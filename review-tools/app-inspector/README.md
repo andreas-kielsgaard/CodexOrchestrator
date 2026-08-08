@@ -3,6 +3,35 @@
 This development/review-only CLI observes an explicitly identified Codex Orchestrator instance. It
 does not add a Tauri command, production route, driver permission, or orchestration action.
 
+## Explicit desktop interaction companion
+
+`interact-app.mjs` is a separate development-only click transport for a named Windows instance.
+It requires both the exact executable path and PID, validates its client coordinates directly in
+the PowerShell boundary, and requires the target HWND to belong to that process or a live
+descendant. It never foregrounds the window and has no clipboard authority. A receipt proves only
+that the target acknowledged the explicit mouse-down and mouse-up messages, so retain a separate
+native-window or SQLite observation for every product, provider, or orchestration claim.
+
+```powershell
+node review-tools/app-inspector/interact-app.mjs click --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --x 470 --y 760 --out "C:\path\to\interaction-receipt.json"
+```
+
+Coordinates must be from `0` through `32767` and fall in the selected main window's client area.
+This tool is for explicitly authorized development/review interaction only; it does not become an
+application transport or infer that any requested workflow stage occurred.
+
+For an isolated development instance deliberately launched with a loopback WebView2 debugging
+port, `webview-control.mjs` can instead type into or click one bounded CSS selector without
+foregrounding the window. It requires the exact owner executable and PID; exactly one listener
+endpoint must be on a loopback address, belong to a descendant process, and declare the requested
+port. The returned WebSocket URL must also be `ws`, loopback, and use the same port. These are
+point-in-time checks before dispatch, not race-free identity proof. The tool resolves one supported
+DOM control, derives a point with a fixed internal geometry query, and sends Chrome DevTools
+Protocol `Input` events. It accepts neither coordinates nor caller-supplied script, and exposes no
+generic browser control. The receipt redacts text and distinguishes pre-dispatch ownership, sent
+input commands, and unobserved product semantics. The debugger port is a development-only launch
+choice, never a production application transport.
+
 ## First snapshot
 
 Run from any PowerShell directory:
@@ -81,6 +110,9 @@ storage inputs.
   rows are observed. SQLite rows are additionally labelled `recorded` evidence.
 - A source-to-executable relationship is inferred only from path containment; the binary does not
   embed its producing commit.
+- WebView ownership checks are point-in-time pre-dispatch observations. External launch provenance
+  records the clean source checkpoint and executable hash; neither is race-free process identity
+  proof or an MCP discovery inventory.
 - The already-running production WebView2 process has no debugging attachment endpoint. Windows UI
   Automation exposes its shell but not the semantic DOM, so the current route/screen name is
   unavailable. The PNG is real visual evidence for the reviewing agent or human.

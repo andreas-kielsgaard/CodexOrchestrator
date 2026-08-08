@@ -18,6 +18,7 @@ import type {
   SprintAutomaticContinuationPolicyController,
   EpicAutomaticContinuationPolicyController,
 } from '../../../application/orchestrations';
+import type { ContextualFileReviewResult } from '../../../application/contextualFileReview';
 
 export interface EpicDetailProps {
   readonly epic: EpicPresentation;
@@ -34,6 +35,7 @@ export interface EpicDetailProps {
   readonly onDetailLocationChange: (location: SprintWorkspaceDetailLocation) => void;
   readonly onBack: () => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
 }
 
 export function EpicDetail({
@@ -51,6 +53,7 @@ export function EpicDetail({
   onDetailLocationChange,
   onBack,
   onOpenAgentSession,
+  onRequestFileReview,
 }: EpicDetailProps) {
   const restoreSprintIdRef = useRef<string | null>(null);
   const [selectedSprintOpener, setSelectedSprintOpener] = useState<{
@@ -90,6 +93,7 @@ export function EpicDetail({
           onCloseSprint();
         }}
         onOpenAgentSession={onOpenAgentSession}
+        onRequestFileReview={onRequestFileReview}
       />
     );
   }
@@ -134,13 +138,29 @@ export function EpicDetail({
           </>
         }
         primary={
-          <SprintPlan
-            items={epic.plan.items}
-            onOpen={(sprint, opener) => {
-              setSelectedSprintOpener({ sprint, opener });
-              onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
-            }}
-          />
+          <>
+            {(epic.epicEscalationReceivers ?? []).length > 0 && (
+              <section aria-label="Epic reassessment" className="orchestration-reassessment">
+                <p className="eyebrow">Epic reassessment</p>
+                <p>The Epic received the exact Sprint concern. The concern remains unresolved.</p>
+                {(epic.epicEscalationReceivers ?? []).map((receiver) => (
+                  <div key={`${receiver.epicId}:${receiver.sprintId}:${receiver.deliveryRequestedAt}`}>
+                    <strong>Receiver delivery and reassessment</strong>
+                    <p>Delivery requested: {receiver.deliveryRequestedAt}</p>
+                    {receiver.semanticReassessmentRecordedAt && <p>Semantic reassessment recorded: {receiver.semanticReassessmentRecordedAt}</p>}
+                    {receiver.disposition && <p>Disposition: {receiver.disposition.movementKind}. This is not Sprint selection, start, settlement, completion, or acceptance.</p>}
+                  </div>
+                ))}
+              </section>
+            )}
+            <SprintPlan
+              items={epic.plan.items}
+              onOpen={(sprint, opener) => {
+                setSelectedSprintOpener({ sprint, opener });
+                onOpenSprint(sprint.id, sprint.workspace?.selectedSprintPlanRevisionId ?? '');
+              }}
+            />
+          </>
         }
         agentSession={
           epic.epicRunnerSession ? (

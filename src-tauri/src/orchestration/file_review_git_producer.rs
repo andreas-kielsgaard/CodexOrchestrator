@@ -104,6 +104,7 @@ pub(crate) fn produce_file_review_from_git(
             changed_files,
         })
         .map_err(map_store_error)?;
+    repository.store_file_review_git_capture_document_link(&authorization_id,&document_ref_id,&artifact_id).map_err(map_store_error)?;
 
     Ok(ProducedFileReview {
         document_ref_id,

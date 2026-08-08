@@ -70,8 +70,14 @@ impl SqliteAgentSessionRepository {
         let invocations = list_invocations_from(&transaction, session_id)?
             .into_iter()
             .map(|invocation| {
+                let launch_accepted_at =
+                    invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
                 let events = list_events_from(&transaction, &invocation.id)?;
-                Ok(AgentInvocationHistory { invocation, events })
+                Ok(AgentInvocationHistory {
+                    invocation,
+                    launch_accepted_at,
+                    events,
+                })
             })
             .collect::<Result<Vec<_>, RepositoryError>>()?;
         transaction
@@ -333,15 +339,34 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         invocation_id: &AgentInvocationId,
     ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
         let connection = self.lock()?;
-        let accepted_at = connection
-            .query_row(
-                "SELECT accepted_at FROM agent_session_invocation_launch_acceptances WHERE invocation_id = ?1",
-                params![invocation_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(sql_unavailable("load invocation launch acceptance"))?;
-        accepted_at.map(|value| parse_timestamp(&value)).transpose()
+        invocation_launch_accepted_at_from(&connection, invocation_id)
+    }
+
+    fn recover_pre_acceptance_interruption(
+        &self,
+        invocation_id: &AgentInvocationId,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin pre-acceptance invocation recovery"))?;
+        if invocation_launch_accepted_at_from(&transaction, invocation_id)?.is_some() {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation cannot return to pre-acceptance state",
+            ));
+        }
+        let current = required_invocation(&transaction, invocation_id)?;
+        let updated = current
+            .recover_pre_acceptance_interruption(updated_at)
+            .map_err(contract_error)?;
+        update_invocation(&transaction, &updated)?;
+        touch_session(&transaction, &updated.session_id, updated_at)?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit pre-acceptance invocation recovery"))?;
+        Ok(updated)
     }
 
     fn finish_invocation(

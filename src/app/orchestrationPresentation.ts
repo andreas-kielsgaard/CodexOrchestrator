@@ -44,6 +44,7 @@ export function presentProductOrchestrations(
       goal: epic.goal,
       movement: presentationMovement(epic.overview.currentMovement),
       state: presentationState(epic.overview.state),
+      epicEscalationReceivers: [...(epic.epicEscalationReceivers ?? [])],
       plan: {
         items: epic.sprints.map((sprint) => ({
           id: sprint.sprintId,

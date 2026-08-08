@@ -171,7 +171,7 @@ fn support(value: Option<bool>) -> CapabilitySupport {
     }
 }
 
-pub(super) fn resolve_program(program: String) -> Result<String, String> {
+pub(crate) fn resolve_program(program: String) -> Result<String, String> {
     #[cfg(windows)]
     {
         use std::path::Path;

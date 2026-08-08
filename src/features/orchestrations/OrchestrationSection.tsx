@@ -12,6 +12,7 @@ import {
 import './styles/orchestrationSection.css';
 import type { EpicPlanningDraftSummary } from '../../application/orchestrations';
 import type { AgentSessionProductLocation } from '../../application/agentSessionNavigation';
+import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
 
 export interface OrchestrationSectionProps {
   readonly view: OrchestrationSectionView;
@@ -24,6 +25,7 @@ export interface OrchestrationSectionProps {
   readonly onOpenPlanningDraft?: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation?: AgentSessionProductLocation | null;
   readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
 }
 
 export function OrchestrationSection({
@@ -37,6 +39,7 @@ export function OrchestrationSection({
   onOpenPlanningDraft,
   requestedLocation,
   onOpenAgentSession,
+  onRequestFileReview,
 }: OrchestrationSectionProps) {
   const workspace = useOrchestrationWorkspace(requestedLocation);
   const selected = view.epics.find(({ id }) => id === workspace.epicId);
@@ -58,6 +61,7 @@ export function OrchestrationSection({
         onDetailLocationChange={workspace.setDetailLocation}
         onBack={workspace.backToOverview}
         onOpenAgentSession={onOpenAgentSession}
+        onRequestFileReview={onRequestFileReview}
       />
     );
   }

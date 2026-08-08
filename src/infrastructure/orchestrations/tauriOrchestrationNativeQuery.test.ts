@@ -149,12 +149,30 @@ describe('Tauri orchestration native query connector', () => {
         if (!available) throw new Error('transition unavailable');
         return transition;
       },
+    }, {
+      load: async () => ({
+        contract: 'sprint-runner-transition-query/v1' as const,
+        transitions: [{
+          sprintId: 'sprint-fixture', epicId: 'epic-fixture', requestId: 'request-1',
+          epicRunnerInvocationId: 'runner-invocation', sprintRunnerSessionId: 'sprint-runner-session',
+          sprintRunnerInvocationId: 'sprint-runner-invocation', requestedAt: 't', authorizedAt: 't',
+          sessionCreatedAt: 't', harnessAppliedAt: 't', launchAcceptedAt: 't',
+          preStartReady: true, lifecycleObserved: false, accepted: false,
+          downstreamNotStarted: true,
+        }],
+      }),
     });
     const ready = await orchestration.load();
     expect(ready.kind).toBe('ready');
     if (ready.kind === 'ready')
       expect(ready.readModels.epics[0]?.bootstrapTransition).toMatchObject({
         kind: 'bootstrap_running',
+      });
+    if (ready.kind === 'ready')
+      expect(ready.readModels.epics[0]?.sprints[0]?.sprintRunnerTransition).toMatchObject({
+        label: 'Sprint Runner launch accepted — pre-start ready',
+        lifecycleObserved: false,
+        accepted: false,
       });
     available = false;
     await expect(orchestration.load()).resolves.toEqual({

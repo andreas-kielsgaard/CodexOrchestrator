@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Work Unit Handler"
+  short_description: "Inspect bounded Work Unit evidence"
+  default_prompt: "Use $work-unit-handler only with an application-supplied authorized evidence package."

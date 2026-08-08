@@ -1,5 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
+import {
+  composeProductOrchestrationReadModels,
+  type ProductSprintRunnerTransitionStatusV1,
+} from '../../application/orchestrations';
 import { presentProductOrchestrations } from '../../app/orchestrationPresentation';
 import { recordedPresentationAdjunct } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
 import { recordedProductReadCompositionInput } from '../../dev/orchestrationSection/recordedProductReadCompositionInput';
@@ -174,6 +178,237 @@ describe('OrchestrationSection', () => {
     expect(await within(session).findByText('Record Sprint feedback')).toBeVisible();
     expect(within(session).queryByText(/No live agent was invoked/)).toBeNull();
     expect(within(session).queryByRole('button', { name: /Collapse/ })).toBeNull();
+  });
+
+  it('shows only durable Sprint Runner activation evidence on the existing Sprint surface', () => {
+    const view = {
+      epics: canonicalRecordedView.epics.map((epic) => ({
+        ...epic,
+        plan: {
+          ...epic.plan,
+          items: epic.plan.items.map((item) =>
+            item.name === 'Planner and Work Unit Interaction Discovery' && item.workspace
+              ? {
+                  ...item,
+                  workspace: {
+                    ...item.workspace,
+                    sprint: {
+                      ...item.workspace.sprint,
+                      sprintRunnerTransition: {
+                        label: 'Sprint Runner launch accepted — pre-start ready',
+                        requestedAt: 't',
+                        authorizedAt: 't',
+                        sessionCreatedAt: 't',
+                        harnessAppliedAt: 't',
+                        launchAcceptedAt: 't',
+                        preStartReady: true,
+                        lifecycleObserved: false as const,
+                        accepted: false as const,
+                        downstreamNotStarted: true,
+                      },
+                    },
+                  },
+                }
+              : item,
+          ),
+        },
+      })),
+    };
+    render(<OrchestrationSection view={view} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'View proposed Plan: Planner and Work Unit Interaction Discovery',
+      }),
+    );
+    const activation = screen.getByLabelText('Sprint Runner activation');
+    expect(activation).toHaveTextContent('Sprint Runner launch accepted — pre-start ready');
+    expect(activation).toHaveTextContent('Provider/receiver activation has not been observed');
+    expect(activation).toHaveTextContent('No Work Slice or Work Unit has been created');
+    expect(activation).not.toHaveTextContent('delivery has been observed');
+    expect(activation).not.toHaveTextContent('Sprint has not started');
+  });
+
+  it('renders persisted-not-launched and planning-ready activation branches without overstating delivery', () => {
+    const withTransition = (sprintRunnerTransition: ProductSprintRunnerTransitionStatusV1) => ({
+      epics: canonicalRecordedView.epics.map((epic) => ({
+        ...epic,
+        plan: {
+          ...epic.plan,
+          items: epic.plan.items.map((item) =>
+            item.name === 'Planner and Work Unit Interaction Discovery' && item.workspace
+              ? {
+                  ...item,
+                  workspace: {
+                    ...item.workspace,
+                    sprint: { ...item.workspace.sprint, sprintRunnerTransition },
+                  },
+                }
+              : item,
+          ),
+        },
+      })),
+    });
+    const openSprint = () => {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+      );
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'View proposed Plan: Planner and Work Unit Interaction Discovery',
+        }),
+      );
+    };
+    const persisted = render(
+      <OrchestrationSection
+        view={withTransition({
+          label: 'Epic continuation invocation persisted; launch acceptance pending',
+          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
+          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
+          preStartSemanticOutcomeRecordedAt: 't', preStartLifecycleObservedAt: 't',
+          preStartOutcomeAcceptedAt: 't', parentContinuationDeliveryRequestedAt: 't',
+          parentContinuationDeliveryPersistedAt: 't', downstreamNotStarted: true,
+        })}
+      />,
+    );
+    openSprint();
+    const pending = screen.getByLabelText('Sprint Runner activation');
+    expect(pending).toHaveTextContent('Epic continuation delivery requested');
+    expect(pending).toHaveTextContent('Epic continuation invocation persisted');
+    expect(pending).toHaveTextContent('Provider/receiver activation has not been observed');
+    expect(pending).not.toHaveTextContent('Provider/receiver activation has been observed');
+    persisted.unmount();
+
+    render(
+      <OrchestrationSection
+        view={withTransition({
+          label: 'Sprint planning-ready; downstream not started',
+          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
+          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
+          sprintStartAuthorizedAt: 't', sprintStartPersistedAt: 't',
+          sprintContinuationLaunchAcceptedAt: 't', repositoryBranchReevaluationRecordedAt: 't',
+          planningReadyAt: 't', providerReceiverActivationObservedAt: 't',
+          downstreamNotStarted: true,
+        })}
+      />,
+    );
+    openSprint();
+    const ready = screen.getByLabelText('Sprint Runner activation');
+    expect(ready).toHaveTextContent('Sprint start authorized and persisted');
+    expect(ready).toHaveTextContent('Repository and branch reevaluation recorded');
+    expect(ready).toHaveTextContent('Planning-ready; downstream has not started');
+    expect(ready).toHaveTextContent('Provider/receiver activation has been observed');
+    expect(ready).not.toHaveTextContent('Provider/receiver activation has not been observed');
+  });
+
+  it('keeps Sprint-owned File Review invocation and bounded status in the persistent header', async () => {
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const requestFileReview = vi.fn(
+      () =>
+        new Promise<ContextualFileReviewResult>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <OrchestrationSection
+        view={disposableRecordedOrchestrationView}
+        onRequestFileReview={requestFileReview}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+
+    const action = screen.getByRole('button', { name: 'Review files' });
+    const control = action.closest('.sprint-file-review-control') as HTMLElement;
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    expect(action).toBeVisible();
+    expect(action.closest('.detail-workspace__control')).toBeVisible();
+    expect(action.closest('.sprint-start-assessment')).toBeNull();
+
+    fireEvent.click(action);
+    expect(action).toBeDisabled();
+    expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
+    expect(requestFileReview).toHaveBeenCalledWith('sprint-control-surface');
+
+    await act(async () => {
+      settle({
+        status: 'failed',
+        reason: 'source_not_ready',
+        message: 'The Sprint source is not ready for File Review.',
+      });
+    });
+    expect(within(control).getByRole('alert')).toHaveTextContent(
+      'The Sprint source is not ready for File Review.',
+    );
+    expect(action).toBeEnabled();
+  });
+
+  it('retains the shared Sprint File Review request across planning-point and Work Unit detail', async () => {
+    let settle!: (result: ContextualFileReviewResult) => void;
+    const requestFileReview = vi.fn(
+      () =>
+        new Promise<ContextualFileReviewResult>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <OrchestrationSection
+        view={disposableRecordedOrchestrationView}
+        onRequestFileReview={requestFileReview}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Codex Epic Runner workspace development' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Open Sprint: Sprint Control Surface Discovery' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Work Slice planning point: Integrated detail surfaces',
+      }),
+    );
+
+    expect(
+      screen.getByRole('main', {
+        name: 'Work Slice planning point detail: Integrated detail surfaces',
+      }),
+    ).toBeVisible();
+    let action = screen.getByRole('button', { name: 'Review files' });
+    let control = action.closest('.sprint-file-review-control') as HTMLElement;
+    expect(action.closest('.detail-workspace__control')).toBeVisible();
+    fireEvent.click(action);
+    expect(action).toBeDisabled();
+    expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
+    expect(requestFileReview).toHaveBeenNthCalledWith(1, 'sprint-control-surface');
+
+    fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    action = screen.getByRole('button', { name: 'Review files' });
+    control = action.closest('.sprint-file-review-control') as HTMLElement;
+    expect(action.closest('.detail-workspace__control')).toBeVisible();
+    expect(action).toBeDisabled();
+    expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
+    expect(requestFileReview).toHaveBeenCalledTimes(1);
+    expect(requestFileReview.mock.calls[0]).toEqual(['sprint-control-surface']);
+
+    await act(async () => {
+      settle({
+        status: 'failed',
+        reason: 'conflict',
+        message: 'File Review could not confirm one current Sprint source.',
+      });
+    });
+    const failure = within(control).getByRole('alert');
+    expect(failure).toHaveAttribute('data-reason', 'conflict');
+    expect(failure).toHaveTextContent('File Review could not confirm one current Sprint source.');
+    expect(action).toBeEnabled();
   });
 
   it('navigates Plan and Work Unit details, restores focus, and coordinates dual sessions', () => {

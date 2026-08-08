@@ -1,0 +1,4 @@
+interface:
+  display_name: "Complete Plan Slice"
+  short_description: "Judge and return a completed ad-hoc Plan Slice"
+  default_prompt: "Use $complete-plan-slice to evaluate this slice as a whole and return its result."

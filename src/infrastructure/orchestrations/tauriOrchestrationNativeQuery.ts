@@ -10,6 +10,7 @@ import {
 } from '../../application/orchestrations';
 import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
 import type { EpicBootstrapTransitionClient } from './tauriEpicBootstrapTransition';
+import type { SprintRunnerTransitionClient } from './tauriSprintRunnerTransition';
 
 type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 export interface OrchestrationNativeQueryClient {
@@ -32,17 +33,25 @@ export function createTauriOrchestrationNativeQueryClient(
 export function createNativeQueryOrchestrationClient(
   nativeQuery: OrchestrationNativeQueryClient,
   transitionClient?: EpicBootstrapTransitionClient,
+  sprintRunnerTransitionClient?: SprintRunnerTransitionClient,
 ): OrchestrationApplicationClient {
   return {
     async load() {
       try {
         const query = await nativeQuery.load();
         const transitionQuery = transitionClient ? await transitionClient.load() : undefined;
+        const sprintRunnerTransitionQuery = sprintRunnerTransitionClient
+          ? await sprintRunnerTransitionClient.load()
+          : undefined;
         if (query.initiatedEpics.length)
           return {
             kind: 'ready',
             readModels: composeProductOrchestrationReadModels(
-              nativeQueryProductCompositionInputV2(query, transitionQuery),
+              nativeQueryProductCompositionInputV2(
+                query,
+                transitionQuery,
+                sprintRunnerTransitionQuery,
+              ),
             ),
           };
         return { kind: 'empty', reason: 'No accepted Epic orchestration has been recorded.' };

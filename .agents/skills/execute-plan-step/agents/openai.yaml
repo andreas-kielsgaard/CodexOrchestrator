@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execute Plan Step"
+  short_description: "Complete one bounded ad-hoc Plan Step"
+  default_prompt: "Use $execute-plan-step to complete this assigned Plan Step and return evidence to its Slice Plan conversation."

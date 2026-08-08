@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Overall Plan"
+  short_description: "Keep an ad-hoc Initiative's high-level plan current"
+  default_prompt: "Use $maintain-overall-plan to establish or update this ad-hoc Initiative's Overall Plan."

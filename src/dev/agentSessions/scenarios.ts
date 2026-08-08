@@ -52,7 +52,7 @@ const event = (
   sequence,
   source,
   rawPayload,
-  normalized: { kind, text, externalContextId: null, usage: null, details },
+  normalized: { kind, text, externalContextId: null, usage: null, details, toolActivity: null },
   recordedAt: time,
 });
 const diagnostic = (invocationId: string, code: string, message: string): AgentDiagnosticDto => ({

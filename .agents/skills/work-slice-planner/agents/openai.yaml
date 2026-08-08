@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Slice Planner"
-  short_description: "Plan one currently executable work slice"
-  default_prompt: "Use $work-slice-planner to plan and settle the work that is executable at this Sprint decision point."

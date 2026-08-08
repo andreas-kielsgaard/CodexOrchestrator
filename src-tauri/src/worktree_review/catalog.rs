@@ -3,7 +3,7 @@ use crate::worktree_runtime::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -50,17 +50,11 @@ impl ReviewWorktreeCatalog {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|_| "Git worktree discovery was not UTF-8".to_string())?;
-        let mut catalog = Self::from_porcelain(&text, &current_source)?;
-        let common_dir = git_common_dir(&catalog.main_path, git)?;
-        for path in catalog.paths.values() {
-            if git_common_dir(path, git)? != common_dir {
-                return Err(
-                    "A discovered worktree does not belong to the catalog repository".into(),
-                );
-            }
-        }
-        catalog.common_dir = Some(common_dir);
-        Ok(catalog)
+        validate_catalog_identity(
+            Self::from_porcelain(&text, &current_source)?,
+            &current_source,
+            |path| git_common_dir(path, git),
+        )
     }
 
     fn from_porcelain(text: &str, current_source: &Path) -> Result<Self, String> {
@@ -211,6 +205,38 @@ impl ReviewWorktreeCatalog {
                 .ok_or_else(|| "The catalog Git repository identity is unavailable.".to_string())?,
         })
     }
+}
+
+fn validate_catalog_identity(
+    mut catalog: ReviewWorktreeCatalog,
+    current_source: &Path,
+    mut common_dir_for: impl FnMut(&Path) -> Result<PathBuf, String>,
+) -> Result<ReviewWorktreeCatalog, String> {
+    if !catalog.paths.values().any(|path| path == current_source) {
+        return Err("The launcher source is missing from Git worktree discovery".into());
+    }
+    let common_dir = common_dir_for(&catalog.main_path)?;
+    if common_dir_for(current_source)? != common_dir {
+        return Err("The launcher source does not belong to the catalog repository".into());
+    }
+    let usable = catalog
+        .paths
+        .iter()
+        .filter_map(|(source_ref, path)| {
+            (path == &catalog.main_path
+                || path == current_source
+                || common_dir_for(path).is_ok_and(|candidate| candidate == common_dir))
+            .then(|| source_ref.clone())
+        })
+        .collect::<HashSet<_>>();
+    catalog
+        .paths
+        .retain(|source_ref, _| usable.contains(source_ref));
+    catalog
+        .options
+        .retain(|option| usable.contains(&option.source_ref));
+    catalog.common_dir = Some(common_dir);
+    Ok(catalog)
 }
 
 fn git_common_dir(root: &Path, git: &Path) -> Result<PathBuf, String> {
@@ -389,6 +415,112 @@ mod tests {
                 .unwrap()
                 .baseline_object_id,
             baseline
+        );
+    }
+
+    #[test]
+    fn discovery_ignores_an_unusable_unselected_registered_worktree() {
+        let directory = tempfile::tempdir().expect("directory");
+        let main = directory.path().join("main");
+        let selected = directory.path().join("selected");
+        let unavailable = directory.path().join("unavailable");
+        git(directory.path(), &["init", main.to_str().unwrap()]);
+        git(&main, &["config", "user.email", "test@example.invalid"]);
+        git(&main, &["config", "user.name", "Test"]);
+        fs::write(main.join("source.txt"), "baseline\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "baseline"]);
+        git(&main, &["branch", "selected"]);
+        git(&main, &["branch", "unavailable"]);
+        git(
+            &main,
+            &["worktree", "add", selected.to_str().unwrap(), "selected"],
+        );
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                unavailable.to_str().unwrap(),
+                "unavailable",
+            ],
+        );
+        fs::write(unavailable.join(".git"), "gitdir: missing\n").unwrap();
+
+        let review = crate::worktree_review::compose(&main, &directory.path().join("runtime"))
+            .expect("unrelated unavailable worktree does not prevent review startup");
+        let sources = review.sources();
+        assert_eq!(sources.len(), 2);
+        assert!(sources
+            .iter()
+            .any(|option| option.label.contains("launcher source")));
+        assert!(sources
+            .iter()
+            .any(|option| option.label.contains("selected")));
+        assert!(sources
+            .iter()
+            .all(|option| !option.label.contains("unavailable")));
+    }
+
+    #[test]
+    fn catalog_rejects_source_mismatch_and_excludes_foreign_unselected_entries() {
+        let directory = tempfile::tempdir().expect("directory");
+        let current = directory.path().join("current");
+        let foreign = directory.path().join("foreign");
+        fs::create_dir_all(&current).expect("current");
+        fs::create_dir_all(&foreign).expect("foreign");
+        let current = current.canonicalize().expect("current canonical");
+        let foreign = foreign.canonicalize().expect("foreign canonical");
+        let text = format!(
+            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/current\n\nworktree {}\nHEAD abcdef0123456789\nbranch refs/heads/foreign\n",
+            current.display(),
+            foreign.display()
+        );
+        let catalog = ReviewWorktreeCatalog::from_porcelain(&text, &current).expect("catalog");
+        let foreign_ref = catalog
+            .options()
+            .iter()
+            .find(|option| option.label.contains("foreign"))
+            .expect("foreign option")
+            .source_ref
+            .clone();
+        let common = directory.path().join("common");
+        fs::create_dir_all(&common).expect("common");
+        let filtered = validate_catalog_identity(catalog, &current, |path| {
+            if path == current {
+                Ok(common.clone())
+            } else {
+                Ok(directory.path().join("foreign-common"))
+            }
+        })
+        .expect("foreign entry is excluded");
+        assert!(filtered.label(&foreign_ref).is_none());
+        assert!(filtered.scope(&foreign_ref, "review".into()).is_err());
+
+        let launcher = directory.path().join("launcher");
+        fs::create_dir_all(&launcher).expect("launcher");
+        let launcher = launcher.canonicalize().expect("launcher canonical");
+        let source_text = format!(
+            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/main\n\nworktree {}\nHEAD abcdef0123456789\nbranch refs/heads/launcher\n",
+            current.display(),
+            launcher.display()
+        );
+        let source_mismatch =
+            ReviewWorktreeCatalog::from_porcelain(&source_text, &launcher).expect("catalog");
+        let result = validate_catalog_identity(source_mismatch, &launcher, |path| {
+            Ok(if path == launcher {
+                directory.path().join("mismatched-common")
+            } else {
+                common.clone()
+            })
+        });
+        let error = match result {
+            Ok(_) => panic!("source mismatch accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            "The launcher source does not belong to the catalog repository"
         );
     }
 

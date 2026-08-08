@@ -7,7 +7,7 @@ const profile = {
   skillGuidance: [
     {
       canonicalName: 'epic-plan-builder',
-      canonicalPath: '.agents/skills/epic-plan-builder/SKILL.md',
+      canonicalPath: '.agents/product-skills/epic-plan-builder/SKILL.md',
       purpose: 'Build one Epic plan.',
       useWhen: 'the user requests a plan.',
     },

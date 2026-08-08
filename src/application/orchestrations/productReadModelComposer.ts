@@ -14,6 +14,7 @@ import type {
   ProductWorkUnitPresentationState,
 } from './productReadModels';
 import { projectBootstrapTransitionStatus } from './epicBootstrapTransition';
+import { projectSprintRunnerTransitionStatus } from './sprintRunnerTransition';
 
 /**
  * Composition envelope rule: one decoded event root plus one decoded control/artifact root and a
@@ -34,6 +35,7 @@ export function composeProductOrchestrationReadModels(
     input,
     events.epics.map((epic) => epic.epicId),
   );
+  validateSprintRunnerTransitions(input, events);
 
   const index = indexReferenceData(input.referenceIndex);
   const sessions = events.agentSessionReferences.map((reference) => ({
@@ -54,6 +56,10 @@ export function composeProductOrchestrationReadModels(
           sessions,
           sprint.sprintId,
           input.selection,
+          input.workUnitMaterializations,
+          input.sprintRunnerTransition?.query.transitions.find(
+            (transition) => transition.sprintId === sprint.sprintId,
+          ),
         ),
       );
     return {
@@ -66,6 +72,7 @@ export function composeProductOrchestrationReadModels(
         state: overview.state,
       },
       sprints,
+      epicEscalationReceivers: sprints.flatMap((sprint) => sprint.epicEscalationReceivers ?? []),
       agentSessionReferences: sessions.filter((reference) =>
         belongsToEpic(events, reference, epic.epicId),
       ),
@@ -87,6 +94,23 @@ export function composeProductOrchestrationReadModels(
       (reference) => reference.targetKind === 'other',
     ),
   };
+}
+
+function validateSprintRunnerTransitions(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  if (!input.sprintRunnerTransition) return;
+  for (const transition of input.sprintRunnerTransition.query.transitions) {
+    const sprint = events.sprints.find((candidate) => candidate.sprintId === transition.sprintId);
+    if (!sprint || sprint.epicId !== transition.epicId)
+      fail('Sprint Runner transition does not match a native initiated Sprint');
+    const bootstrap = input.bootstrapTransition?.query.transitions.find(
+      (candidate) => candidate.epicId === transition.epicId,
+    );
+    if (!bootstrap || bootstrap.runnerInvocationId !== transition.epicRunnerInvocationId)
+      fail('Sprint Runner transition does not match the launch-authorized Epic Runner');
+  }
 }
 
 function validateBootstrapTransitions(
@@ -114,6 +138,8 @@ function composeSprint(
   sessions: readonly ProductAgentSessionReferenceReadModelV1[],
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
+  workUnitMaterializations: ProductReadCompositionInputV1['workUnitMaterializations'],
+  sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
   const plan = events.sprintPlans.find((candidate) => candidate.sprintId === sprintId);
@@ -170,6 +196,15 @@ function composeSprint(
     current.sprintPlanRevisionId,
     'current revision view',
   );
+  const epicEscalationReceivers = currentWorkUnits.flatMap((unit) =>
+    (unit.attemptHistory ?? []).flatMap((attempt) =>
+      attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
+    ),
+  );
+  for (const receiver of epicEscalationReceivers) {
+    if (receiver.sprintId !== sprintId || receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? ''))
+      fail('Epic escalation receiver does not match its Sprint and Epic owner');
+  }
   return {
     sprintId,
     epicId:
@@ -189,6 +224,12 @@ function composeSprint(
             'No application-owned Sprint start and repository reevaluation record is available.',
         },
       } as const),
+    ...(sprintRunnerTransition
+      ? { sprintRunnerTransition: projectSprintRunnerTransitionStatus(sprintRunnerTransition) }
+      : {}),
+    workUnitMaterializations: (workUnitMaterializations ?? []).filter(
+      (materialization) => materialization.sprintId === sprintId,
+    ),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,
@@ -220,6 +261,7 @@ function composeSprint(
     },
     workSlicePlanningPoints,
     revisionViews,
+    ...(epicEscalationReceivers.length > 0 ? { epicEscalationReceivers } : {}),
     concerns: index.concerns
       .filter((concern) => concern.sprintId === sprintId)
       .map((concern) => ({

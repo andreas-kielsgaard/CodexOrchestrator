@@ -3,10 +3,15 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-const ACTIVE_SCHEMA_VERSION: i64 = 12;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 36;
+pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
+}
+
+pub(crate) fn harness_revision_repository_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME)
 }
 
 pub(crate) fn open_active_database(path: &Path) -> Result<Connection, String> {
@@ -23,9 +28,24 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
     if current_version == ACTIVE_SCHEMA_VERSION {
+        if native_profile_schema_is_present(connection)? {
+            return Ok(());
+        }
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("Unable to begin active v22 schema evolution: {error}"))?;
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
+            .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
+        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+            .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
+        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=11).contains(&current_version) {
+    if (1..=35).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -108,6 +128,170 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 format!("Unable to migrate Harness working-copy schema: {error}")
             })?;
         transaction
+            .execute_batch(
+                crate::orchestration::conversation_harness_revision::HARNESS_REVISION_SCHEMA,
+            )
+            .map_err(|error| format!("Unable to migrate Harness revision schema: {error}"))?;
+        transaction
+            .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
+            .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
+        crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
+            .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
+            .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
+        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+            .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
+        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
+        if current_version <= 21 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native profile readiness schema: {error}"))?;
+        }
+        if current_version <= 22 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native profile attention schema: {error}"))?;
+        }
+        if current_version <= 23 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native profile producer-attempt schema: {error}"))?;
+        }
+        if current_version <= 24 {
+            let has_full_access_canary = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_readiness') WHERE name='danger_full_access_canary')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native profile readiness schema: {error}"))?
+                != 0;
+            if !has_full_access_canary {
+                transaction.execute_batch("ALTER TABLE native_codex_profile_readiness ADD COLUMN danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked'));")
+                    .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
+            }
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native execution-mode authority schema: {error}"))?;
+        }
+        if current_version <= 25 {
+            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .map_err(|error| format!("Unable to migrate native full-access canary schema: {error}"))?;
+        }
+        if current_version <= 26 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V27_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native login-attempt schema: {error}")
+                })?;
+        }
+        if current_version <= 27 {
+            let legacy_setup_attempts = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_setup_attempts') WHERE name='started_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native setup-attempt schema: {error}"))?
+                != 0;
+            if legacy_setup_attempts {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V28_MIGRATION)
+                    .map_err(|error| {
+                        format!("Unable to migrate native setup-attempt evidence schema: {error}")
+                    })?;
+            }
+        }
+        if current_version <= 28 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V29_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native setup-attempt policy schema: {error}")
+                })?;
+        }
+        if current_version <= 29 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V30_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native setup-attempt policy invariants: {error}")
+                })?;
+        }
+        if current_version <= 30 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V31_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native sandbox adoption evidence: {error}")
+                })?;
+        }
+        if current_version <= 31 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V32_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native sandbox adoption confirmations: {error}")
+                })?;
+        }
+        if current_version <= 32 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V33_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native canary receipt classification: {error}")
+                })?;
+        }
+        if current_version <= 33 {
+            let versioned_danger_authorization = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_mode_authorizations') WHERE name='authority_scope')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native danger authorization schema: {error}"))?
+                != 0;
+            if !versioned_danger_authorization {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_MIGRATION)
+                    .map_err(|error| {
+                        format!("Unable to migrate native danger authorization evidence: {error}")
+                    })?;
+            }
+            let legacy_full_access_canary = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_full_access_canaries') WHERE name='started_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("Unable to inspect native full-access canary schema: {error}"))?
+                != 0;
+            if legacy_full_access_canary {
+                transaction
+                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
+                    .map_err(|error| format!("Unable to migrate native full-access canary evidence: {error}"))?;
+            }
+        }
+        if current_version <= 34 {
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native MCP reporting dispatch claims: {error}")
+                })?;
+        }
+        if current_version == 14 {
+            transaction
+                .execute_batch(
+                    crate::orchestration::execution_support::EXECUTION_SUPPORT_BASELINE_MIGRATION,
+                )
+                .map_err(|error| {
+                    format!("Unable to migrate execution-support attempt baseline: {error}")
+                })?;
+        }
+        if (14..=15).contains(&current_version) {
+            transaction
+                .execute_batch(
+                    crate::orchestration::execution_support::EXECUTION_SUPPORT_ATTEMPT_AUTHORIZATION_MIGRATION,
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to migrate execution-support attempt authorization authority: {error}"
+                    )
+                })?;
+        }
+        transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
         transaction
@@ -157,12 +341,37 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         )
         .map_err(|error| format!("Unable to initialize Harness working-copy schema: {error}"))?;
     transaction
+        .execute_batch(crate::orchestration::conversation_harness_revision::HARNESS_REVISION_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness revision schema: {error}"))?;
+    transaction
+        .execute_batch(crate::orchestration::execution_support::EXECUTION_SUPPORT_SCHEMA)
+        .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
+    crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
+        .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
+    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
+        .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
+    transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
+    transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
         .commit()
         .map_err(|error| format!("Unable to commit active schema initialization: {error}"))?;
     Ok(())
+}
+
+fn native_profile_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|present| present != 0)
+        .map_err(|error| format!("Unable to inspect active native-profile schema: {error}"))
 }
 use std::time::Duration;
 
@@ -247,9 +456,15 @@ mod tests {
         assert_eq!(
             tables,
             vec![
+                "accepted_candidate_authority_attentions",
+                "accepted_handler_candidates",
+                "accepted_work_unit_integration_evidence",
+                "accepted_work_unit_integrations",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
+                "agent_session_native_profile_bindings",
+                "agent_session_native_profile_launch_provenance",
                 "agent_session_runtime_events",
                 "agent_sessions",
                 "capability_profiles",
@@ -269,14 +484,31 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "execution_support_attempt_authorizations",
+                "execution_support_grants",
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
+                "file_review_git_capture_documents",
+                "harness_revision_commands",
+                "harness_revision_publications",
+                "harness_revisions",
                 "harness_working_copies",
                 "harness_working_copy_commands",
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",
+                "native_codex_profile_attentions",
+                "native_codex_profile_execution_modes",
+                "native_codex_profile_full_access_canaries",
+                "native_codex_profile_login_attempts",
+                "native_codex_profile_mcp_probes",
+                "native_codex_profile_mode_authorizations",
+                "native_codex_profile_readiness",
+                "native_codex_profile_sandbox_adoption_confirmations",
+                "native_codex_profile_sandbox_adoptions",
+                "native_codex_profile_setup_attempts",
+                "native_codex_profiles",
                 "plan_builder_context_deliveries",
                 "planning_draft_agent_session_associations",
                 "planning_draft_lifecycle_events",
@@ -285,7 +517,18 @@ mod tests {
                 "proposal_commands",
                 "proposal_events",
                 "proposal_revisions",
+                "sprint_target_current_attentions",
+                "sprint_target_currents",
                 "stored_file_review_artifacts",
+                "work_slice_execution_attentions",
+                "work_slice_execution_graph_completions",
+                "work_slice_execution_settlements",
+                "work_slice_planning_point_execution_settlements",
+                "work_unit_dependency_activation_intents",
+                "work_unit_execution_attentions",
+                "work_unit_execution_states",
+                "work_unit_prerequisite_contributions",
+                "work_unit_settlements",
             ]
         );
         assert_eq!(
@@ -390,6 +633,127 @@ mod tests {
             .unwrap();
         assert!(command_columns.contains(&"payload_fingerprint".to_string()));
         assert!(command_columns.contains(&"result_digest".to_string()));
+        let revision_columns = connection
+            .prepare("PRAGMA table_info(harness_revisions)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "revision_id",
+            "configuration_digest",
+            "source_draft_revision",
+            "predecessor_revision_id",
+            "repository_commit_ref",
+            "creation_provenance_kind",
+            "creation_provenance_reference",
+            "created_at",
+        ] {
+            assert!(revision_columns.contains(&column.to_string()));
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_index_list('harness_revisions') WHERE [unique] = 1 AND name IN ('harness_revision_root_by_harness','harness_revision_unique_predecessor')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn migrates_v18_accepted_integration_schema_and_reopens() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v18.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                 DROP TABLE work_unit_prerequisite_contributions;
+                 DROP TABLE work_unit_settlements;
+                 DROP TABLE accepted_work_unit_integration_evidence;
+                 DROP TABLE accepted_work_unit_integrations;
+                 DROP TABLE accepted_handler_candidates;
+                 CREATE TABLE accepted_handler_candidates (candidate_id TEXT PRIMARY KEY,work_unit_id TEXT,authority_id TEXT,pinned_at TEXT,attention_reason TEXT,candidate_commit_id TEXT,candidate_tree_id TEXT,private_ref_name TEXT,evidence_fingerprint TEXT);
+                 INSERT INTO accepted_handler_candidates VALUES
+                   ('candidate','unit','authority','t',NULL,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','refs/codex/orchestrator/accepted/candidate','evidence'),
+                   ('terminal-candidate','terminal-unit','authority','t',NULL,'cccccccccccccccccccccccccccccccccccccccc','dddddddddddddddddddddddddddddddddddddddd','refs/codex/orchestrator/accepted/terminal-candidate','terminal-evidence');
+                 CREATE TABLE accepted_work_unit_integrations (integration_id TEXT PRIMARY KEY,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,integration_commit_id TEXT,integration_tree_id TEXT,settled_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
+                 INSERT INTO accepted_work_unit_integrations VALUES
+                   ('integration','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t',NULL,NULL,NULL,NULL,NULL),
+                   ('terminal-integration','terminal-unit','terminal-candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',2,'cccccccccccccccccccccccccccccccccccccccc','dddddddddddddddddddddddddddddddddddddddd','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','terminal-intent','terminal-intent-at','eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','ffffffffffffffffffffffffffffffffffffffff','terminal-settled-at',NULL,NULL);
+                 CREATE TABLE accepted_work_unit_integration_evidence (evidence_id TEXT PRIMARY KEY,integration_id TEXT,evidence_fingerprint TEXT,integration_commit_id TEXT,integration_tree_id TEXT,parent_object_id TEXT,candidate_id TEXT,target_ref_name TEXT,intent_fingerprint TEXT,recorded_at TEXT);
+                 INSERT INTO accepted_work_unit_integration_evidence VALUES ('terminal-evidence-id','terminal-integration','terminal-evidence-fingerprint','eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','ffffffffffffffffffffffffffffffffffffffff','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','terminal-candidate','refs/heads/main','terminal-intent','terminal-evidence-at');
+                 CREATE TABLE work_unit_settlements (settlement_id TEXT PRIMARY KEY,work_unit_id TEXT,integration_id TEXT,settled_at TEXT);
+                 INSERT INTO work_unit_settlements VALUES ('terminal-settlement-id','terminal-unit','terminal-integration','terminal-settled-at');
+                 CREATE TABLE work_unit_prerequisite_contributions (contribution_id TEXT PRIMARY KEY,prerequisite_work_unit_id TEXT,dependent_work_unit_id TEXT,integration_id TEXT,relationship_id TEXT,recorded_at TEXT);
+                 INSERT INTO work_unit_prerequisite_contributions VALUES ('terminal-contribution-id','terminal-unit','dependent-unit','terminal-integration','terminal-edge','terminal-contribution-at');
+                 PRAGMA user_version=18;",
+            )
+            .expect("v18 predecessor");
+        initialize_active_database(&connection).expect("migrate v18");
+        drop(connection);
+        let mut reopened = open_active_database(&path).expect("reopen v19");
+        for table in [
+            "accepted_work_unit_integrations",
+            "accepted_work_unit_integration_evidence",
+            "work_unit_settlements",
+            "work_unit_prerequisite_contributions",
+        ] {
+            assert!(table_exists(&reopened, table), "missing {table}");
+        }
+        assert_eq!(reopened.query_row("SELECT candidate_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, String>(0)).expect("preserved candidate"), "candidate");
+        assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved missing baseline"), None);
+        assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='terminal-candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved terminal missing baseline"), None);
+        assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
+        assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get::<_, String>(0)).expect("terminal stage"), "settled");
+        let evolved_columns = reopened.prepare("PRAGMA table_info(accepted_work_unit_integrations)").unwrap().query_map([], |row| row.get::<_, String>(1)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        for column in ["stage","authorization_recorded_at","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "t");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "terminal-intent-at");
+        let terminal: (String, Option<String>, Option<String>) = reopened.query_row("SELECT notification_intent_recorded_at,notification_delivered_at,commit_fingerprint FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(terminal, ("terminal-settled-at".into(), None, None));
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT evidence_id FROM accepted_work_unit_integration_evidence", [], |row| row.get(0)).unwrap(), "terminal-evidence-id");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT settlement_id FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), "terminal-settlement-id");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT contribution_id FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), "terminal-contribution-id");
+        assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
+        assert!(reopened.execute("UPDATE accepted_work_unit_integrations SET stage='unknown' WHERE integration_id='integration'", []).is_err());
+        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened).expect("NULL baseline remains non-integratable");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "intent_reserved");
+        assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "settled");
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn evolves_existing_v19_integration_authorization_boundary() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v19.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection.execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             DROP TABLE work_unit_prerequisite_contributions;
+             DROP TABLE work_unit_settlements;
+             DROP TABLE accepted_work_unit_integration_evidence;
+             DROP TABLE accepted_work_unit_integrations;
+             CREATE TABLE accepted_work_unit_integrations (integration_id TEXT PRIMARY KEY,work_unit_id TEXT,candidate_id TEXT,authority_id TEXT,target_ref_name TEXT,pre_object_id TEXT,pre_version INTEGER,candidate_commit_id TEXT,candidate_tree_id TEXT,baseline_object_id TEXT,intent_fingerprint TEXT,intent_recorded_at TEXT,integration_commit_id TEXT,integration_tree_id TEXT,settled_at TEXT,attention_code TEXT,attention_recorded_at TEXT);
+             INSERT INTO accepted_work_unit_integrations VALUES ('integration-v19','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','cccccccccccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent-v19','2026-08-04T00:00:00Z',NULL,NULL,NULL,NULL,NULL);
+             PRAGMA user_version=19;",
+        ).expect("v19 predecessor");
+        drop(connection);
+
+        let reopened = open_active_database(&path).expect("evolve v19");
+        assert_eq!(
+            reopened.query_row::<String, _, _>(
+                "SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration-v19'",
+                [],
+                |row| row.get(0),
+            ).unwrap(),
+            "2026-08-04T00:00:00Z"
+        );
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 
     #[test]
@@ -443,7 +807,10 @@ mod tests {
                 .expect("preserved Batch 11 authority"),
             "capture-fingerprint-v10"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         initialize_active_database(&connection).expect("reopen current schema");
     }
 
@@ -475,8 +842,124 @@ mod tests {
                 .expect("preserved predecessor row"),
             "preserved"
         );
-        assert_eq!(pragma_i64(&connection, "user_version"), 12);
-        initialize_active_database(&connection).expect("reopen v12");
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
+        initialize_active_database(&connection).expect("reopen current schema");
+    }
+
+    #[test]
+    fn migrates_direct_v12_predecessor_to_revision_schema_and_reopens() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("seed current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE harness_revision_commands;
+                 DROP TABLE harness_revision_publications;
+                 DROP TABLE harness_revisions;
+                 INSERT INTO epic_planning_drafts (id,title,status,created_at,updated_at) VALUES ('draft-v12','preserved','active','t','t');
+                 PRAGMA user_version=12;",
+            )
+            .expect("shape genuine v12 predecessor");
+
+        initialize_active_database(&connection).expect("migrate v12");
+
+        for table in [
+            "harness_revisions",
+            "harness_revision_publications",
+            "harness_revision_commands",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
+        assert!(table_exists(&connection, "harness_working_copies"));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT title FROM epic_planning_drafts WHERE id='draft-v12'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("preserved predecessor row"),
+            "preserved"
+        );
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
+        initialize_active_database(&connection).expect("reopen current schema");
+    }
+
+    #[test]
+    fn migrates_v15_execution_authorizations_to_allow_multiple_attempts_per_sprint_authority() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("seed current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE execution_support_attempt_authorizations;
+                 CREATE TABLE execution_support_attempt_authorizations (
+                   attempt_id TEXT PRIMARY KEY,
+                   work_unit_id TEXT NOT NULL,
+                   role_kind TEXT NOT NULL,
+                   sprint_git_authority_id TEXT NOT NULL UNIQUE,
+                   baseline_object_id TEXT NOT NULL,
+                   recorded_at TEXT NOT NULL
+                 );
+                 PRAGMA user_version=15;",
+            )
+            .expect("seed v15 execution authorization schema");
+
+        initialize_active_database(&connection).expect("migrate v15");
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("temporarily bypass unrelated authority fixtures");
+        for (attempt, work_unit, role, fingerprint) in [
+            (
+                "attempt-1",
+                "work-unit-1",
+                "work_unit_implementer",
+                "fingerprint-1",
+            ),
+            (
+                "attempt-2",
+                "work-unit-2",
+                "work_unit_handler",
+                "fingerprint-2",
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO execution_support_attempt_authorizations (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint,recorded_at) VALUES (?1,?2,?3,'authority-1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?4,'t')",
+                    (attempt, work_unit, role, fingerprint),
+                )
+                .expect("attempt sharing Sprint authority");
+        }
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .expect("restore foreign keys");
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn composition_paths_keep_database_and_harness_repository_stable_and_separate() {
+        let app_data = Path::new("C:/application-owned-data");
+        assert_eq!(
+            active_database_path(app_data),
+            app_data.join(ACTIVE_DATABASE_FILE_NAME)
+        );
+        assert_eq!(
+            harness_revision_repository_path(app_data),
+            app_data.join(HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME)
+        );
+        assert_ne!(
+            active_database_path(app_data),
+            harness_revision_repository_path(app_data)
+        );
     }
 
     #[test]
@@ -953,6 +1436,146 @@ mod tests {
                 "missing {table}"
             );
         }
+    }
+
+    #[test]
+    fn migrates_a_real_v33_native_profile_predecessor_and_reopens_idempotently() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v33.sqlite");
+        let connection = open_active_database(&path).expect("current database");
+        connection
+            .execute_batch(
+                "DROP INDEX ux_native_codex_profile_full_access_canary_pending;
+                 DROP TABLE native_codex_profile_full_access_canaries;
+                 DROP TABLE native_codex_profile_mode_authorizations;
+                 CREATE TABLE native_codex_profile_mode_authorizations (
+                   profile_id TEXT NOT NULL,
+                   mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+                   filesystem_identity TEXT NOT NULL,
+                   authorized_at TEXT NOT NULL,
+                   revoked_at TEXT,
+                   PRIMARY KEY(profile_id, mode),
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 CREATE TABLE native_codex_profile_full_access_canaries (
+                   attempt_id TEXT PRIMARY KEY,
+                   profile_id TEXT NOT NULL,
+                   filesystem_identity TEXT NOT NULL,
+                   mode TEXT NOT NULL CHECK (mode='danger_full_access'),
+                   executable TEXT NOT NULL,
+                   version TEXT NOT NULL,
+                   sentinel_path TEXT NOT NULL,
+                   state TEXT NOT NULL CHECK (state IN ('pending','passed','blocked','cancelled')),
+                   started_at TEXT NOT NULL,
+                   completed_at TEXT,
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 CREATE UNIQUE INDEX ux_native_codex_profile_full_access_canary_pending
+                 ON native_codex_profile_full_access_canaries(profile_id) WHERE state='pending';
+                 INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,selected_at,created_at,updated_at)
+                 VALUES ('v33-profile','C:/application-owned/v33-home','v33-identity','application_dedicated','active','2026-08-07T12:00:00Z','2026-08-07T12:00:00Z','2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,mcp_reporting,attention,login_requested_at,observed_at)
+                 VALUES ('v33-profile','authenticated','initialized','passed','passed','ready',NULL,NULL,'2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at)
+                 VALUES ('v33-profile','danger_full_access','2026-08-07T12:00:00Z');
+                 INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authorized_at,revoked_at)
+                 VALUES ('v33-profile','danger_full_access','v33-identity','2026-08-07T12:00:00Z',NULL);
+                 INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,state,started_at,completed_at)
+                 VALUES ('v33-canary','v33-profile','v33-identity','danger_full_access','C:/application-owned/codex.exe','codex-cli 0.144.0','C:/application-owned/receipt.txt','passed','2026-08-07T12:00:00Z','2026-08-07T12:00:01Z');
+                 INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed)
+                 VALUES ('v33-profile','v33-identity','C:/application-owned/codex.exe','codex-cli 0.144.0',1,1,'v33-adoption','2026-08-07T12:00:00Z','verified',1);
+                 PRAGMA user_version=33;",
+            )
+            .expect("seed real v33 native-profile predecessor");
+
+        initialize_active_database(&connection).expect("migrate v33 through dispatch claim");
+        assert_eq!(pragma_i64(&connection, "user_version"), 36);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_table_info('native_codex_profile_mcp_probes') WHERE name IN ('dispatch_claim_id','dispatch_claimed_at')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("dispatch claim columns"),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT authority_scope,authority_version,authorization_correlation_id,authorized_at FROM native_codex_profile_mode_authorizations WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, String>(3)?)),
+                )
+                .expect("migrated authorization"),
+            (
+                "filesystem_only".into(),
+                "danger-full-access/filesystem-only/v1".into(),
+                None,
+                "2026-08-07T12:00:00Z".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT state,terminal_classification,cleanup_disposition FROM native_codex_profile_full_access_canaries WHERE attempt_id='v33-canary'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                )
+                .expect("downgraded historical canary"),
+            (
+                "legacy_unverified".into(),
+                "legacy_unverified".into(),
+                "not_observed".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,mcp_reporting FROM native_codex_profile_readiness WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+                )
+                .expect("preserved readiness"),
+            (
+                "authenticated".into(),
+                "initialized".into(),
+                "passed".into(),
+                "blocked".into(),
+                "ready".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,elevated_mode_observed FROM native_codex_profile_sandbox_adoptions WHERE profile_id='v33-profile'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
+                )
+                .expect("preserved adoption"),
+            (
+                "v33-identity".into(),
+                "C:/application-owned/codex.exe".into(),
+                "codex-cli 0.144.0".into(),
+                1,
+                1,
+                1,
+            )
+        );
+        drop(connection);
+
+        let reopened = open_active_database(&path).expect("idempotent v35 reopen");
+        assert_eq!(pragma_i64(&reopened, "user_version"), 36);
+        assert_eq!(
+            reopened
+                .query_row(
+                    "SELECT count(*) FROM native_codex_profile_full_access_canaries WHERE attempt_id='v33-canary' AND state='legacy_unverified'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("retained historical canary"),
+            1
+        );
     }
 
     fn pragma_i64(connection: &Connection, name: &str) -> i64 {

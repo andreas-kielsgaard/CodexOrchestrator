@@ -1,3 +1,11 @@
+use super::conversation_harness_revision::{
+    decode_verified_configuration, normalized_configuration_envelope, revision_id,
+    validate_create_command as validate_harness_revision_command, validate_revision,
+    CreateHarnessRevisionCommand, CreateHarnessRevisionResult, HarnessRevision,
+    HarnessRevisionCommitManifest, HarnessRevisionCreationProvenance, HarnessRevisionError,
+    HarnessRevisionHistoryOutcome, HarnessRevisionProvenanceKind, HarnessRevisionReadOutcome,
+    LocalHarnessRevisionRepository, LocalHarnessRevisionRepositoryError,
+};
 use super::conversation_harness_working_copy::{
     validate_command as validate_harness_working_copy_command, validate_harness_key,
     validate_working_copy, HarnessEditorKind, HarnessEffectiveConfigurationEnvelope,
@@ -12,11 +20,11 @@ use super::domain::{
     NATIVE_QUERY_VERSION,
 };
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
-use serde::Serialize;
+use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use uuid::Uuid;
@@ -248,6 +256,13 @@ CREATE TABLE IF NOT EXISTS file_review_git_capture_authorizations (
  FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
  FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS file_review_git_capture_documents (
+ capture_authorization_id TEXT PRIMARY KEY REFERENCES file_review_git_capture_authorizations(capture_authorization_id) ON DELETE RESTRICT,
+ document_ref_id TEXT NOT NULL UNIQUE REFERENCES file_review_documents(document_ref_id) ON DELETE RESTRICT,
+ artifact_id TEXT NOT NULL UNIQUE REFERENCES stored_file_review_artifacts(artifact_id) ON DELETE RESTRICT,
+ linkage_fingerprint TEXT NOT NULL UNIQUE,
+ recorded_at TEXT NOT NULL
+);
 "#;
 pub(crate) const FILE_REVIEW_FACTS_IDEMPOTENCY_SCHEMA: &str = r#"
 ALTER TABLE file_review_documents ADD COLUMN payload_fingerprint TEXT NOT NULL DEFAULT '';
@@ -459,6 +474,7 @@ pub(crate) struct ManagedPlanBuilderBinding {
 pub(crate) struct SqliteOrchestrationRepository {
     connection: Mutex<Connection>,
     clock: Arc<dyn OrchestrationClock>,
+    harness_revisions: LocalHarnessRevisionRepository,
     #[cfg(test)]
     fail_next_context_consume: std::sync::atomic::AtomicBool,
 }
@@ -483,20 +499,57 @@ impl SqliteOrchestrationRepository {
         connection: Connection,
         clock: Arc<dyn OrchestrationClock>,
     ) -> Result<Self, SaveProposalError> {
+        Self::new_with_clock_and_harness_revision_repository(
+            connection,
+            clock,
+            std::env::temp_dir().join(format!(
+                "codex-orchestrator-harness-revisions-{}",
+                Uuid::new_v4()
+            )),
+        )
+    }
+
+    pub(crate) fn new_with_clock_and_harness_revision_repository(
+        connection: Connection,
+        clock: Arc<dyn OrchestrationClock>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(sql_error("configure orchestration database"))?;
         Ok(Self {
             connection: Mutex::new(connection),
             clock,
+            harness_revisions: LocalHarnessRevisionRepository::new(harness_revision_repository),
             #[cfg(test)]
             fail_next_context_consume: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, SaveProposalError> {
+        let path = path.as_ref();
+        let repository_root = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(crate::storage::HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME);
+        Self::open_with_harness_revision_repository(path, repository_root)
+    }
+
+    pub(crate) fn open_with_harness_revision_repository(
+        path: impl AsRef<Path>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
         let connection =
             Connection::open(path).map_err(sql_error("open orchestration database"))?;
-        Self::new(connection)
+        Self::new_with_clock_and_harness_revision_repository(
+            connection,
+            Arc::new(SystemOrchestrationClock),
+            harness_revision_repository,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn harness_revision_repository_root(&self) -> PathBuf {
+        self.harness_revisions.root().to_path_buf()
     }
 
     pub(crate) fn create_planning_draft(
@@ -1103,6 +1156,72 @@ impl SqliteOrchestrationRepository {
         for document in &mut file_review_documents {
             document.changed_files = connection.prepare("SELECT changed_file_reference_id, display_name, change_kind, previous_display_name FROM file_review_changed_files WHERE document_ref_id = ?1 ORDER BY ordinal").map_err(|e| e.to_string())?.query_map(params![document.document_ref_id], |row| Ok(FileReviewChangedFileDto { changed_file_reference_id: row.get(0)?, display_name: row.get(1)?, change_kind: row.get(2)?, previous_display_name: row.get(3)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
         }
+        // The Sprint Runner owns creation of these tables.  Repository-only pre-Sprint stores
+        // remain readable as an empty materialization projection.
+        let materialization_tables = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_materializations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let work_unit_materializations = if materialization_tables { collect(&connection, "SELECT materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at FROM work_unit_materializations ORDER BY authorization_recorded_at,materialization_id", |row| Ok(WorkUnitMaterializationDto { materialization_id:row.get(0)?, planning_point_id:row.get(1)?, accepted_revision_id:row.get(2)?, epic_id:row.get(3)?, sprint_id:row.get(4)?, work_slice_id:row.get(5)?, authorization_recorded_at:row.get(6)?, attempt_recorded_at:row.get(7)?, work_units_created_at:row.get(8)?, relationships_completed_at:row.get(9)?, settled_at:row.get(10)? }))? } else { Vec::new() };
+        let handler_activation_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_activations')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let dependency_intent_tables = materialization_tables && connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_dependency_activation_intents')", [], |row| row.get::<_, bool>(0)).map_err(|e| e.to_string())?;
+        let dependency_activation_intents = if dependency_intent_tables { collect(&connection, "SELECT work_unit_id,materialization_id,accepted_revision_id,eligibility_state,blocked_reason,eligibility_recorded_at,activation_intended_at FROM work_unit_dependency_activation_intents ORDER BY work_unit_id", |row| Ok(WorkUnitDependencyActivationIntentDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, accepted_revision_id:row.get(2)?, eligibility_state:row.get(3)?, blocked_reason:row.get(4)?, eligibility_recorded_at:row.get(5)?, activation_intended_at:row.get(6)? }))? } else { Vec::new() };
+        let execution_tables: i64 = connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_unit_execution_states','work_slice_execution_graph_completions','work_slice_execution_settlements','work_slice_planning_point_execution_settlements','work_slice_execution_attentions')", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+        if execution_tables != 0 && execution_tables != 5 { return Err("Productive execution projection tables are incomplete".into()); }
+        let execution_enabled = execution_tables == 5;
+        let work_unit_execution_states = if execution_enabled { collect(&connection, "SELECT work_unit_id,materialization_id,accepted_revision_id,execution_state,recorded_at FROM work_unit_execution_states ORDER BY work_unit_id", |row| Ok(WorkUnitExecutionStateDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, accepted_revision_id:row.get(2)?, state:row.get(3)?, recorded_at:row.get(4)? }))? } else { Vec::new() };
+        let work_slice_execution_graph_completions = if execution_enabled { collect(&connection, "SELECT materialization_id,accepted_revision_id,completed_at FROM work_slice_execution_graph_completions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionGraphCompletionDto { materialization_id:row.get(0)?, accepted_revision_id:row.get(1)?, completed_at:row.get(2)? }))? } else { Vec::new() };
+        let work_slice_execution_settlements = if execution_enabled { collect(&connection, "SELECT materialization_id,graph_completion_materialization_id,settled_at FROM work_slice_execution_settlements ORDER BY materialization_id", |row| Ok(WorkSliceExecutionSettlementDto { materialization_id:row.get(0)?, graph_completion_materialization_id:row.get(1)?, settled_at:row.get(2)? }))? } else { Vec::new() };
+        let work_slice_planning_point_execution_settlements = if execution_enabled { collect(&connection, "SELECT planning_point_id,materialization_id,work_slice_execution_materialization_id,settled_at FROM work_slice_planning_point_execution_settlements ORDER BY planning_point_id", |row| Ok(WorkSlicePlanningPointExecutionSettlementDto { planning_point_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_execution_materialization_id:row.get(2)?, settled_at:row.get(3)? }))? } else { Vec::new() };
+        let work_slice_execution_attentions = if execution_enabled { collect(&connection, "SELECT materialization_id,recorded_at FROM work_slice_execution_attentions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionAttentionDto { materialization_id:row.get(0)?, recorded_at:row.get(1)? }))? } else { Vec::new() };
+        let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
+        let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
+        let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
+        let mut handler_reviews = handler_review_rows(&connection)?;
+        let mut handler_decisions = handler_decision_rows(&connection)?;
+        let mut incomplete_dispositions = incomplete_disposition_rows(&connection)?;
+        let mut retry_attempts = retry_attempt_rows(&connection)?;
+        let mut work_units = if handler_activation_tables { collect(&connection, "SELECT u.work_unit_id,u.materialization_id,u.work_slice_id,u.accepted_revision_id,u.lane_ordinal,u.lane_title,u.specification,a.attempt_id,a.handler_session_id,a.handler_invocation_id,a.handler_harness_revision_id,a.handler_harness_configuration_digest,a.handler_harness_repository_commit_ref,a.eligibility_state,a.blocked_reason,a.requested_at,a.authorized_at,a.attempt_created_at,a.execution_support_granted_at,a.isolated_worktree_ready_at,a.handler_session_created_at,a.handler_invocation_prepared_at,a.handler_harness_bound_at,a.launch_requested_at,a.launch_accepted_at,a.provider_activation_observed_at,a.handler_ready_at,a.failure_reason FROM work_units u LEFT JOIN work_unit_handler_activations a ON a.work_unit_id=u.work_unit_id ORDER BY u.materialization_id,u.lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation: match row.get::<_,Option<String>>(7)? { Some(attempt_id) => Some(WorkUnitHandlerActivationDto { attempt_id, handler_session_id:row.get(8)?, handler_invocation_id:row.get(9)?, handler_harness_revision_id:row.get(10)?, handler_harness_configuration_digest:row.get(11)?, handler_harness_repository_commit_ref:row.get(12)?, eligibility_state:row.get(13)?, blocked_reason:row.get(14)?, requested_at:row.get(15)?, authorized_at:row.get(16)?, attempt_created_at:row.get(17)?, execution_support_granted_at:row.get(18)?, isolated_worktree_ready_at:row.get(19)?, handler_session_created_at:row.get(20)?, handler_invocation_prepared_at:row.get(21)?, handler_harness_bound_at:row.get(22)?, launch_requested_at:row.get(23)?, launch_accepted_at:row.get(24)?, provider_activation_observed_at:row.get(25)?, handler_ready_at:row.get(26)?, failure_reason:row.get(27)? }), None => None }, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), retry_attempts:Vec::new(), integration:None }))? } else if materialization_tables { collect(&connection, "SELECT work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification FROM work_units ORDER BY materialization_id,lane_ordinal", |row| Ok(WorkUnitDto { work_unit_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_id:row.get(2)?, accepted_revision_id:row.get(3)?, lane_ordinal:row.get(4)?, lane_title:row.get(5)?, specification:row.get(6)?, handler_activation:None, action_continuation:None, implementer_activation:None, attempt_history:Vec::new(), retry_attempts:Vec::new(), integration:None }))? } else { Vec::new() };
+        let work_unit_relationships = if materialization_tables { collect(&connection, "SELECT relationship_id,materialization_id,relationship_kind,from_id,to_id,ordinal FROM work_unit_relationships ORDER BY materialization_id,relationship_kind,from_id,to_id", |row| Ok(WorkUnitRelationshipDto { relationship_id:row.get(0)?, materialization_id:row.get(1)?, relationship_kind:row.get(2)?, from_id:row.get(3)?, to_id:row.get(4)?, ordinal:row.get(5)? }))? } else { Vec::new() };
+        let mut productive_integrations = productive_integration_rows(&connection, &work_units, &work_unit_relationships)?;
+        for work_unit in &mut work_units {
+            work_unit.action_continuation = action_continuations.get(&work_unit.work_unit_id).cloned();
+            work_unit.implementer_activation = implementer_activations.get(&work_unit.work_unit_id).cloned();
+            work_unit.attempt_history = implementer_outcomes.remove(&work_unit.work_unit_id).unwrap_or_default().into_iter().map(|(ordinal, outcome)| WorkUnitAttemptHistoryDto { ordinal, attempt_id: outcome.attempt_id.clone(), implementer_outcome: Some(outcome), handler_review: None, handler_decision: None, incomplete_disposition: None }).collect();
+            for review in handler_reviews.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == review.attempt_id).ok_or_else(|| "Handler review references an unknown Implementer attempt".to_string())?;
+                member.handler_review = Some(review);
+            }
+            for decision in handler_decisions.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == decision.attempt_id).ok_or_else(|| "Handler decision references an unknown Implementer attempt".to_string())?;
+                member.handler_decision = Some(decision);
+            }
+            for disposition in incomplete_dispositions.remove(&work_unit.work_unit_id).unwrap_or_default() {
+                let member = work_unit.attempt_history.iter_mut().find(|member| member.attempt_id == disposition.attempt_id).ok_or_else(|| "incomplete disposition references an unknown Implementer attempt".to_string())?;
+                member.incomplete_disposition = Some(disposition);
+            }
+            work_unit.retry_attempts = retry_attempts.remove(&work_unit.work_unit_id).unwrap_or_default();
+            work_unit.integration = productive_integrations.remove(&work_unit.work_unit_id);
+            validate_attempt_history_projection(work_unit)?;
+            validate_work_unit_activation_projection(work_unit)?;
+        }
+        validate_dependency_activation_intents(&dependency_activation_intents, &work_units)?;
+        validate_execution_projection(&work_unit_execution_states, &work_slice_execution_graph_completions, &work_slice_execution_settlements, &work_slice_planning_point_execution_settlements, &work_slice_execution_attentions, &work_unit_materializations, &work_units)?;
+        if !implementer_outcomes.is_empty() {
+            return Err("Implementer outcome references an unknown Work Unit".into());
+        }
+        if !handler_reviews.is_empty() {
+            return Err("Handler review references an unknown Work Unit".into());
+        }
+        if !handler_decisions.is_empty() {
+            return Err("Handler decision references an unknown Work Unit".into());
+        }
+        if !incomplete_dispositions.is_empty() {
+            return Err("incomplete disposition references an unknown Work Unit".into());
+        }
+        if !retry_attempts.is_empty() {
+            return Err("retry attempt references an unknown Work Unit".into());
+        }
+        if !productive_integrations.is_empty() {
+            return Err("Productive integration references an unknown Work Unit".into());
+        }
         Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
@@ -1119,6 +1238,11 @@ impl SqliteOrchestrationRepository {
             initiated_epics,
             initiated_sprints,
             file_review_documents,
+            work_unit_materializations,
+            work_units,
+            work_unit_relationships,
+            dependency_activation_intents,
+            work_unit_execution_states, work_slice_execution_graph_completions, work_slice_execution_settlements, work_slice_planning_point_execution_settlements, work_slice_execution_attentions,
         })
     }
 
@@ -1384,6 +1508,235 @@ impl SqliteOrchestrationRepository {
         load_harness_working_copy_from_connection(&connection, harness_key)
     }
 
+    /// Publishes the exact current working-copy revision through the application-owned local
+    /// repository. The command carries no configuration bytes or repository authority.
+    pub(crate) fn create_harness_revision(
+        &self,
+        command: CreateHarnessRevisionCommand,
+    ) -> Result<CreateHarnessRevisionResult, HarnessRevisionError> {
+        validate_harness_revision_command(&command)?;
+        let fingerprint = harness_revision_command_fingerprint(&command)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+
+        let replay: Option<(String, String, i64, Option<String>, String, String, String, String)> =
+            transaction
+                .query_row(
+                    "SELECT payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at FROM harness_revision_commands WHERE idempotency_key=?1",
+                    [&command.idempotency_key],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                            row.get(6)?,
+                            row.get(7)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|_| HarnessRevisionError::Unavailable)?;
+        if let Some((
+            existing_fingerprint,
+            harness_key,
+            source_draft_revision,
+            expected_predecessor,
+            result_revision_id,
+            result_json,
+            result_digest,
+            recorded_at,
+        )) = replay
+        {
+            if existing_fingerprint != fingerprint {
+                return Err(HarnessRevisionError::Conflict);
+            }
+            if harness_key != command.harness_key
+                || source_draft_revision != command.expected_source_draft_revision as i64
+                || expected_predecessor != command.expected_predecessor_revision_id
+                || result_digest != format!("{:x}", Sha256::digest(result_json.as_bytes()))
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            let recorded: HarnessRevision = serde_json::from_str(&result_json)
+                .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+            validate_revision(&recorded)?;
+            if recorded.revision_id != result_revision_id
+                || recorded.harness_key != command.harness_key
+                || recorded.source_draft_revision != command.expected_source_draft_revision
+                || recorded.predecessor_revision_id != command.expected_predecessor_revision_id
+                || recorded.creation_provenance != command.creation_provenance
+                || timestamp(recorded.created_at) != recorded_at
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            let verified = load_verified_harness_revision_from_connection(
+                &transaction,
+                &self.harness_revisions,
+                &recorded.revision_id,
+            )?
+            .ok_or(HarnessRevisionError::InvalidStoredState)?;
+            if verified != recorded {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+            return Ok(CreateHarnessRevisionResult::IdempotentReplay(verified));
+        }
+
+        let working_copy =
+            load_harness_working_copy_from_connection(&transaction, &command.harness_key)?
+                .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
+        if working_copy.draft_revision != command.expected_source_draft_revision {
+            return Err(HarnessRevisionError::Conflict);
+        }
+        let existing = load_verified_harness_revision_history_from_connection(
+            &transaction,
+            &self.harness_revisions,
+            &command.harness_key,
+        )?;
+        if existing
+            .last()
+            .is_some_and(|revision| revision.source_draft_revision >= working_copy.draft_revision)
+        {
+            return Err(HarnessRevisionError::Conflict);
+        }
+        let current_head = existing.last().map(|revision| revision.revision_id.clone());
+        if current_head != command.expected_predecessor_revision_id {
+            return Err(HarnessRevisionError::Conflict);
+        }
+
+        let (normalized_envelope, configuration_digest) =
+            normalized_configuration_envelope(&working_copy.configuration)?;
+        // The SQLite ledger stores millisecond RFC3339 text; normalize before writing immutable
+        // local evidence so its manifest and later verified read have identical timestamps.
+        let created_at_text = timestamp(self.clock.now());
+        let created_at = DateTime::parse_from_rfc3339(&created_at_text)
+            .map_err(|_| HarnessRevisionError::Unavailable)?
+            .with_timezone(&Utc);
+        let revision_id = revision_id();
+        let repository_commit_ref = LocalHarnessRevisionRepository::commit_reference(&revision_id);
+        let revision = HarnessRevision {
+            revision_id,
+            harness_key: command.harness_key.clone(),
+            configuration: working_copy.configuration,
+            configuration_digest,
+            source_draft_revision: working_copy.draft_revision,
+            predecessor_revision_id: current_head,
+            repository_commit_ref,
+            creation_provenance: command.creation_provenance.clone(),
+            created_at,
+        };
+        validate_revision(&revision)?;
+        let manifest = HarnessRevisionCommitManifest::for_revision(&revision);
+        self.harness_revisions
+            .install_and_verify(&manifest, &normalized_envelope)
+            .map_err(map_local_harness_revision_error)?;
+
+        let result_json =
+            serde_json::to_string(&revision).map_err(|_| HarnessRevisionError::Invalid)?;
+        let result_digest = format!("{:x}", Sha256::digest(result_json.as_bytes()));
+        transaction
+            .execute(
+                "INSERT INTO harness_revisions (revision_id,harness_key,configuration_contract_version,configuration_digest,source_draft_revision,predecessor_revision_id,repository_commit_ref,creation_provenance_kind,creation_provenance_reference,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![
+                    revision.revision_id,
+                    revision.harness_key,
+                    HARNESS_EFFECTIVE_CONFIGURATION_V1,
+                    revision.configuration_digest,
+                    revision.source_draft_revision as i64,
+                    revision.predecessor_revision_id,
+                    revision.repository_commit_ref,
+                    revision.creation_provenance.kind.as_str(),
+                    revision.creation_provenance.reference,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO harness_revision_publications (revision_id,harness_key,repository_commit_ref,evidence_kind,verified_at) VALUES (?1,?2,?3,'local_commit_verified',?4)",
+                params![
+                    revision.revision_id,
+                    revision.harness_key,
+                    revision.repository_commit_ref,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .execute(
+                "INSERT INTO harness_revision_commands (idempotency_key,payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![
+                    command.idempotency_key,
+                    fingerprint,
+                    command.harness_key,
+                    command.expected_source_draft_revision as i64,
+                    command.expected_predecessor_revision_id,
+                    revision.revision_id,
+                    result_json,
+                    result_digest,
+                    created_at_text,
+                ],
+            )
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| HarnessRevisionError::Unavailable)?;
+        Ok(CreateHarnessRevisionResult::Published(revision))
+    }
+
+    pub(crate) fn load_harness_revision(&self, revision_id: &str) -> HarnessRevisionReadOutcome {
+        let connection = match self.connection.lock() {
+            Ok(connection) => connection,
+            Err(_) => return HarnessRevisionReadOutcome::Unavailable,
+        };
+        match load_verified_harness_revision_from_connection(
+            &connection,
+            &self.harness_revisions,
+            revision_id,
+        ) {
+            Ok(Some(revision)) => HarnessRevisionReadOutcome::AvailableAndVerified { revision },
+            Ok(None) => HarnessRevisionReadOutcome::Missing,
+            Err(HarnessRevisionError::InvalidStoredState)
+            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
+                HarnessRevisionReadOutcome::InvalidLocalCommitEvidence
+            }
+            Err(_) => HarnessRevisionReadOutcome::Unavailable,
+        }
+    }
+
+    pub(crate) fn load_harness_revision_history(
+        &self,
+        harness_key: &str,
+    ) -> HarnessRevisionHistoryOutcome {
+        if validate_harness_key(harness_key).is_err() {
+            return HarnessRevisionHistoryOutcome::Missing;
+        }
+        let connection = match self.connection.lock() {
+            Ok(connection) => connection,
+            Err(_) => return HarnessRevisionHistoryOutcome::Unavailable,
+        };
+        match load_verified_harness_revision_history_from_connection(
+            &connection,
+            &self.harness_revisions,
+            harness_key,
+        ) {
+            Ok(revisions) if revisions.is_empty() => HarnessRevisionHistoryOutcome::Missing,
+            Ok(revisions) => HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions },
+            Err(HarnessRevisionError::InvalidStoredState)
+            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
+                HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
+            }
+            Err(_) => HarnessRevisionHistoryOutcome::Unavailable,
+        }
+    }
+
     /// Control-side write seam. There is intentionally no Tauri command for this authority.
     pub(crate) fn store_file_review_git_capture_authorization(
         &self,
@@ -1431,6 +1784,15 @@ impl SqliteOrchestrationRepository {
             .lock()
             .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
         connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+    }
+
+    /// Producer-only durable linkage; an authorization can produce exactly one immutable review.
+    pub(crate) fn store_file_review_git_capture_document_link(&self,capture_authorization_id:&str,document_ref_id:&str,artifact_id:&str)->Result<(),FileReviewFactsError>{
+        let mut connection=self.connection.lock().map_err(|_|FileReviewFactsError::Unavailable("database lock is poisoned".into()))?;let tx=connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;
+        let fingerprint=format!("{:x}",Sha256::digest(format!("{capture_authorization_id}\0{document_ref_id}\0{artifact_id}").as_bytes()));
+        let valid:Option<i64>=tx.query_row("SELECT 1 FROM file_review_git_capture_authorizations c JOIN file_review_documents d ON d.epic_id=c.epic_id AND d.sprint_id=c.sprint_id AND d.provenance_id=c.provenance_id JOIN stored_file_review_artifacts a ON a.artifact_id=?3 AND a.document_ref_id=d.document_ref_id WHERE c.capture_authorization_id=?1 AND d.document_ref_id=?2",params![capture_authorization_id,document_ref_id,artifact_id],|r|r.get(0)).optional().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;if valid.is_none(){return Err(FileReviewFactsError::Forbidden)}
+        let existing:Option<String>=tx.query_row("SELECT linkage_fingerprint FROM file_review_git_capture_documents WHERE capture_authorization_id=?1 OR document_ref_id=?2 OR artifact_id=?3",params![capture_authorization_id,document_ref_id,artifact_id],|r|r.get(0)).optional().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;if let Some(existing)=existing{if existing==fingerprint{tx.commit().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;return Ok(())}return Err(FileReviewFactsError::Conflict)}
+        tx.execute("INSERT INTO file_review_git_capture_documents(capture_authorization_id,document_ref_id,artifact_id,linkage_fingerprint,recorded_at) VALUES(?1,?2,?3,?4,?5)",params![capture_authorization_id,document_ref_id,artifact_id,fingerprint,timestamp(self.clock.now())]).map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;tx.commit().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;Ok(())
     }
 
     /// Application-only transition store. Runtime and Git facts are supplied by an internal port.
@@ -1533,6 +1895,39 @@ impl SqliteOrchestrationRepository {
             return Err(InitiatedSprintGitAuthorityError::Forbidden);
         }
         Ok(Some(authority))
+    }
+
+    /// Application-owned context lookup. The caller supplies only the initiated Sprint identity;
+    /// private runtime and Git authority remain inside the repository boundary.
+    pub(crate) fn load_initiated_sprint_git_authority_for_sprint(
+        &self,
+        sprint_id: &str,
+    ) -> Result<Option<InitiatedSprintGitAuthority>, InitiatedSprintGitAuthorityError> {
+        if !bounded_application_id(sprint_id) {
+            return Err(InitiatedSprintGitAuthorityError::Invalid);
+        }
+        let authority_ids = {
+            let connection = self
+                .connection
+                .lock()
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at, authority_id LIMIT 2",
+                )
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            let authority_ids = statement
+                .query_map([sprint_id], |row| row.get::<_, String>(0))
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+            authority_ids
+        };
+        match authority_ids.as_slice() {
+            [] => Ok(None),
+            [authority_id] => self.load_initiated_sprint_git_authority(authority_id),
+            _ => Err(InitiatedSprintGitAuthorityError::Conflict),
+        }
     }
 
     /// Producer-only application seam. No Tauri command accepts these facts.
@@ -2157,6 +2552,215 @@ fn harness_working_copy_digest(
     format!("{:x}", digest.finalize())
 }
 
+fn harness_revision_command_fingerprint(
+    command: &CreateHarnessRevisionCommand,
+) -> Result<String, HarnessRevisionError> {
+    let bytes = serde_json::to_vec(command).map_err(|_| HarnessRevisionError::Invalid)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+#[derive(Clone, Debug)]
+struct StoredHarnessRevision {
+    revision_id: String,
+    harness_key: String,
+    configuration_digest: String,
+    source_draft_revision: u64,
+    predecessor_revision_id: Option<String>,
+    repository_commit_ref: String,
+    creation_provenance: HarnessRevisionCreationProvenance,
+    created_at: DateTime<Utc>,
+}
+
+impl StoredHarnessRevision {
+    fn manifest(&self) -> HarnessRevisionCommitManifest {
+        HarnessRevisionCommitManifest::from_metadata(
+            self.revision_id.clone(),
+            self.harness_key.clone(),
+            self.configuration_digest.clone(),
+            self.source_draft_revision,
+            self.predecessor_revision_id.clone(),
+            self.repository_commit_ref.clone(),
+            self.creation_provenance.clone(),
+            self.created_at,
+        )
+    }
+}
+
+fn load_stored_harness_revision_from_connection(
+    connection: &Connection,
+    revision_id: &str,
+) -> Result<Option<StoredHarnessRevision>, HarnessRevisionError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT revision.revision_id,revision.harness_key,revision.configuration_contract_version,revision.configuration_digest,revision.source_draft_revision,revision.predecessor_revision_id,revision.repository_commit_ref,revision.creation_provenance_kind,revision.creation_provenance_reference,revision.created_at,publication.repository_commit_ref,publication.evidence_kind,publication.verified_at FROM harness_revisions revision LEFT JOIN harness_revision_publications publication ON publication.revision_id=revision.revision_id WHERE revision.revision_id=?1",
+        )
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut rows = statement
+        .query([revision_id])
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let Some(row) = rows.next().map_err(|_| HarnessRevisionError::Unavailable)? else {
+        return Ok(None);
+    };
+    let decoded: Result<
+        (
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        rusqlite::Error,
+    > = (|| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+            row.get(8)?,
+            row.get(9)?,
+            row.get(10)?,
+            row.get(11)?,
+            row.get(12)?,
+        ))
+    })();
+    let (
+        revision_id,
+        harness_key,
+        contract,
+        configuration_digest,
+        source_draft_revision,
+        predecessor_revision_id,
+        repository_commit_ref,
+        provenance_kind,
+        provenance_reference,
+        created_at,
+        publication_ref,
+        evidence_kind,
+        verified_at,
+    ) = decoded.map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+    if contract != HARNESS_EFFECTIVE_CONFIGURATION_V1
+        || source_draft_revision <= 0
+        || publication_ref.as_deref() != Some(repository_commit_ref.as_str())
+        || evidence_kind.as_deref() != Some("local_commit_verified")
+        || verified_at.as_deref() != Some(created_at.as_str())
+    {
+        return Err(HarnessRevisionError::InvalidStoredState);
+    }
+    let creation_provenance = HarnessRevisionCreationProvenance {
+        kind: HarnessRevisionProvenanceKind::parse(&provenance_kind)
+            .ok_or(HarnessRevisionError::InvalidStoredState)?,
+        reference: provenance_reference,
+    };
+    let created_at = DateTime::parse_from_rfc3339(&created_at)
+        .map_err(|_| HarnessRevisionError::InvalidStoredState)?
+        .with_timezone(&Utc);
+    Ok(Some(StoredHarnessRevision {
+        revision_id,
+        harness_key,
+        configuration_digest,
+        source_draft_revision: source_draft_revision as u64,
+        predecessor_revision_id,
+        repository_commit_ref,
+        creation_provenance,
+        created_at,
+    }))
+}
+
+fn load_verified_harness_revision_from_connection(
+    connection: &Connection,
+    repository: &LocalHarnessRevisionRepository,
+    revision_id: &str,
+) -> Result<Option<HarnessRevision>, HarnessRevisionError> {
+    let Some(stored) = load_stored_harness_revision_from_connection(connection, revision_id)?
+    else {
+        return Ok(None);
+    };
+    let manifest = stored.manifest();
+    let envelope = repository
+        .read_and_verify(&stored.repository_commit_ref, &manifest)
+        .map_err(map_local_harness_revision_error)?;
+    let configuration = decode_verified_configuration(&envelope, &stored.configuration_digest)?;
+    let revision = HarnessRevision {
+        revision_id: stored.revision_id,
+        harness_key: stored.harness_key,
+        configuration,
+        configuration_digest: stored.configuration_digest,
+        source_draft_revision: stored.source_draft_revision,
+        predecessor_revision_id: stored.predecessor_revision_id,
+        repository_commit_ref: stored.repository_commit_ref,
+        creation_provenance: stored.creation_provenance,
+        created_at: stored.created_at,
+    };
+    validate_revision(&revision)?;
+    Ok(Some(revision))
+}
+
+fn load_verified_harness_revision_history_from_connection(
+    connection: &Connection,
+    repository: &LocalHarnessRevisionRepository,
+    harness_key: &str,
+) -> Result<Vec<HarnessRevision>, HarnessRevisionError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT revision_id FROM harness_revisions WHERE harness_key=?1 ORDER BY source_draft_revision,revision_id",
+        )
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut rows = statement
+        .query([harness_key])
+        .map_err(|_| HarnessRevisionError::Unavailable)?;
+    let mut revision_ids = Vec::new();
+    while let Some(row) = rows.next().map_err(|_| HarnessRevisionError::Unavailable)? {
+        revision_ids.push(
+            row.get::<_, String>(0)
+                .map_err(|_| HarnessRevisionError::InvalidStoredState)?,
+        );
+    }
+    let mut revisions: Vec<HarnessRevision> = Vec::with_capacity(revision_ids.len());
+    for revision_id in revision_ids {
+        let revision =
+            load_verified_harness_revision_from_connection(connection, repository, &revision_id)?
+                .ok_or(HarnessRevisionError::InvalidStoredState)?;
+        if revision.harness_key != harness_key {
+            return Err(HarnessRevisionError::InvalidStoredState);
+        }
+        if let Some(previous) = revisions.last() {
+            if revision.predecessor_revision_id.as_deref() != Some(previous.revision_id.as_str())
+                || revision.source_draft_revision <= previous.source_draft_revision
+                || revision.created_at < previous.created_at
+            {
+                return Err(HarnessRevisionError::InvalidStoredState);
+            }
+        } else if revision.predecessor_revision_id.is_some() {
+            return Err(HarnessRevisionError::InvalidStoredState);
+        }
+        revisions.push(revision);
+    }
+    Ok(revisions)
+}
+
+fn map_local_harness_revision_error(
+    error: LocalHarnessRevisionRepositoryError,
+) -> HarnessRevisionError {
+    match error {
+        LocalHarnessRevisionRepositoryError::InvalidEvidence => {
+            HarnessRevisionError::InvalidLocalCommitEvidence
+        }
+        LocalHarnessRevisionRepositoryError::Unavailable => HarnessRevisionError::Unavailable,
+    }
+}
+
 fn timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -2199,6 +2803,11 @@ pub(crate) struct NativeQueryV2 {
     initiated_epics: Vec<InitiatedEpicDto>,
     initiated_sprints: Vec<InitiatedSprintDto>,
     file_review_documents: Vec<FileReviewDocumentDto>,
+    work_unit_materializations: Vec<WorkUnitMaterializationDto>,
+    work_units: Vec<WorkUnitDto>,
+    work_unit_relationships: Vec<WorkUnitRelationshipDto>,
+    dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
+    work_unit_execution_states: Vec<WorkUnitExecutionStateDto>, work_slice_execution_graph_completions: Vec<WorkSliceExecutionGraphCompletionDto>, work_slice_execution_settlements: Vec<WorkSliceExecutionSettlementDto>, work_slice_planning_point_execution_settlements: Vec<WorkSlicePlanningPointExecutionSettlementDto>, work_slice_execution_attentions: Vec<WorkSliceExecutionAttentionDto>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2339,6 +2948,1945 @@ struct InitiatedSprintDto {
     concern_summaries: Vec<String>,
     sprint_plan_id: String,
     sprint_plan_revision_id: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitMaterializationDto {
+    materialization_id: String,
+    planning_point_id: String,
+    accepted_revision_id: String,
+    epic_id: String,
+    sprint_id: String,
+    work_slice_id: String,
+    authorization_recorded_at: String,
+    attempt_recorded_at: Option<String>,
+    work_units_created_at: Option<String>,
+    relationships_completed_at: Option<String>,
+    settled_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitDependencyActivationIntentDto {
+    work_unit_id: String,
+    materialization_id: String,
+    accepted_revision_id: String,
+    eligibility_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocked_reason: Option<String>,
+    eligibility_recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_intended_at: Option<String>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkUnitExecutionStateDto { work_unit_id: String, materialization_id: String, accepted_revision_id: String, state: String, recorded_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionGraphCompletionDto { materialization_id: String, accepted_revision_id: String, completed_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionSettlementDto { materialization_id: String, graph_completion_materialization_id: String, settled_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSlicePlanningPointExecutionSettlementDto { planning_point_id: String, materialization_id: String, work_slice_execution_materialization_id: String, settled_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
+struct WorkSliceExecutionAttentionDto { materialization_id: String, recorded_at: String }
+fn validate_execution_projection(states:&[WorkUnitExecutionStateDto], completions:&[WorkSliceExecutionGraphCompletionDto], settlements:&[WorkSliceExecutionSettlementDto], planning:&[WorkSlicePlanningPointExecutionSettlementDto], attentions:&[WorkSliceExecutionAttentionDto], materializations:&[WorkUnitMaterializationDto], units:&[WorkUnitDto])->Result<(),String>{
+ let mut seen=std::collections::HashSet::new(); for state in states { if !seen.insert(&state.work_unit_id)||!matches!(state.state.as_str(),"waiting_on_prerequisites"|"ready"|"active"|"retry_authorized"|"handed_back"|"settled"|"attention"){return Err("Productive Work Unit execution state is duplicate or unknown".into())} let unit=units.iter().find(|u|u.work_unit_id==state.work_unit_id).ok_or_else(||"Productive Work Unit execution state references an unknown Work Unit".to_string())?; if unit.materialization_id!=state.materialization_id||unit.accepted_revision_id!=state.accepted_revision_id{return Err("Productive Work Unit execution state has foreign correlation".into())} }
+ if !states.is_empty()&&states.len()!=units.len(){return Err("Productive execution state is incomplete".into())} let mut ids=std::collections::HashSet::new(); for c in completions {if !ids.insert(&c.materialization_id){return Err("Productive graph completion is duplicated".into())} let m=materializations.iter().find(|m|m.materialization_id==c.materialization_id).ok_or_else(||"Productive graph completion references an unknown materialization".to_string())?;if m.accepted_revision_id!=c.accepted_revision_id||attentions.iter().any(|a|a.materialization_id==c.materialization_id)||units.iter().filter(|u|u.materialization_id==c.materialization_id).any(|u|!states.iter().any(|s|s.work_unit_id==u.work_unit_id&&s.state=="settled")){return Err("Productive graph completion is incoherent".into())}} ids.clear(); for a in attentions {if !ids.insert(&a.materialization_id)||!materializations.iter().any(|m|m.materialization_id==a.materialization_id){return Err("Productive Work Slice attention is duplicate or foreign".into())}}
+ ids.clear(); for s in settlements {if !ids.insert(&s.materialization_id)||s.graph_completion_materialization_id!=s.materialization_id||!completions.iter().any(|c|c.materialization_id==s.materialization_id){return Err("Productive Work Slice execution settlement is incoherent".into())}} ids.clear(); for p in planning {let m=materializations.iter().find(|m|m.materialization_id==p.materialization_id).ok_or_else(||"Productive planning-point execution settlement references an unknown materialization".to_string())?;if !ids.insert(&p.planning_point_id)||m.planning_point_id!=p.planning_point_id||p.work_slice_execution_materialization_id!=p.materialization_id||!settlements.iter().any(|s|s.materialization_id==p.materialization_id){return Err("Productive planning-point execution settlement is incoherent".into())}} Ok(()) }
+
+fn validate_dependency_activation_intents(
+    intents: &[WorkUnitDependencyActivationIntentDto],
+    units: &[WorkUnitDto],
+) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for intent in intents {
+        if !seen.insert(&intent.work_unit_id) {
+            return Err("Duplicate dependency activation intent Work Unit".into());
+        }
+        let Some(unit) = units.iter().find(|unit| unit.work_unit_id == intent.work_unit_id) else {
+            return Err("Dependency activation intent references an unknown Work Unit".into());
+        };
+        if unit.materialization_id != intent.materialization_id
+            || unit.accepted_revision_id != intent.accepted_revision_id
+        {
+            return Err("Dependency activation intent has a foreign materialization or accepted revision".into());
+        }
+        match intent.eligibility_state.as_str() {
+            "blocked" if intent.blocked_reason.is_some() => {}
+            "eligible" if intent.blocked_reason.is_none() => {}
+            _ => return Err("Dependency activation intent has contradictory eligibility facts".into()),
+        }
+    }
+    Ok(())
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitDto {
+    work_unit_id: String,
+    materialization_id: String,
+    work_slice_id: String,
+    accepted_revision_id: String,
+    lane_ordinal: i64,
+    lane_title: String,
+    specification: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_activation: Option<WorkUnitHandlerActivationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_continuation: Option<WorkUnitHandlerActionContinuationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementer_activation: Option<WorkUnitImplementerActivationDto>,
+    attempt_history: Vec<WorkUnitAttemptHistoryDto>,
+    retry_attempts: Vec<WorkUnitRetryAttemptDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    integration: Option<WorkUnitIntegrationDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitAttemptHistoryDto {
+    ordinal: i64,
+    attempt_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementer_outcome: Option<WorkUnitImplementerOutcomeDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_review: Option<WorkUnitHandlerReviewDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_decision: Option<WorkUnitHandlerDecisionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_disposition: Option<WorkUnitIncompleteDispositionDto>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerActivationDto {
+    attempt_id: String,
+    handler_session_id: Option<String>,
+    handler_invocation_id: Option<String>,
+    handler_harness_revision_id: Option<String>,
+    #[serde(skip_serializing)]
+    handler_harness_configuration_digest: Option<String>,
+    #[serde(skip_serializing)]
+    handler_harness_repository_commit_ref: Option<String>,
+    eligibility_state: Option<String>,
+    blocked_reason: Option<String>,
+    requested_at: Option<String>,
+    authorized_at: Option<String>,
+    attempt_created_at: Option<String>,
+    execution_support_granted_at: Option<String>,
+    isolated_worktree_ready_at: Option<String>,
+    handler_session_created_at: Option<String>,
+    handler_invocation_prepared_at: Option<String>,
+    handler_harness_bound_at: Option<String>,
+    launch_requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    provider_activation_observed_at: Option<String>,
+    handler_ready_at: Option<String>,
+    failure_reason: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerActionContinuationDto {
+    attempt_id: String,
+    handler_session_id: String,
+    original_handler_invocation_id: String,
+    action_invocation_id: String,
+    action_harness_revision_id: String,
+    #[serde(skip_serializing)]
+    action_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
+    action_harness_repository_commit_ref: String,
+    requested_at: String,
+    authorized_at: Option<String>,
+    invocation_prepared_at: Option<String>,
+    harness_bound_at: Option<String>,
+    launch_requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    provider_activation_observed_at: Option<String>,
+    action_ready_at: Option<String>,
+    blocked_reason: Option<String>,
+    failure_reason: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerActivationDto {
+    attempt_id: String,
+    handler_action_invocation_id: String,
+    implementer_session_id: String,
+    implementer_invocation_id: String,
+    implementer_harness_revision_id: String,
+    #[serde(skip_serializing)]
+    implementer_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
+    implementer_harness_repository_commit_ref: String,
+    requested_at: String,
+    authorized_at: Option<String>,
+    execution_support_granted_at: Option<String>,
+    isolated_worktree_ready_at: Option<String>,
+    implementer_session_created_at: Option<String>,
+    implementer_invocation_prepared_at: Option<String>,
+    implementer_harness_bound_at: Option<String>,
+    launch_requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    provider_activation_observed_at: Option<String>,
+    implementer_ready_at: Option<String>,
+    failure_reason: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitRetryAttemptDto {
+    ordinal: i64,
+    origin_attempt_id: String,
+    retry_attempt_id: String,
+    implementer_session_id: String,
+    implementer_invocation_id: String,
+    capture_requested_at: String,
+    candidate_pinned_at: Option<String>,
+    authorized_at: Option<String>,
+    execution_support_granted_at: Option<String>,
+    isolated_worktree_ready_at: Option<String>,
+    implementer_session_created_at: Option<String>,
+    implementer_invocation_prepared_at: Option<String>,
+    implementer_harness_bound_at: Option<String>,
+    launch_requested_at: Option<String>,
+    launch_accepted_at: Option<String>,
+    provider_activation_observed_at: Option<String>,
+    retry_ready_at: Option<String>,
+    failure_reason: Option<String>,
+}
+
+/// Productive integration exposes only semantic progress and terminal facts. Candidate, Git,
+/// authority, and repository correlations remain private durable state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationDto {
+    requested_at: String,
+    authorized_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<WorkUnitIntegrationProgressDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention: Option<WorkUnitIntegrationAttentionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    success: Option<WorkUnitIntegrationSuccessDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement: Option<WorkUnitSettlementDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prerequisite_contribution: Option<WorkUnitPrerequisiteContributionDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationProgressDto { phase: String, recorded_at: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationAttentionDto { kind: String, safe_code: String, recorded_at: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIntegrationSuccessDto { recorded_at: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitSettlementDto { settled_at: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitPrerequisiteContributionDto { recorded_at: String, dependent_count: usize }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ImplementationOutcomeVariantDto {
+    ReviewPending,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationOutcomeClaims {
+    outcome: ImplementationOutcomeVariantDto,
+    summary: String,
+    validation_statement: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerSubmissionDto {
+    variant: ImplementationOutcomeVariantDto,
+    summary_claim: String,
+    validation_statement_claim: String,
+    semantic_payload_fingerprint: String,
+    submitted_at: String,
+    validation_at: String,
+    validation_result: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationEvidenceManifestEntry {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedImplementationEvidenceContentFingerprint {
+    evidence_ref: String,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ImplementationEvidenceChangeKindDto {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerEvidenceFileDto {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: ImplementationEvidenceChangeKindDto,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerEvidenceDto {
+    changed_files: Vec<WorkUnitImplementerEvidenceFileDto>,
+    comparison_fingerprint: String,
+    ready_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerSemanticCompletionDto {
+    invocation_id: String,
+    completed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitImplementerLifecycleStatusDto {
+    Completed,
+    Failed,
+    Canceled,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerTerminalLifecycleDto {
+    status: WorkUnitImplementerLifecycleStatusDto,
+    observed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitImplementerOutcomeDto {
+    attempt_id: String,
+    implementer_session_id: String,
+    original_implementer_invocation_id: String,
+    reporting_invocation_id: String,
+    reporting_harness_revision_id: String,
+    #[serde(skip_serializing)]
+    reporting_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
+    reporting_harness_repository_commit_ref: String,
+    reporting_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_prepared_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_ready_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submitted_outcome: Option<WorkUnitImplementerSubmissionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<WorkUnitImplementerEvidenceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_completion: Option<WorkUnitImplementerSemanticCompletionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_lifecycle: Option<WorkUnitImplementerTerminalLifecycleDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    application_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_review_ready_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewPayload {
+    summary: String,
+    validation_statement: String,
+    changed_files: Vec<PersistedHandlerReviewChangedFile>,
+    comparison_fingerprint: String,
+    evidence_content_fingerprints: Vec<PersistedHandlerReviewContentFingerprint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewChangedFile {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedHandlerReviewContentFingerprint {
+    evidence_ref: String,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewEvidenceFileDto {
+    evidence_ref: String,
+    display_name: String,
+    change_kind: ImplementationEvidenceChangeKindDto,
+    content_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewEvidenceDto {
+    summary_claim: String,
+    validation_statement_claim: String,
+    changed_files: Vec<WorkUnitHandlerReviewEvidenceFileDto>,
+    comparison_fingerprint: String,
+    delivered_payload_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerReviewJudgmentVariantDto {
+    Accept,
+    Return,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkUnitHandlerReviewReasonDto {
+    code: String,
+    explanation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewJudgmentDto {
+    variant: WorkUnitHandlerReviewJudgmentVariantDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<WorkUnitHandlerReviewReasonDto>,
+    fingerprint: String,
+    recorded_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerReviewLifecycleStatusDto {
+    Completed,
+    Failed,
+    Canceled,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewLifecycleDto {
+    status: WorkUnitHandlerReviewLifecycleStatusDto,
+    observed_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewConflictDto {
+    occurred_at: String,
+    reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerReviewDto {
+    attempt_id: String,
+    reporting_invocation_id: String,
+    handler_session_id: String,
+    original_handler_invocation_id: String,
+    action_handler_invocation_id: String,
+    review_invocation_id: String,
+    review_harness_revision_id: String,
+    #[serde(skip_serializing)]
+    review_harness_configuration_digest: String,
+    #[serde(skip_serializing)]
+    review_harness_repository_commit_ref: String,
+    delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_ready_at: Option<String>,
+    delivered: WorkUnitHandlerReviewEvidenceDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_judgment: Option<WorkUnitHandlerReviewJudgmentDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<WorkUnitHandlerReviewLifecycleDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict: Option<WorkUnitHandlerReviewConflictDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitHandlerDecisionVariantDto {
+    Accepted,
+    Returned,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitHandlerDecisionDto {
+    attempt_id: String,
+    review_invocation_id: String,
+    variant: WorkUnitHandlerDecisionVariantDto,
+    fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    return_reason: Option<WorkUnitHandlerReviewReasonDto>,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementation_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    implementation_returned_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_required_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    settlement_ready_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkUnitIncompleteDispositionClassificationDto { RefinementNeeded, FunctionalObjectiveNotSatisfied, Blocked }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitNoProgressHandbackDto {
+    handback_id: String,
+    source_attempt_id: String,
+    source_review_invocation_id: String,
+    context_fingerprint: String,
+    persisted_at: String,
+    delivery_intended_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_receiver_activated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_receiver_decision_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_runner_delivery: Option<SprintRunnerHandbackDeliveryDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    epic_runner_receiver: Option<EpicRunnerEscalationReceiverDto>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EpicRunnerEscalationReceiverDto {
+    sprint_id: String, epic_id: String, delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")] delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] provider_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] reassessment_lifecycle_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] reassessment_lifecycle_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] semantic_reassessment_recorded_at: Option<String>,
+    disposition: Option<EpicRunnerEscalationDispositionDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EpicRunnerEscalationDispositionDto {
+    movement_kind: String, rationale: String,
+    #[serde(skip_serializing_if = "Option::is_none")] considered_intent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    downstream_request: Option<EpicRunnerEscalationDownstreamRequestDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    human_external_attention: Option<EpicRunnerEscalationAttentionDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EpicRunnerEscalationDownstreamRequestDto { target: String, #[serde(skip_serializing_if = "Option::is_none")] dependency: Option<String>, request: String, resumption_path: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EpicRunnerEscalationAttentionDto { reason: String, authority_needed: String, evidence_context: String, resumption_path: String }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintRunnerHandbackDeliveryDto {
+    delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_reassessment_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_movement_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_movement: Option<SprintRunnerHandbackMovementDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    escalation_intent_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    escalation_delivery_requested_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintRunnerHandbackMovementDto {
+    movement_kind: String,
+    rationale: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eligible_work_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dependency_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dependency_owner_classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabling_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resumption_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_exhaustion_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bounded_details: Option<Vec<SprintRunnerHandbackBoundedDetailDto>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintRunnerHandbackBoundedDetailDto {
+    label: String,
+    value: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitIncompleteDispositionDto {
+    attempt_id: String,
+    review_invocation_id: String,
+    decision_fingerprint: String,
+    classification: WorkUnitIncompleteDispositionClassificationDto,
+    meaningful_progress: bool,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_attempt_authorized_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    no_progress_handback: Option<WorkUnitNoProgressHandbackDto>,
+}
+
+fn map_implementer_outcome(row: &Row<'_>) -> Result<WorkUnitImplementerOutcomeDto, rusqlite::Error> {
+    let summary: Option<String> = row.get(14)?;
+    let variant: Option<String> = row.get(15)?;
+    let validation_statement: Option<String> = row.get(16)?;
+    let semantic_payload: Option<String> = row.get(17)?;
+    let submission_fingerprint: Option<String> = row.get(18)?;
+    let submitted_at: Option<String> = row.get(19)?;
+    let validation_at: Option<String> = row.get(20)?;
+    let validation_result: Option<String> = row.get(21)?;
+    let submitted_outcome = match (
+        summary,
+        variant,
+        validation_statement,
+        semantic_payload,
+        submission_fingerprint,
+        submitted_at,
+        validation_at,
+        validation_result,
+    ) {
+        (None, None, None, None, None, None, None, None) => None,
+        (
+            Some(summary),
+            Some(variant),
+            Some(validation_statement),
+            Some(payload),
+            Some(fingerprint),
+            Some(submitted_at),
+            Some(validation_at),
+            Some(validation_result),
+        ) => {
+            let claims: PersistedImplementationOutcomeClaims =
+                serde_json::from_str(&payload).map_err(|error| to_sql_error(error.to_string()))?;
+            let canonical = serde_json::to_string(&claims)
+                .map_err(|error| to_sql_error(error.to_string()))?;
+            if variant != "review_pending"
+                || claims.outcome != ImplementationOutcomeVariantDto::ReviewPending
+                || validation_result != "valid"
+                || claims.summary != summary
+                || claims.validation_statement != validation_statement
+                || canonical != payload
+                || fingerprint != projection_stable_id("implementer-outcome", &payload)
+                || summary.trim().is_empty()
+                || validation_statement.trim().is_empty()
+            {
+                return Err(to_sql_error(
+                    "Implementer submitted outcome bundle is incoherent".into(),
+                ));
+            }
+            Some(WorkUnitImplementerSubmissionDto {
+                variant: claims.outcome,
+                summary_claim: summary,
+                validation_statement_claim: validation_statement,
+                semantic_payload_fingerprint: fingerprint,
+                submitted_at,
+                validation_at,
+                validation_result: "valid",
+            })
+        }
+        _ => {
+            return Err(to_sql_error(
+                "Implementer submitted outcome bundle is partial".into(),
+            ))
+        }
+    };
+
+    let manifest_json: Option<String> = row.get(22)?;
+    let comparison_fingerprint: Option<String> = row.get(23)?;
+    let content_fingerprints_json: Option<String> = row.get(24)?;
+    let evidence_ready_at: Option<String> = row.get(25)?;
+    let evidence = match (
+        manifest_json,
+        comparison_fingerprint,
+        content_fingerprints_json,
+        evidence_ready_at,
+    ) {
+        (None, None, None, None) => None,
+        (Some(manifest_json), Some(comparison_fingerprint), Some(contents_json), Some(ready_at)) => {
+            let manifest: Vec<PersistedImplementationEvidenceManifestEntry> =
+                serde_json::from_str(&manifest_json).map_err(|error| to_sql_error(error.to_string()))?;
+            let contents: Vec<PersistedImplementationEvidenceContentFingerprint> =
+                serde_json::from_str(&contents_json).map_err(|error| to_sql_error(error.to_string()))?;
+            if manifest.is_empty()
+                || manifest.len() > 500
+                || manifest.len() != contents.len()
+                || comparison_fingerprint.trim().is_empty()
+            {
+                return Err(to_sql_error("Implementer evidence bundle is incoherent".into()));
+            }
+            let content_by_reference = contents
+                .into_iter()
+                .map(|entry| (entry.evidence_ref, entry.content_fingerprint))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            if content_by_reference.len() != manifest.len() {
+                return Err(to_sql_error("Implementer evidence references are duplicated".into()));
+            }
+            let mut changed_files = Vec::with_capacity(manifest.len());
+            let mut seen = std::collections::BTreeSet::new();
+            for entry in manifest {
+                let change_kind = match entry.change_kind.as_str() {
+                    "added" => ImplementationEvidenceChangeKindDto::Added,
+                    "modified" => ImplementationEvidenceChangeKindDto::Modified,
+                    "deleted" => ImplementationEvidenceChangeKindDto::Deleted,
+                    "renamed" => ImplementationEvidenceChangeKindDto::Renamed,
+                    _ => return Err(to_sql_error("invalid Implementer evidence change kind".into())),
+                };
+                let content_fingerprint = content_by_reference
+                    .get(&entry.evidence_ref)
+                    .filter(|fingerprint| !fingerprint.trim().is_empty())
+                    .cloned()
+                    .ok_or_else(|| to_sql_error("Implementer evidence content is uncorrelated".into()))?;
+                if !seen.insert(entry.evidence_ref.clone())
+                    || entry.evidence_ref.trim().is_empty()
+                    || entry.display_name.trim().is_empty()
+                {
+                    return Err(to_sql_error("Implementer evidence manifest is incoherent".into()));
+                }
+                changed_files.push(WorkUnitImplementerEvidenceFileDto {
+                    evidence_ref: entry.evidence_ref,
+                    display_name: entry.display_name,
+                    change_kind,
+                    content_fingerprint,
+                });
+            }
+            changed_files.sort_by(|left, right| left.evidence_ref.cmp(&right.evidence_ref));
+            Some(WorkUnitImplementerEvidenceDto {
+                changed_files,
+                comparison_fingerprint,
+                ready_at,
+            })
+        }
+        _ => return Err(to_sql_error("Implementer evidence bundle is partial".into())),
+    };
+
+    let semantic_completed_at: Option<String> = row.get(26)?;
+    let semantic_completion_invocation_id: Option<String> = row.get(27)?;
+    let semantic_completion = match (semantic_completed_at, semantic_completion_invocation_id) {
+        (None, None) => None,
+        (Some(completed_at), Some(invocation_id)) => Some(WorkUnitImplementerSemanticCompletionDto {
+            invocation_id,
+            completed_at,
+        }),
+        _ => return Err(to_sql_error("Implementer semantic completion bundle is partial".into())),
+    };
+
+    let lifecycle_observed_at: Option<String> = row.get(28)?;
+    let lifecycle_status: Option<String> = row.get(29)?;
+    let terminal_lifecycle = match (lifecycle_observed_at, lifecycle_status) {
+        (None, None) => None,
+        (Some(observed_at), Some(status)) => {
+            let status = match status.as_str() {
+                "completed" => WorkUnitImplementerLifecycleStatusDto::Completed,
+                "failed" => WorkUnitImplementerLifecycleStatusDto::Failed,
+                "canceled" => WorkUnitImplementerLifecycleStatusDto::Canceled,
+                "interrupted" => WorkUnitImplementerLifecycleStatusDto::Interrupted,
+                _ => return Err(to_sql_error("invalid Implementer reporting lifecycle status".into())),
+            };
+            Some(WorkUnitImplementerTerminalLifecycleDto { status, observed_at })
+        }
+        _ => return Err(to_sql_error("Implementer terminal lifecycle bundle is partial".into())),
+    };
+
+    Ok(WorkUnitImplementerOutcomeDto {
+        attempt_id: row.get(1)?,
+        implementer_session_id: row.get(2)?,
+        original_implementer_invocation_id: row.get(3)?,
+        reporting_invocation_id: row.get(4)?,
+        reporting_harness_revision_id: row.get(5)?,
+        reporting_harness_configuration_digest: row.get(6)?,
+        reporting_harness_repository_commit_ref: row.get(7)?,
+        reporting_requested_at: row.get(8)?,
+        reporting_prepared_at: row.get(9)?,
+        reporting_harness_bound_at: row.get(10)?,
+        reporting_launch_requested_at: row.get(11)?,
+        reporting_launch_accepted_at: row.get(12)?,
+        reporting_ready_at: row.get(13)?,
+        submitted_outcome,
+        evidence,
+        semantic_completion,
+        terminal_lifecycle,
+        application_accepted_at: row.get(30)?,
+        handler_review_ready_at: row.get(31)?,
+        failure_reason: row.get(32)?,
+    })
+}
+
+fn map_implementer_activation(row: &Row<'_>) -> Result<WorkUnitImplementerActivationDto, rusqlite::Error> {
+    Ok(WorkUnitImplementerActivationDto {
+        attempt_id: row.get(1)?, handler_action_invocation_id: row.get(2)?,
+        implementer_session_id: row.get(3)?, implementer_invocation_id: row.get(4)?,
+        implementer_harness_revision_id: row.get(5)?,
+        implementer_harness_configuration_digest: row.get(6)?,
+        implementer_harness_repository_commit_ref: row.get(7)?, requested_at: row.get(8)?,
+        authorized_at: row.get(9)?, execution_support_granted_at: row.get(10)?,
+        isolated_worktree_ready_at: row.get(11)?, implementer_session_created_at: row.get(12)?,
+        implementer_invocation_prepared_at: row.get(13)?, implementer_harness_bound_at: row.get(14)?,
+        launch_requested_at: row.get(15)?, launch_accepted_at: row.get(16)?,
+        provider_activation_observed_at: row.get(17)?, implementer_ready_at: row.get(18)?,
+        failure_reason: row.get(19)?,
+    })
+}
+
+fn map_retry_attempt(row: &Row<'_>) -> Result<WorkUnitRetryAttemptDto, rusqlite::Error> {
+    Ok(WorkUnitRetryAttemptDto {
+        ordinal: row.get(1)?, origin_attempt_id: row.get(2)?, retry_attempt_id: row.get(3)?,
+        implementer_session_id: row.get(4)?, implementer_invocation_id: row.get(5)?,
+        capture_requested_at: row.get(6)?, candidate_pinned_at: row.get(7)?,
+        authorized_at: row.get(8)?, execution_support_granted_at: row.get(9)?,
+        isolated_worktree_ready_at: row.get(10)?, implementer_session_created_at: row.get(11)?,
+        implementer_invocation_prepared_at: row.get(12)?, implementer_harness_bound_at: row.get(13)?,
+        launch_requested_at: row.get(14)?, launch_accepted_at: row.get(15)?,
+        provider_activation_observed_at: row.get(16)?, retry_ready_at: row.get(17)?, failure_reason: row.get(18)?,
+    })
+}
+
+fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
+    let mut expected_ordinal = 0;
+    let mut attempt_ids = std::collections::HashSet::new();
+    for member in &work_unit.attempt_history {
+        if member.ordinal != expected_ordinal || !attempt_ids.insert(member.attempt_id.as_str()) {
+            return Err("attempt history has a gapped ordinal or duplicate attempt identity".into());
+        }
+        expected_ordinal += 1;
+        let outcome = member.implementer_outcome.as_ref().ok_or_else(|| "attempt history member lacks an Implementer outcome record".to_string())?;
+        if outcome.attempt_id != member.attempt_id || outcome.reporting_invocation_id != projection_stable_id("work-unit-implementer-reporting-invocation", &member.attempt_id) {
+            return Err("attempt history Implementer outcome correlation is incoherent".into());
+        }
+        if let Some(review) = &member.handler_review {
+            let handler = work_unit.handler_activation.as_ref().ok_or_else(|| "Handler review lacks the application-owned Handler authority".to_string())?;
+            let action = work_unit.action_continuation.as_ref().ok_or_else(|| "Handler review lacks Handler action authority".to_string())?;
+            if review.attempt_id != member.attempt_id || review.reporting_invocation_id != outcome.reporting_invocation_id
+                || review.review_invocation_id != projection_stable_id("work-unit-handler-review-invocation", &member.attempt_id)
+                || handler.handler_session_id.as_deref() != Some(review.handler_session_id.as_str())
+                || handler.handler_invocation_id.as_deref() != Some(review.original_handler_invocation_id.as_str())
+                || action.handler_session_id != review.handler_session_id || action.action_invocation_id != review.action_handler_invocation_id
+            {
+                return Err("Handler review has foreign attempt or Handler authority correlation".into());
+            }
+        }
+        if let Some(decision) = &member.handler_decision {
+            let review = member.handler_review.as_ref().ok_or_else(|| "Handler decision lacks its attempt review".to_string())?;
+            let judgment = review.semantic_judgment.as_ref().ok_or_else(|| "Handler decision lacks semantic judgment".to_string())?;
+            let lifecycle = review.lifecycle.as_ref().ok_or_else(|| "Handler decision lacks review lifecycle".to_string())?;
+            if decision.attempt_id != member.attempt_id || decision.review_invocation_id != review.review_invocation_id
+                || !matches!(lifecycle.status, WorkUnitHandlerReviewLifecycleStatusDto::Completed)
+            {
+                return Err("Handler decision lacks exact completed attempt-review correlation".into());
+            }
+            match (&judgment.variant, &decision.variant) {
+                (WorkUnitHandlerReviewJudgmentVariantDto::Accept, WorkUnitHandlerDecisionVariantDto::Accepted) => {}
+                (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned) => {}
+                _ => return Err("Handler decision contradicts its attempt judgment".into()),
+            }
+        }
+        if let Some(disposition) = &member.incomplete_disposition {
+            let review = member.handler_review.as_ref().ok_or_else(|| "incomplete disposition lacks its attempt review".to_string())?;
+            let decision = member.handler_decision.as_ref().ok_or_else(|| "incomplete disposition lacks its final decision".to_string())?;
+            if disposition.attempt_id != member.attempt_id || disposition.review_invocation_id != review.review_invocation_id || disposition.decision_fingerprint != decision.fingerprint || !matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) {
+                return Err("incomplete disposition has foreign attempt-review-decision correlation".into());
+            }
+            if disposition.meaningful_progress {
+                if disposition.next_attempt_authorized_at.is_none() || disposition.no_progress_handback.is_some() { return Err("meaningful-progress disposition has incoherent later effects".into()); }
+            } else if disposition.next_attempt_authorized_at.is_some() || disposition.no_progress_handback.is_none() {
+                return Err("no-progress disposition has incoherent authorization or handback".into());
+            } else if let Some(handback) = &disposition.no_progress_handback {
+                if handback.source_attempt_id != member.attempt_id
+                    || handback.source_review_invocation_id != review.review_invocation_id
+                    || handback.sprint_runner_receiver_activated_at.is_some()
+                    || handback.sprint_runner_receiver_decision_at.is_some()
+                {
+                    return Err("no-progress handback has foreign or forbidden receiver effects".into());
+                }
+            }
+        }
+    }
+    let mut retry_ordinals = std::collections::HashSet::new();
+    let mut retry_attempt_ids = std::collections::HashSet::new();
+    for retry in &work_unit.retry_attempts {
+        if !retry_ordinals.insert(retry.ordinal) || !retry_attempt_ids.insert(retry.retry_attempt_id.as_str()) {
+            return Err("retry activation has duplicate ordinal or attempt identity".into());
+        }
+        let origin = work_unit.attempt_history.iter().find(|member| member.attempt_id == retry.origin_attempt_id).ok_or_else(|| "retry activation lacks its origin history member".to_string())?;
+        let predecessor = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal - 1);
+        let returned = predecessor.is_some_and(|member| member.attempt_id == retry.origin_attempt_id && member.incomplete_disposition.as_ref().is_some_and(|disposition| disposition.meaningful_progress && disposition.next_attempt_authorized_at.is_some()))
+            || (origin.ordinal == 0 && retry.ordinal == 1 && origin.incomplete_disposition.is_none() && origin.handler_decision.as_ref().is_some_and(|decision| matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned) && decision.retry_required_at.is_some()));
+        let retry_member = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal);
+        if retry.ordinal != origin.ordinal + 1 || !returned || retry_member.is_some_and(|member| member.attempt_id != retry.retry_attempt_id) || (attempt_ids.contains(retry.retry_attempt_id.as_str()) && retry_member.is_none()) {
+            return Err("retry activation has invalid origin or ordinal correlation".into());
+        }
+        if retry_member.is_none() {
+            attempt_ids.insert(retry.retry_attempt_id.as_str());
+        }
+    }
+    Ok(())
+}
+
+fn validate_work_unit_activation_projection(work_unit: &WorkUnitDto) -> Result<(), String> {
+    let original = work_unit.attempt_history.iter().find(|member| member.ordinal == 0);
+    let original_outcome = original.and_then(|member| member.implementer_outcome.as_ref());
+    let original_review = original.and_then(|member| member.handler_review.as_ref());
+    let original_decision = original.and_then(|member| member.handler_decision.as_ref());
+    if let Some(handler) = &work_unit.handler_activation {
+        match (handler.eligibility_state.as_deref(), handler.blocked_reason.as_deref()) {
+            (Some("eligible"), None) | (Some("blocked"), Some(_)) => {}
+            _ => return Err("Handler activation eligibility projection is incoherent".into()),
+        }
+        if handler.requested_at.is_none() {
+            return Err("Handler activation lacks its request phase".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                handler.requested_at.as_deref(), handler.authorized_at.as_deref(),
+                handler.attempt_created_at.as_deref(), handler.execution_support_granted_at.as_deref(),
+                handler.isolated_worktree_ready_at.as_deref(), handler.handler_session_created_at.as_deref(),
+                handler.handler_invocation_prepared_at.as_deref(), handler.handler_harness_bound_at.as_deref(),
+                handler.launch_requested_at.as_deref(), handler.launch_accepted_at.as_deref(),
+                handler.handler_ready_at.as_deref(),
+            ],
+            "Handler activation",
+        )?;
+        if handler.provider_activation_observed_at.is_some() && handler.launch_requested_at.is_none() {
+            return Err("Handler provider observation lacks launch request".into());
+        }
+        if handler.handler_ready_at.is_some() && handler.launch_accepted_at.is_none() {
+            return Err("Handler readiness lacks launch acceptance".into());
+        }
+        if handler.eligibility_state.as_deref() == Some("blocked")
+            && [
+                &handler.authorized_at, &handler.attempt_created_at,
+                &handler.execution_support_granted_at, &handler.isolated_worktree_ready_at,
+                &handler.handler_session_created_at, &handler.handler_invocation_prepared_at,
+                &handler.handler_harness_bound_at, &handler.launch_requested_at,
+                &handler.launch_accepted_at, &handler.provider_activation_observed_at,
+                &handler.handler_ready_at,
+            ].into_iter().any(Option::is_some)
+        {
+            return Err("blocked Handler activation has authorized phases".into());
+        }
+        if handler.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || handler.failure_reason.is_some() && handler.handler_ready_at.is_some()
+        {
+            return Err("Handler activation failure projection is incoherent".into());
+        }
+    }
+
+    if let Some(continuation) = &work_unit.action_continuation {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Handler action continuation lacks Handler activation".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != continuation.attempt_id
+            || handler.handler_session_id.as_deref() != Some(continuation.handler_session_id.as_str())
+            || handler.handler_invocation_id.as_deref() != Some(continuation.original_handler_invocation_id.as_str())
+        {
+            return Err("Handler action continuation has foreign Handler correlation".into());
+        }
+        if continuation.action_invocation_id == continuation.original_handler_invocation_id {
+            return Err("Handler action continuation reuses the original invocation".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                Some(continuation.requested_at.as_str()), continuation.authorized_at.as_deref(),
+                continuation.invocation_prepared_at.as_deref(), continuation.harness_bound_at.as_deref(),
+                continuation.launch_requested_at.as_deref(), continuation.launch_accepted_at.as_deref(),
+                continuation.action_ready_at.as_deref(),
+            ],
+            "Handler action continuation",
+        )?;
+        if continuation.provider_activation_observed_at.is_some() && continuation.launch_requested_at.is_none() {
+            return Err("Handler action provider observation lacks launch request".into());
+        }
+        if continuation.action_ready_at.is_some() && continuation.launch_accepted_at.is_none() {
+            return Err("Handler action readiness lacks launch acceptance".into());
+        }
+        if continuation.blocked_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || continuation.blocked_reason.is_some()
+                && [
+                    &continuation.authorized_at, &continuation.invocation_prepared_at,
+                    &continuation.harness_bound_at, &continuation.launch_requested_at,
+                    &continuation.launch_accepted_at, &continuation.provider_activation_observed_at,
+                    &continuation.action_ready_at,
+                ].into_iter().any(Option::is_some)
+        {
+            return Err("blocked Handler action continuation has authorized phases".into());
+        }
+        if continuation.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || continuation.failure_reason.is_some() && continuation.action_ready_at.is_some()
+            || continuation.failure_reason.is_some() && continuation.blocked_reason.is_some()
+        {
+            return Err("Handler action failure projection is incoherent".into());
+        }
+    }
+
+    if let Some(implementer) = &work_unit.implementer_activation {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Implementer activation lacks Handler activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Implementer activation lacks Handler action continuation".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != implementer.attempt_id
+            || continuation.action_invocation_id != implementer.handler_action_invocation_id
+            || continuation.blocked_reason.is_some()
+        {
+            return Err("Implementer activation has foreign Handler correlation".into());
+        }
+        if implementer.implementer_invocation_id == implementer.handler_action_invocation_id {
+            return Err("Implementer activation reuses the Handler action invocation".into());
+        }
+        require_projected_phase_prerequisites(
+            &[
+                Some(implementer.requested_at.as_str()), implementer.authorized_at.as_deref(),
+                implementer.execution_support_granted_at.as_deref(), implementer.isolated_worktree_ready_at.as_deref(),
+                implementer.implementer_session_created_at.as_deref(), implementer.implementer_invocation_prepared_at.as_deref(),
+                implementer.implementer_harness_bound_at.as_deref(), implementer.launch_requested_at.as_deref(),
+                implementer.launch_accepted_at.as_deref(), implementer.implementer_ready_at.as_deref(),
+            ],
+            "Implementer activation",
+        )?;
+        if implementer.provider_activation_observed_at.is_some() && implementer.launch_requested_at.is_none() {
+            return Err("Implementer provider observation lacks launch request".into());
+        }
+        if implementer.implementer_ready_at.is_some() && implementer.launch_accepted_at.is_none() {
+            return Err("Implementer readiness lacks launch acceptance".into());
+        }
+        if implementer.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || implementer.failure_reason.is_some() && implementer.implementer_ready_at.is_some()
+        {
+            return Err("Implementer failure projection is incoherent".into());
+        }
+    }
+
+    for retry in &work_unit.retry_attempts {
+        let origin = work_unit.attempt_history.iter()
+            .find(|member| member.attempt_id == retry.origin_attempt_id)
+            .ok_or_else(|| "retry attempt lacks its origin history member".to_string())?;
+        let predecessor = work_unit.attempt_history.iter()
+            .find(|member| member.ordinal == retry.ordinal - 1);
+        let decision = origin.handler_decision.as_ref()
+            .ok_or_else(|| "retry attempt lacks Handler return decision".to_string())?;
+        let disposition = predecessor.and_then(|member| member.incomplete_disposition.as_ref());
+        let generalized_authorization = predecessor.is_some_and(|member| member.attempt_id == origin.attempt_id)
+            && disposition.is_some_and(|value| value.meaningful_progress && value.next_attempt_authorized_at.is_some());
+        let legacy_ordinal_one = origin.ordinal == 0
+            && retry.ordinal == 1
+            && predecessor.is_some_and(|member| member.attempt_id == origin.attempt_id)
+            && origin.incomplete_disposition.is_none()
+            && decision.retry_required_at.is_some();
+        if retry.ordinal != origin.ordinal + 1
+            || !matches!(decision.variant, WorkUnitHandlerDecisionVariantDto::Returned)
+            || !(generalized_authorization || legacy_ordinal_one)
+        {
+            return Err("retry attempt has foreign or non-return lineage".into());
+        }
+        if generalized_authorization {
+            require_timestamp_at_or_after(
+                disposition.and_then(|value| value.next_attempt_authorized_at.as_deref()).expect("meaningful-progress authorization checked"),
+                &retry.capture_requested_at,
+                "retry capture request",
+            )?;
+        } else {
+            require_timestamp_at_or_after(
+                decision.retry_required_at.as_deref().expect("legacy retry-required fact checked"),
+                &retry.capture_requested_at,
+                "legacy retry capture request",
+            )?;
+        }
+        if let Some(retry_history) = work_unit.attempt_history.iter().find(|member| member.ordinal == retry.ordinal) {
+            if retry_history.attempt_id != retry.retry_attempt_id {
+                return Err("retry activation does not match its attempt-history identity".into());
+            }
+            if let Some(outcome) = &retry_history.implementer_outcome {
+                if outcome.implementer_session_id != retry.implementer_session_id
+                    || outcome.original_implementer_invocation_id != retry.implementer_invocation_id
+                {
+                    return Err("retry attempt history does not match its exact Session and invocation".into());
+                }
+            }
+        } else if work_unit.attempt_history.iter().any(|member| member.attempt_id == retry.retry_attempt_id) {
+            return Err("retry activation reuses a foreign attempt-history identity".into());
+        }
+        require_ordered_projected_phases(
+            &[
+                Some(retry.capture_requested_at.as_str()), retry.candidate_pinned_at.as_deref(),
+                retry.authorized_at.as_deref(), retry.execution_support_granted_at.as_deref(),
+                retry.isolated_worktree_ready_at.as_deref(), retry.implementer_session_created_at.as_deref(),
+                retry.implementer_invocation_prepared_at.as_deref(), retry.implementer_harness_bound_at.as_deref(),
+                retry.launch_requested_at.as_deref(), retry.launch_accepted_at.as_deref(), retry.retry_ready_at.as_deref(),
+            ],
+            "retry Implementer activation",
+        )?;
+        require_optional_ordered_projected_phases(
+            &[
+                Some(retry.capture_requested_at.as_str()), retry.candidate_pinned_at.as_deref(),
+                retry.authorized_at.as_deref(), retry.execution_support_granted_at.as_deref(),
+                retry.isolated_worktree_ready_at.as_deref(), retry.implementer_session_created_at.as_deref(),
+                retry.implementer_invocation_prepared_at.as_deref(), retry.implementer_harness_bound_at.as_deref(),
+                retry.launch_requested_at.as_deref(), retry.launch_accepted_at.as_deref(),
+                retry.provider_activation_observed_at.as_deref(), retry.retry_ready_at.as_deref(),
+            ],
+            "retry Implementer activation",
+        )?;
+        if retry.retry_ready_at.is_some() && retry.launch_accepted_at.is_none() {
+            return Err("retry readiness lacks launch acceptance".into());
+        }
+        if retry.provider_activation_observed_at.is_some() && retry.launch_requested_at.is_none() {
+            return Err("retry provider observation lacks launch request".into());
+        }
+        if retry.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty())
+            || retry.failure_reason.is_some() && retry.retry_ready_at.is_some()
+        {
+            return Err("retry failure projection is incoherent".into());
+        }
+    }
+
+    if let Some(outcome) = original_outcome {
+        let implementer = work_unit.implementer_activation.as_ref()
+            .ok_or_else(|| "Implementer outcome lacks Implementer activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Implementer outcome lacks Handler action continuation".to_string())?;
+        if outcome.attempt_id != implementer.attempt_id
+            || outcome.implementer_session_id != implementer.implementer_session_id
+            || outcome.original_implementer_invocation_id != implementer.implementer_invocation_id
+            || implementer.launch_accepted_at.is_none()
+            || implementer.implementer_ready_at.is_none()
+        {
+            return Err("Implementer outcome has foreign activation correlation".into());
+        }
+        if outcome.reporting_invocation_id
+            != projection_stable_id("work-unit-implementer-reporting-invocation", &outcome.attempt_id)
+            || outcome.reporting_invocation_id == outcome.original_implementer_invocation_id
+            || outcome.reporting_invocation_id == continuation.action_invocation_id
+            || outcome.reporting_invocation_id == continuation.original_handler_invocation_id
+            || outcome.reporting_harness_revision_id == implementer.implementer_harness_revision_id
+            || outcome.reporting_harness_configuration_digest
+                == implementer.implementer_harness_configuration_digest
+        {
+            return Err("Implementer outcome reuses or mismatches reporting identity".into());
+        }
+        for identity in [
+            &outcome.reporting_harness_revision_id,
+            &outcome.reporting_harness_configuration_digest,
+            &outcome.reporting_harness_repository_commit_ref,
+        ] {
+            if identity.trim().is_empty() {
+                return Err("Implementer reporting Harness facts are incomplete".into());
+            }
+        }
+        require_ordered_projected_phases(
+            &[
+                Some(outcome.reporting_requested_at.as_str()),
+                outcome.reporting_prepared_at.as_deref(),
+                outcome.reporting_harness_bound_at.as_deref(),
+                outcome.reporting_launch_requested_at.as_deref(),
+                outcome.reporting_launch_accepted_at.as_deref(),
+                outcome.reporting_ready_at.as_deref(),
+            ],
+            "Implementer reporting",
+        )?;
+        if outcome.failure_reason.as_deref().is_some_and(|reason| reason.trim().is_empty()) {
+            return Err("Implementer reporting failure reason is blank".into());
+        }
+        if let Some(submission) = &outcome.submitted_outcome {
+            let reporting_ready = outcome.reporting_ready_at.as_deref()
+                .ok_or_else(|| "Implementer outcome submission lacks reporting readiness".to_string())?;
+            require_timestamp_at_or_after(
+                reporting_ready,
+                &submission.submitted_at,
+                "Implementer outcome submission",
+            )?;
+            require_timestamp_at_or_after(
+                &submission.submitted_at,
+                &submission.validation_at,
+                "Implementer outcome validation",
+            )?;
+        }
+        if let Some(evidence) = &outcome.evidence {
+            let validation_at = outcome.submitted_outcome.as_ref()
+                .map(|submission| submission.validation_at.as_str())
+                .ok_or_else(|| "Implementer evidence lacks a validated submission".to_string())?;
+            require_timestamp_at_or_after(
+                validation_at,
+                &evidence.ready_at,
+                "Implementer evidence readiness",
+            )?;
+        }
+        if let Some(completion) = &outcome.semantic_completion {
+            let evidence_ready = outcome.evidence.as_ref()
+                .map(|evidence| evidence.ready_at.as_str())
+                .ok_or_else(|| "Implementer semantic completion lacks evidence".to_string())?;
+            if completion.invocation_id != outcome.reporting_invocation_id {
+                return Err("Implementer semantic completion has a foreign invocation".into());
+            }
+            require_timestamp_at_or_after(
+                evidence_ready,
+                &completion.completed_at,
+                "Implementer semantic completion",
+            )?;
+        }
+        if let Some(lifecycle) = &outcome.terminal_lifecycle {
+            let reporting_ready = outcome.reporting_ready_at.as_deref()
+                .ok_or_else(|| "Implementer terminal lifecycle lacks reporting readiness".to_string())?;
+            require_timestamp_at_or_after(
+                reporting_ready,
+                &lifecycle.observed_at,
+                "Implementer terminal lifecycle observation",
+            )?;
+            if let Some(completion) = &outcome.semantic_completion {
+                require_timestamp_at_or_after(
+                    &completion.completed_at,
+                    &lifecycle.observed_at,
+                    "Implementer terminal lifecycle observation",
+                )?;
+            }
+        }
+        if let Some(accepted_at) = &outcome.application_accepted_at {
+            let lifecycle = outcome.terminal_lifecycle.as_ref()
+                .filter(|lifecycle| matches!(lifecycle.status, WorkUnitImplementerLifecycleStatusDto::Completed))
+                .ok_or_else(|| "Implementer application acceptance lacks Completed lifecycle".to_string())?;
+            if outcome.submitted_outcome.is_none()
+                || outcome.evidence.is_none()
+                || outcome.semantic_completion.is_none()
+            {
+                return Err("Implementer application acceptance lacks semantic or evidence prerequisites".into());
+            }
+            require_timestamp_at_or_after(
+                &lifecycle.observed_at,
+                accepted_at,
+                "Implementer application acceptance",
+            )?;
+        }
+        if let Some(review_ready_at) = &outcome.handler_review_ready_at {
+            let accepted_at = outcome.application_accepted_at.as_deref()
+                .ok_or_else(|| "Handler review readiness lacks application acceptance".to_string())?;
+            require_timestamp_at_or_after(
+                accepted_at,
+                review_ready_at,
+                "Handler review readiness",
+            )?;
+        }
+    }
+    if let Some(review) = original_review {
+        let handler = work_unit.handler_activation.as_ref()
+            .ok_or_else(|| "Handler review lacks Handler activation".to_string())?;
+        let continuation = work_unit.action_continuation.as_ref()
+            .ok_or_else(|| "Handler review lacks Handler action continuation".to_string())?;
+        let outcome = original_outcome
+            .ok_or_else(|| "Handler review lacks Implementer outcome".to_string())?;
+        if handler.eligibility_state.as_deref() != Some("eligible")
+            || handler.attempt_id != review.attempt_id
+            || handler.handler_session_id.as_deref() != Some(review.handler_session_id.as_str())
+            || handler.handler_invocation_id.as_deref() != Some(review.original_handler_invocation_id.as_str())
+            || continuation.attempt_id != review.attempt_id
+            || continuation.handler_session_id != review.handler_session_id
+            || continuation.original_handler_invocation_id != review.original_handler_invocation_id
+            || continuation.action_invocation_id != review.action_handler_invocation_id
+            || outcome.attempt_id != review.attempt_id
+            || outcome.reporting_invocation_id != review.reporting_invocation_id
+        {
+            return Err("Handler review has foreign activation or reporting correlation".into());
+        }
+        if review.review_invocation_id
+            != projection_stable_id("work-unit-handler-review-invocation", &review.attempt_id)
+        {
+            return Err("Handler review invocation is not stable for its attempt".into());
+        }
+        for identity in [
+            &review.review_harness_revision_id,
+            &review.review_harness_configuration_digest,
+            &review.review_harness_repository_commit_ref,
+        ] {
+            if identity.trim().is_empty() { return Err("Handler review Harness facts are incomplete".into()); }
+        }
+        require_ordered_projected_phases(
+            &[
+                Some(review.delivery_requested_at.as_str()), review.delivery_persisted_at.as_deref(),
+                review.harness_bound_at.as_deref(), review.launch_requested_at.as_deref(),
+                review.launch_accepted_at.as_deref(), review.review_ready_at.as_deref(),
+            ],
+            "Handler review",
+        )?;
+        if let (Some(submitted), Some(evidence)) = (&outcome.submitted_outcome, &outcome.evidence) {
+            if submitted.summary_claim != review.delivered.summary_claim
+                || submitted.validation_statement_claim != review.delivered.validation_statement_claim
+                || evidence.comparison_fingerprint != review.delivered.comparison_fingerprint
+                || evidence.changed_files.len() != review.delivered.changed_files.len()
+                || evidence.changed_files.iter().zip(&review.delivered.changed_files).any(|(left, right)|
+                    left.evidence_ref != right.evidence_ref || left.display_name != right.display_name
+                        || left.change_kind != right.change_kind || left.content_fingerprint != right.content_fingerprint)
+            {
+                return Err("Handler review delivered evidence differs from the accepted Implementer outcome".into());
+            }
+        } else {
+            return Err("Handler review lacks the accepted Implementer outcome bundle".into());
+        }
+        if let Some(judgment) = &review.semantic_judgment {
+            if judgment.fingerprint.trim().is_empty() || judgment.fingerprint.len() > 240 {
+                return Err("Handler review judgment fingerprint is incomplete".into());
+            }
+            let launch_accepted = review.launch_accepted_at.as_deref()
+                .ok_or_else(|| "Handler review judgment lacks launch acceptance".to_string())?;
+            let review_ready = review.review_ready_at.as_deref()
+                .ok_or_else(|| "Handler review judgment lacks review readiness".to_string())?;
+            require_timestamp_at_or_after(review_ready, &judgment.recorded_at, "Handler review judgment")?;
+            require_timestamp_at_or_after(launch_accepted, review_ready, "Handler review readiness")?;
+        }
+        if let Some(lifecycle) = &review.lifecycle {
+            let review_ready = review.review_ready_at.as_deref()
+                .ok_or_else(|| "Handler review lifecycle lacks review readiness".to_string())?;
+            require_timestamp_at_or_after(review_ready, &lifecycle.observed_at, "Handler review lifecycle")?;
+            if let Some(judgment) = &review.semantic_judgment {
+                require_timestamp_at_or_after(&judgment.recorded_at, &lifecycle.observed_at, "Handler review lifecycle")?;
+            }
+        }
+    }
+    if let Some(decision) = original_decision {
+        let review = original_review
+            .ok_or_else(|| "Handler decision lacks Handler review".to_string())?;
+        let judgment = review.semantic_judgment.as_ref()
+            .ok_or_else(|| "Handler decision lacks semantic judgment".to_string())?;
+        let lifecycle = review.lifecycle.as_ref()
+            .ok_or_else(|| "Handler decision lacks observed lifecycle".to_string())?;
+        if decision.review_invocation_id != review.review_invocation_id
+            || !matches!(lifecycle.status, WorkUnitHandlerReviewLifecycleStatusDto::Completed)
+        {
+            return Err("Handler decision lacks exact Completed review judgment correlation".into());
+        }
+        require_timestamp_at_or_after(&judgment.recorded_at, &decision.recorded_at, "Handler decision")?;
+        if decision.fingerprint.trim().is_empty() || decision.fingerprint.len() > 240 {
+            return Err("Handler decision fingerprint is incomplete".into());
+        }
+        for (stage, label) in [
+            (decision.implementation_accepted_at.as_deref(), "Handler accepted decision"),
+            (decision.implementation_returned_at.as_deref(), "Handler returned decision"),
+            (decision.retry_required_at.as_deref(), "Handler retry requirement"),
+        ] {
+            if let Some(stage) = stage {
+                require_timestamp_at_or_after(&decision.recorded_at, stage, label)?;
+            }
+        }
+        match (&judgment.variant, &decision.variant, &decision.return_reason) {
+            (WorkUnitHandlerReviewJudgmentVariantDto::Accept, WorkUnitHandlerDecisionVariantDto::Accepted, None) => {
+                if decision.implementation_accepted_at.is_none()
+                    || decision.implementation_returned_at.is_some() || decision.retry_required_at.is_some()
+                { return Err("accepted Handler decision facts are incoherent".into()); }
+            }
+            (WorkUnitHandlerReviewJudgmentVariantDto::Return, WorkUnitHandlerDecisionVariantDto::Returned, Some(reason)) => {
+                if decision.implementation_returned_at.is_none()
+                    || decision.implementation_accepted_at.is_some()
+                    || review.semantic_judgment.as_ref().and_then(|value| value.reason.as_ref()) != Some(reason)
+                { return Err("returned Handler decision facts are incoherent".into()); }
+            }
+            _ => return Err("Handler decision contradicts semantic judgment".into()),
+        }
+        if decision.settlement_ready_at.is_some() {
+            return Err("Handler decision has forbidden settlement readiness".into());
+        }
+    }
+    Ok(())
+}
+
+fn require_projected_phase_prerequisites(phases: &[Option<&str>], label: &str) -> Result<(), String> {
+    let mut missing = false;
+    for phase in phases {
+        if phase.is_none() {
+            missing = true;
+        } else if missing {
+            return Err(format!("{label} has a phase without its prerequisite"));
+        }
+    }
+    Ok(())
+}
+
+fn require_ordered_projected_phases(phases: &[Option<&str>], label: &str) -> Result<(), String> {
+    require_projected_phase_prerequisites(phases, label)?;
+    let mut previous = None;
+    for phase in phases.iter().flatten() {
+        let parsed = DateTime::parse_from_rfc3339(phase)
+            .map_err(|_| format!("{label} has an invalid timestamp"))?;
+        if previous.is_some_and(|previous| parsed < previous) {
+            return Err(format!("{label} phase timestamps are not ordered"));
+        }
+        previous = Some(parsed);
+    }
+    Ok(())
+}
+
+fn require_optional_ordered_projected_phases(phases: &[Option<&str>], label: &str) -> Result<(), String> {
+    let mut previous = None;
+    for phase in phases.iter().flatten() {
+        let parsed = DateTime::parse_from_rfc3339(phase)
+            .map_err(|_| format!("{label} has an invalid timestamp"))?;
+        if previous.is_some_and(|previous| parsed < previous) {
+            return Err(format!("{label} phase timestamps are not ordered"));
+        }
+        previous = Some(parsed);
+    }
+    Ok(())
+}
+
+fn require_timestamp_at_or_after(prerequisite: &str, value: &str, label: &str) -> Result<(), String> {
+    let prerequisite = DateTime::parse_from_rfc3339(prerequisite)
+        .map_err(|_| format!("{label} prerequisite has an invalid timestamp"))?;
+    let value = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| format!("{label} has an invalid timestamp"))?;
+    if value < prerequisite {
+        return Err(format!("{label} precedes its prerequisite"));
+    }
+    Ok(())
+}
+
+fn productive_integration_rows(
+    connection: &Connection,
+    work_units: &[WorkUnitDto],
+    relationships: &[WorkUnitRelationshipDto],
+) -> Result<std::collections::HashMap<String, WorkUnitIntegrationDto>, String> {
+    let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_work_unit_integrations')", [], |row| row.get(0)).map_err(|error| error.to_string())?;
+    if !exists { return Ok(Default::default()); }
+    let has_integrations: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations)",
+        [],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    if !has_integrations { return Ok(Default::default()); }
+    for table in ["accepted_handler_candidates", "work_unit_handler_reviews", "work_unit_handler_decisions", "accepted_work_unit_integration_evidence", "work_unit_settlements", "work_unit_prerequisite_contributions"] {
+        let available: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table], |row| row.get(0)).map_err(|error| error.to_string())?;
+        if !available { return Err("Productive integration projection is missing a required durable table".into()); }
+    }
+    let known = work_units.iter().map(|unit| unit.work_unit_id.as_str()).collect::<std::collections::HashSet<_>>();
+    let mut statement = connection.prepare("SELECT integration_id,work_unit_id,candidate_id,authority_id,intent_recorded_at,authorization_recorded_at,stage,object_created_at,ref_advanced_at,runtime_advanced_at,db_advanced_at,settled_at,attention_code,attention_recorded_at FROM accepted_work_unit_integrations ORDER BY intent_recorded_at,integration_id").map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?,row.get::<_, String>(3)?,row.get::<_, String>(4)?,row.get::<_, String>(5)?,row.get::<_, String>(6)?,row.get::<_, Option<String>>(7)?,row.get::<_, Option<String>>(8)?,row.get::<_, Option<String>>(9)?,row.get::<_, Option<String>>(10)?,row.get::<_, Option<String>>(11)?,row.get::<_, Option<String>>(12)?,row.get::<_, Option<String>>(13)?))).map_err(|error| error.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::new();
+    for (integration_id, work_unit_id, candidate_id, authority_id, requested_at, authorized_at, stage, object_created_at, ref_advanced_at, runtime_advanced_at, db_advanced_at, settled_at, attention_code, attention_recorded_at) in rows {
+        if !known.contains(work_unit_id.as_str()) || result.contains_key(&work_unit_id) { return Err("Productive integration has an unknown or duplicate Work Unit correlation".into()); }
+        let accepted: Option<(String, String, String)> = connection.query_row("SELECT candidate.pinned_at,decision.decision_recorded_at,review.lifecycle_observed_at FROM accepted_handler_candidates candidate JOIN work_unit_handler_decisions decision ON decision.review_invocation_id=candidate.review_invocation_id AND decision.decision_fingerprint=candidate.decision_fingerprint JOIN work_unit_handler_reviews review ON review.review_invocation_id=candidate.review_invocation_id WHERE candidate.candidate_id=?1 AND candidate.work_unit_id=?2 AND candidate.authority_id=?3 AND candidate.pinned_at IS NOT NULL AND candidate.attention_reason IS NULL AND decision.decision_variant='accepted' AND decision.implementation_accepted_at IS NOT NULL AND decision.implementation_returned_at IS NULL AND review.semantic_judgment_variant='accept' AND review.lifecycle_status='completed'", params![candidate_id, work_unit_id, authority_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(|error| error.to_string())?;
+        let Some((pinned_at, decision_at, review_at)) = accepted else { return Err("Productive integration lacks exact accepted Handler authority".into()); };
+        require_timestamp_at_or_after(&review_at, &decision_at, "Productive integration decision")?;
+        require_timestamp_at_or_after(&decision_at, &pinned_at, "Productive integration candidate")?;
+        require_timestamp_at_or_after(&pinned_at, &requested_at, "Productive integration request")?;
+        require_timestamp_at_or_after(&requested_at, &authorized_at, "Productive integration authorization")?;
+        let phases = [Some(requested_at.as_str()), Some(authorized_at.as_str()), object_created_at.as_deref(), ref_advanced_at.as_deref(), runtime_advanced_at.as_deref(), db_advanced_at.as_deref()];
+        require_ordered_projected_phases(&phases, "Productive integration")?;
+        let (progress_phase, progress_at) = if let Some(value) = db_advanced_at.as_ref() { (Some("recording"), Some(value)) } else if let Some(value) = runtime_advanced_at.as_ref().or(ref_advanced_at.as_ref()) { (Some("applying"), Some(value)) } else if let Some(value) = object_created_at.as_ref() { (Some("preparing"), Some(value)) } else { (None, None) };
+        let progress = progress_phase.zip(progress_at).map(|(phase, recorded_at)| WorkUnitIntegrationProgressDto { phase: phase.into(), recorded_at: recorded_at.clone() });
+        let attention = match (attention_code, attention_recorded_at) { (Some(code), Some(recorded_at)) => { let (kind, safe_code) = if code.contains("conflict") || code.contains("cas") || code.contains("foreign") { ("conflict", "integration_conflict") } else { ("failure", "integration_failure") }; Some(WorkUnitIntegrationAttentionDto { kind: kind.into(), safe_code: safe_code.into(), recorded_at }) }, (None, None) => None, _ => return Err("Productive integration attention bundle is malformed".into()) };
+        let evidence: i64 = connection.query_row("SELECT COUNT(*) FROM accepted_work_unit_integration_evidence WHERE integration_id=?1 AND candidate_id=?2", params![integration_id, candidate_id], |row| row.get(0)).map_err(|error| error.to_string())?;
+        let settlement: Option<String> = connection.query_row("SELECT settled_at FROM work_unit_settlements WHERE integration_id=?1 AND work_unit_id=?2", params![integration_id, work_unit_id], |row| row.get(0)).optional().map_err(|error| error.to_string())?;
+        let contributions = connection.prepare("SELECT prerequisite_work_unit_id,dependent_work_unit_id,relationship_id,recorded_at FROM work_unit_prerequisite_contributions WHERE integration_id=?1 ORDER BY relationship_id").and_then(|mut statement| statement.query_map([&integration_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())?;
+        let expected = relationships.iter().filter(|relationship| relationship.relationship_kind == "depends_on" && relationship.to_id == work_unit_id).map(|relationship| relationship.relationship_id.as_str()).collect::<std::collections::HashSet<_>>();
+        let mut actual = std::collections::HashSet::new(); let mut contribution_at = None;
+        for (prerequisite, dependent, relationship_id, recorded_at) in &contributions { if prerequisite != &work_unit_id || !relationships.iter().any(|relationship| relationship.relationship_id == *relationship_id && relationship.relationship_kind == "depends_on" && relationship.to_id == *prerequisite && relationship.from_id == *dependent) || !actual.insert(relationship_id.as_str()) { return Err("Prerequisite contribution has a foreign or duplicate correlation".into()); } if contribution_at.replace(recorded_at).is_some_and(|value| value != recorded_at) { return Err("Prerequisite contributions have inconsistent timestamps".into()); } }
+        let settled = stage == "settled";
+        if settled { if attention.is_some() || evidence != 1 || settlement.as_deref() != settled_at.as_deref() || actual != expected { return Err("Settled productive integration has an incoherent terminal bundle".into()); } } else if evidence != 0 || settlement.is_some() || !contributions.is_empty() || settled_at.is_some() { return Err("Partial productive integration has terminal facts".into()); }
+        if !matches!(stage.as_str(), "intent_reserved" | "object_created" | "ref_advanced" | "runtime_advanced" | "db_advanced" | "attention" | "settled") { return Err("Productive integration stage is unknown".into()); }
+        result.insert(work_unit_id, WorkUnitIntegrationDto { requested_at, authorized_at, progress, attention, success: settled.then(|| WorkUnitIntegrationSuccessDto { recorded_at: settled_at.clone().unwrap() }), settlement: settled.then(|| WorkUnitSettlementDto { settled_at: settled_at.unwrap() }), prerequisite_contribution: contribution_at.map(|recorded_at| WorkUnitPrerequisiteContributionDto { recorded_at: recorded_at.clone(), dependent_count: contributions.len() }) });
+    }
+    Ok(result)
+}
+
+fn projection_stable_id(prefix: &str, value: &str) -> String {
+    let mut hash = Sha256::new();
+    hash.update(prefix.as_bytes());
+    hash.update([0]);
+    hash.update(value.as_bytes());
+    format!("{prefix}-{:x}", hash.finalize())
+}
+
+fn activation_rows<T, F>(connection: &Connection, table: &str, columns: &str, mut map: F) -> Result<std::collections::HashMap<String, T>, String>
+where
+    F: FnMut(&Row<'_>) -> Result<T, rusqlite::Error>,
+{
+    if !matches!(table, "work_unit_handler_action_continuations" | "work_unit_implementer_activations") {
+        return Err("unsupported activation projection table".into());
+    }
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)", [table],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(&format!("SELECT work_unit_id,{columns} FROM {table}"))
+        .map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map(row)?)))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<std::collections::HashMap<_, _>, _>>().map_err(|error| error.to_string())
+}
+
+fn retry_attempt_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitRetryAttemptDto>>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_retry_attempts')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,ordinal,origin_attempt_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,capture_requested_at,candidate_pinned_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,retry_ready_at,failure_reason FROM work_unit_retry_attempts ORDER BY work_unit_id,ordinal,retry_attempt_id"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_retry_attempt(row)?)))
+        .map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::<String, Vec<WorkUnitRetryAttemptDto>>::new();
+    for row in rows {
+        let (work_unit_id, retry) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_default();
+        if retry.ordinal < 0 || entries.iter().any(|existing| existing.ordinal == retry.ordinal || existing.retry_attempt_id == retry.retry_attempt_id) {
+            return Err("retry attempt projection has duplicate ordinal or attempt identity".into());
+        }
+        entries.push(retry);
+    }
+    Ok(result)
+}
+
+fn implementer_outcome_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<(i64, WorkUnitImplementerOutcomeDto)>>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_implementer_outcomes')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists {
+        return Ok(std::collections::HashMap::new());
+    }
+    let has_ordinal = connection.prepare("PRAGMA table_info(work_unit_implementer_outcomes)").and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())?.iter().any(|column| column == "attempt_ordinal");
+    let ordinal = if has_ordinal { "attempt_ordinal" } else { "0" };
+    let mut statement = connection.prepare(&format!(
+        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason,{ordinal} FROM work_unit_implementer_outcomes"
+    )).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(33)?, map_implementer_outcome(row)?))
+    }).map_err(|error| error.to_string())?;
+    let mut result: std::collections::HashMap<String, Vec<(i64, WorkUnitImplementerOutcomeDto)>> = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, ordinal, outcome) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|(existing, value)| *existing == ordinal || value.attempt_id == outcome.attempt_id) { return Err("attempt-scoped Implementer history has duplicate ordinal or attempt identity".into()); }
+        entries.push((ordinal, outcome));
+    }
+    for entries in result.values_mut() { entries.sort_by_key(|(ordinal, _)| *ordinal); }
+    Ok(result)
+}
+
+fn handler_review_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitHandlerReviewDto>>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_reviews')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint,semantic_judgment_at,lifecycle_observed_at,lifecycle_status,conflict_at,conflict_reason FROM work_unit_handler_reviews"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_review(row)?)))
+        .map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, review) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitHandlerReviewDto| existing.attempt_id == review.attempt_id) { return Err("attempt-scoped Handler review history has duplicate attempt identity".into()); }
+        entries.push(review);
+    }
+    Ok(result)
+}
+
+fn handler_decision_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitHandlerDecisionDto>>, String> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_decisions')",
+        [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let mut statement = connection.prepare(
+        "SELECT work_unit_id,review_invocation_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_accepted_at,implementation_returned_at,retry_required_at,settlement_ready_at,attempt_id FROM work_unit_handler_decisions"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_decision(row)?)))
+        .map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, decision) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitHandlerDecisionDto| existing.attempt_id == decision.attempt_id) { return Err("attempt-scoped Handler decision history has duplicate attempt identity".into()); }
+        entries.push(decision);
+    }
+    Ok(result)
+}
+
+fn incomplete_disposition_rows(
+    connection: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<WorkUnitIncompleteDispositionDto>>, String> {
+    let exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_unit_handler_incomplete_dispositions')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
+    if !exists { return Ok(std::collections::HashMap::new()); }
+    let handback_delivery_exists = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_runner_handback_deliveries')", [], |row| row.get::<_, bool>(0)).map_err(|error| error.to_string())?;
+    let delivery_fields = if handback_delivery_exists { "x.delivery_requested_at,x.delivery_persisted_at,x.harness_bound_at,x.launch_requested_at,x.launch_accepted_at,x.provider_activation_observed_at,x.semantic_reassessment_recorded_at,m.movement_kind,m.details_json,e.requested_at,e.delivery_requested_at" } else { "NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL" };
+    let delivery_joins = if handback_delivery_exists { " LEFT JOIN sprint_runner_handback_deliveries x ON x.handback_id=h.handback_id LEFT JOIN sprint_runner_handback_dispositions m ON m.handback_id=x.handback_id LEFT JOIN sprint_runner_handback_escalations e ON e.handback_id=x.handback_id" } else { "" };
+    let query = format!("SELECT d.work_unit_id,d.attempt_id,d.review_invocation_id,d.decision_fingerprint,d.classification,d.meaningful_progress,d.recorded_at,d.next_attempt_authorized_at,h.handback_id,h.source_attempt_id,h.source_review_invocation_id,h.context_json,h.context_fingerprint,h.persisted_at,h.delivery_intended_at,h.sprint_runner_receiver_activated_at,h.sprint_runner_receiver_decision_at,{delivery_fields},r.sprint_id,r.epic_id,r.delivery_requested_at,r.delivery_persisted_at,r.harness_bound_at,r.launch_requested_at,r.launch_accepted_at,r.provider_activation_observed_at,r.reassessment_lifecycle_status,r.reassessment_lifecycle_observed_at,r.semantic_reassessment_recorded_at,EXISTS(SELECT 1 FROM initiated_sprints s WHERE s.id=r.sprint_id AND s.epic_id=r.epic_id),ed.movement_kind,ed.details_json,dr.request_kind,dr.request_json,ea.attention_json FROM work_unit_handler_incomplete_dispositions d LEFT JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id AND h.source_review_invocation_id=d.review_invocation_id AND h.decision_fingerprint=d.decision_fingerprint{delivery_joins} LEFT JOIN epic_runner_escalation_receivers r ON r.handback_id=h.handback_id LEFT JOIN epic_runner_escalation_dispositions ed ON ed.handback_id=r.handback_id LEFT JOIN epic_runner_escalation_downstream_requests dr ON dr.handback_id=r.handback_id LEFT JOIN epic_runner_escalation_attentions ea ON ea.handback_id=r.handback_id");
+    let mut statement = connection.prepare(&query).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        let classification = match row.get::<_, String>(4)?.as_str() {
+            "refinement_needed" => WorkUnitIncompleteDispositionClassificationDto::RefinementNeeded,
+            "functional_objective_not_satisfied" => WorkUnitIncompleteDispositionClassificationDto::FunctionalObjectiveNotSatisfied,
+            "blocked" => WorkUnitIncompleteDispositionClassificationDto::Blocked,
+            _ => return Err(to_sql_error("invalid incomplete disposition classification".into())),
+        };
+        let meaningful_progress = match row.get::<_, i64>(5)? { 0 => false, 1 => true, _ => return Err(to_sql_error("invalid incomplete disposition progress judgment".into())) };
+        let next_attempt_authorized_at: Option<String> = row.get(7)?;
+        if meaningful_progress != next_attempt_authorized_at.is_some() { return Err(to_sql_error("incomplete disposition authorization contradicts progress judgment".into())); }
+        let handback = match (row.get::<_, Option<String>>(8)?, row.get::<_, Option<String>>(9)?, row.get::<_, Option<String>>(10)?, row.get::<_, Option<String>>(11)?, row.get::<_, Option<String>>(12)?, row.get::<_, Option<String>>(13)?, row.get::<_, Option<String>>(14)?, row.get::<_, Option<String>>(15)?, row.get::<_, Option<String>>(16)?) {
+            (None,None,None,None,None,None,None,None,None) => None,
+            (Some(handback_id),Some(source_attempt_id),Some(source_review_invocation_id),Some(context_json),Some(context_fingerprint),Some(persisted_at),Some(delivery_intended_at),receiver_activated,receiver_decision) => {
+                if meaningful_progress || receiver_activated.is_some() || receiver_decision.is_some() || source_attempt_id != row.get::<_, String>(1)? || source_review_invocation_id != row.get::<_, String>(2)? || context_fingerprint != projection_stable_id("work-unit-no-progress-handback-context", &context_json) || serde_json::from_str::<serde_json::Value>(&context_json).is_err() { return Err(to_sql_error("no-progress handback is incoherent".into())); }
+                if DateTime::parse_from_rfc3339(&delivery_intended_at).map_err(|_| to_sql_error("no-progress handback has invalid delivery intent".into()))? < DateTime::parse_from_rfc3339(&persisted_at).map_err(|_| to_sql_error("no-progress handback has invalid persistence".into()))? { return Err(to_sql_error("no-progress handback delivery intent precedes persistence".into())); }
+                let delivery = match row.get::<_, Option<String>>(17)? {
+                    None => None,
+                    Some(delivery_requested_at) => {
+                        let delivery_persisted_at: Option<String> = row.get(18)?;
+                        let harness_bound_at: Option<String> = row.get(19)?;
+                        let launch_requested_at: Option<String> = row.get(20)?;
+                        let launch_accepted_at: Option<String> = row.get(21)?;
+                        let provider_activation_observed_at: Option<String> = row.get(22)?;
+                        let semantic_reassessment_recorded_at: Option<String> = row.get(23)?;
+                        let selected_movement_kind: Option<String> = row.get(24)?;
+                        let selected_movement = match (selected_movement_kind.as_deref(), row.get::<_, Option<String>>(25)?) {
+                            (None, None) => None,
+                            (Some(_), None) => return Err(to_sql_error("selected Handback movement lacks structured detail".into())),
+                            (None, Some(_)) => return Err(to_sql_error("Handback movement detail lacks its kind".into())),
+                            (Some(kind), Some(details)) => Some(sprint_runner_handback_movement(&details, kind)?),
+                        };
+                        let escalation_intent_recorded_at: Option<String> = row.get(26)?;
+                        let escalation_delivery_requested_at: Option<String> = row.get(27)?;
+                        require_ordered_projected_phases(&[Some(delivery_requested_at.as_str()), delivery_persisted_at.as_deref(), harness_bound_at.as_deref(), launch_requested_at.as_deref(), launch_accepted_at.as_deref()], "Sprint Runner Handback delivery").map_err(to_sql_error)?;
+                        if let Some(provider) = provider_activation_observed_at.as_deref() {
+                            let launch_accepted = launch_accepted_at.as_deref().ok_or_else(|| to_sql_error("Handback provider observation lacks launch acceptance".into()))?;
+                            require_timestamp_at_or_after(launch_accepted, provider, "Handback provider observation").map_err(to_sql_error)?;
+                        }
+                        if let Some(reassessment) = semantic_reassessment_recorded_at.as_deref() {
+                            let launch_accepted = launch_accepted_at.as_deref().ok_or_else(|| to_sql_error("Handback reassessment lacks launch acceptance".into()))?;
+                            require_timestamp_at_or_after(launch_accepted, reassessment, "Handback semantic reassessment").map_err(to_sql_error)?;
+                        }
+                        if selected_movement_kind.is_some() && semantic_reassessment_recorded_at.is_none() { return Err(to_sql_error("selected Handback movement lacks semantic reassessment".into())); }
+                        if selected_movement_kind.as_deref() == Some("wait_for_agent_dependency") && selected_movement.is_none() { return Err(to_sql_error("dependency movement lacks structured route detail".into())); }
+                        if escalation_intent_recorded_at.is_some() || escalation_delivery_requested_at.is_some() {
+                            if selected_movement.as_ref().is_none_or(|movement| movement.movement_kind != "local_exhaustion_escalate") { return Err(to_sql_error("escalation delivery lacks selected local exhaustion movement".into())); }
+                            let reassessment = semantic_reassessment_recorded_at.as_deref().ok_or_else(|| to_sql_error("escalation delivery lacks semantic reassessment".into()))?;
+                            let intent = escalation_intent_recorded_at.as_deref().ok_or_else(|| to_sql_error("escalation delivery request lacks recorded intent".into()))?;
+                            require_timestamp_at_or_after(reassessment, intent, "Handback escalation intent").map_err(to_sql_error)?;
+                            if let Some(escalation) = escalation_delivery_requested_at.as_deref() {
+                                require_timestamp_at_or_after(intent, escalation, "Handback escalation delivery").map_err(to_sql_error)?;
+                                require_timestamp_at_or_after(reassessment, escalation, "Handback escalation delivery").map_err(to_sql_error)?;
+                            }
+                        }
+                        Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at, delivery_persisted_at, harness_bound_at, launch_requested_at, launch_accepted_at, provider_activation_observed_at, semantic_reassessment_recorded_at, selected_movement_kind, selected_movement, escalation_intent_recorded_at, escalation_delivery_requested_at })
+                    }
+                };
+                let epic_runner_receiver = match row.get::<_, Option<String>>(28)? {
+                    None => None,
+                    Some(sprint_id) => {
+                        let epic_id: String = row.get(29)?;
+                        if !row.get::<_, bool>(39)? || sprint_id.is_empty() || epic_id.is_empty() { return Err(to_sql_error("Epic escalation receiver correlation is invalid".into())); }
+                        let delivery_requested_at: String = row.get(30)?;
+                        let delivery_persisted_at: Option<String> = row.get(31)?;
+                        let harness_bound_at: Option<String> = row.get(32)?;
+                        let launch_requested_at: Option<String> = row.get(33)?;
+                        let launch_accepted_at: Option<String> = row.get(34)?;
+                        let provider_activation_observed_at: Option<String> = row.get(35)?;
+                        let semantic_reassessment_recorded_at: Option<String> = row.get(38)?;
+                        require_ordered_projected_phases(&[Some(delivery_requested_at.as_str()), delivery_persisted_at.as_deref(), harness_bound_at.as_deref(), launch_requested_at.as_deref(), launch_accepted_at.as_deref()], "Epic escalation receiver").map_err(to_sql_error)?;
+                        if (provider_activation_observed_at.is_some() || semantic_reassessment_recorded_at.is_some()) && launch_accepted_at.is_none() { return Err(to_sql_error("Epic receiver later observation lacks launch acceptance".into())); }
+                        let disposition = match row.get::<_, Option<String>>(40)? {
+                            None => None,
+                            Some(movement_kind) => {
+                                let details: String = row.get(41)?;
+                                let mut parsed: EpicRunnerEscalationDispositionDto = serde_json::from_str(&details).map_err(|error| to_sql_error(error.to_string()))?;
+                                if parsed.movement_kind != movement_kind || semantic_reassessment_recorded_at.is_none() { return Err(to_sql_error("Epic escalation disposition is incoherent".into())); }
+                                if let Some(request_json) = row.get::<_, Option<String>>(43)? { parsed.downstream_request = Some(serde_json::from_str(&request_json).map_err(|error| to_sql_error(error.to_string()))?); }
+                                if let Some(attention_json) = row.get::<_, Option<String>>(44)? { parsed.human_external_attention = Some(serde_json::from_str(&attention_json).map_err(|error| to_sql_error(error.to_string()))?); }
+                                Some(parsed)
+                            }
+                        };
+                        Some(EpicRunnerEscalationReceiverDto { sprint_id, epic_id, delivery_requested_at, delivery_persisted_at, harness_bound_at, launch_requested_at, launch_accepted_at, provider_activation_observed_at, reassessment_lifecycle_status: row.get(36)?, reassessment_lifecycle_observed_at: row.get(37)?, semantic_reassessment_recorded_at, disposition })
+                    }
+                };
+                Some(WorkUnitNoProgressHandbackDto { handback_id, source_attempt_id, source_review_invocation_id, context_fingerprint, persisted_at, delivery_intended_at, sprint_runner_receiver_activated_at: receiver_activated, sprint_runner_receiver_decision_at: receiver_decision, sprint_runner_delivery: delivery, epic_runner_receiver })
+            }
+            _ => return Err(to_sql_error("no-progress handback bundle is partial".into())),
+        };
+        if !meaningful_progress && handback.is_none() { return Err(to_sql_error("no-progress disposition lacks its Work Unit handback".into())); }
+        Ok((row.get::<_, String>(0)?, WorkUnitIncompleteDispositionDto { attempt_id: row.get(1)?, review_invocation_id: row.get(2)?, decision_fingerprint: row.get(3)?, classification, meaningful_progress, recorded_at: row.get(6)?, next_attempt_authorized_at, no_progress_handback: handback }))
+    }).map_err(|error| error.to_string())?;
+    let mut result = std::collections::HashMap::new();
+    for row in rows {
+        let (work_unit_id, disposition) = row.map_err(|error| error.to_string())?;
+        let entries = result.entry(work_unit_id).or_insert_with(Vec::new);
+        if entries.iter().any(|existing: &WorkUnitIncompleteDispositionDto| existing.attempt_id == disposition.attempt_id) { return Err("incomplete disposition history has duplicate attempt identity".into()); }
+        entries.push(disposition);
+    }
+    Ok(result)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedSprintRunnerHandbackMovement {
+    movement_kind: String,
+    rationale: String,
+    eligible_work_summary: Option<String>,
+    dependency_owner: Option<String>,
+    dependency_owner_classification: Option<String>,
+    enabling_result: Option<String>,
+    resumption_path: Option<String>,
+    local_exhaustion_summary: Option<String>,
+}
+
+fn sprint_runner_handback_movement(details: &str, movement_kind: &str) -> Result<SprintRunnerHandbackMovementDto, rusqlite::Error> {
+    let value: PersistedSprintRunnerHandbackMovement = serde_json::from_str(details).map_err(|error| to_sql_error(error.to_string()))?;
+    if value.movement_kind != movement_kind || movement_kind.is_empty() || movement_kind.len() > 96 || !movement_kind.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')) || value.rationale.trim().is_empty() || value.rationale.len() > 20_000 { return Err(to_sql_error("Handback movement detail is incoherent".into())); }
+    let text_ok = |value: &Option<String>| value.as_deref().is_none_or(|text| !text.trim().is_empty() && text.len() <= 20_000);
+    if [&value.eligible_work_summary, &value.dependency_owner, &value.dependency_owner_classification, &value.enabling_result, &value.resumption_path, &value.local_exhaustion_summary].iter().any(|text| !text_ok(text)) { return Err(to_sql_error("Handback movement text is incoherent".into())); }
+    let mut bounded_details = None;
+    match movement_kind {
+        "continue_eligible_work" if value.eligible_work_summary.is_some() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() && value.local_exhaustion_summary.is_none() => {}
+        "wait_for_agent_dependency" => {
+            let Some(owner) = value.dependency_owner.as_deref() else { return Err(to_sql_error("dependency movement lacks owner".into())); };
+            let Some(classification) = value.dependency_owner_classification.as_deref() else { return Err(to_sql_error("dependency movement lacks owner classification".into())); };
+            if !["work_unit_handler", "work_unit_implementer", "work_slice_planner", "sprint_runner"].contains(&classification) || value.enabling_result.is_none() || value.resumption_path.is_none() || value.eligible_work_summary.is_some() || value.local_exhaustion_summary.is_some() || ["human", "external", "approval", "manual", "user"].iter().any(|term| owner.to_ascii_lowercase().contains(term)) { return Err(to_sql_error("dependency movement is outside the agent-achievable boundary".into())); }
+        }
+        "local_exhaustion_escalate" if value.local_exhaustion_summary.is_some() && value.eligible_work_summary.is_none() && value.dependency_owner.is_none() && value.dependency_owner_classification.is_none() && value.enabling_result.is_none() && value.resumption_path.is_none() => {}
+        _ => {
+            if value.dependency_owner_classification.as_deref().is_some_and(|classification| !["work_unit_handler", "work_unit_implementer", "work_slice_planner", "sprint_runner"].contains(&classification)) { return Err(to_sql_error("bounded Handback movement has an invalid detail classification".into())); }
+            let details = [
+                ("eligibleWorkSummary", value.eligible_work_summary.as_ref()),
+                ("dependencyOwner", value.dependency_owner.as_ref()),
+                ("dependencyOwnerClassification", value.dependency_owner_classification.as_ref()),
+                ("enablingResult", value.enabling_result.as_ref()),
+                ("resumptionPath", value.resumption_path.as_ref()),
+                ("localExhaustionSummary", value.local_exhaustion_summary.as_ref()),
+            ].into_iter().filter_map(|(label, value)| value.map(|value| SprintRunnerHandbackBoundedDetailDto { label: label.into(), value: value.clone() })).collect::<Vec<_>>();
+            bounded_details = (!details.is_empty()).then_some(details);
+        }
+    }
+    Ok(SprintRunnerHandbackMovementDto { movement_kind: value.movement_kind, rationale: value.rationale, eligible_work_summary: if movement_kind == "continue_eligible_work" { value.eligible_work_summary } else { None }, dependency_owner: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner } else { None }, dependency_owner_classification: if movement_kind == "wait_for_agent_dependency" { value.dependency_owner_classification } else { None }, enabling_result: if movement_kind == "wait_for_agent_dependency" { value.enabling_result } else { None }, resumption_path: if movement_kind == "wait_for_agent_dependency" { value.resumption_path } else { None }, local_exhaustion_summary: if movement_kind == "local_exhaustion_escalate" { value.local_exhaustion_summary } else { None }, bounded_details })
+}
+
+fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlite::Error> {
+    let payload_json: String = row.get(16)?;
+    let payload: PersistedHandlerReviewPayload = serde_json::from_str(&payload_json)
+        .map_err(|error| to_sql_error(error.to_string()))?;
+    let canonical = serde_json::to_string(&payload).map_err(|error| to_sql_error(error.to_string()))?;
+    if canonical != payload_json
+        || payload.summary.trim().is_empty() || payload.summary.len() > 20_000
+        || payload.validation_statement.trim().is_empty() || payload.validation_statement.len() > 20_000
+        || payload.changed_files.is_empty() || payload.changed_files.len() > 500
+        || payload.comparison_fingerprint.trim().is_empty() || payload.comparison_fingerprint.len() > 240
+    {
+        return Err(to_sql_error("Handler review delivered payload is incoherent".into()));
+    }
+    let mut content = std::collections::HashMap::new();
+    for entry in payload.evidence_content_fingerprints {
+        if entry.evidence_ref.trim().is_empty() || entry.evidence_ref.len() > 240
+            || entry.content_fingerprint.trim().is_empty() || entry.content_fingerprint.len() > 240
+            || content.insert(entry.evidence_ref, entry.content_fingerprint).is_some()
+        {
+            return Err(to_sql_error("Handler review evidence content is incoherent".into()));
+        }
+    }
+    let mut changed_files = Vec::with_capacity(payload.changed_files.len());
+    let mut references = std::collections::HashSet::new();
+    for entry in payload.changed_files {
+        let change_kind = match entry.change_kind.as_str() {
+            "added" => ImplementationEvidenceChangeKindDto::Added,
+            "modified" => ImplementationEvidenceChangeKindDto::Modified,
+            "deleted" => ImplementationEvidenceChangeKindDto::Deleted,
+            "renamed" => ImplementationEvidenceChangeKindDto::Renamed,
+            _ => return Err(to_sql_error("invalid Handler review evidence change kind".into())),
+        };
+        let Some(content_fingerprint) = content.remove(&entry.evidence_ref) else {
+            return Err(to_sql_error("Handler review evidence content is uncorrelated".into()));
+        };
+        if entry.display_name.trim().is_empty() || entry.display_name.len() > 1_000
+            || !references.insert(entry.evidence_ref.clone())
+        {
+            return Err(to_sql_error("Handler review evidence references are incoherent".into()));
+        }
+        changed_files.push(WorkUnitHandlerReviewEvidenceFileDto {
+            evidence_ref: entry.evidence_ref,
+            display_name: entry.display_name,
+            change_kind,
+            content_fingerprint,
+        });
+    }
+    if !content.is_empty() {
+        return Err(to_sql_error("Handler review evidence content has an unknown reference".into()));
+    }
+    let semantic_variant: Option<String> = row.get(18)?;
+    let semantic_reason: Option<String> = row.get(19)?;
+    let semantic_fingerprint: Option<String> = row.get(20)?;
+    let semantic_at: Option<String> = row.get(21)?;
+    let semantic_judgment = match (semantic_variant, semantic_reason, semantic_fingerprint, semantic_at) {
+        (None, None, None, None) => None,
+        (Some(variant), reason, Some(fingerprint), Some(recorded_at)) => {
+            let variant = match variant.as_str() {
+                "accept" => WorkUnitHandlerReviewJudgmentVariantDto::Accept,
+                "return" => WorkUnitHandlerReviewJudgmentVariantDto::Return,
+                _ => return Err(to_sql_error("invalid Handler review judgment variant".into())),
+            };
+            let reason = match (&variant, reason) {
+                (WorkUnitHandlerReviewJudgmentVariantDto::Accept, None) => None,
+                (WorkUnitHandlerReviewJudgmentVariantDto::Return, Some(value)) => Some(parse_handler_review_reason(value)?),
+                _ => return Err(to_sql_error("Handler review judgment reason is incoherent".into())),
+            };
+            Some(WorkUnitHandlerReviewJudgmentDto { variant, reason, fingerprint, recorded_at })
+        }
+        _ => return Err(to_sql_error("Handler review judgment bundle is partial".into())),
+    };
+    let lifecycle_observed_at: Option<String> = row.get(22)?;
+    let lifecycle_status: Option<String> = row.get(23)?;
+    let lifecycle = match (lifecycle_observed_at, lifecycle_status) {
+        (None, None) => None,
+        (Some(observed_at), Some(status)) => Some(WorkUnitHandlerReviewLifecycleDto {
+            status: match status.as_str() {
+                "completed" => WorkUnitHandlerReviewLifecycleStatusDto::Completed,
+                "failed" => WorkUnitHandlerReviewLifecycleStatusDto::Failed,
+                "canceled" => WorkUnitHandlerReviewLifecycleStatusDto::Canceled,
+                "interrupted" => WorkUnitHandlerReviewLifecycleStatusDto::Interrupted,
+                _ => return Err(to_sql_error("invalid Handler review lifecycle status".into())),
+            },
+            observed_at,
+        }),
+        _ => return Err(to_sql_error("Handler review lifecycle bundle is partial".into())),
+    };
+    let conflict_at: Option<String> = row.get(24)?;
+    let conflict_reason: Option<String> = row.get(25)?;
+    let conflict = match (conflict_at, conflict_reason) {
+        (None, None) => None,
+        (Some(occurred_at), Some(reason)) if !reason.trim().is_empty() && reason.len() <= 4_000 =>
+            Some(WorkUnitHandlerReviewConflictDto { occurred_at, reason }),
+        _ => return Err(to_sql_error("Handler review conflict bundle is incoherent".into())),
+    };
+    let delivered_payload_fingerprint: String = row.get(17)?;
+    if delivered_payload_fingerprint != projection_stable_id("work-unit-handler-review-delivery", &payload_json) {
+        return Err(to_sql_error("Handler review delivered payload fingerprint is incoherent".into()));
+    }
+    Ok(WorkUnitHandlerReviewDto {
+        attempt_id: row.get(1)?, reporting_invocation_id: row.get(2)?, handler_session_id: row.get(3)?,
+        original_handler_invocation_id: row.get(4)?, action_handler_invocation_id: row.get(5)?,
+        review_invocation_id: row.get(6)?, review_harness_revision_id: row.get(7)?,
+        review_harness_configuration_digest: row.get(8)?, review_harness_repository_commit_ref: row.get(9)?,
+        delivery_requested_at: row.get(10)?, delivery_persisted_at: row.get(11)?, harness_bound_at: row.get(12)?,
+        launch_requested_at: row.get(13)?, launch_accepted_at: row.get(14)?, review_ready_at: row.get(15)?,
+        delivered: WorkUnitHandlerReviewEvidenceDto {
+            summary_claim: payload.summary, validation_statement_claim: payload.validation_statement,
+            changed_files, comparison_fingerprint: payload.comparison_fingerprint, delivered_payload_fingerprint,
+        },
+        semantic_judgment, lifecycle, conflict,
+    })
+}
+
+fn parse_handler_review_reason(value: String) -> Result<WorkUnitHandlerReviewReasonDto, rusqlite::Error> {
+    let reason: WorkUnitHandlerReviewReasonDto = serde_json::from_str(&value)
+        .map_err(|error| to_sql_error(error.to_string()))?;
+    let canonical = serde_json::to_string(&reason).map_err(|error| to_sql_error(error.to_string()))?;
+    if canonical != value || reason.code.is_empty() || reason.code.len() > 96
+        || !reason.code.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        || reason.explanation.trim().is_empty() || reason.explanation.len() > 2_000
+    {
+        return Err(to_sql_error("Handler review reason is incoherent".into()));
+    }
+    Ok(reason)
+}
+
+fn map_handler_decision(row: &Row<'_>) -> Result<WorkUnitHandlerDecisionDto, rusqlite::Error> {
+    let variant: String = row.get(2)?;
+    let reason: Option<String> = row.get(4)?;
+    let variant = match variant.as_str() {
+        "accepted" if reason.is_none() && row.get::<_, Option<String>>(6)?.is_some()
+            && row.get::<_, Option<String>>(7)?.is_none() && row.get::<_, Option<String>>(8)?.is_none() =>
+            WorkUnitHandlerDecisionVariantDto::Accepted,
+        "returned" if reason.is_some() && row.get::<_, Option<String>>(6)?.is_none()
+            && row.get::<_, Option<String>>(7)?.is_some() =>
+            WorkUnitHandlerDecisionVariantDto::Returned,
+        "accepted" | "returned" => return Err(to_sql_error("Handler decision facts contradict their variant".into())),
+        _ => return Err(to_sql_error("invalid Handler decision variant".into())),
+    };
+    let settlement_ready_at: Option<String> = row.get(9)?;
+    if settlement_ready_at.is_some() {
+        return Err(to_sql_error("Handler decision has forbidden settlement readiness".into()));
+    }
+    Ok(WorkUnitHandlerDecisionDto {
+        attempt_id: row.get(10)?, review_invocation_id: row.get(1)?, variant, fingerprint: row.get(3)?,
+        return_reason: reason.map(parse_handler_review_reason).transpose()?, recorded_at: row.get(5)?,
+        implementation_accepted_at: row.get(6)?, implementation_returned_at: row.get(7)?,
+        retry_required_at: row.get(8)?, settlement_ready_at,
+    })
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkUnitRelationshipDto {
+    relationship_id: String,
+    materialization_id: String,
+    relationship_kind: String,
+    from_id: String,
+    to_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ordinal: Option<i64>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

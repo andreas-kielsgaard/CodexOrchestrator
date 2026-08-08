@@ -149,6 +149,19 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
         vec![2, 9]
     );
     assert_eq!(history.invocations[0].events[0].normalized, None);
+    assert_eq!(history.invocations[0].launch_accepted_at, Some(at(4)));
+    let observation =
+        crate::agent_sessions::application::project_invocation_observation(&history.invocations[0]);
+    assert_eq!(observation.launch_accepted_at, Some(at(4)));
+    assert!(observation.provider_activity.is_none());
+    assert!(observation.provider_terminal.is_none());
+    assert_eq!(
+        observation
+            .process_terminal
+            .as_ref()
+            .map(|terminal| terminal.status),
+        Some(AgentInvocationStatus::Completed)
+    );
     assert_eq!(
         history.invocations[0].events[0].raw_payload,
         json!({"type":"future.event","nested":{"unchanged":[1,true,null]}})
@@ -419,6 +432,7 @@ fn normalized_event(
             external_context_id: None,
             usage: None,
             details: Some(json!({"final": true})),
+            tool_activity: None,
         }),
         recorded_at,
     }

@@ -13,6 +13,7 @@ type Artifact = ProductSprintReadModelV1['internalArtifacts'][number];
 type AgentSessionReference = ProductSprintReadModelV1['agentSessionReferences'][number];
 
 export interface SprintWorkspacePresentationV1 {
+  readonly epicEscalationReceivers: ProductSprintReadModelV1['epicEscalationReceivers'];
   readonly sprint: Readonly<{
     readonly sprintId: string;
     readonly epicId: string;
@@ -22,6 +23,8 @@ export interface SprintWorkspacePresentationV1 {
     readonly source: ReadSourceAuthorityV1;
     readonly lifecycle?: ProductSprintReadModelV1['lifecycle'];
     readonly planningState: ProductSprintReadModelV1['planningState'];
+    readonly sprintRunnerTransition?: ProductSprintReadModelV1['sprintRunnerTransition'];
+    readonly workUnitMaterializations: ProductSprintReadModelV1['workUnitMaterializations'];
   }>;
   readonly revisions: readonly Readonly<{
     readonly sprintPlanRevisionId: string;
@@ -73,6 +76,7 @@ export function projectSprintWorkspacePresentation(
     ]),
   );
   return {
+    epicEscalationReceivers: sprint.epicEscalationReceivers,
     sprint: {
       sprintId: sprint.sprintId,
       epicId: sprint.epicId,
@@ -82,6 +86,12 @@ export function projectSprintWorkspacePresentation(
       source: sprint.source,
       ...(sprint.lifecycle ? { lifecycle: sprint.lifecycle } : {}),
       planningState: sprint.planningState,
+      ...(sprint.sprintRunnerTransition
+        ? { sprintRunnerTransition: sprint.sprintRunnerTransition }
+        : {}),
+      workUnitMaterializations: (sprint.workUnitMaterializations ?? []).map((materialization) => ({
+        ...materialization,
+      })),
     },
     revisions: sprint.sprintPlan.revisions.map((revision) => ({ ...revision })),
     activeSprintPlanRevisionId: sprint.sprintPlan.currentSprintPlanRevisionId,

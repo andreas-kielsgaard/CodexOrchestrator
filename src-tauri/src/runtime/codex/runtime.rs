@@ -113,6 +113,7 @@ impl ProcessEventSink for RuntimeCoordinator {
                             external_context_id: None,
                             usage: None,
                             details: None,
+                            tool_activity: None,
                         }),
                     });
                 }
@@ -274,6 +275,10 @@ impl CodexCliRuntime {
     ) -> Result<(), RuntimePortError> {
         // Application persistence supplies the preflight-approved effective options. Launch must
         // not rediscover or reinterpret capabilities after that durable transition.
+        let invocation_mode = match &command {
+            InvocationCommand::Start => "start",
+            InvocationCommand::Resume(_) => "resume",
+        };
         let args = build_args_from_effective_options(
             command,
             &request.submitted_text,
@@ -300,6 +305,11 @@ impl CodexCliRuntime {
         }
         self.coordinator
             .register(request.invocation_id.clone(), update_sink)?;
+        self.coordinator.record_launch_provenance(
+            &request.invocation_id,
+            &spec,
+            invocation_mode,
+        );
         match self
             .supervisor
             .start(request.session_id, request.invocation_id.clone(), spec)
@@ -312,6 +322,100 @@ impl CodexCliRuntime {
                 Err(map_supervisor_error(error))
             }
         }
+    }
+}
+
+impl RuntimeCoordinator {
+    fn record_launch_provenance(
+        &self,
+        invocation_id: &AgentInvocationId,
+        spec: &ProcessLaunchSpec,
+        invocation_mode: &str,
+    ) {
+        let Some(sink) = self
+            .invocations
+            .lock()
+            .ok()
+            .and_then(|states| states.get(invocation_id).map(|state| state.sink.clone()))
+        else {
+            return;
+        };
+        let configuration_keys = spec
+            .args
+            .windows(2)
+            .filter_map(|pair| {
+                (pair[0] == "-c").then_some(
+                    pair[1]
+                        .split_once('=')
+                        .map_or(pair[1].as_str(), |(key, _)| key),
+                )
+            })
+            .map(sanitized_configuration_key)
+            .collect::<Vec<_>>();
+        let sandbox = spec
+            .args
+            .windows(2)
+            .find_map(|pair| (pair[0] == "--sandbox").then_some(pair[1].as_str()))
+            .or_else(|| {
+                spec.args.windows(2).find_map(|pair| {
+                    (pair[0] == "-c")
+                        .then(|| pair[1].strip_prefix("sandbox_mode=\"")?.strip_suffix('"'))
+                        .flatten()
+                })
+            });
+        let working_directory = spec.working_directory.as_ref().map(|path| {
+            let value = path.to_string_lossy();
+            json!({
+                "provided": true,
+                "extendedLengthPrefix": value.starts_with(r"\\?\"),
+                "absolute": path.is_absolute(),
+            })
+        }).unwrap_or_else(|| json!({"provided": false}));
+        let launch_restrictions = json!({
+            "strictConfig": spec.args.iter().any(|argument| argument == "--strict-config"),
+            "ignoresUserConfig": spec.args.iter().any(|argument| argument == "--ignore-user-config"),
+            "ignoresRules": spec.args.iter().any(|argument| argument == "--ignore-rules"),
+            "additionalWritableDirectoryCount": spec.args.iter().filter(|argument| argument.as_str() == "--add-dir").count(),
+            "dangerouslyBypassesApprovalsAndSandbox": spec.args.iter().any(|argument| argument == "--dangerously-bypass-approvals-and-sandbox"),
+            "dangerouslyBypassesHookTrust": spec.args.iter().any(|argument| argument == "--dangerously-bypass-hook-trust"),
+            "liveWebSearchEnabled": spec.args.iter().any(|argument| argument == "--search"),
+        });
+        deliver_update(
+            &sink,
+            invocation_id,
+            RuntimeUpdate::Event(RuntimeEventDraft {
+                source: AgentRuntimeEventSource::Runtime,
+                raw_payload: json!({
+                    "kind": "codex_launch_provenance",
+                    "invocationMode": invocation_mode,
+                    "executable": PathBuf::from(&spec.program).file_name().and_then(|name| name.to_str()).unwrap_or("codex"),
+                    "sandbox": sandbox,
+                    "sandboxAuthorityEvidence": if sandbox == Some("workspace-write") {
+                        "unverified_until_application_candidate_evidence"
+                    } else {
+                        "configuration_only"
+                    },
+                    "configurationKeys": configuration_keys,
+                    "environmentKeys": spec.environment.iter().map(|(key, _)| key).collect::<Vec<_>>(),
+                    "inheritsParentEnvironment": true,
+                    "parentCodeHomePresent": std::env::var_os("CODEX_HOME").is_some(),
+                    "launchRestrictions": launch_restrictions,
+                    "workingDirectory": working_directory,
+                }),
+                normalized: None,
+            }),
+        );
+    }
+}
+
+/// Launch provenance intentionally keeps configuration names but never an isolated-worktree
+/// path.  The provider still receives the exact launch-only key; persistence records only the
+/// bounded purpose of that key.
+pub(super) fn sanitized_configuration_key(key: &str) -> String {
+    if key.starts_with("projects.") && key.ends_with(".trust_level") {
+        "projects.<application-bound-workspace>.trust_level".into()
+    } else {
+        key.into()
     }
 }
 

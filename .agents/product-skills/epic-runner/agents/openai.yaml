@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Epic Runner"
+  short_description: "Manage a product Epic across Sprints"
+  default_prompt: "Use $epic-runner to advance this Epic through its next Sprint-level transition."

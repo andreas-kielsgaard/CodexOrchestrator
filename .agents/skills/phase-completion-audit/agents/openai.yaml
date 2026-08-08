@@ -1,4 +1,0 @@
-interface:
-  display_name: "Phase Completion Audit"
-  short_description: "Audit whether an orchestration phase is complete."
-  default_prompt: "Use $phase-completion-audit to audit whether a phase is complete."

@@ -238,6 +238,36 @@ impl AgentInvocation {
         validate_invocation(&next)?;
         Ok(next)
     }
+
+    /// A restart may prove that no in-process runtime owner survived, while the durable launch
+    /// acceptance marker is still absent. Only that classified interruption can return to the
+    /// pre-launch state for an application-owned recovery of this exact invocation.
+    pub(crate) fn recover_pre_acceptance_interruption(
+        &self,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Self, ContractViolation> {
+        let recoverable = self.status == AgentInvocationStatus::Interrupted
+            && self.runtime_error.as_ref().is_some_and(|error| {
+                error.code == "runtime_startup_without_launch_acceptance"
+            });
+        if !recoverable {
+            return Err(ContractViolation::InvalidInvocationTransition {
+                from: self.status,
+                to: AgentInvocationStatus::Pending,
+            });
+        }
+        let mut next = self.clone();
+        next.status = AgentInvocationStatus::Pending;
+        next.effective_options = None;
+        next.started_at = None;
+        next.completed_at = None;
+        next.exit_code = None;
+        next.signal = None;
+        next.runtime_error = None;
+        next.updated_at = updated_at;
+        validate_invocation(&next)?;
+        Ok(next)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -262,6 +292,35 @@ pub(crate) enum NormalizedRuntimeEventKind {
     Unknown,
 }
 
+/// Provider-neutral semantic detail for a tool item. The enclosing runtime event retains the
+/// provider payload for audit; consumers use these fields without parsing it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolActivityPhase {
+    Started,
+    Completed,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolResultClassification {
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NormalizedToolActivity {
+    pub(crate) phase: ToolActivityPhase,
+    pub(crate) item_id: Option<String>,
+    pub(crate) server: Option<String>,
+    pub(crate) tool: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) result_classification: ToolResultClassification,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentRuntimeUsage {
@@ -278,6 +337,10 @@ pub(crate) struct NormalizedRuntimeEvent {
     pub(crate) external_context_id: Option<ExternalRuntimeContextId>,
     pub(crate) usage: Option<AgentRuntimeUsage>,
     pub(crate) details: Option<Value>,
+    /// Older durable event records predate this field. Missing data remains absent rather than
+    /// being reconstructed from raw provider payloads.
+    #[serde(default)]
+    pub(crate) tool_activity: Option<NormalizedToolActivity>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

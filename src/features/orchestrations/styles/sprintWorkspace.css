@@ -4,6 +4,62 @@
   min-width: 0;
 }
 
+.sprint-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sprint-file-review-control {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  max-width: 250px;
+}
+
+.sprint-file-review-control button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid #9cabb3;
+  border-radius: 7px;
+  background: #fff;
+  color: #344854;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sprint-file-review-control button:hover:not(:disabled) {
+  border-color: #6f8c9b;
+  background: #f3f7f8;
+}
+
+.sprint-file-review-control button:focus-visible {
+  outline: 3px solid #cf7b32;
+  outline-offset: 2px;
+}
+
+.sprint-file-review-control button:disabled {
+  cursor: progress;
+  opacity: 0.68;
+}
+
+.sprint-file-review-control small {
+  overflow: hidden;
+  color: #657680;
+  font-size: 0.64rem;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sprint-file-review-control small[role='alert'] {
+  color: #9b3f34;
+}
+
 .sprint-context > p {
   color: #42545f;
   font-size: 0.84rem;
@@ -234,6 +290,16 @@
 
   .sprint-auto-flow {
     padding-left: 7px;
+  }
+
+  .sprint-header-controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 7px;
+  }
+
+  .sprint-file-review-control {
+    max-width: min(46vw, 190px);
   }
 
   .sprint-auto-flow__switch > span {

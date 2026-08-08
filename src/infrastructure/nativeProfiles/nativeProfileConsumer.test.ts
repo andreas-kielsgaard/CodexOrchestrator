@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest';
+import { createNativeProfileApplicationConsumer, resolveNativeProfileApplicationConsumer } from './nativeProfileConsumer';
+import type { NativeProfileQuery } from './nativeProfileClient';
+
+const query: NativeProfileQuery = {
+  contract: 'native-codex-profile-query/v1',
+  profiles: [{
+    id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
+    execution: { selectedMode: 'workspace_write', dangerFullAccessAuthorized: false, dangerAuthorization: { disposition: 'not_authorized', authorityScope: null, authorityVersion: null, correlationId: null, authorizedAt: null, revokedAt: null } },
+    loginAttempt: { disposition: 'not_requested', browserHandoff: 'unobserved', requestedAt: null, launchAcceptedAt: null, settledAt: null },
+    setupAttempt: { phase: 'not_requested', disposition: 'not_requested', executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed', terminalExitCode: null },
+    sandboxAdoption: { disposition: 'not_verified', executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null },
+    sandboxAdoptionConfirmation: { disposition: 'not_confirmed', correlationId: null, confirmedAt: null },
+    fullAccessCanaryAttempt: { disposition: 'not_requested', authorizationVersion: null, authorizationCorrelationId: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, processActivity: 'unobserved', providerActivity: 'unobserved', terminalClassification: 'not_observed', terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'not_observed' },
+    readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
+  }],
+};
+
+describe('native profile application consumer', () => {
+  it('projects only the validated home and separate readiness facts', () => {
+    expect(resolveNativeProfileApplicationConsumer(query, 'p1')).toEqual({
+      profileId: 'p1', codexHome: 'C:/codex', readiness: query.profiles[0].readiness,
+    });
+  });
+
+  it('rejects an id that is not the current selected profile', () => {
+    expect(() => resolveNativeProfileApplicationConsumer(query, 'other')).toThrow(/not present/);
+    expect(() => resolveNativeProfileApplicationConsumer({ ...query, profiles: [{ ...query.profiles[0], selected: false }] }, 'p1')).toThrow(/currently validated/);
+  });
+
+  it('loads current durable state before resolving the application boundary', async () => {
+    const load = async () => query;
+    await expect(createNativeProfileApplicationConsumer({ load }).resolve('p1')).resolves.toMatchObject({ codexHome: 'C:/codex' });
+  });
+});
