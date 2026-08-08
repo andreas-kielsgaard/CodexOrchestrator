@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A lightweight, layered atlas of the Codex Orchestration Engine research snapshot."
+    />
+    <title>Codex Orchestration Engine — Insight Atlas</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-view="product">
+    <div class="ambient ambient-left" aria-hidden="true"></div>
+    <div class="ambient ambient-right" aria-hidden="true"></div>
+
+    <header class="atlas-header">
+      <div class="brand-row">
+        <a class="brand" href="../../README.md">
+          <span class="brand-mark">CO</span>
+          <strong>Codex Orchestration Atlas</strong>
+        </a>
+        <div class="evidence-boundary">
+          <code title="Stable research snapshot 9240364">Evidence · 9240364</code>
+          <button id="about-atlas" type="button">How to read this</button>
+        </div>
+      </div>
+
+      <div class="perspective-row">
+        <div>
+          <h1 id="view-title"></h1>
+        </div>
+        <nav class="perspective-switcher" aria-label="Atlas perspective">
+          <button data-view="product" aria-pressed="true">Product</button>
+          <button data-view="architecture" aria-pressed="false">Architecture</button>
+          <button data-view="implementation" aria-pressed="false">Implementation</button>
+          <button data-view="experience" aria-pressed="false">Experience</button>
+        </nav>
+      </div>
+    </header>
+
+    <main class="atlas-main">
+      <section class="canvas-shell" aria-labelledby="canvas-heading">
+        <div class="canvas-heading">
+          <h2 id="canvas-heading"></h2>
+        </div>
+        <div id="atlas-canvas" class="atlas-canvas" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <dialog id="concept-dialog" class="concept-dialog" aria-labelledby="detail-title">
+      <div class="dialog-frame">
+        <header class="dialog-header">
+          <div>
+            <div class="detail-meta">
+              <span id="detail-status" class="detail-status"></span>
+              <span id="detail-perspective"></span>
+            </div>
+            <h2 id="detail-title"></h2>
+          </div>
+          <button id="close-detail" class="close-detail" type="button" aria-label="Close detail">×</button>
+        </header>
+        <div class="dialog-content">
+          <section class="insight-layer" aria-labelledby="insight-title">
+            <h3 id="insight-title">Interpretation</h3>
+            <p id="detail-insight"></p>
+          </section>
+          <section class="relationship-layer" aria-labelledby="relationship-title">
+            <h3 id="relationship-title">Relationships</h3>
+            <div id="relationship-list" class="relationship-list"></div>
+          </section>
+          <details class="evidence-layer">
+            <summary>
+              <span>Exact evidence</span>
+            </summary>
+            <div class="evidence-content">
+              <div>
+                <h3>Principal artifacts</h3>
+                <ul id="artifact-list"></ul>
+              </div>
+              <div>
+                <h3>Research paths</h3>
+                <ul id="evidence-list"></ul>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="atlas-note" class="atlas-note" aria-labelledby="atlas-note-title">
+      <div>
+        <button id="close-note" class="close-detail" type="button" aria-label="Close explanation">×</button>
+        <h2 id="atlas-note-title">Atlas → concept → evidence</h2>
+        <ol>
+          <li><strong>Atlas:</strong> one purposeful model for the selected question.</li>
+          <li><strong>Concept:</strong> a stronger interpretation and its important relationships.</li>
+          <li><strong>Evidence:</strong> exact artifacts and research paths when verification matters.</li>
+        </ol>
+        <p>Emerging capabilities appear by product meaning. Lower-level provenance stays in the supporting research.</p>
+      </div>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>

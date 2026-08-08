@@ -1,0 +1,23 @@
+# Capability landscape
+
+This is a first-pass orientation to the product created around the Epic workflow. It will be revised as operation traces and historical comparisons deepen the evidence.
+
+| Capability region | Product purpose | Principal implementation areas | Initial status question |
+| --- | --- | --- | --- |
+| Agent Sessions | Durable interaction with Codex agents, transcript preservation, restart, continuation, and cancellation | `src/features/agentSessions/`, `src/application/agentSessions/`, `src/infrastructure/agentSessions/`, `src-tauri/src/agent_sessions/`, `src-tauri/src/runtime/` | Productive core; determine every embedded and managed variant |
+| Epic Plan Builder | Discuss, propose, revise, confirm, and initiate an Epic | `EpicPlanBuilder.tsx`, orchestration frontend contracts/adapters, `orchestration/application.rs`, `orchestration/mcp.rs`, `confirmation.rs` | Productive; map exact user, MCP, and durable authority boundaries |
+| Epic bootstrap | Generate application-prepared materials and start the Epic Runner transition | `bootstrap_transition.rs`, bootstrap query adapters and UI projections | Implemented operational path; separate preparation, semantic completion, launch, and observation |
+| Epic and Sprint control | Select Sprints, start them, reassess, continue, hand back, and settle | `sprint_runner_transition.rs`, native query projection, Epic/Sprint detail views | Broad implementation across divergent lines; reconstruct cumulative product shape |
+| Work Slice planning | Capture the current planning point, proposal, refinement, and semantic completion | Sprint transition MCP, native query, Work Slice planning views | Implemented; verify productive frontend depth and lifecycle coverage |
+| Work Unit execution | Materialize Handler and Implementer work, report outcomes, review, retry, and drain dependencies | execution support, work-unit harness, Sprint transition MCP, Work Unit views | Implemented operational spine; distinguish claims, evidence, review, and settlement |
+| Harnesses | Define and inspect role-specific prompts, skills, runtime settings, MCP tools, and completion policy | `conversation_harness*`, `conversation_harness_catalog.json`, Harness Management frontend | Product configuration and product UI overlap; mutable product authority is unclear |
+| MCP hosting | Give each managed agent a bounded application-owned tool surface | Plan Builder, bootstrap, Sprint transition, and native-profile Rust modules | Productive infrastructure with duplicated hosting and injection mechanics |
+| Native Codex profiles | Select application-owned Codex homes and establish readiness, sandbox, execution mode, canaries, and reporting | `native_profiles.rs`, native-profile frontend client and settings | Productive but branch-local and highly concentrated; final wiring still moving |
+| Orchestration read models | Project durable orchestration state into frontend-safe Epic, Sprint, planning, Work Unit, activity, and evidence models | native query Rust repository/application/transport and TypeScript decoder/composer | Productive, large, and historically layered with compatibility projections |
+| Product navigation | Move among Epics, Sprints, Work Units, Agent Sessions, File Review, decisions, and prior locations | `App.tsx`, product navigation application models, command bar, feature callbacks | Material work exists on sibling lines; cumulative design needs reconstruction |
+| File Review | Present application-authorized Git/file evidence in context | file-review application, infrastructure and UI; Rust Git producer and review services | Stored review is productive; contextual production differs by build mode and branch |
+| Product Decisions | Present, correct, version, and accept durable Epic decisions | Product Decisions sibling branch frontend and Rust modules | Substantial productive sibling-line capability absent from initial baseline |
+| Worktree and human review | Prepare, build, launch, inspect, and control isolated review instances | Rust `worktree_review` and `worktree_runtime`, JS worktree runtime, review frontend and tools | Large debug/operator surface; product ownership and duplication need resolution |
+| Legacy Tasks | Earlier task dashboard, runs, Git, validation, and local runtime stack | Rust `lib.rs`, older frontend domain/application/infrastructure and Task Dashboard | Compiled and command-shaped but fail-closed/quarantined; retention reason needs proof |
+| Development and recorded surfaces | Exercise deterministic scenarios, prototypes, reviews, and historical product hypotheses | `src/dev/`, `offline-review/`, `orchestration-monitoring/`, secondary Vite entries | Valuable evidence mixed with build output and compatibility dependencies |
+
