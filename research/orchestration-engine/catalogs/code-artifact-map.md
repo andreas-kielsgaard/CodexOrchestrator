@@ -69,4 +69,3 @@ Large files are not automatically defects, but they identify boundaries worth un
 - Rust: `bootstrap_transition.rs`, `native_profiles.rs`, `lib.rs`, `orchestration/repository.rs`, and `sprint_runner_transition.rs`.
 - Frontend: `nativeQuery.ts`, `ConversationHarnessInspector.tsx`, `recordedProductReadCompositionInput.ts`, `productReadModelComposer.ts`, `SprintWorkspace.tsx`, and `WorkUnitDetailWorkspace.tsx`.
 - Styling: Harness Management, global `styles.css`, Agent Sessions, orchestration subdetail, and File Review each have large independent style surfaces.
-

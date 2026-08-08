@@ -76,4 +76,3 @@ These are cumulative product and design insights even though the initial operati
 - Can shared layout, Markdown, identity, badge, activity, and evidence components move to neutral ownership without flattening useful feature semantics?
 - Which recorded workflow maps remain valuable design hypotheses after durable native-query projections matured?
 - How should technical readiness and orchestration status coexist without making the product feel like a backend dashboard?
-

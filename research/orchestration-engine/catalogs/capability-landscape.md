@@ -20,4 +20,3 @@ This is a first-pass orientation to the product created around the Epic workflow
 | Worktree and human review | Prepare, build, launch, inspect, and control isolated review instances | Rust `worktree_review` and `worktree_runtime`, JS worktree runtime, review frontend and tools | Large debug/operator surface; product ownership and duplication need resolution |
 | Legacy Tasks | Earlier task dashboard, runs, Git, validation, and local runtime stack | Rust `lib.rs`, older frontend domain/application/infrastructure and Task Dashboard | Compiled and command-shaped but fail-closed/quarantined; retention reason needs proof |
 | Development and recorded surfaces | Exercise deterministic scenarios, prototypes, reviews, and historical product hypotheses | `src/dev/`, `offline-review/`, `orchestration-monitoring/`, secondary Vite entries | Valuable evidence mixed with build output and compatibility dependencies |
-
