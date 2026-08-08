@@ -44,6 +44,14 @@ CREATE TABLE agent_session_invocation_launch_acceptances (
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 
+CREATE TABLE agent_session_invocation_transport_bindings (
+  invocation_id TEXT PRIMARY KEY,
+  transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
+  extension_fingerprint TEXT NOT NULL,
+  bound_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+);
+
 CREATE TABLE agent_session_runtime_events (
   id TEXT PRIMARY KEY,
   invocation_id TEXT NOT NULL,
@@ -73,6 +81,14 @@ pub(crate) const AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS agent_session_invocation_launch_acceptances (
   invocation_id TEXT PRIMARY KEY,
   accepted_at TEXT NOT NULL,
+  FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_session_invocation_transport_bindings (
+  invocation_id TEXT PRIMARY KEY,
+  transport_kind TEXT NOT NULL CHECK (transport_kind IN ('work_unit_implementer_reporting', 'work_unit_handler_review')),
+  extension_fingerprint TEXT NOT NULL,
+  bound_at TEXT NOT NULL,
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 "#;

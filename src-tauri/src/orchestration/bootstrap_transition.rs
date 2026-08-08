@@ -2044,9 +2044,10 @@ mod tests {
             application::{AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders},
             domain::{AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource, AgentRuntimeOptions, AgentSessionId},
             ports::{
-                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
-                RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-                RuntimeEventDraft, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+                AgentRuntime, AgentRuntimeUpdateSink, ApplicationInvocationTransportKind,
+                RuntimeInvocationMode, RuntimeInvocationOutcome, RuntimeInvocationPreflight,
+                RuntimeInvocationRequest, RuntimeEventDraft, RuntimePortError,
+                RuntimePortErrorKind, RuntimeUpdate,
             },
             repository::SqliteAgentSessionRepository,
         },
@@ -2500,6 +2501,106 @@ mod tests {
                 }),
             )
         }
+    }
+
+    fn scoped_mcp_endpoint(injection: &CodexMcpInjection) -> String {
+        injection
+            .configuration_args
+            .iter()
+            .find_map(|argument| {
+                argument
+                    .strip_prefix("mcp_servers.")
+                    .and_then(|value| value.split_once(".url=\"").map(|(_, url)| url))
+                    .map(|url| url.trim_end_matches('"').to_owned())
+            })
+            .expect("scoped MCP endpoint")
+    }
+
+    fn scoped_mcp_json(text: &str) -> serde_json::Value {
+        let json = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(text);
+        serde_json::from_str(json).expect("scoped MCP JSON response")
+    }
+
+    async fn initialize_scoped_mcp(
+        injection: &CodexMcpInjection,
+    ) -> (reqwest::Client, String, String) {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap();
+        let endpoint = scoped_mcp_endpoint(injection);
+        let bearer = injection.environment.1.clone();
+        let initialize = serde_json::json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize",
+            "params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"typed-transport-test","version":"1"}}
+        })
+        .to_string();
+        assert_eq!(
+            client
+                .post(&endpoint)
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .header("authorization", "Bearer wrong")
+                .body(initialize.clone())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        let initialized = client
+            .post(&endpoint)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {bearer}"))
+            .body(initialize)
+            .send()
+            .await
+            .unwrap();
+        let session = initialized
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        client
+            .post(&endpoint)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {bearer}"))
+            .header("mcp-session-id", &session)
+            .body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string())
+            .send()
+            .await
+            .unwrap();
+        (client, endpoint, session)
+    }
+
+    async fn scoped_mcp_request(
+        client: &reqwest::Client,
+        endpoint: &str,
+        session: &str,
+        bearer: &str,
+        id: u64,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = client
+            .post(endpoint)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {bearer}"))
+            .header("mcp-session-id", session)
+            .body(serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string())
+            .send()
+            .await
+            .unwrap();
+        scoped_mcp_json(&response.text().await.unwrap())
     }
 
     struct SynchronousProvenanceRuntime {
@@ -6761,7 +6862,7 @@ mod tests {
             implementer_invocation_hash.finalize()
         );
         fixture.runtime.stage_candidate_change(&expected_implementer_invocation);
-        let injection = handler_runner.prepared_handler_action_injection(&recovery_invocation).unwrap();
+        let injection = handler_runner.prepared_action_injection_for_test(&recovery_invocation).unwrap();
         let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
         let bearer = injection.environment.1.clone();
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
@@ -7084,12 +7185,12 @@ mod tests {
         // Reopen drains only that persisted request, does not recreate the terminal action MCP
         // server, and does not make the public action callable from a terminal invocation.
         fixture.runtime.finish(&recovery_invocation, AgentInvocationTerminalStatus::Completed);
-        assert!(handler_runner.prepared_handler_action_injection(&recovery_invocation).is_none());
+        assert!(handler_runner.prepared_action_injection_for_test(&recovery_invocation).is_none());
         let terminal_action_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
             &fixture.database_path, fixture.sessions.clone(),
         ).unwrap();
         terminal_action_reopen.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert!(terminal_action_reopen.prepared_handler_action_injection(&recovery_invocation).is_none());
+        assert!(terminal_action_reopen.prepared_action_injection_for_test(&recovery_invocation).is_none());
         assert!(matches!(
             terminal_action_reopen.request_work_unit_implementer_from_authenticated_continuation(&continuation.3),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
@@ -8173,12 +8274,12 @@ mod tests {
                 original_handler_invocation_id,action_handler_invocation_id,
                 review_invocation_id,review_harness_revision_id,
                 review_harness_configuration_digest,review_harness_repository_commit_ref,
-                delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,
+                delivery_requested_at,delivery_persisted_at,harness_bound_at,action_exposed_at,launch_requested_at,
                 launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,
                 semantic_judgment_variant,semantic_judgment_fingerprint,semantic_judgment_at,
                 lifecycle_observed_at,lifecycle_status)
              VALUES(?1,?2,?3,?4,?5,?6,?7,'terminal-review-revision',
-                    'terminal-review-digest','terminal-review-commit',?8,?8,?8,?8,?8,?8,?9,?10,'accept',?11,?8,?8,'completed')",
+                    'terminal-review-digest','terminal-review-commit',?8,?8,?8,?8,?8,?8,?8,?9,?10,'accept',?11,?8,?8,'completed')",
             params![work_unit_id, attempt_id, reporting, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), format!("terminal-handler-action-{suffix}"), review, now, review_payload, delivery_fingerprint, format!("terminal-review-judgment-{suffix}")],
         ).unwrap();
         connection.execute(
@@ -8241,7 +8342,7 @@ mod tests {
                (work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
                 reporting_invocation_id,reporting_harness_revision_id,
                 reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
-                reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,
+                reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_action_exposed_at,
                 reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,
                 submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,
                 submission_fingerprint,submitted_at,validation_at,validation_result,
@@ -8250,7 +8351,7 @@ mod tests {
                 evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,
                 lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at)
              VALUES(?1,?2,0,?3,?4,?5,'terminal-reporting-revision','terminal-reporting-digest',
-                    'terminal-reporting-commit',?6,?6,?6,?6,?6,?6,?7,'review_pending',?8,?9,?10,?6,?6,'valid',?11,?12,?13,?14,?6,?6,?5,?6,'completed',?6,?6)",
+                    'terminal-reporting-commit',?6,?6,?6,?6,?6,?6,?6,?7,'review_pending',?8,?9,?10,?6,?6,'valid',?11,?12,?13,?14,?6,?6,?5,?6,'completed',?6,?6)",
             params![work_unit_id, attempt_id, format!("terminal-implementer-session-{suffix}"), format!("terminal-implementer-invocation-{suffix}"), reporting, now, format!("Accepted terminal candidate {ordinal}."), "Local Git candidate captured.", outcome_payload, outcome_fingerprint, manifest, comparison, contents, capture],
         ).unwrap();
         connection.execute_batch("PRAGMA foreign_keys=ON").unwrap();
@@ -8694,9 +8795,21 @@ mod tests {
                 Some(original_runtime.extension),
             ).unwrap();
             base.runtime.finish(&implementer_invocation_id, AgentInvocationTerminalStatus::Completed);
-            let reporting_runtime = reporting_package.runtime_launch_configuration();
-            let reporting_launch = base.sessions.send_idempotent_application_message_with_launch_observation(
-                SendIdempotentApplicationAgentSessionMessageCommand {
+            let mut reporting_runtime = reporting_package.runtime_launch_configuration();
+            let reporting_injection = transition
+                .prepare_implementer_reporting_action_for_test(
+                    AgentInvocationId::new(reporting_invocation_id.clone()).unwrap(),
+                )
+                .unwrap();
+            reporting_runtime
+                .extension
+                .additional_args
+                .extend(reporting_injection.configuration_args);
+            reporting_runtime
+                .extension
+                .environment
+                .push(reporting_injection.environment);
+            let reporting_command = SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new(reporting_invocation_id.clone()).unwrap(),
                     message: SendAgentSessionMessageCommand {
                         session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
@@ -8705,9 +8818,19 @@ mod tests {
                         working_directory: Some(working_directory.to_string_lossy().into_owned()),
                         requested_options: Some(reporting_runtime.requested_options),
                     },
-                },
-                Some(reporting_runtime.extension),
-            ).unwrap();
+                };
+            base.sessions
+                .prepare_idempotent_application_invocation(reporting_command.clone())
+                .unwrap();
+            let reporting_launch = base
+                .sessions
+                .launch_prepared_application_invocation_with_transport(
+                    reporting_command,
+                    ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+                    reporting_runtime.extension,
+                    || Ok(()),
+                )
+                .unwrap();
             assert!(reporting_launch.launch_accepted);
 
             let now = "2026-08-04T00:00:00Z";
@@ -8741,8 +8864,9 @@ mod tests {
                     reporting_invocation_id,reporting_harness_revision_id,
                     reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,
                     reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,
-                    reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at
-                 ) VALUES (?1,?2,0,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9)",
+                    reporting_launch_requested_at,reporting_action_exposed_at,
+                    reporting_launch_accepted_at,reporting_ready_at
+                 ) VALUES (?1,?2,0,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9,?9)",
                 params![
                     work_unit_id,
                     attempt_id,
@@ -8968,6 +9092,14 @@ mod tests {
                 [&self.reporting_invocation_id],
             ).unwrap();
             connection.execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                [&self.reporting_invocation_id],
+            ).unwrap();
+            connection.execute(
+                "DELETE FROM agent_session_invocation_transport_bindings WHERE invocation_id=?1",
+                [&self.reporting_invocation_id],
+            ).unwrap();
+            connection.execute(
                 "DELETE FROM agent_session_invocations WHERE id=?1",
                 [&self.reporting_invocation_id],
             ).unwrap();
@@ -9026,6 +9158,16 @@ mod tests {
         fresh.transition.prepare_later_attempt_reporting_for_test().unwrap();
         assert!(fresh.candidate_failure().is_none());
         assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
+        let fresh_transport: (Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fresh.base.database_path).unwrap().query_row("SELECT reporting_action_exposed_at,reporting_launch_accepted_at,reporting_ready_at,failure_reason FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+        assert!(fresh_transport.0.is_some() && fresh_transport.1.is_some() && fresh_transport.2.is_some() && fresh_transport.3.is_none(), "unexpected reporting transport state: {fresh_transport:?}");
+        assert_eq!(
+            fresh.base.sessions.application_invocation_transport_launch_evidence(
+                &fresh.invocation(),
+                &AgentSessionId::new(fresh.session_id.clone()).unwrap(),
+                ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+            ).unwrap(),
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport,
+        );
         fresh.assert_pinned_evidence_available();
         let fresh_launches = fresh.base.runtime.requests().len();
         fresh.reopened().prepare_later_attempt_reporting_for_test().unwrap();
@@ -9066,6 +9208,168 @@ mod tests {
         let facts = fixture.facts();
         assert_eq!(facts.lifecycle_status.as_deref(), Some("completed"));
         assert!(facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none());
+    }
+
+    #[test]
+    fn real_mcp_consumers_observe_only_the_exact_reporting_and_review_tools() {
+        let reporting = ReportingFixture::new();
+        reporting.write_evidence("real MCP reporting evidence\n");
+        let reporting_injection = reporting
+            .transition
+            .prepared_action_injection_for_test(&reporting.reporting_invocation_id)
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let bearer = reporting_injection.environment.1.clone();
+                let (client, endpoint, session) =
+                    initialize_scoped_mcp(&reporting_injection).await;
+                let listed = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    2,
+                    "tools/list",
+                    serde_json::json!({}),
+                )
+                .await;
+                let mut names = listed["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|tool| tool["name"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                names.sort_unstable();
+                assert_eq!(
+                    names,
+                    ["complete_implementation_outcome", "submit_implementation_outcome"]
+                );
+                let malformed = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    3,
+                    "tools/call",
+                    serde_json::json!({"name":"submit_implementation_outcome","arguments":{"outcome":"review_pending","summary":"claim","validationStatement":"claim","attemptId":"foreign"}}),
+                )
+                .await;
+                assert!(malformed.get("error").is_some() || malformed["result"]["isError"] == true);
+                let submitted = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    4,
+                    "tools/call",
+                    serde_json::json!({"name":"submit_implementation_outcome","arguments":{"outcome":"review_pending","summary":"Implemented through the exact reporting tool.","validationStatement":"Deterministic reporting MCP proof passed."}}),
+                )
+                .await;
+                assert_eq!(submitted["result"]["isError"], false);
+                let completed = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    5,
+                    "tools/call",
+                    serde_json::json!({"name":"complete_implementation_outcome","arguments":{}}),
+                )
+                .await;
+                assert_eq!(completed["result"]["isError"], false);
+            });
+        let reporting_facts = reporting.facts();
+        assert!(reporting_facts.submitted_at.is_some());
+        assert!(reporting_facts.semantic_completed_at.is_some());
+
+        let review = ReportingFixture::new();
+        let review_invocation = review.ready_review();
+        let review_injection = review
+            .transition
+            .prepared_action_injection_for_test(&review_invocation)
+            .unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let bearer = review_injection.environment.1.clone();
+                let (client, endpoint, session) = initialize_scoped_mcp(&review_injection).await;
+                let listed = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    2,
+                    "tools/list",
+                    serde_json::json!({}),
+                )
+                .await;
+                let mut names = listed["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|tool| tool["name"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                names.sort_unstable();
+                assert_eq!(
+                    names,
+                    [
+                        "accept_implementation_outcome",
+                        "read_handler_review_evidence",
+                        "return_implementation_outcome",
+                    ]
+                );
+                let malformed = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    3,
+                    "tools/call",
+                    serde_json::json!({"name":"read_handler_review_evidence","arguments":{"reviewInvocationId":"foreign"}}),
+                )
+                .await;
+                assert!(malformed.get("error").is_some() || malformed["result"]["isError"] == true);
+                let evidence = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    4,
+                    "tools/call",
+                    serde_json::json!({"name":"read_handler_review_evidence","arguments":{}}),
+                )
+                .await;
+                assert_eq!(evidence["result"]["isError"], false);
+                let accepted = scoped_mcp_request(
+                    &client,
+                    &endpoint,
+                    &session,
+                    &bearer,
+                    5,
+                    "tools/call",
+                    serde_json::json!({"name":"accept_implementation_outcome","arguments":{}}),
+                )
+                .await;
+                assert_eq!(accepted["result"]["isError"], false);
+            });
+        assert_eq!(
+            Connection::open(&review.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT semantic_judgment_variant FROM work_unit_handler_reviews WHERE review_invocation_id=?1",
+                    [&review_invocation],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "accept"
+        );
     }
 
     #[test]
@@ -10010,16 +10314,90 @@ mod tests {
     }
 
     #[test]
+    fn accepted_continuations_without_exposure_reopen_as_durable_attention_without_relaunch() {
+        let reporting = ReportingFixture::new();
+        let reporting_launches = reporting.base.runtime.requests().len();
+        Connection::open(&reporting.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_implementer_outcomes
+                 SET reporting_ready_at=NULL,reporting_action_exposed_at=NULL
+                 WHERE work_unit_id=?1",
+                [&reporting.work_unit_id],
+            )
+            .unwrap();
+        let reopened_reporting = reporting.reopened();
+        reopened_reporting.reconcile_reporting_for_test().unwrap();
+        let reporting_attention: (Option<String>, Option<String>, Option<String>) =
+            Connection::open(&reporting.base.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT reporting_launch_accepted_at,reporting_ready_at,failure_reason
+                     FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+                    [&reporting.work_unit_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+        assert!(reporting_attention.0.is_some());
+        assert!(reporting_attention.1.is_none());
+        assert_eq!(
+            reporting_attention.2.as_deref(),
+            Some("implementer_reporting_accepted_without_action_exposure")
+        );
+        assert_eq!(reporting.base.runtime.requests().len(), reporting_launches);
+
+        let review = ReportingFixture::new();
+        let review_invocation = review.ready_review();
+        let review_launches = review.base.runtime.requests().len();
+        Connection::open(&review.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_handler_reviews
+                 SET review_ready_at=NULL,action_exposed_at=NULL
+                 WHERE review_invocation_id=?1",
+                [&review_invocation],
+            )
+            .unwrap();
+        let reopened_review = review.reopened();
+        reopened_review.reconcile_handler_reviews_for_test().unwrap();
+        let review_attention: (Option<String>, Option<String>, Option<String>) =
+            Connection::open(&review.base.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT launch_accepted_at,review_ready_at,conflict_reason
+                     FROM work_unit_handler_reviews WHERE review_invocation_id=?1",
+                    [&review_invocation],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+        assert!(review_attention.0.is_some());
+        assert!(review_attention.1.is_none());
+        assert_eq!(
+            review_attention.2.as_deref(),
+            Some("handler_review_accepted_without_action_exposure")
+        );
+        assert_eq!(review.base.runtime.requests().len(), review_launches);
+    }
+
+    #[test]
     fn handler_review_uses_one_exact_read_only_boundary_and_finalizes_only_completed_judgments() {
         let accepted = ReportingFixture::new();
         let review = accepted.ready_review();
-        let review_facts:(String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&accepted.base.database_path).unwrap().query_row(
-            "SELECT handler_session_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),
+        let review_facts:(String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&accepted.base.database_path).unwrap().query_row(
+            "SELECT handler_session_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_persisted_at,harness_bound_at,launch_requested_at,action_exposed_at,launch_accepted_at,review_ready_at FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?)),
         ).unwrap();
         assert_eq!(review_facts.0, accepted.handler_session_id);
         assert_eq!(review_facts.1, review);
-        assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some());
+        assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some() && review_facts.10.is_some());
+        assert_eq!(
+            accepted.base.sessions.application_invocation_transport_launch_evidence(
+                &AgentInvocationId::new(review.clone()).unwrap(),
+                &AgentSessionId::new(accepted.handler_session_id.clone()).unwrap(),
+                ApplicationInvocationTransportKind::WorkUnitHandlerReview,
+            ).unwrap(),
+            crate::agent_sessions::application::ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport,
+        );
         let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
         assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
         assert!(pinned.profile.runtime_configuration_args().iter().any(|value| value == "approval_policy=\"never\""));

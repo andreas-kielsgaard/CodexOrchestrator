@@ -72,9 +72,7 @@ describe('orchestration native query v1', () => {
         },
       },
     ];
-    expect(() => decodeOrchestrationNativeQueryV2(malformed)).toThrow(
-      'contains unresolved facts',
-    );
+    expect(() => decodeOrchestrationNativeQueryV2(malformed)).toThrow('contains unresolved facts');
 
     const foreign = structuredClone(base) as Record<string, unknown>;
     foreign.epicSettlementStates = [
@@ -1180,16 +1178,22 @@ describe('orchestration native query v1', () => {
       providerActivityObserved: false,
     });
 
-    const blankHandlerFailure = JSON.parse(JSON.stringify(failedHandler)) as Record<string, unknown>;
-    ((blankHandlerFailure.workUnits as Array<Record<string, unknown>>)[0]!
-      .handlerActivation as Record<string, unknown>).failureReason = ' ';
+    const blankHandlerFailure = JSON.parse(JSON.stringify(failedHandler)) as Record<
+      string,
+      unknown
+    >;
+    (
+      (blankHandlerFailure.workUnits as Array<Record<string, unknown>>)[0]!
+        .handlerActivation as Record<string, unknown>
+    ).failureReason = ' ';
     expect(() => decodeOrchestrationNativeQueryV2(blankHandlerFailure)).toThrow(
       'Handler activation failureReason must be non-blank',
     );
 
     const readyFailedHandler = JSON.parse(JSON.stringify(failedHandler)) as Record<string, unknown>;
-    const readyFailedHandlerActivation = (readyFailedHandler.workUnits as Array<Record<string, unknown>>)[0]!
-      .handlerActivation as Record<string, unknown>;
+    const readyFailedHandlerActivation = (
+      readyFailedHandler.workUnits as Array<Record<string, unknown>>
+    )[0]!.handlerActivation as Record<string, unknown>;
     readyFailedHandlerActivation.executionSupportGrantedAt = '2026-08-02T00:01:03Z';
     readyFailedHandlerActivation.isolatedWorktreeReadyAt = '2026-08-02T00:01:04Z';
     readyFailedHandlerActivation.handlerSessionCreatedAt = '2026-08-02T00:01:05Z';
@@ -2769,6 +2773,7 @@ function implementerOutcomeFixture(
   Object.assign(outcome, {
     reportingHarnessBoundAt: '2026-08-04T00:00:02Z',
     reportingLaunchRequestedAt: '2026-08-04T00:00:03Z',
+    reportingActionExposedAt: '2026-08-04T00:00:03.500Z',
     reportingLaunchAcceptedAt: '2026-08-04T00:00:04Z',
     reportingReadyAt: '2026-08-04T00:00:05Z',
   });
@@ -2830,6 +2835,7 @@ function handlerReviewFixture(
     deliveryPersistedAt: '2026-08-04T00:00:12Z',
     harnessBoundAt: '2026-08-04T00:00:13Z',
     launchRequestedAt: '2026-08-04T00:00:14Z',
+    actionExposedAt: '2026-08-04T00:00:14.500Z',
     launchAcceptedAt: '2026-08-04T00:00:15Z',
     reviewReadyAt: '2026-08-04T00:00:16Z',
     delivered: {

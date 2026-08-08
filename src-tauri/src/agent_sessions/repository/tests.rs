@@ -6,7 +6,11 @@ use crate::agent_sessions::domain::{
     NormalizedRuntimeEventKind,
 };
 use serde_json::json;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Barrier},
+};
 use uuid::Uuid;
 
 #[test]
@@ -227,6 +231,124 @@ fn enforces_one_active_invocation_and_rolls_back_rejected_create() {
             .len(),
         1
     );
+}
+
+#[test]
+fn concurrent_typed_and_generic_launch_claims_converge_on_the_bound_transport() {
+    let repository = Arc::new(memory_repository());
+    let session = repository
+        .create_session(test_session("session", at(0)))
+        .expect("create session");
+    let mut pending = test_invocation("application-invocation", &session.id, at(1));
+    pending.input_provenance = AgentInvocationInputProvenance::Application;
+    let invocation = repository
+        .create_pending_invocation(pending)
+        .expect("create application invocation");
+    let binding = ApplicationInvocationTransportBinding {
+        kind: ApplicationInvocationTransportKind::WorkUnitHandlerReview,
+        extension_fingerprint: "exact-extension-fingerprint".into(),
+        bound_at: at(2),
+    };
+    repository
+        .bind_application_invocation_transport(&invocation.id, binding.clone())
+        .expect("bind exact transport");
+
+    let barrier = Arc::new(Barrier::new(3));
+    let typed_repository = repository.clone();
+    let typed_invocation = invocation.id.clone();
+    let typed_binding = binding.clone();
+    let typed_barrier = barrier.clone();
+    let typed = std::thread::spawn(move || {
+        typed_barrier.wait();
+        typed_repository.mark_invocation_running_with_transport(
+            &typed_invocation,
+            &typed_binding,
+            at(3),
+            options(),
+            at(3),
+        )
+    });
+    let generic_repository = repository.clone();
+    let generic_invocation = invocation.id.clone();
+    let generic_barrier = barrier.clone();
+    let generic = std::thread::spawn(move || {
+        generic_barrier.wait();
+        generic_repository.mark_invocation_running(
+            &generic_invocation,
+            at(3),
+            options(),
+            at(3),
+        )
+    });
+    barrier.wait();
+
+    typed
+        .join()
+        .expect("typed caller thread")
+        .expect("typed caller wins contract");
+    let generic_error = generic
+        .join()
+        .expect("generic caller thread")
+        .expect_err("generic caller fails closed");
+    assert_eq!(generic_error.kind, RepositoryErrorKind::Conflict);
+    assert_eq!(
+        repository
+            .application_invocation_transport_binding(&invocation.id)
+            .expect("read exact binding"),
+        Some(binding)
+    );
+}
+
+#[test]
+fn accepted_typed_transport_binding_survives_close_and_reopen() {
+    let path = temporary_database_path();
+    let connection = initialized_file_database(&path);
+    let repository = SqliteAgentSessionRepository::new(connection).expect("construct repository");
+    let session = repository
+        .create_session(test_session("session", at(0)))
+        .expect("create session");
+    let mut pending = test_invocation("application-invocation", &session.id, at(1));
+    pending.input_provenance = AgentInvocationInputProvenance::Application;
+    let invocation = repository
+        .create_pending_invocation(pending)
+        .expect("create application invocation");
+    let binding = ApplicationInvocationTransportBinding {
+        kind: ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+        extension_fingerprint: "persisted-extension-fingerprint".into(),
+        bound_at: at(2),
+    };
+    repository
+        .bind_application_invocation_transport(&invocation.id, binding.clone())
+        .expect("bind exact transport");
+    repository
+        .mark_invocation_running_with_transport(
+            &invocation.id,
+            &binding,
+            at(3),
+            options(),
+            at(3),
+        )
+        .expect("start exact transport");
+    repository
+        .record_invocation_launch_accepted(&invocation.id, at(4))
+        .expect("record exact acceptance");
+    drop(repository);
+
+    let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
+    assert_eq!(
+        reopened
+            .application_invocation_transport_binding(&invocation.id)
+            .expect("read reopened binding"),
+        Some(binding)
+    );
+    assert_eq!(
+        reopened
+            .invocation_launch_accepted_at(&invocation.id)
+            .expect("read reopened acceptance"),
+        Some(at(4))
+    );
+    drop(reopened);
+    fs::remove_file(path).expect("remove test database");
 }
 
 #[test]

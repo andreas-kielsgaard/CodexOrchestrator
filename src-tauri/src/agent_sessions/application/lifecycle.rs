@@ -9,13 +9,15 @@ use crate::agent_sessions::{
     },
     ports::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
-        AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RuntimeInvocationMode,
-        RuntimeInvocationOutcome, RuntimeInvocationRequest, RuntimeLaunchExtension,
-        RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+        AgentSessionSummary, ApplicationInvocationTransportBinding,
+        ApplicationInvocationTransportKind, ListAgentSessionsQuery, RepositoryError,
+        RuntimeInvocationMode, RuntimeInvocationOutcome, RuntimeInvocationRequest,
+        RuntimeLaunchExtension, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
     },
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{error::Error, fmt, sync::Arc};
 use uuid::Uuid;
 
@@ -63,6 +65,14 @@ pub(crate) enum ApplicationInvocationLaunchEvidence {
     NeverPersisted,
     PersistedNotAccepted,
     LaunchAccepted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplicationInvocationTransportLaunchEvidence {
+    NeverPersisted,
+    PersistedNotAccepted,
+    LaunchAcceptedWithoutTransport,
+    LaunchAcceptedWithTransport,
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +281,7 @@ impl AgentSessionApplication {
             AgentInvocationInputProvenance::User,
             None,
             false,
+            None,
         )
         .map(|result| result.acknowledgement)
     }
@@ -286,6 +297,7 @@ impl AgentSessionApplication {
             AgentInvocationInputProvenance::Application,
             Some(command.invocation_id),
             false,
+            None,
         )
     }
 
@@ -319,6 +331,75 @@ impl AgentSessionApplication {
             AgentInvocationInputProvenance::Application,
             Some(command.invocation_id),
             true,
+            None,
+        )
+    }
+
+    /// Claims a typed transport before the provider can move to running. Generic launchers reject
+    /// the claim, and the role callback records exposure before this exact extension is launched.
+    pub(crate) fn launch_prepared_application_invocation_with_transport<F>(
+        &self,
+        command: SendIdempotentApplicationAgentSessionMessageCommand,
+        kind: ApplicationInvocationTransportKind,
+        launch_extension: RuntimeLaunchExtension,
+        record_transport_exposure: F,
+    ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let session_id = command.message.session_id.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid(
+                "typed application transport requires a Session",
+            )
+        })?;
+        let session = self
+            .repository
+            .get_session(session_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
+        if session.working_directory
+            != normalize_optional(command.message.working_directory.clone())
+        {
+            return Err(AgentSessionApplicationError::conflict(
+                "typed application transport working directory does not match its Session",
+            ));
+        }
+        match self.application_invocation_transport_launch_evidence(
+            &command.invocation_id,
+            session_id,
+            kind,
+        )? {
+            ApplicationInvocationTransportLaunchEvidence::NeverPersisted => {
+                return Err(AgentSessionApplicationError::not_found(
+                    "prepared application invocation not found",
+                ));
+            }
+            ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport
+            | ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport => {
+                return Err(AgentSessionApplicationError::conflict(
+                    "launch-accepted invocation cannot bind or retrofit a transport",
+                ));
+            }
+            ApplicationInvocationTransportLaunchEvidence::PersistedNotAccepted => {}
+        }
+        let binding = ApplicationInvocationTransportBinding {
+            kind,
+            extension_fingerprint: runtime_launch_extension_fingerprint(&launch_extension),
+            bound_at: self.clock.now(),
+        };
+        self.repository
+            .bind_application_invocation_transport(&command.invocation_id, binding.clone())
+            .map_err(AgentSessionApplicationError::repository)?;
+        record_transport_exposure().map_err(|message| {
+            AgentSessionApplicationError::new(AgentSessionApplicationErrorKind::Repository, message)
+        })?;
+        self.send_message_with_provenance(
+            command.message,
+            Some(launch_extension),
+            AgentInvocationInputProvenance::Application,
+            Some(command.invocation_id),
+            true,
+            Some(binding),
         )
     }
 
@@ -333,6 +414,7 @@ impl AgentSessionApplication {
             AgentInvocationInputProvenance::User,
             Some(command.invocation_id),
             false,
+            None,
         )
     }
 
@@ -428,6 +510,34 @@ impl AgentSessionApplication {
         )
     }
 
+    pub(crate) fn application_invocation_transport_launch_evidence(
+        &self,
+        invocation_id: &AgentInvocationId,
+        expected_session_id: &AgentSessionId,
+        expected_kind: ApplicationInvocationTransportKind,
+    ) -> Result<ApplicationInvocationTransportLaunchEvidence, AgentSessionApplicationError> {
+        match self.application_invocation_launch_evidence(invocation_id, expected_session_id)? {
+            ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                Ok(ApplicationInvocationTransportLaunchEvidence::NeverPersisted)
+            }
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                Ok(ApplicationInvocationTransportLaunchEvidence::PersistedNotAccepted)
+            }
+            ApplicationInvocationLaunchEvidence::LaunchAccepted => {
+                let exact = self
+                    .repository
+                    .application_invocation_transport_binding(invocation_id)
+                    .map_err(AgentSessionApplicationError::repository)?
+                    .is_some_and(|binding| binding.kind == expected_kind);
+                Ok(if exact {
+                    ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport
+                } else {
+                    ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport
+                })
+            }
+        }
+    }
+
     /// Reopens only the classified restart gap before durable launch acceptance. The caller must
     /// still launch through the prepared-invocation seam with the same identity and semantics.
     pub(crate) fn recover_pre_acceptance_application_invocation(
@@ -519,6 +629,7 @@ impl AgentSessionApplication {
         input_provenance: AgentInvocationInputProvenance,
         requested_invocation_id: Option<AgentInvocationId>,
         launch_existing_prepared: bool,
+        transport_binding: Option<ApplicationInvocationTransportBinding>,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
         if command.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
@@ -667,14 +778,22 @@ impl AgentSessionApplication {
         };
 
         let started_at = self.clock.now();
-        self.repository
-            .mark_invocation_running(
+        match transport_binding.as_ref() {
+            Some(binding) => self.repository.mark_invocation_running_with_transport(
+                &invocation.id,
+                binding,
+                started_at,
+                preflight.effective_options.clone(),
+                started_at,
+            ),
+            None => self.repository.mark_invocation_running(
                 &invocation.id,
                 started_at,
                 preflight.effective_options.clone(),
                 started_at,
-            )
-            .map_err(AgentSessionApplicationError::repository)?;
+            ),
+        }
+        .map_err(AgentSessionApplicationError::repository)?;
 
         let request = RuntimeInvocationRequest {
             session_id: session.id.clone(),
@@ -1148,6 +1267,35 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn runtime_launch_extension_fingerprint(extension: &RuntimeLaunchExtension) -> String {
+    fn hash_field(hash: &mut Sha256, value: &str) {
+        hash.update((value.len() as u64).to_be_bytes());
+        hash.update(value.as_bytes());
+    }
+
+    let mut hash = Sha256::new();
+    hash.update(b"application-invocation-runtime-launch-extension-v1");
+    hash.update((extension.additional_args.len() as u64).to_be_bytes());
+    for argument in &extension.additional_args {
+        hash_field(&mut hash, argument);
+    }
+    hash.update((extension.environment.len() as u64).to_be_bytes());
+    for (key, value) in &extension.environment {
+        hash_field(&mut hash, key);
+        hash_field(&mut hash, value);
+    }
+    match extension.initial_prompt_prefix.as_ref() {
+        Some(prefix) => {
+            hash.update([1]);
+            hash_field(&mut hash, &prefix.source);
+            hash.update(prefix.version.to_be_bytes());
+            hash_field(&mut hash, &prefix.content);
+        }
+        None => hash.update([0]),
+    }
+    format!("{:x}", hash.finalize())
 }
 
 fn title_from_message(message: &str) -> String {

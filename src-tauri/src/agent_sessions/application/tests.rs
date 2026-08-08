@@ -1,6 +1,7 @@
 use super::lifecycle::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
-    AgentSessionNotifier, ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
+    AgentSessionNotifier, ApplicationInvocationLaunchEvidence,
+    ApplicationInvocationTransportLaunchEvidence, CancelAgentInvocationCommand,
     CreateAgentSessionCommand, NativeProfileLaunchAuthority, SendAgentSessionMessageCommand,
     SendIdempotentApplicationAgentSessionMessageCommand,
 };
@@ -15,8 +16,9 @@ use crate::agent_sessions::{
     },
     ports::{
         AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory, AgentSessionRepository,
-        AgentSessionSummary, ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
-        RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
+        AgentSessionSummary, ApplicationInvocationTransportBinding,
+        ApplicationInvocationTransportKind, ListAgentSessionsQuery, RepositoryError,
+        RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
         RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimeLaunchExtension,
         RuntimePortError, RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
@@ -463,6 +465,130 @@ fn prepared_application_invocation_launches_once_without_allocating_a_replacemen
 }
 
 #[test]
+fn typed_transport_claim_blocks_a_generic_launcher_and_launches_the_exact_extension() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut prepared_message = message(&session.id, "Typed prepared application launch");
+    prepared_message.working_directory = session.working_directory.clone();
+    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+        invocation_id: invocation_id.clone(),
+        message: prepared_message,
+    };
+    let extension = RuntimeLaunchExtension {
+        additional_args: vec!["--typed-role".into()],
+        environment: vec![("ROLE_MCP_CONFIG".into(), "exact-config".into())],
+        initial_prompt_prefix: None,
+    };
+    harness
+        .application
+        .prepare_idempotent_application_invocation(command.clone())
+        .expect("prepare exact invocation");
+
+    let launched = harness
+        .application
+        .launch_prepared_application_invocation_with_transport(
+            command.clone(),
+            ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+            extension.clone(),
+            || {
+                let generic = match harness
+                    .application
+                    .launch_prepared_application_invocation_with_launch_observation(
+                        command.clone(),
+                        None,
+                    )
+                {
+                    Ok(_) => panic!("generic launcher cannot cross the typed transport claim"),
+                    Err(error) => error,
+                };
+                assert!(generic
+                    .to_string()
+                    .contains("typed application transport requires its contract-bound launcher"));
+                Ok(())
+            },
+        )
+        .expect("launch through exact typed contract");
+
+    assert!(launched.launch_accepted);
+    assert_eq!(
+        harness
+            .application
+            .application_invocation_transport_launch_evidence(
+                &invocation_id,
+                &session.id,
+                ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+            )
+            .expect("typed evidence"),
+        ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithTransport
+    );
+    assert_eq!(
+        harness
+            .runtime
+            .calls
+            .lock()
+            .expect("runtime calls")
+            .iter()
+            .filter_map(|call| match call {
+                RuntimeCall::Start(request) if request.invocation_id == invocation_id => {
+                    request.launch_extension.clone()
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![extension]
+    );
+}
+
+#[test]
+fn accepted_generic_launch_cannot_retrofit_or_prove_a_typed_transport() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut prepared_message = message(&session.id, "Generic launch wins first");
+    prepared_message.working_directory = session.working_directory.clone();
+    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+        invocation_id: invocation_id.clone(),
+        message: prepared_message,
+    };
+    harness
+        .application
+        .prepare_idempotent_application_invocation(command.clone())
+        .expect("prepare exact invocation");
+    harness
+        .application
+        .launch_prepared_application_invocation_with_launch_observation(command.clone(), None)
+        .expect("generic launch accepted first");
+
+    assert_eq!(
+        harness
+            .application
+            .application_invocation_transport_launch_evidence(
+                &invocation_id,
+                &session.id,
+                ApplicationInvocationTransportKind::WorkUnitHandlerReview,
+            )
+            .expect("unproven typed evidence"),
+        ApplicationInvocationTransportLaunchEvidence::LaunchAcceptedWithoutTransport
+    );
+    let retrofit = match harness
+        .application
+        .launch_prepared_application_invocation_with_transport(
+            command,
+            ApplicationInvocationTransportKind::WorkUnitHandlerReview,
+            RuntimeLaunchExtension::default(),
+            || Ok(()),
+        )
+    {
+        Ok(_) => panic!("accepted provider process cannot be retrofitted"),
+        Err(error) => error,
+    };
+    assert!(retrofit
+        .to_string()
+        .contains("launch-accepted invocation cannot bind or retrofit a transport"));
+}
+
+#[test]
 fn prepared_launch_refuses_to_allocate_a_missing_invocation() {
     let harness = Harness::new(RuntimeBehavior::StayRunning);
     let session = harness.create_session();
@@ -792,6 +918,86 @@ fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocat
             .filter(|call| matches!(call, RuntimeCall::Start(request) if request.invocation_id == invocation_id))
             .count(),
         1
+    );
+}
+
+#[test]
+fn classified_typed_preacceptance_gap_rebinds_the_recreated_exact_extension() {
+    let harness = Harness::new(RuntimeBehavior::StayRunning);
+    let session = harness.create_session();
+    let invocation_id = harness.application.allocate_application_invocation_id();
+    let mut prepared_message = message(&session.id, "Recover typed transport");
+    prepared_message.working_directory = session.working_directory.clone();
+    let command = SendIdempotentApplicationAgentSessionMessageCommand {
+        invocation_id: invocation_id.clone(),
+        message: prepared_message,
+    };
+    harness
+        .application
+        .prepare_idempotent_application_invocation(command.clone())
+        .expect("prepare exact invocation");
+    let bound_at = harness
+        .repository
+        .get_invocation(&invocation_id)
+        .unwrap()
+        .unwrap()
+        .created_at
+        + Duration::milliseconds(1);
+    let stale_binding = ApplicationInvocationTransportBinding {
+        kind: ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+        extension_fingerprint: "stale-preacceptance-extension".into(),
+        bound_at,
+    };
+    harness
+        .repository
+        .bind_application_invocation_transport(&invocation_id, stale_binding.clone())
+        .expect("bind stale preacceptance extension");
+    harness
+        .repository
+        .mark_invocation_running_with_transport(
+            &invocation_id,
+            &stale_binding,
+            stale_binding.bound_at,
+            AgentRuntimeOptions::default(),
+            stale_binding.bound_at,
+        )
+        .expect("persist preacceptance running gap");
+    assert_eq!(harness.application.reconcile_startup().unwrap(), 1);
+    harness
+        .application
+        .recover_pre_acceptance_application_invocation(&invocation_id, &session.id)
+        .expect("recover classified gap");
+
+    let recreated_extension = RuntimeLaunchExtension {
+        additional_args: vec!["--recreated-role-server".into()],
+        environment: vec![("ROLE_MCP_CONFIG".into(), "recreated-config".into())],
+        initial_prompt_prefix: None,
+    };
+    let launched = harness
+        .application
+        .launch_prepared_application_invocation_with_transport(
+            command,
+            ApplicationInvocationTransportKind::WorkUnitImplementerReporting,
+            recreated_extension.clone(),
+            || Ok(()),
+        )
+        .expect("launch recreated exact extension");
+    assert!(launched.launch_accepted);
+    assert_eq!(
+        harness
+            .runtime
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|call| match call {
+                RuntimeCall::Start(request) if request.invocation_id == invocation_id => {
+                    request.launch_extension.clone()
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![recreated_extension]
     );
 }
 
@@ -1507,6 +1713,40 @@ impl AgentSessionRepository for FaultInjectingRepository {
     ) -> Result<AgentInvocation, RepositoryError> {
         self.inner
             .mark_invocation_running(invocation_id, started_at, effective_options, updated_at)
+    }
+
+    fn bind_application_invocation_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: ApplicationInvocationTransportBinding,
+    ) -> Result<(), RepositoryError> {
+        self.inner
+            .bind_application_invocation_transport(invocation_id, binding)
+    }
+
+    fn application_invocation_transport_binding(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<ApplicationInvocationTransportBinding>, RepositoryError> {
+        self.inner
+            .application_invocation_transport_binding(invocation_id)
+    }
+
+    fn mark_invocation_running_with_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: &ApplicationInvocationTransportBinding,
+        started_at: DateTime<Utc>,
+        effective_options: AgentRuntimeOptions,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        self.inner.mark_invocation_running_with_transport(
+            invocation_id,
+            binding,
+            started_at,
+            effective_options,
+            updated_at,
+        )
     }
 
     fn record_invocation_launch_accepted(

@@ -10,10 +10,10 @@ use super::{
     },
     ports::{
         AgentInvocationHistory, AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory,
-        AgentSessionRepository, AgentSessionSummary, ListAgentSessionsQuery, RepositoryError,
-        RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
-        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate,
-        RuntimeUpdateDeliveryFailure,
+        AgentSessionRepository, AgentSessionSummary, ApplicationInvocationTransportBinding,
+        ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind, RuntimeEventDraft,
+        RuntimeInvocationMode, RuntimeInvocationOutcome, RuntimeInvocationPreflight,
+        RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
 };
 use chrono::{DateTime, Utc};
@@ -348,6 +348,7 @@ struct FakeRepositoryState {
     sessions: BTreeMap<AgentSessionId, AgentSession>,
     invocations: BTreeMap<AgentInvocationId, AgentInvocation>,
     launch_acceptances: BTreeMap<AgentInvocationId, DateTime<Utc>>,
+    transport_bindings: BTreeMap<AgentInvocationId, ApplicationInvocationTransportBinding>,
     events: BTreeMap<AgentInvocationId, Vec<AgentRuntimeEvent>>,
 }
 
@@ -599,6 +600,12 @@ impl AgentSessionRepository for FakeRepository {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError> {
         let mut state = self.state.lock().expect("fake repository");
+        if state.transport_bindings.contains_key(invocation_id) {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "typed transport requires contract-bound launch",
+            ));
+        }
         let invocation = state.invocations.get_mut(invocation_id).ok_or_else(|| {
             repository_error(RepositoryErrorKind::NotFound, "invocation not found")
         })?;
@@ -607,6 +614,71 @@ impl AgentSessionRepository for FakeRepository {
             .map_err(|error| {
                 repository_error(RepositoryErrorKind::InvalidState, error.to_string())
             })?;
+        *invocation = updated.clone();
+        Ok(updated)
+    }
+
+    fn bind_application_invocation_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: ApplicationInvocationTransportBinding,
+    ) -> Result<(), RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        if state.launch_acceptances.contains_key(invocation_id) {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "accepted invocation transport is immutable",
+            ));
+        }
+        let invocation = state.invocations.get(invocation_id).ok_or_else(|| {
+            repository_error(RepositoryErrorKind::NotFound, "invocation not found")
+        })?;
+        if invocation.input_provenance != AgentInvocationInputProvenance::Application
+            || invocation.status != AgentInvocationStatus::Pending
+        {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "typed transport requires pending application invocation",
+            ));
+        }
+        state.transport_bindings.insert(invocation_id.clone(), binding);
+        Ok(())
+    }
+
+    fn application_invocation_transport_binding(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<ApplicationInvocationTransportBinding>, RepositoryError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("fake repository")
+            .transport_bindings
+            .get(invocation_id)
+            .cloned())
+    }
+
+    fn mark_invocation_running_with_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: &ApplicationInvocationTransportBinding,
+        started_at: DateTime<Utc>,
+        effective_options: AgentRuntimeOptions,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        if state.transport_bindings.get(invocation_id) != Some(binding) {
+            return Err(repository_error(
+                RepositoryErrorKind::Conflict,
+                "invocation transport changed before launch",
+            ));
+        }
+        let invocation = state.invocations.get_mut(invocation_id).ok_or_else(|| {
+            repository_error(RepositoryErrorKind::NotFound, "invocation not found")
+        })?;
+        let updated = invocation
+            .mark_running(started_at, effective_options, updated_at)
+            .map_err(|error| repository_error(RepositoryErrorKind::InvalidState, error.to_string()))?;
         *invocation = updated.clone();
         Ok(updated)
     }

@@ -20,11 +20,12 @@ use super::{
     },
     ports::{
         AgentInvocationHistory, AgentSessionHistory, AgentSessionRepository, AgentSessionSummary,
+        ApplicationInvocationTransportBinding, ApplicationInvocationTransportKind,
         ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
     },
 };
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::{path::Path, sync::Mutex};
 
 pub(crate) struct SqliteAgentSessionRepository {
@@ -307,6 +308,19 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         let transaction = connection
             .transaction()
             .map_err(sql_unavailable("begin invocation start"))?;
+        let typed_transport_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM agent_session_invocation_transport_bindings WHERE invocation_id=?1)",
+                [invocation_id.as_str()],
+                |row| row.get(0),
+            )
+            .map_err(sql_unavailable("inspect invocation transport binding"))?;
+        if typed_transport_exists {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "typed application transport requires its contract-bound launcher",
+            ));
+        }
         let current = required_invocation(&transaction, invocation_id)?;
         let updated = current
             .mark_running(started_at, effective_options, updated_at)
@@ -316,6 +330,135 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         transaction
             .commit()
             .map_err(sql_unavailable("commit invocation start"))?;
+        Ok(updated)
+    }
+
+    fn bind_application_invocation_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: ApplicationInvocationTransportBinding,
+    ) -> Result<(), RepositoryError> {
+        if binding.extension_fingerprint.trim().is_empty() {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::InvalidState,
+                "typed application transport fingerprint is empty",
+            ));
+        }
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_unavailable("begin invocation transport binding"))?;
+        if invocation_launch_accepted_at_from(&transaction, invocation_id)?.is_some() {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation transport is immutable",
+            ));
+        }
+        let invocation = required_invocation(&transaction, invocation_id)?;
+        if invocation.input_provenance != super::domain::AgentInvocationInputProvenance::Application
+            || invocation.status != AgentInvocationStatus::Pending
+        {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "typed application transport requires a pending application invocation",
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO agent_session_invocation_transport_bindings (invocation_id,transport_kind,extension_fingerprint,bound_at)
+                 VALUES (?1,?2,?3,?4)
+                 ON CONFLICT(invocation_id) DO UPDATE SET
+                   transport_kind=excluded.transport_kind,
+                   extension_fingerprint=excluded.extension_fingerprint,
+                   bound_at=excluded.bound_at",
+                params![
+                    invocation_id.as_str(),
+                    binding.kind.as_str(),
+                    binding.extension_fingerprint,
+                    timestamp(binding.bound_at),
+                ],
+            )
+            .map_err(sql_write("bind invocation transport"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit invocation transport binding"))?;
+        Ok(())
+    }
+
+    fn application_invocation_transport_binding(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<ApplicationInvocationTransportBinding>, RepositoryError> {
+        let connection = self.lock()?;
+        let row: Option<(String, String, String)> = connection
+            .query_row(
+                "SELECT transport_kind,extension_fingerprint,bound_at
+                 FROM agent_session_invocation_transport_bindings WHERE invocation_id=?1",
+                [invocation_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("read invocation transport binding"))?;
+        row.map(|(kind, extension_fingerprint, bound_at)| {
+            let kind = ApplicationInvocationTransportKind::from_str(&kind).ok_or_else(|| {
+                RepositoryError::new(
+                    RepositoryErrorKind::Unavailable,
+                    "stored invocation transport kind is invalid",
+                )
+            })?;
+            Ok(ApplicationInvocationTransportBinding {
+                kind,
+                extension_fingerprint,
+                bound_at: parse_timestamp(&bound_at)?,
+            })
+        })
+        .transpose()
+    }
+
+    fn mark_invocation_running_with_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: &ApplicationInvocationTransportBinding,
+        started_at: DateTime<Utc>,
+        effective_options: AgentRuntimeOptions,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_unavailable("begin contract-bound invocation start"))?;
+        if invocation_launch_accepted_at_from(&transaction, invocation_id)?.is_some() {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "launch-accepted invocation cannot be started again",
+            ));
+        }
+        let stored: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT transport_kind,extension_fingerprint
+                 FROM agent_session_invocation_transport_bindings WHERE invocation_id=?1",
+                [invocation_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(sql_unavailable("verify invocation transport binding"))?;
+        if stored.as_ref().map(|(kind, fingerprint)| (kind.as_str(), fingerprint.as_str()))
+            != Some((binding.kind.as_str(), binding.extension_fingerprint.as_str()))
+        {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "invocation transport changed before provider launch",
+            ));
+        }
+        let current = required_invocation(&transaction, invocation_id)?;
+        let updated = current
+            .mark_running(started_at, effective_options, updated_at)
+            .map_err(contract_error)?;
+        update_invocation(&transaction, &updated)?;
+        touch_session(&transaction, &updated.session_id, updated_at)?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit contract-bound invocation start"))?;
         Ok(updated)
     }
 

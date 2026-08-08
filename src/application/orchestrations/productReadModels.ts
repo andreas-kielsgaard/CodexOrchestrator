@@ -393,6 +393,7 @@ export type ProductWorkUnitHandlerReviewV1 = Readonly<{
   readonly deliveryPersistedAt?: string;
   readonly harnessBoundAt?: string;
   readonly launchRequestedAt?: string;
+  readonly actionExposedAt?: string;
   readonly launchAcceptedAt?: string;
   readonly reviewReadyAt?: string;
   readonly delivered: Readonly<{
@@ -762,6 +763,7 @@ export type ProductWorkUnitImplementerOutcomeV1 = Readonly<{
   readonly reportingPreparedAt?: string;
   readonly reportingHarnessBoundAt?: string;
   readonly reportingLaunchRequestedAt?: string;
+  readonly reportingActionExposedAt?: string;
   readonly reportingLaunchAcceptedAt?: string;
   readonly reportingReadyAt?: string;
   readonly submittedOutcome?: Readonly<{

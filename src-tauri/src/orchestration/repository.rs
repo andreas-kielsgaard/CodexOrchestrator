@@ -4550,6 +4550,8 @@ struct WorkUnitImplementerOutcomeDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     reporting_harness_bound_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reporting_action_exposed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reporting_launch_requested_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reporting_launch_accepted_at: Option<String>,
@@ -4681,6 +4683,8 @@ struct WorkUnitHandlerReviewDto {
     delivery_persisted_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_exposed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_requested_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -5013,6 +5017,7 @@ fn map_implementer_outcome(row: &Row<'_>) -> Result<WorkUnitImplementerOutcomeDt
         reporting_requested_at: row.get(8)?,
         reporting_prepared_at: row.get(9)?,
         reporting_harness_bound_at: row.get(10)?,
+        reporting_action_exposed_at: row.get(34)?,
         reporting_launch_requested_at: row.get(11)?,
         reporting_launch_accepted_at: row.get(12)?,
         reporting_ready_at: row.get(13)?,
@@ -5067,6 +5072,9 @@ fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), St
         if outcome.attempt_id != member.attempt_id || outcome.reporting_invocation_id != projection_stable_id("work-unit-implementer-reporting-invocation", &member.attempt_id) {
             return Err("attempt history Implementer outcome correlation is incoherent".into());
         }
+        if outcome.reporting_ready_at.is_some() && (outcome.reporting_action_exposed_at.is_none() || outcome.reporting_launch_accepted_at.is_none() || outcome.failure_reason.is_some()) {
+            return Err("Implementer reporting readiness lacks exact action exposure and launch acceptance".into());
+        }
         if let Some(review) = &member.handler_review {
             let handler = work_unit.handler_activation.as_ref().ok_or_else(|| "Handler review lacks the application-owned Handler authority".to_string())?;
             let action = work_unit.action_continuation.as_ref().ok_or_else(|| "Handler review lacks Handler action authority".to_string())?;
@@ -5077,6 +5085,9 @@ fn validate_attempt_history_projection(work_unit: &WorkUnitDto) -> Result<(), St
                 || action.handler_session_id != review.handler_session_id || action.action_invocation_id != review.action_handler_invocation_id
             {
                 return Err("Handler review has foreign attempt or Handler authority correlation".into());
+            }
+            if review.review_ready_at.is_some() && (review.action_exposed_at.is_none() || review.launch_accepted_at.is_none() || review.conflict.as_ref().is_some_and(|conflict| conflict.reason == "handler_review_accepted_without_action_exposure")) {
+                return Err("Handler review readiness lacks exact action exposure and launch acceptance".into());
             }
         }
         if let Some(decision) = &member.handler_decision {
@@ -5764,7 +5775,7 @@ fn implementer_outcome_rows(
     let has_ordinal = connection.prepare("PRAGMA table_info(work_unit_implementer_outcomes)").and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())?.iter().any(|column| column == "attempt_ordinal");
     let ordinal = if has_ordinal { "attempt_ordinal" } else { "0" };
     let mut statement = connection.prepare(&format!(
-        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason,{ordinal} FROM work_unit_implementer_outcomes"
+        "SELECT work_unit_id,attempt_id,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at,reporting_prepared_at,reporting_harness_bound_at,reporting_launch_requested_at,reporting_launch_accepted_at,reporting_ready_at,submitted_summary,outcome_variant,submitted_validation_statement,semantic_payload_json,submission_fingerprint,submitted_at,validation_at,validation_result,evidence_manifest_json,comparison_fingerprint,evidence_content_fingerprints_json,evidence_ready_at,semantic_completed_at,semantic_completion_invocation_id,lifecycle_observed_at,lifecycle_status,application_accepted_at,handler_review_ready_at,failure_reason,{ordinal},reporting_action_exposed_at FROM work_unit_implementer_outcomes"
     )).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(33)?, map_implementer_outcome(row)?))
@@ -5790,7 +5801,7 @@ fn handler_review_rows(
     ).map_err(|error| error.to_string())?;
     if !exists { return Ok(std::collections::HashMap::new()); }
     let mut statement = connection.prepare(
-        "SELECT work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint,semantic_judgment_at,lifecycle_observed_at,lifecycle_status,conflict_at,conflict_reason FROM work_unit_handler_reviews"
+        "SELECT work_unit_id,attempt_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivery_persisted_at,harness_bound_at,launch_requested_at,launch_accepted_at,review_ready_at,delivered_payload_json,delivered_payload_fingerprint,semantic_judgment_variant,semantic_return_reason_json,semantic_judgment_fingerprint,semantic_judgment_at,lifecycle_observed_at,lifecycle_status,conflict_at,conflict_reason,action_exposed_at FROM work_unit_handler_reviews"
     ).map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, map_handler_review(row)?)))
         .map_err(|error| error.to_string())?;
@@ -6087,7 +6098,7 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
         original_handler_invocation_id: row.get(4)?, action_handler_invocation_id: row.get(5)?,
         review_invocation_id: row.get(6)?, review_harness_revision_id: row.get(7)?,
         review_harness_configuration_digest: row.get(8)?, review_harness_repository_commit_ref: row.get(9)?,
-        delivery_requested_at: row.get(10)?, delivery_persisted_at: row.get(11)?, harness_bound_at: row.get(12)?,
+        delivery_requested_at: row.get(10)?, delivery_persisted_at: row.get(11)?, harness_bound_at: row.get(12)?, action_exposed_at: row.get(26)?,
         launch_requested_at: row.get(13)?, launch_accepted_at: row.get(14)?, review_ready_at: row.get(15)?,
         delivered: WorkUnitHandlerReviewEvidenceDto {
             summary_claim: payload.summary, validation_statement_claim: payload.validation_statement,

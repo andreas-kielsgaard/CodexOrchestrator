@@ -38,6 +38,36 @@ pub(crate) struct ListAgentSessionsQuery {
     pub(crate) limit: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplicationInvocationTransportKind {
+    WorkUnitImplementerReporting,
+    WorkUnitHandlerReview,
+}
+
+impl ApplicationInvocationTransportKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkUnitImplementerReporting => "work_unit_implementer_reporting",
+            Self::WorkUnitHandlerReview => "work_unit_handler_review",
+        }
+    }
+
+    pub(crate) fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "work_unit_implementer_reporting" => Some(Self::WorkUnitImplementerReporting),
+            "work_unit_handler_review" => Some(Self::WorkUnitHandlerReview),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ApplicationInvocationTransportBinding {
+    pub(crate) kind: ApplicationInvocationTransportKind,
+    pub(crate) extension_fingerprint: String,
+    pub(crate) bound_at: DateTime<Utc>,
+}
+
 /// Durable Agent Session storage operations.
 ///
 /// Implementations must make `create_pending_invocation` atomically reject a second active
@@ -103,6 +133,29 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     fn mark_invocation_running(
         &self,
         invocation_id: &AgentInvocationId,
+        started_at: DateTime<Utc>,
+        effective_options: AgentRuntimeOptions,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentInvocation, RepositoryError>;
+
+    /// Binds one typed role transport before launch. A pending, unaccepted invocation may replace
+    /// a stale preacceptance binding, but an accepted invocation is immutable.
+    fn bind_application_invocation_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: ApplicationInvocationTransportBinding,
+    ) -> Result<(), RepositoryError>;
+
+    fn application_invocation_transport_binding(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<ApplicationInvocationTransportBinding>, RepositoryError>;
+
+    /// Moves a pending invocation to running only when its exact typed transport is still bound.
+    fn mark_invocation_running_with_transport(
+        &self,
+        invocation_id: &AgentInvocationId,
+        binding: &ApplicationInvocationTransportBinding,
         started_at: DateTime<Utc>,
         effective_options: AgentRuntimeOptions,
         updated_at: DateTime<Utc>,

@@ -147,6 +147,57 @@ impl CodexMcpInjection {
                 .is_some_and(|variable| !variable.is_empty())
         }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
     }
+
+    pub(crate) fn work_unit_handler_review(server_url: &str, bearer: String) -> Self {
+        Self::new_named(
+            "work_unit_handler_review",
+            server_url,
+            bearer,
+            &[
+                "read_handler_review_evidence".to_string(),
+                "accept_implementation_outcome".to_string(),
+                "return_implementation_outcome".to_string(),
+            ],
+            true,
+        )
+    }
+
+    pub(crate) fn is_exact_work_unit_handler_review_transport(&self) -> bool {
+        if self.configuration_args.len() != 14
+            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+        {
+            return false;
+        }
+        let values = self
+            .configuration_args
+            .chunks_exact(2)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>();
+        let Some(name) = values.iter().find_map(|value| {
+            value
+                .strip_prefix("mcp_servers.")
+                .and_then(|value| value.split_once(".url="))
+                .and_then(|(name, url)| (!url.is_empty()).then_some(name))
+        }) else {
+            return false;
+        };
+        if !name.starts_with("work_unit_handler_review_") {
+            return false;
+        }
+        let expected = [
+            format!("mcp_servers.{name}.bearer_token_env_var="),
+            format!("mcp_servers.{name}.enabled_tools=[\"read_handler_review_evidence\",\"accept_implementation_outcome\",\"return_implementation_outcome\"]"),
+            format!("mcp_servers.{name}.required=true"),
+            format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
+            format!("mcp_servers.{name}.startup_timeout_sec=10"),
+            format!("mcp_servers.{name}.tool_timeout_sec=300"),
+        ];
+        values.iter().any(|value| {
+            value
+                .strip_prefix(&expected[0])
+                .is_some_and(|variable| !variable.is_empty())
+        }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
+    }
 }
 
 #[derive(Clone)]
