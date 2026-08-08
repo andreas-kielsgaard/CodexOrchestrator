@@ -22,6 +22,27 @@ custom-game engine.
 - A trigger captures the then-current recipe when it fires. Already-instantiated actions and active
   Agent Sessions are not interrupted by later recipe changes.
 
+## Current understanding from the discussion
+
+This is an assistant synthesis and can be corrected as the concept develops.
+
+- The first version is primarily a visual definition and execution surface, not a workflow-proof or
+  policy-enforcement system.
+- The recipe designer owns semantic correctness. The engine should prevent an incoherent graph from
+  becoming live, but it should otherwise permit weak prompts, missing runtime files, unsuitable
+  payloads, and other poor recipe choices to fail naturally.
+- A connection is initially sender-oriented. It observes or accepts something from the sender,
+  exposes values through a connection-type-specific output interface, constructs an action input,
+  and activates the target.
+- Connection contracts are initially practical payload shapes rather than negotiated sender and
+  receiver schemas.
+- Files and text blocks are the first useful payload primitives. More elaborate contracts should be
+  added only after concrete needs emerge.
+- Live editing is important, but changes affect future trigger firings rather than interrupting work
+  already in progress.
+- The initial design should provide a small set of composable primitives and avoid infrastructure
+  added only for speculative future functionality.
+
 ## Decision register
 
 ### Roles and instances
@@ -41,9 +62,16 @@ custom-game engine.
 
 - Every configurable element has its own Activate control.
 - A bulk activation surface lists edited elements and supports selecting any subset or all edits.
+- Draft edits may temporarily contain structural errors, but an activation is blocked if its
+  selected changes would make the live recipe structurally invalid.
 - An activation affects future action instantiations only.
 - An action is instantiated, and captures the current recipe configuration, when its trigger fires.
 - Connections target specific role-instance nodes, not roles or groups.
+- Deleting a node deletes its outgoing connections.
+- Connections entering a deleted node remain as dangling draft elements. They can be dragged to a
+  replacement or different target, or deleted before activation.
+- A node deletion can be activated only after all of its dangling dependent connections have been
+  reconnected or deleted.
 
 ### Session and context policy
 
@@ -62,18 +90,30 @@ custom-game engine.
 
 ### Workflow position
 
-- A workflow has a starting point.
+- A workflow currently requires exactly one starting point.
 - Parent and child are abstract flow-relative categories.
 - If seniority is needed, it can be derived from the earliest step at which a node is reachable from
   the starting point.
 - Nodes first reachable at the same step have equal seniority.
-- No consequential use of seniority has been accepted.
+- Seniority is reserved, but no consequential use has been accepted.
+- Multiple entry nodes and external entry triggers are potential future concepts.
+
+### Scope discipline
+
+- Potential future functionality must be recorded without being prematurely supported when that
+  support would add complexity to the initial build.
 
 ### Validation
 
-- If an activated recipe contains an error, activation should be blocked.
-- What constitutes a structural error is unresolved. The current conceptual model does not yet make
-  such errors evident to the user.
+- A structurally invalid workflow cannot be activated.
+- A draft may remain structurally invalid while the user reconnects or removes dangling elements.
+- An individual or bulk activation validates the complete resulting live recipe, not only the
+  selected elements.
+- Known structural errors include a dangling connection and the absence of exactly one starting
+  point.
+- The initial engine focuses on defining recipes, not proving that they are useful or robust.
+- The recipe designer may activate semantically poor configurations. The engine does not initially
+  verify every payload assumption, prompt, expected file, or runtime outcome.
 
 ## Proposals to explore
 
@@ -94,20 +134,46 @@ simple arrow.
 "Agent finished" may need more precise events. Runtime termination, provider-terminal observation,
 MCP completion, artifact production, and application acceptance can occur independently.
 
-### Possible structural errors
+### Connection contracts
 
-The following are hypotheses based on assumptions that have not been accepted:
+The initial contract is sender-defined and intentionally simple. The sender is assumed to provide
+something the receiver can use. More expressive receiver or shared contracts are deferred.
 
-- A connection refers to a node that has been removed from the live recipe.
-- A connection subscribes to a trigger or output that its source no longer exposes.
-- An operation requires an input or MCP tool removed by another independently activated edit.
-- A producer and consumer use incompatible enforced artifact formats.
-- The configured starting point has been removed or made unavailable.
-- A node inherits a role that has been removed without first detaching or replacing the node.
+The sender satisfies the connection when its trigger results in target activation. This is a simple
+behavioral boundary for the first version, not a durable delivery or semantic-acceptance guarantee.
 
-These problems exist only if the engine permits the referenced elements to be independently removed
-or changed. Strong references and editing constraints could instead prevent invalid states from
-being expressible. Compatibility warnings may still exist without constituting structural errors.
+### Trigger, output, and action shape
+
+A connection contains:
+
+1. a trigger source;
+2. a routine that constructs an output through the trigger source's output interface; and
+3. a resulting action that consumes the constructed output.
+
+Initial trigger-source categories are:
+
+- a hook observing agent-session behavior;
+- an MCP call made by the sender; and
+- an actively monitored deterministic routine.
+
+Each hook, MCP call, or deterministic routine exposes an output interface whose values can be used
+to construct the resulting prompt or another action input. Payload-construction options depend on
+the connection type.
+
+Initial examples:
+
+- An MCP call accepts a list of files and a prompt from the sender. Its connection output exposes
+  the file list and text block for construction of the resulting action.
+- A turn-finished hook expects a configured file to exist after the sender session finishes its
+  turn. Its connection output exposes the file location, a connection-defined description text
+  block, and a fixed prompt text block for construction of the resulting action.
+
+### Structural validity still to define
+
+Dangling connections and an invalid starting-point count are structural errors. It remains open
+whether any other state makes the graph impossible to activate. Unavailable triggers, missing
+tools, incompatible payloads, absent expected files, and unusable prompts should initially be
+treated as recipe or runtime failures rather than exhaustively verified before activation.
 
 ### Potential uses of seniority
 
@@ -118,11 +184,8 @@ descriptive graph property.
 
 ## Open questions
 
-- Should invalid graph states be impossible to express, representable in a draft but blocked from
-  activation, or allowed as inactive paths?
-- Which edits count as removal: deletion, disabling, renaming, or changing a port contract?
-- Are triggers and artifact formats typed contracts or flexible labels interpreted by operations?
-- Does a workflow require exactly one starting node, at least one starting node, or explicit external
-  entry triggers?
-- Is seniority merely descriptive, or should any engine policy consume it?
-
+- How are MCP triggers named and exposed to the sender?
+- How is an expected file location configured for a turn-finished hook?
+- How does a connection map its trigger output fields into a target prompt or other action input?
+- What qualifies as an actively monitored deterministic routine in the first version?
+- Should any engine policy eventually consume reserved seniority?
