@@ -4,15 +4,15 @@ Status: revised. Harness runtime loading remains product work.
 
 ## Observation
 
-Product role skills and ad-hoc development skills originally shared `.agents/skills`, so ordinary Codex sessions received both catalogues. Wording alone could not prevent accidental selection. Later ad-hoc renaming separated vocabulary but still left 22 exposed workflow skills.
+Product role skills and ad-hoc development skills originally shared `.agents/skills`, so ordinary Codex sessions received both catalogues. An intermediate move into a hidden `.agents` subdirectory stopped ordinary name discovery but still placed product definitions under the Codex agent namespace and falsely implied Codex ownership.
 
 ## Theory
 
-Physical co-location made product roles appear usable before the product Harness supplied them. The oversized ad-hoc catalogue also resembled a second product role system rather than a small Codex coordination workflow.
+Storage namespace communicates ownership as well as discoverability. A hidden subfolder under another harness's namespace remains the wrong source boundary even when current discovery happens not to recurse into it.
 
 ## Revision
 
-The seven product role skills remain under `.agents/product-skills`: Epic Plan Builder, Epic Bootstrap Generator, Epic Runner, Sprint Runner, Work Slice Planner, Work Unit Handler, and Work Unit Implementer. Their Harness availability is not claimed until the product implements and proves selective exposure.
+The product catalogue now lives under repository-owned `product/skills`, outside Codex's `.agents` namespace and automatic skill roots. It contains Epic Plan Builder, Epic Bootstrap Generator, Epic Runner, Sprint Runner, Work Slice Planner, Work Unit Handler, Work Unit Implementer, and Route Epic Feedback. Their availability is established only when the product Harness selectively supplies them.
 
 Ordinary repository discovery now exposes three ad-hoc conversation-role skills and eight operation skills: Overall Plan, Slice Plan, and Plan Step. Their names and bodies use only that vocabulary and do not reference product roles or product-only capabilities.
 
@@ -20,4 +20,4 @@ Ordinary repository discovery now exposes three ad-hoc conversation-role skills 
 
 ## Evaluation
 
-The storage boundary prevents ordinary Codex agents from discovering product role definitions. The compact role-and-operation catalogue also differentiates the ad-hoc workflow by structure and use, rather than relying only on renamed roles. Product Harness implementation remains outside this maintenance change.
+The storage boundary now reflects both ownership and exposure: ordinary Codex agents discover the ad-hoc catalogue, while product definitions remain inert repository assets until the product Harness supplies them. Existing product code and documentation still naming the old path are intentionally outside this skill-maintenance correction.

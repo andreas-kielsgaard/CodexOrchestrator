@@ -22,6 +22,8 @@ Begin revision when:
 
 When evidence is uncertain or the skill did not contribute, continue investigation or explain the assessment. Keep revisions proportional to the evidence and edit only clearly owned targets.
 
+A confirmed behavioral defect establishes that a revision is warranted; current mutation authority determines whether to apply it. Under a report-only, read-only, or no-edit boundary, provide the revision concept and affected targets as a proposal. A later request to reflect, elaborate, or consider alternatives preserves that boundary unless it clearly authorizes edits.
+
 ## Establish The Reader
 
 Before revising, determine:
@@ -33,6 +35,8 @@ Before revising, determine:
 - the output or return route needed to complete its responsibility.
 
 Inspect relevant sessions, harness configuration, source material, and observed outputs where useful.
+
+Treat storage and discovery as part of the reader context. Identify the harness that owns exposure and its automatic discovery roots before choosing a skill location. Store the definition in the owning system's catalogue; nesting it beneath another harness's namespace does not transfer ownership. When exposure must be selective, keep the source outside automatic discovery roots and let the owning harness supply it.
 
 Assume prerequisites already established before the reader receives the skill. Exclude instructions about creating or preparing that prerequisite environment unless the reader can encounter and act on that state.
 

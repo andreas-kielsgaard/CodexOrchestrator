@@ -1,0 +1,4 @@
+interface:
+  display_name: "Retire Plan Slice"
+  short_description: "Reclaim storage after accepting a Plan Slice"
+  default_prompt: "Use $retire-plan-slice to safely reclaim retained storage after accepting this Plan Slice."

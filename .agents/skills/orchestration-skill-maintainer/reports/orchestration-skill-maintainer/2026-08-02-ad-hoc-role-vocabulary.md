@@ -30,7 +30,9 @@ Each role skill names the operation skills available to its reader and holds per
 - Slice Plan: `maintain-slice-plan`, `start-plan-steps`, `evaluate-plan-step`, `complete-plan-slice`.
 - Plan Step: `execute-plan-step`.
 
-`maintain-overall-plan` follows the early provisional movement map. `maintain-slice-plan` uses the old Sprint 5 plan as a flexible presentation model rather than a mandatory template. Review, exploration, integration, verification, documentation, or similar work can be expressed as Plan Steps when needed.
+`maintain-overall-plan` follows the early provisional movement map. `maintain-slice-plan` treats the old Sprint 5 considerations as required coverage while allowing flexible grouping instead of rigid headings. Review, exploration, integration, verification, documentation, or similar work can be expressed as Plan Steps when needed.
+
+Every Overall Plan maintenance pass presents the complete current plan. Before first delegation, every Plan Slice presents all detailed planning considerations inherited from the historical Sprint plan; it may combine sections for clarity but does not replace them with an internal plan update or child prompt.
 
 Standing role information was removed from the operation skills where the role skill now supplies it. Start operations create top-level conversations with the appropriate `run-*` skill; the receiving role skill then selects its current operation.
 
@@ -38,7 +40,7 @@ The creating role also selects the child profile. Overall Plan defaults Plan Sli
 
 The prior workflow entry points were removed. Their detailed instructions were not moved into reference files. Historical reports and non-discoverable evidence remain available, while `orchestration-skill-maintainer` remains a maintenance utility rather than part of the workflow catalogue.
 
-Product role skills remain separately stored under `.agents/product-skills` and are not referenced by these ad-hoc operations.
+Product role skills remain separately stored under repository-owned `product/skills` and are not referenced by these ad-hoc operations.
 
 ## Evaluation
 
