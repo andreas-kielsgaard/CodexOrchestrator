@@ -263,9 +263,42 @@
   pointer-events: none;
 }
 
-.workflow-canvas__connections line {
+.workflow-canvas__connections .workflow-connection__visible {
   stroke: #64746b;
   stroke-width: 2;
+}
+
+.workflow-canvas__connections g[role='button'] {
+  outline: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.workflow-canvas__connections .workflow-connection__hitbox {
+  stroke: transparent;
+  stroke-width: 18;
+}
+
+.workflow-canvas__connections g.is-highlighted .workflow-connection__visible,
+.workflow-canvas__connections g:focus .workflow-connection__visible {
+  stroke: #9a7920;
+  stroke-width: 4;
+}
+
+.workflow-canvas__connections g.is-dangling .workflow-connection__visible {
+  stroke: #a34f3b;
+  stroke-dasharray: 7 5;
+}
+
+.workflow-canvas__connections text {
+  fill: #17211b;
+  font-size: 12px;
+  font-weight: 850;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: #fffdf8;
+  stroke-width: 5px;
+  text-anchor: middle;
 }
 
 .workflow-canvas__connections marker path {
@@ -314,6 +347,16 @@
   box-shadow: 0 0 0 2px rgb(242 202 82 / 40%);
 }
 
+.workflow-node.is-connection-source {
+  border-color: #32715a;
+  box-shadow: 0 0 0 3px rgb(50 113 90 / 26%);
+}
+
+.workflow-node.is-deleted {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
 .workflow-node__badges {
   display: flex;
   gap: 5px;
@@ -355,6 +398,175 @@
   border-radius: 12px;
   background: #fffdf8;
   box-shadow: 0 16px 36px rgb(23 33 27 / 18%);
+}
+
+.workflow-connection-preview,
+.workflow-bulk-activation {
+  position: absolute;
+  z-index: 5;
+  top: 18px;
+  right: 18px;
+  display: grid;
+  gap: 13px;
+  width: min(360px, calc(100% - 36px));
+  max-height: calc(100% - 36px);
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid #aeb9b1;
+  border-radius: 12px;
+  background: #fffdf8;
+  box-shadow: 0 16px 36px rgb(23 33 27 / 18%);
+}
+
+.workflow-connection-preview > header,
+.workflow-bulk-activation > header,
+.workflow-connection-list > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-connection-preview > header button,
+.workflow-bulk-activation > header button,
+.workflow-connection-list > header button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: #eef1eb;
+  color: #45534b;
+  cursor: pointer;
+}
+
+.workflow-connection-preview > p {
+  color: #59655e;
+  font-size: 0.8rem;
+}
+
+.workflow-connection-list {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  width: min(300px, calc(100% - 24px));
+  max-height: 320px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #aeb9b1;
+  border-radius: 10px;
+  background: #fffdf8;
+  box-shadow: 0 12px 28px rgb(23 33 27 / 18%);
+}
+
+.workflow-connection-list header strong {
+  font-size: 0.78rem;
+}
+
+.workflow-connection-list ul,
+.workflow-bulk-activation ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-connection-list li > button,
+.workflow-list-secondary {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #d8ddd5;
+  border-radius: 7px;
+  background: #f8f8f4;
+  color: #17211b;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-connection-list li > button:hover,
+.workflow-connection-list li > button:focus {
+  border-color: #9a7920;
+  background: #fff4cc;
+}
+
+.workflow-connection-list small {
+  color: #66736c;
+  font-size: 0.67rem;
+}
+
+.workflow-deletion-note,
+.workflow-draft-note {
+  padding: 10px;
+  border: 1px solid #e1c9a9;
+  border-radius: 8px;
+  background: #fff3df;
+  color: #6b4d21;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.workflow-mechanism-fields {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #d8ddd5;
+  border-radius: 9px;
+}
+
+.workflow-mechanism-fields label {
+  display: grid;
+  gap: 5px;
+}
+
+.workflow-mechanism-fields textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.workflow-mechanism-fields p {
+  color: #66736c;
+  font-size: 0.69rem;
+}
+
+.workflow-bulk-activation .workflow-select-all,
+.workflow-bulk-activation li label {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+}
+
+.workflow-bulk-activation input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.workflow-bulk-activation small {
+  color: #66736c;
+  text-transform: capitalize;
+}
+
+.workflow-canvas__error {
+  position: absolute;
+  z-index: 7;
+  right: 18px;
+  bottom: 18px;
+  max-width: 430px;
+  border: 1px solid #d8a79d;
+  border-radius: 8px;
+  background: #fff8f5;
 }
 
 .workflow-node-config > header {

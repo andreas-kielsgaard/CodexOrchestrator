@@ -1,9 +1,10 @@
 use super::{
     application::WorkflowRepository,
     domain::{
-        EffectiveRecipe, WorkflowConnectionConfig, WorkflowConnectionElement, WorkflowDefinition,
-        WorkflowElementKind, WorkflowElementRef, WorkflowNativeQuery, WorkflowNodeConfig,
-        WorkflowNodeElement, WorkflowTypeSummary,
+        EffectiveRecipe, WorkflowConnectionConfig, WorkflowConnectionElement,
+        WorkflowConnectionMechanism, WorkflowDefinition, WorkflowElementKind, WorkflowElementRef,
+        WorkflowExpectedFileSelector, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowNodeElement,
+        WorkflowTypeSummary,
     },
 };
 use chrono::Utc;
@@ -464,7 +465,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             .map(|summary| load_workflow_type(&connection, &summary.id))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(WorkflowNativeQuery {
-            schema_version: "workflow-native-query/v1",
+            schema_version: "workflow-native-query/v2",
             workflow_types,
         })
     }
@@ -502,6 +503,44 @@ fn validate_candidate(
                 "Workflow connection {} has no live receiver node.",
                 connection.id
             ));
+        }
+        validate_connection_mechanism(connection)?;
+    }
+    Ok(())
+}
+
+fn validate_connection_mechanism(connection: &WorkflowConnectionConfig) -> Result<(), String> {
+    let Some(mechanism) = &connection.mechanism else {
+        return Err(format!(
+            "Workflow connection {} needs a connecting mechanism before activation.",
+            connection.id
+        ));
+    };
+    match mechanism {
+        WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+            file_selector,
+            description_text,
+            prompt_text,
+            ..
+        } => {
+            required(description_text, "Connection file description")?;
+            required(prompt_text, "Connection prompt")?;
+            match file_selector {
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder,
+                    filename_pattern,
+                } => {
+                    required(folder, "Expected file folder")?;
+                    required(filename_pattern, "Expected filename pattern")?;
+                }
+                WorkflowExpectedFileSelector::FolderOutputRegex {
+                    folder,
+                    output_regex,
+                } => {
+                    required(folder, "Expected file folder")?;
+                    required(output_regex, "Agent output regex")?;
+                }
+            }
         }
     }
     Ok(())
@@ -782,6 +821,16 @@ mod tests {
             name: id.to_string(),
             sender_node_id: sender.to_string(),
             receiver_node_id: receiver.map(str::to_string),
+            mechanism: Some(WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+                file_selector: WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "*.md".to_string(),
+                },
+                description_text: "The sender handoff".to_string(),
+                prompt_text: "Continue from this handoff.".to_string(),
+                match_selection: super::super::domain::WorkflowMatchSelection::Newest,
+                initial_check: super::super::domain::WorkflowInitialCheck::OnceImmediately,
+            }),
         }
     }
 
@@ -843,6 +892,73 @@ mod tests {
     }
 
     #[test]
+    fn connection_mechanisms_remain_drafts_until_their_declared_inputs_are_complete() {
+        let repository = SqliteWorkflowRepository::new(Connection::open_in_memory().unwrap())
+            .expect("repository");
+        let id = repository
+            .create_workflow_type("Handoff")
+            .unwrap()
+            .workflow_type
+            .id;
+        repository
+            .save_node_draft(&id, node("sender", true))
+            .unwrap();
+        repository
+            .save_node_draft(&id, node("receiver", false))
+            .unwrap();
+        let mut edge = connection("handoff", "sender", Some("receiver"));
+        edge.mechanism = None;
+        let definition = repository.save_connection_draft(&id, edge.clone()).unwrap();
+        assert!(definition.connections[0].has_unpublished_changes);
+        let error = repository
+            .activate_changes(&id, &all(&definition))
+            .expect_err("missing mechanism blocks activation");
+        assert!(error.contains("needs a connecting mechanism"));
+
+        edge.mechanism = Some(WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+            file_selector: WorkflowExpectedFileSelector::FolderOutputRegex {
+                folder: "handoffs".to_string(),
+                output_regex: String::new(),
+            },
+            description_text: "Handoff file".to_string(),
+            prompt_text: "Continue.".to_string(),
+            match_selection: super::super::domain::WorkflowMatchSelection::Newest,
+            initial_check: super::super::domain::WorkflowInitialCheck::OnceImmediately,
+        });
+        let definition = repository.save_connection_draft(&id, edge.clone()).unwrap();
+        let error = repository
+            .activate_changes(&id, &all(&definition))
+            .expect_err("empty regex blocks activation");
+        assert!(error.contains("Agent output regex is required"));
+
+        if let Some(WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+            file_selector: WorkflowExpectedFileSelector::FolderOutputRegex { output_regex, .. },
+            ..
+        }) = &mut edge.mechanism
+        {
+            *output_regex = r"handoff: (.+\.md)".to_string();
+        }
+        let definition = repository.save_connection_draft(&id, edge).unwrap();
+        let activated = repository.activate_changes(&id, &all(&definition)).unwrap();
+        assert!(matches!(
+            activated.active_recipe.unwrap().connections[0].mechanism,
+            Some(WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+                file_selector: WorkflowExpectedFileSelector::FolderOutputRegex { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn legacy_connection_json_without_a_mechanism_reopens_as_an_incomplete_draft_shape() {
+        let parsed: WorkflowConnectionConfig = serde_json::from_str(
+            r#"{"id":"edge","name":"Old edge","senderNodeId":"a","receiverNodeId":"b"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.mechanism, None);
+    }
+
+    #[test]
     fn deleting_a_node_deletes_outgoing_drafts_and_leaves_incoming_drafts_dangling() {
         let repository = SqliteWorkflowRepository::new(Connection::open_in_memory().unwrap())
             .expect("repository");
@@ -889,6 +1005,24 @@ mod tests {
             None
         );
         assert!(repository.activate_changes(&id, &all(&deleted)).is_err());
+
+        let mut reconnected = deleted
+            .connections
+            .iter()
+            .find(|edge| edge.id == "in")
+            .unwrap()
+            .draft
+            .clone()
+            .unwrap();
+        reconnected.receiver_node_id = Some("a".to_string());
+        let repaired = repository.save_connection_draft(&id, reconnected).unwrap();
+        let activated = repository.activate_changes(&id, &all(&repaired)).unwrap();
+        assert!(activated
+            .active_recipe
+            .unwrap()
+            .nodes
+            .iter()
+            .all(|node| node.id != "b"));
     }
 
     #[test]
@@ -963,7 +1097,7 @@ mod tests {
         );
         assert_eq!(definition.nodes[0].live.as_ref().unwrap().name, "start");
         let query = reopened.native_query().unwrap();
-        assert_eq!(query.schema_version, "workflow-native-query/v1");
+        assert_eq!(query.schema_version, "workflow-native-query/v2");
         assert_eq!(
             query
                 .workflow_types

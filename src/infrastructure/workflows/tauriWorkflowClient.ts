@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   WorkflowApplicationClient,
+  WorkflowConnectionConfig,
   WorkflowDefinition,
   WorkflowElementRef,
   WorkflowNodeConfig,
@@ -23,6 +24,18 @@ export function createTauriWorkflowClient(
     saveNodeDraft: (workflowTypeId, node: WorkflowNodeConfig) =>
       invokeCommand<WorkflowDefinition>('save_workflow_node_draft', {
         input: { workflowTypeId, node },
+      }),
+    deleteNodeDraft: (workflowTypeId, nodeId) =>
+      invokeCommand<WorkflowDefinition>('delete_workflow_node_draft', {
+        input: { workflowTypeId, nodeId },
+      }),
+    saveConnectionDraft: (workflowTypeId, connection: WorkflowConnectionConfig) =>
+      invokeCommand<WorkflowDefinition>('save_workflow_connection_draft', {
+        input: { workflowTypeId, connection },
+      }),
+    deleteConnectionDraft: (workflowTypeId, connectionId) =>
+      invokeCommand<WorkflowDefinition>('delete_workflow_connection_draft', {
+        input: { workflowTypeId, connectionId },
       }),
     activateChanges: (workflowTypeId, elements: readonly WorkflowElementRef[]) =>
       invokeCommand<WorkflowDefinition>('activate_workflow_changes', {

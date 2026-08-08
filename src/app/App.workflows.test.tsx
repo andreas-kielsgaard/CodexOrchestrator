@@ -96,6 +96,9 @@ function mutableWorkflowClient(initial: WorkflowDefinition): ControlledWorkflowC
       };
       return definition;
     }),
+    deleteNodeDraft: vi.fn(async () => definition),
+    saveConnectionDraft: vi.fn(async () => definition),
+    deleteConnectionDraft: vi.fn(async () => definition),
     activateChanges: vi.fn(async () => definition),
     holdNextSave() {
       nextSaveGate = new Promise<void>((resolve) => {

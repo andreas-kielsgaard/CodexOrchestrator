@@ -46,6 +46,36 @@ describe('Workflow persistence coordinator', () => {
     ).resolves.toEqual(definition);
     expect(saveNodeDraft).toHaveBeenCalledTimes(2);
   });
+
+  it('orders connection drafts before reopening the workflow definition', async () => {
+    let resolveWrite!: (definition: WorkflowDefinition) => void;
+    const definition = workflowDefinition();
+    const connection = {
+      id: 'connection-1',
+      name: 'Handoff',
+      senderNodeId: 'node-1',
+      receiverNodeId: 'node-1',
+      mechanism: null,
+    };
+    const raw = client({
+      saveConnectionDraft: vi.fn(
+        () =>
+          new Promise<WorkflowDefinition>((resolve) => {
+            resolveWrite = resolve;
+          }),
+      ),
+    });
+    const coordinated = workflowPersistenceCoordinator(raw);
+
+    const pendingWrite = coordinated.saveConnectionDraft('workflow-1', connection);
+    const pendingLoad = coordinated.loadWorkflowType('workflow-1');
+    await Promise.resolve();
+    expect(raw.loadWorkflowType).not.toHaveBeenCalled();
+
+    resolveWrite(definition);
+    await expect(pendingWrite).resolves.toEqual(definition);
+    await expect(pendingLoad).resolves.toEqual(definition);
+  });
 });
 
 function client(overrides: Partial<WorkflowApplicationClient> = {}): WorkflowApplicationClient {
@@ -55,6 +85,9 @@ function client(overrides: Partial<WorkflowApplicationClient> = {}): WorkflowApp
     createWorkflowType: vi.fn(async () => definition),
     loadWorkflowType: vi.fn(async () => definition),
     saveNodeDraft: vi.fn(async () => definition),
+    deleteNodeDraft: vi.fn(async () => definition),
+    saveConnectionDraft: vi.fn(async () => definition),
+    deleteConnectionDraft: vi.fn(async () => definition),
     activateChanges: vi.fn(async () => definition),
     ...overrides,
   };

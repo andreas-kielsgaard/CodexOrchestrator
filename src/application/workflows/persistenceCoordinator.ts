@@ -65,6 +65,18 @@ export function workflowPersistenceCoordinator(
     },
     saveNodeDraft: (workflowTypeId, node) =>
       enqueue<WorkflowDefinition>(workflowTypeId, () => client.saveNodeDraft(workflowTypeId, node)),
+    deleteNodeDraft: (workflowTypeId, nodeId) =>
+      enqueue<WorkflowDefinition>(workflowTypeId, () =>
+        client.deleteNodeDraft(workflowTypeId, nodeId),
+      ),
+    saveConnectionDraft: (workflowTypeId, connection) =>
+      enqueue<WorkflowDefinition>(workflowTypeId, () =>
+        client.saveConnectionDraft(workflowTypeId, connection),
+      ),
+    deleteConnectionDraft: (workflowTypeId, connectionId) =>
+      enqueue<WorkflowDefinition>(workflowTypeId, () =>
+        client.deleteConnectionDraft(workflowTypeId, connectionId),
+      ),
     activateChanges: (workflowTypeId, elements) =>
       enqueue<WorkflowDefinition>(workflowTypeId, () =>
         client.activateChanges(workflowTypeId, elements),

@@ -30,6 +30,45 @@ pub(crate) struct WorkflowConnectionConfig {
     pub(crate) name: String,
     pub(crate) sender_node_id: String,
     pub(crate) receiver_node_id: Option<String>,
+    #[serde(default)]
+    pub(crate) mechanism: Option<WorkflowConnectionMechanism>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum WorkflowConnectionMechanism {
+    TurnFinishedExpectedFile {
+        file_selector: WorkflowExpectedFileSelector,
+        description_text: String,
+        prompt_text: String,
+        match_selection: WorkflowMatchSelection,
+        initial_check: WorkflowInitialCheck,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum WorkflowExpectedFileSelector {
+    FolderFilenamePattern {
+        folder: String,
+        filename_pattern: String,
+    },
+    FolderOutputRegex {
+        folder: String,
+        output_regex: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowMatchSelection {
+    Newest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowInitialCheck {
+    OnceImmediately,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

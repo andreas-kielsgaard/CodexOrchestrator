@@ -22,7 +22,29 @@ export interface WorkflowConnectionConfig {
   readonly name: string;
   readonly senderNodeId: string;
   readonly receiverNodeId: string | null;
+  readonly mechanism: WorkflowConnectionMechanism | null;
 }
+
+export type WorkflowConnectionMechanism = {
+  readonly kind: 'turn_finished_expected_file';
+  readonly fileSelector: WorkflowExpectedFileSelector;
+  readonly descriptionText: string;
+  readonly promptText: string;
+  readonly matchSelection: 'newest';
+  readonly initialCheck: 'once_immediately';
+};
+
+export type WorkflowExpectedFileSelector =
+  | {
+      readonly kind: 'folder_filename_pattern';
+      readonly folder: string;
+      readonly filenamePattern: string;
+    }
+  | {
+      readonly kind: 'folder_output_regex';
+      readonly folder: string;
+      readonly outputRegex: string;
+    };
 
 export interface WorkflowNodeElement {
   readonly id: string;
@@ -64,6 +86,12 @@ export interface WorkflowApplicationClient {
   createWorkflowType(input: { readonly name: string }): Promise<WorkflowDefinition>;
   loadWorkflowType(workflowTypeId: string): Promise<WorkflowDefinition>;
   saveNodeDraft(workflowTypeId: string, node: WorkflowNodeConfig): Promise<WorkflowDefinition>;
+  deleteNodeDraft(workflowTypeId: string, nodeId: string): Promise<WorkflowDefinition>;
+  saveConnectionDraft(
+    workflowTypeId: string,
+    connection: WorkflowConnectionConfig,
+  ): Promise<WorkflowDefinition>;
+  deleteConnectionDraft(workflowTypeId: string, connectionId: string): Promise<WorkflowDefinition>;
   activateChanges(
     workflowTypeId: string,
     elements: readonly WorkflowElementRef[],
