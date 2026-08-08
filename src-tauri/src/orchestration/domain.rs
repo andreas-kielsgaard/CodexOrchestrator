@@ -211,7 +211,9 @@ impl InitiateEpicCommand {
         }
         if let Some(root_branch) = &self.root_branch {
             if !valid_root_branch(root_branch) {
-                return Err(InitiateEpicError::InvalidInput("Epic root branch is invalid".into()));
+                return Err(InitiateEpicError::InvalidInput(
+                    "Epic root branch is invalid".into(),
+                ));
             }
         }
         Ok(())
@@ -219,9 +221,23 @@ impl InitiateEpicCommand {
 }
 
 pub(crate) fn valid_root_branch(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 240 && !value.starts_with('-') && !value.starts_with('/')
-        && !value.ends_with('/') && !value.contains("..") && !value.contains("//")
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+    !value.is_empty()
+        && value.len() <= 240
+        && value != "@"
+        && !value.starts_with('-')
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.ends_with('.')
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains("@{")
+        && value.split('/').all(|component| {
+            !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
+        })
+        && value.chars().all(|character| {
+            !character.is_control()
+                && !matches!(character, ' ' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,6 +279,46 @@ impl std::fmt::Display for InitiateEpicError {
             Self::IdempotencyConflict => {
                 f.write_str("idempotency key was used for different initiation semantics")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_root_branch;
+
+    #[test]
+    fn root_branch_uses_git_ref_name_constraints() {
+        for name in [
+            "main",
+            "codex/epic-workflow-ux-test",
+            "feature/with.unicode-ø",
+        ] {
+            assert!(valid_root_branch(name), "{name} should be accepted");
+        }
+        for name in [
+            "",
+            "-main",
+            "/main",
+            "main/",
+            "main..next",
+            "main//next",
+            "main@{1}",
+            "@",
+            ".hidden",
+            "topic/.hidden",
+            "topic.lock",
+            "topic/name.lock",
+            "topic.",
+            "topic name",
+            "topic~old",
+            "topic:old",
+            "topic?old",
+            "topic*old",
+            "topic[old",
+            "topic\\old",
+        ] {
+            assert!(!valid_root_branch(name), "{name} should be rejected");
         }
     }
 }

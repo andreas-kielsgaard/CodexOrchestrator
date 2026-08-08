@@ -353,6 +353,7 @@ mod tests {
             current_object_id: current.clone(),
             runtime_instance_ref: "runtime-real".into(),
             runtime_source_ref: "source-real".into(),
+            root_branch: "codex/test-root".into(),
             source_fingerprint: "1".repeat(64),
         };
         RealComparison {

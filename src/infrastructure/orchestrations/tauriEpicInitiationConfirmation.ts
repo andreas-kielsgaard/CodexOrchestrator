@@ -34,11 +34,11 @@ export function createTauriEpicInitiationConfirmationClient(
         throw new EpicInitiationConfirmationError(confirmationFailureKind(error));
       }
     },
-    async resolve(requestId, decision) {
+    async resolve(requestId, decision, rootBranch) {
       try {
         return decodeEpicInitiationConfirmationResolution(
           await invokeCommand('resolve_epic_initiation_confirmation', {
-            input: { requestId, decision },
+            input: { requestId, decision, ...(rootBranch ? { rootBranch } : {}) },
           }),
         );
       } catch (error) {

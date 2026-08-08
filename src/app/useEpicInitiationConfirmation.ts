@@ -80,7 +80,6 @@ export function useEpicInitiationConfirmation(
       epicPlanningDraftId: string;
       expectedRevisionToken: string;
       idempotencyKey: string;
-      rootBranch: string;
     }) => {
       if (!client) throw new EpicInitiationConfirmationError('unavailable');
       setReceiptError(null);
@@ -98,13 +97,17 @@ export function useEpicInitiationConfirmation(
   );
 
   const resolve = useCallback(
-    async (decision: 'confirmed' | 'rejected') => {
+    async (decision: 'confirmed' | 'rejected', rootBranch?: string) => {
       const current = queueRef.current[0];
       if (!client || !current || resolving) return false;
       setResolving(true);
       setError(null);
       try {
-        await client.resolve(current.request.requestId, decision);
+        if (decision === 'confirmed') {
+          await client.resolve(current.request.requestId, decision, rootBranch);
+        } else {
+          await client.resolve(current.request.requestId, decision);
+        }
       } catch (failure) {
         const kind =
           failure instanceof EpicInitiationConfirmationError ? failure.kind : 'unavailable';

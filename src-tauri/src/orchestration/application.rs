@@ -1209,6 +1209,7 @@ mod tests {
                 expected_revision_token: saved.revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: "context-initiation".into(),
+                root_branch: Some("codex/test-root".into()),
             })
             .unwrap();
         service

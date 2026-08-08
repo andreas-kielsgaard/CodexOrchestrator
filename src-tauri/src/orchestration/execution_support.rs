@@ -1358,6 +1358,7 @@ mod tests {
                 current_object_id: baseline.clone(),
                 runtime_instance_ref: "runtime-1".into(),
                 runtime_source_ref: "source-1".into(),
+                root_branch: "codex/test-root".into(),
                 source_fingerprint: "a".repeat(64),
             })
             .unwrap()

@@ -29,7 +29,11 @@ const agentRequest = {
 function fixture() {
   let listener: ((event: EpicInitiationConfirmationEvent) => void) | undefined;
   let malformed: (() => void) | undefined;
-  const resolve = vi.fn(async (requestId: string, decision: 'confirmed' | 'rejected') => {
+  const resolve = vi.fn(async (
+    requestId: string,
+    decision: 'confirmed' | 'rejected',
+    _rootBranch?: string,
+  ) => {
     if (decision === 'rejected') throw new EpicInitiationConfirmationError('rejected');
     return {
       requestId,
@@ -141,6 +145,9 @@ describe('shared Epic initiation confirmation modal', () => {
     });
     render(<Harness client={f.client} onProjected={projected} />);
     fireEvent.click(screen.getByRole('button', { name: 'Button request' }));
+    fireEvent.change(await screen.findByLabelText('Epic root branch'), {
+      target: { value: 'codex/test-root' },
+    });
     const confirm = await screen.findByRole('button', { name: 'Confirm initiation' });
     fireEvent.click(confirm);
     expect(screen.getByRole('button', { name: 'Resolving…' })).toBeDisabled();
@@ -158,8 +165,13 @@ describe('shared Epic initiation confirmation modal', () => {
     expect(await screen.findByRole('dialog', { name: 'Initiate this Epic?' })).toHaveTextContent(
       'Agent Epic',
     );
+    fireEvent.change(screen.getByLabelText('Epic root branch'), {
+      target: { value: 'codex/test-root' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm initiation' }));
-    await waitFor(() => expect(f.resolve).toHaveBeenCalledWith('agent-request', 'confirmed'));
+    await waitFor(() =>
+      expect(f.resolve).toHaveBeenCalledWith('agent-request', 'confirmed', 'codex/test-root'),
+    );
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -168,6 +180,9 @@ describe('shared Epic initiation confirmation modal', () => {
     const refresh = vi.fn().mockRejectedValue(new Error('refresh unavailable'));
     render(<Harness client={f.client} onProjected={refresh} />);
     fireEvent.click(screen.getByRole('button', { name: 'Button request' }));
+    fireEvent.change(await screen.findByLabelText('Epic root branch'), {
+      target: { value: 'codex/test-root' },
+    });
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm initiation' }));
     expect(
       await screen.findByText(/initiation was confirmed.*could not be refreshed/i),
@@ -185,13 +200,14 @@ describe('shared Epic initiation confirmation modal', () => {
     outside.focus();
     fireEvent.click(screen.getByRole('button', { name: 'Button request' }));
     const dialog = await screen.findByRole('dialog');
-    const confirm = screen.getByRole('button', { name: 'Confirm initiation' });
+    const rootBranch = screen.getByLabelText('Epic root branch');
     const cancel = screen.getByRole('button', { name: 'Cancel' });
-    expect(confirm).toHaveFocus();
+    expect(rootBranch).toHaveFocus();
+    cancel.focus();
     fireEvent.keyDown(dialog, { key: 'Tab' });
-    expect(cancel).toHaveFocus();
+    expect(rootBranch).toHaveFocus();
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
-    expect(confirm).toHaveFocus();
+    expect(cancel).toHaveFocus();
     fireEvent.keyDown(dialog, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(outside).toHaveFocus();
