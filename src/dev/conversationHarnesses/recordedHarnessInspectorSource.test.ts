@@ -82,7 +82,16 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.catalogs.skills.items.every((skill) => skill.path.startsWith('product/skills/'))).toBe(true);
     expect(
       read.snapshot.catalogs.skills.items.find((skill) => skill.name === 'epic-plan-builder')?.text,
-    ).toContain('# Epic Plan Builder');
+    ).toContain('# Product Epic Plan Builder');
+    expect(read.snapshot.catalogs.skills.items.map(({ name, path }) => ({ name, path }))).toEqual([
+      { name: 'epic-bootstrap-generator', path: 'product/skills/epic-bootstrap-generator/SKILL.md' },
+      { name: 'epic-plan-builder', path: 'product/skills/epic-plan-builder/SKILL.md' },
+      { name: 'epic-runner', path: 'product/skills/epic-runner/SKILL.md' },
+      { name: 'sprint-runner', path: 'product/skills/sprint-runner/SKILL.md' },
+      { name: 'work-slice-planner', path: 'product/skills/work-slice-planner/SKILL.md' },
+      { name: 'work-unit-handler', path: 'product/skills/work-unit-handler/SKILL.md' },
+      { name: 'work-unit-implementer', path: 'product/skills/work-unit-implementer/SKILL.md' },
+    ]);
     expect(read.snapshot.catalogs.models).toMatchObject({ source: 'recorded_catalog' });
     expect(current?.tools.items.map((tool) => tool.name)).toEqual([
       'submit_epic_plan_proposal',
@@ -96,6 +105,46 @@ describe('recorded Harness Management source', () => {
       },
     ]);
     expect(current?.hooks.map((hook) => hook.status)).not.toContain('exposed');
+  });
+
+  it('rejects a foreign eighth product skill from the recorded catalogue and working copy', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    expect(initial.kind).toBe('available');
+    if (initial.kind !== 'available' || !source.dispatch) return;
+    expect(initial.snapshot.catalogs.skills.items.map((skill) => skill.name)).not.toContain(
+      'route-epic-feedback',
+    );
+    const base = initial.snapshot.versionControl.versions.at(-1);
+    if (!base) return;
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_edit', baseRevision: base.revision },
+    });
+    if (started.kind !== 'available' || !started.snapshot.workingCopy) return;
+    const rejected = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'save_working_copy',
+        configuration: {
+          ...started.snapshot.workingCopy.configuration,
+          skills: {
+            ...started.snapshot.workingCopy.configuration.skills,
+            items: [
+              ...started.snapshot.workingCopy.configuration.skills.items,
+              {
+                name: 'route-epic-feedback',
+                path: 'product/skills/route-epic-feedback/SKILL.md',
+                purpose: 'Foreign product skill.',
+                useWhen: 'Never.',
+                policy: 'available',
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(rejected).toEqual({ kind: 'unavailable', reason: 'Unknown skill: route-epic-feedback' });
   });
 
   it('persists a complete draft across views without renaming the existing Session', async () => {

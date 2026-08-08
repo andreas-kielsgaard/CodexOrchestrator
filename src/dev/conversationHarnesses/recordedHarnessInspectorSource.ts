@@ -57,6 +57,15 @@ const skillDocuments = import.meta.glob('../../../product/skills/*/SKILL.md', {
   query: '?raw',
   import: 'default',
 }) as Record<string, string>;
+const productRoleSkills = [
+  { name: 'epic-bootstrap-generator', path: 'product/skills/epic-bootstrap-generator/SKILL.md' },
+  { name: 'epic-plan-builder', path: 'product/skills/epic-plan-builder/SKILL.md' },
+  { name: 'epic-runner', path: 'product/skills/epic-runner/SKILL.md' },
+  { name: 'sprint-runner', path: 'product/skills/sprint-runner/SKILL.md' },
+  { name: 'work-slice-planner', path: 'product/skills/work-slice-planner/SKILL.md' },
+  { name: 'work-unit-handler', path: 'product/skills/work-unit-handler/SKILL.md' },
+  { name: 'work-unit-implementer', path: 'product/skills/work-unit-implementer/SKILL.md' },
+] as const;
 const catalog = catalogJson as RecordedCatalog;
 export const recordedHarnessInspectorSessionId = 'recorded-harness-inspector-plan-builder';
 export const recordedHarnessInspectorPeerSessionId = 'recorded-harness-inspector-plan-builder-peer';
@@ -245,21 +254,17 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
 }
 
 function buildCatalogs(): HarnessConfigurationCatalogs {
-  const skills = Object.entries(skillDocuments)
-    .map(([sourcePath, document]) => {
-      const pathMatch = sourcePath
-        .replaceAll('\\', '/')
-        .match(/product\/skills\/([^/]+)\/SKILL\.md$/);
-      const name = frontmatterValue(document, 'name') ?? pathMatch?.[1] ?? '';
-      return {
-        name,
-        path: `product/skills/${pathMatch?.[1] ?? name}/SKILL.md`,
-        description: frontmatterValue(document, 'description') ?? 'Product skill.',
-        text: document,
-      };
-    })
-    .filter((skill) => skill.name)
-    .sort((left, right) => left.name.localeCompare(right.name));
+  const skills = productRoleSkills.map((skill) => {
+    const document = skillDocuments[`../../../${skill.path}`];
+    if (!document || frontmatterValue(document, 'name') !== skill.name)
+      throw new Error(`Authoritative product role skill is unavailable: ${skill.path}`);
+    return {
+      name: skill.name,
+      path: skill.path,
+      description: frontmatterValue(document, 'description') ?? 'Product skill.',
+      text: document,
+    };
+  });
   return {
     agentNames: {
       source: 'product_default_pool',
@@ -287,7 +292,7 @@ function buildCatalogs(): HarnessConfigurationCatalogs {
     skills: {
       source: 'checked_in_product_catalog',
       items: skills,
-      reason: 'This preview reads every checked-in product skill with a SKILL.md file.',
+      reason: 'This preview exposes only the seven authoritative product-role skill paths.',
     },
     tools: {
       source: 'recorded_harness_tool_catalog',
