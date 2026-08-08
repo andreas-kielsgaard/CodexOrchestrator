@@ -11,3 +11,5 @@ The Plan Step domain has one execution operation, but the conversation still nee
 ## Evaluation
 
 Separating role lifecycle from execution keeps the operation focused and gives every Plan Step conversation the same callback and scope behavior. A read-only forward test selected `execute-plan-step`, investigated only the assigned question, reported qualifications, and ended after one callback. The small overlap cost is justified by consistent role initialization.
+
+Completion now includes a committed checkpoint for attributable repository changes. The commit remains a returned candidate until the Plan Slice evaluates it. No-change outcomes avoid empty commits, and corrections produce separate commits.
