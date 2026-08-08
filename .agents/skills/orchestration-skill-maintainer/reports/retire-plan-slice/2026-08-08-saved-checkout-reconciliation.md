@@ -8,8 +8,8 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 
 ## Category counts
 
-- integrated_exactly: 123
-- integrated_semantically_from_newer_canonical_content: 35
+- integrated_exactly: 120
+- integrated_semantically_from_newer_canonical_content: 38
 - intentionally_superseded: 16
 - intentionally_excluded_duplicate: 0
 - retained_external_to_this_slice: 8
@@ -189,13 +189,13 @@ Categories: integrated_exactly, integrated_semantically_from_newer_canonical_con
 | product/skills/epic-plan-builder/SKILL.md | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
 | product/skills/epic-plan-builder/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
 | product/skills/epic-runner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
-| product/skills/epic-runner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/epic-runner/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 candidate blob is LF while the saved blob is CRLF; line-ending normalization yields no semantic diff. |
 | product/skills/route-epic-feedback/SKILL.md | intentionally_superseded | PS-1 commit b7f783a omits this path from the accepted seven-role product/skills catalogue. |
 | product/skills/route-epic-feedback/agents/openai.yaml | intentionally_superseded | PS-1 commit b7f783a omits this path from the accepted seven-role product/skills catalogue. |
 | product/skills/sprint-runner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
-| product/skills/sprint-runner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/sprint-runner/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 candidate blob is LF while the saved blob is CRLF; line-ending normalization yields no semantic diff. |
 | product/skills/work-slice-planner/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
-| product/skills/work-slice-planner/agents/openai.yaml | integrated_exactly | PS-1 commit b7f783a product/skills blob matches the saved file exactly. |
+| product/skills/work-slice-planner/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 candidate blob is LF while the saved blob is CRLF; line-ending normalization yields no semantic diff. |
 | product/skills/work-unit-handler/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
 | product/skills/work-unit-handler/agents/openai.yaml | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
 | product/skills/work-unit-implementer/SKILL.md | integrated_semantically_from_newer_canonical_content | PS-1 commit b7f783a contains the same accepted seven-role path with semantically reconciled content; blobs differ. |
