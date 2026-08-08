@@ -33,8 +33,9 @@ are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
 6. The application lifecycle persists before notification and reconciles missed events by query.
 7. The independent UI shows live work, collapses completed processing, and keeps the final response
    prominent with safe Markdown rendering.
-8. Boundary tests prove continuation, persistence, cancellation, restart recovery, migration
-   compatibility, and installed CLI help compatibility.
+8. Default boundary tests prove continuation, persistence, cancellation, restart recovery, and
+   migration compatibility. Installed CLI help compatibility is a feature-gated, ignored manual
+   probe rather than current default-test proof.
 9. The production app mounts only Agent Sessions. Legacy task handlers fail closed before database
    or process work, while their migration compatibility and isolated component tests remain.
 10. Startup does not probe Codex. The retained SQLite connection uses an explicit foreign-key,
@@ -118,10 +119,10 @@ outcome reports the four-invocation budget, phase results, hashed IDs, final dur
 direct-child cleanup, cancellation state, and stated limitations. A quota/rate-limit result is not
 retried and does not prove provider completion, resume, concurrency, or cancellation.
 
-Current verification status: the cleanup continuation passed the full non-live matrix on
-2026-07-12 (339 frontend tests; 84 Rust tests; two intentional Rust ignores). Recorded-harness
-manual responsive checks previously passed at 1280x800, 860x800, and 390x844. Live Codex lifecycle
-remains pending and was not run during cleanup.
+Historical verification: the cleanup continuation passed the full non-live matrix on 2026-07-12
+(339 frontend tests; 84 Rust tests; two intentional Rust ignores). This is not a claim about the
+current full matrix. Recorded-harness manual responsive checks previously passed at 1280x800,
+860x800, and 390x844. Live Codex lifecycle remains pending and was not run during cleanup.
 
 ## Documents
 

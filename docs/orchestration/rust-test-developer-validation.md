@@ -34,8 +34,9 @@ or product workflows to them automatically.
 Default commands provide deterministic local coverage, including loopback HTTP/MCP and helper
 subprocess boundaries. `cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib`
 also keeps all installed-Codex, live, and paid entries ignored; it compiles their opt-in surface but
-does not run them. Running an ignored entry requires both `--ignored` and that proof's documented
-environment opt-in, and remains outside ordinary developer validation.
+does not run them. Live and paid proofs require both `--ignored` and their documented environment
+opt-in. The feature-gated installed CLI compatibility probe requires `--ignored` and an installed
+Codex executable, not an environment opt-in; all remain outside ordinary developer validation.
 
 ## Returned performance evidence
 
