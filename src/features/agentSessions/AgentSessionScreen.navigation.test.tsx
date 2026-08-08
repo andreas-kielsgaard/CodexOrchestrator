@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
 import type { ProductReadModelsV1 } from '../../application/orchestrations';
 import { recordedProductReadCompositionInput } from '../../dev/orchestrationSection/recordedProductReadCompositionInput';
@@ -56,6 +56,49 @@ describe('standalone Agent Session product navigation', () => {
     ).toBeVisible();
     expect(screen.queryByRole('button', { name: /Go to/ })).toBeNull();
     expect(screen.queryByText('Related product views')).toBeNull();
+  });
+
+  it('fails closed for invocation focus when a different Session is selected', async () => {
+    const origin = {
+      sessionId: 'recorded-session-WU-ECS2E',
+      invocationId: 'recorded-handler-WU-ECS2E-first-review',
+      location: {
+        kind: 'work_unit' as const,
+        epicId: 'epic-runner',
+        sprintId: 'sprint-control-surface',
+        revisionId: 'ECS-R4',
+        workSlicePlanningPointId: 'planning-point-ECS2E',
+        workUnitId: 'WU-ECS2E',
+        label: 'Plan and Work Unit detail surfaces',
+        inspectionState: {
+          tab: 'activity' as const,
+          activityId:
+            'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-1:handler-action:recorded-handler-WU-ECS2E-first-review',
+          sessionId: 'recorded-session-WU-ECS2E',
+          invocationId: 'recorded-handler-WU-ECS2E-first-review',
+        },
+      },
+    };
+    const foreignInvocation = document.createElement('button');
+    foreignInvocation.dataset.invocationId = origin.invocationId;
+    const focus = vi.spyOn(foreignInvocation, 'focus');
+    document.body.append(foreignInvocation);
+
+    render(
+      <StandaloneAgentSessionScreen
+        client={recordedDevelopmentAgentSessionClient}
+        selectedSessionId="recorded-implementer-WU-ECS2E"
+        focusInvocationId={origin.invocationId}
+        returnOrigin={origin}
+      />,
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Implementer' }),
+    ).toBeVisible();
+    await waitFor(() => expect(focus).not.toHaveBeenCalled());
+    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
+    foreignInvocation.remove();
   });
 });
 

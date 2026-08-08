@@ -800,11 +800,12 @@ h3 {
 
 /* Shared shell; feature styles are owned beside their screens. */
 .primary-app-shell {
+  --app-top-offset: 48px;
   width: 100%;
   height: 100vh;
   min-width: 0;
   min-height: 0;
-  padding-top: 48px;
+  padding-top: var(--app-top-offset);
   overflow: hidden;
   overscroll-behavior: none;
 }
@@ -815,14 +816,110 @@ h3 {
   inset: 0 0 auto;
   display: flex;
   grid-auto-flow: unset;
-  gap: 4px;
+  align-items: center;
   height: 48px;
   padding: 6px 12px;
   border-bottom: 1px solid #d8ddd5;
   background: #fffdf8;
 }
 
-.surface-switcher button {
+.surface-switcher__surfaces {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.application-command-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin-left: 6px;
+}
+
+.application-command-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #b8c5bc;
+  border-radius: 6px;
+  background: #fff;
+  color: #344854;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.application-command-bar button:hover:not(:disabled) {
+  background: #edf1f4;
+}
+
+.application-command-bar button:disabled {
+  border-color: #d7ddd8;
+  background: #f2f4f1;
+  color: #96a19a;
+  cursor: not-allowed;
+}
+
+.application-command-bar button:focus-visible {
+  outline: 3px solid #cf7b32;
+  outline-offset: 2px;
+}
+
+.application-command-bar__return {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: 2px;
+}
+
+.application-command-bar__context {
+  min-width: 0;
+  overflow: hidden;
+  color: #657680;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-command-bar__return button {
+  border-color: #7e9cab;
+  color: #315f78;
+}
+
+.primary-app-shell .agent-session-screen {
+  height: calc(100vh - var(--app-top-offset));
+}
+
+.primary-app-shell .harness-inspector-development {
+  height: calc(100vh - var(--app-top-offset));
+}
+
+.primary-app-shell .orchestration-section {
+  height: calc(100vh - var(--app-top-offset));
+  min-height: calc(100vh - var(--app-top-offset));
+}
+
+.primary-app-shell .detail-workspace {
+  inset: var(--app-top-offset) 0 0;
+}
+
+.primary-app-shell .epic-plan-builder {
+  inset: var(--app-top-offset) 0 0;
+}
+
+.surface-switcher__surfaces > button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -900,9 +997,16 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .surface-switcher button {
-    flex: 1;
-    justify-content: center;
+  .surface-switcher__surfaces > button {
+    flex: 0 0 auto;
+  }
+
+  .application-command-bar {
+    gap: 6px;
+  }
+
+  .application-command-bar__context {
+    display: none;
   }
 }
 /* One application-owned modal serves button and agent initiation requests. */

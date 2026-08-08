@@ -27,6 +27,7 @@ export interface WorkSlicePlanningPointDetailWorkspaceProps {
   readonly plannerSession?: SprintAgentSessionPresentation;
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly onBack: () => void;
+  readonly globalBackAvailable?: boolean;
   readonly onOpenWorkUnit: (workUnitId: string) => void;
   readonly onOpenAgentSession?: (sessionId: string) => void;
   readonly sprintControl?: ReactNode;
@@ -40,6 +41,7 @@ export function WorkSlicePlanningPointDetailWorkspace({
   plannerSession,
   agentSessionComposition,
   onBack,
+  globalBackAvailable = false,
   onOpenWorkUnit,
   onOpenAgentSession,
   sprintControl,
@@ -49,9 +51,10 @@ export function WorkSlicePlanningPointDetailWorkspace({
       ariaLabel={`Work Slice planning point detail: ${workSlicePlanningPointGroup.title}`}
       controlsLabel="Work Slice planning point controls"
       contextLabel="Work Slice planning point context"
-      backLabel="Back to Sprint"
+      backLabel={globalBackAvailable ? undefined : 'Back to Sprint'}
       onBack={onBack}
-      focusBackOnMount
+      showBack={!globalBackAvailable}
+      focusBackOnMount={!globalBackAvailable}
       control={
         <div className="sprint-header-controls">
           {sprintControl}

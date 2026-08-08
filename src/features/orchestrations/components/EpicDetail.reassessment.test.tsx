@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { vi } from 'vitest';
+import { recordedEpicProductDecisionSource } from '../../../dev/productDecisions/recordedEpicProductDecisionSource';
 import { EpicDetail } from './EpicDetail';
 
 describe('Epic reassessment presentation', () => {
@@ -122,4 +124,60 @@ describe('Epic reassessment presentation', () => {
     expect(unresolved).toHaveTextContent('Epic settlement remains unresolved');
     expect(unresolved).toHaveTextContent('Resume by: Restore the exact settlement authority.');
   });
+
+  it('suppresses the Product Decisions local Back when global history is available', () => {
+    renderProductDecisions(true);
+    expect(screen.queryByRole('button', { name: 'Back to Epics' })).toBeNull();
+  });
+
+  it('keeps the Product Decisions local Back as a truthful fallback without history', () => {
+    const onBack = renderProductDecisions(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Epics' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('reinitializes every disclosure collapsed after leaving and re-entering Product Decisions', async () => {
+    renderProductDecisions(false);
+    const firstSummary = (await screen.findAllByText('Intent and evidence'))[0]!;
+    fireEvent.click(firstSummary);
+    expect(firstSummary.closest('details')).toHaveAttribute('open');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product decisions' }));
+
+    expect(
+      (await screen.findAllByText('Intent and evidence')).every(
+        (summary) => !summary.closest('details')?.hasAttribute('open'),
+      ),
+    ).toBe(true);
+  });
 });
+
+function renderProductDecisions(globalBackAvailable: boolean) {
+  const onBack = vi.fn();
+  render(
+    <EpicDetail
+      epic={{
+        id: 'epic-codex-runner-workspace',
+        name: 'Recorded Epic',
+        goal: 'Review.',
+        movement: { kind: 'planning_next_work' },
+        state: 'running',
+        plan: { items: [] },
+      }}
+      artifactAccessController={undefined as never}
+      selectedSprintId={null}
+      selectedRevisionId={null}
+      detailLocation={{ kind: 'sprint' }}
+      onOpenSprint={vi.fn()}
+      onCloseSprint={vi.fn()}
+      onSelectedRevisionChange={vi.fn()}
+      onDetailLocationChange={vi.fn()}
+      onBack={onBack}
+      globalBackAvailable={globalBackAvailable}
+      requestedProductDecisions
+      epicProductDecisionSource={recordedEpicProductDecisionSource}
+    />,
+  );
+  return onBack;
+}

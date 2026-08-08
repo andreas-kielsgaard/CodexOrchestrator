@@ -115,6 +115,27 @@ describe('SharedAgentSessionPanel controller composition', () => {
     await waitFor(() => expect(screen.queryByText('Alpha response')).toBeNull());
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeVisible();
   });
+
+  it('keeps inspection read-only even when the underlying Session is writable', async () => {
+    const client = createRecordedAgentSessionClient({
+      store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
+    });
+    render(
+      <SharedAgentSessionPanel
+        ariaLabel="Inspection session"
+        conversationAriaLabel="Inspection conversation"
+        session={presentation}
+        composition={{ client, writableSessionIds: new Set([presentation.sessionId]) }}
+        inspection={{ invocationId: recordedSession.invocations[0].invocation.id }}
+        defaultExpanded
+      />,
+    );
+
+    expect(await screen.findByText('Complete recorded turn')).toBeVisible();
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.getByText(recordedSession.invocations[0].invocation.submittedText)).toBeVisible();
+  });
 });
 
 function namedSession(id: string, title: string, response: string): AgentSessionDetailsDto {

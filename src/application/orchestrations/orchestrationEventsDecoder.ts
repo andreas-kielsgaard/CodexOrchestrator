@@ -263,6 +263,8 @@ export function decodeOrchestrationEventsV1(value: unknown): OrchestrationEvents
       sessionIds,
       'agent session reference session',
     );
+    if (referenceFact.agentInvocationId !== undefined)
+      identifier(referenceFact.agentInvocationId, 'agent session reference invocation');
     const targetKind = literal(
       required(referenceFact, 'targetKind'),
       ['epic', 'sprint', 'work_slice_planning_point', 'work_unit_execution', 'other'],

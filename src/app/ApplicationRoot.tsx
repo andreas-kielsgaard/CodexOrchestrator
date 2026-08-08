@@ -17,6 +17,7 @@ export function ApplicationRoot() {
     let active = true;
     const developmentRoute = new URLSearchParams(window.location.search);
     const harnessInspectorRequested = developmentRoute.has('harness-inspector');
+    const workUnitReviewRequested = developmentRoute.has('recorded-work-unit-review');
     if (humanReviewInstance()) {
       void Promise.all([
         import('../infrastructure/tauriWorktreeBuild'),
@@ -41,12 +42,15 @@ export function ApplicationRoot() {
       );
     } else if (
       viteDevelopmentMode() &&
-      (developmentRoute.has('recorded-plan-builder') || harnessInspectorRequested)
+      (developmentRoute.has('recorded-plan-builder') ||
+        harnessInspectorRequested ||
+        workUnitReviewRequested)
     ) {
       void import('../dev/orchestrationSection/recordedOrchestrationClient').then(
         ({ createRecordedDevelopmentApplicationComposition }) => {
           const recorded = createRecordedDevelopmentApplicationComposition({
             initialSurface: harnessInspectorRequested ? 'harness-inspector' : 'epics',
+            includeWorkUnitReview: workUnitReviewRequested,
           });
           void loadDevelopmentReviewComposition(recorded).then((value) => {
             if (active) setComposition(value);

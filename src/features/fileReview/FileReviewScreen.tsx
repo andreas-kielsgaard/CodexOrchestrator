@@ -20,12 +20,13 @@ import './fileReview.css';
 
 export interface FileReviewScreenProps {
   readonly source: FileReviewSource;
+  readonly initialFileId?: string;
 }
 
 type ContentMode = 'changes' | 'file';
 type DiffLayout = 'unified' | 'split';
 
-export function FileReviewScreen({ source }: FileReviewScreenProps) {
+export function FileReviewScreen({ source, initialFileId }: FileReviewScreenProps) {
   const [snapshot, setSnapshot] = useState<Awaited<ReturnType<FileReviewSource['load']>> | null>(
     null,
   );
@@ -43,7 +44,11 @@ export function FileReviewScreen({ source }: FileReviewScreenProps) {
       (nextSnapshot) => {
         if (!active) return;
         setSnapshot(nextSnapshot);
-        setSelectedFileId(nextSnapshot.files[0]?.fileId ?? '');
+        setSelectedFileId(
+          nextSnapshot.files.some((file) => file.fileId === initialFileId)
+            ? initialFileId!
+            : (nextSnapshot.files[0]?.fileId ?? ''),
+        );
         setContentMode('changes');
         setExpandedContext(new Set());
       },
@@ -54,7 +59,7 @@ export function FileReviewScreen({ source }: FileReviewScreenProps) {
     return () => {
       active = false;
     };
-  }, [source]);
+  }, [initialFileId, source]);
 
   const selectedFile = useMemo(
     () =>

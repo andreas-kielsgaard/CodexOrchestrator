@@ -13,6 +13,12 @@ export type AgentSessionProductLocation =
       readonly label: string;
     }
   | {
+      /** Epic-local Product Decisions view; recorded and productive data remain separate. */
+      readonly kind: 'epic_product_decisions';
+      readonly epicId: string;
+      readonly label: string;
+    }
+  | {
       readonly kind: 'sprint';
       readonly epicId: string;
       readonly sprintId: string;
@@ -34,12 +40,26 @@ export type AgentSessionProductLocation =
       readonly workSlicePlanningPointId: string;
       readonly workUnitId: string;
       readonly label: string;
+      readonly inspectionState?: Readonly<{
+        readonly tab: 'activity' | 'evidence';
+        readonly activityId: string;
+        readonly sessionId: string;
+        readonly invocationId: string;
+      }>;
     }
   | {
       readonly kind: 'epic_planning_draft';
       readonly epicPlanningDraftId: string;
       readonly label: string;
     };
+
+/** An immutable application-owned return destination for a standalone Session visit. */
+export interface AgentSessionProductOrigin {
+  readonly sessionId: string;
+  readonly location: AgentSessionProductLocation;
+  /** Present only when the opening product control has an exact durable invocation pointer. */
+  readonly invocationId?: string;
+}
 
 export interface AgentSessionNavigationIdentity {
   readonly sessionId: string;

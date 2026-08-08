@@ -1,16 +1,19 @@
 import { AlertCircle, ArrowUpRight, ChevronDown, X } from 'lucide-react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import {
   buildAgentSessionNavigation,
   type AgentSessionNavigationIdentity,
   type AgentSessionProductLocation,
+  type AgentSessionProductOrigin,
 } from '../../application/agentSessionNavigation';
 import type {
   EpicPlanningDraftSummary,
   ProductReadModelsV1,
 } from '../../application/orchestrations';
+import type { ProductDecisionEvidenceDestination } from '../../application/productDecisions';
+import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
@@ -30,6 +33,9 @@ export interface AgentSessionScreenProps {
   readonly onNavigateToProduct?: (location: AgentSessionProductLocation) => void;
   readonly harnessManagementSource?: ConversationHarnessManagementSource;
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
+  readonly focusInvocationId?: string;
+  readonly focusEvidence?: ProductDecisionEvidenceDestination;
+  readonly returnOrigin?: AgentSessionProductOrigin | null;
 }
 
 export function StandaloneAgentSessionScreen({
@@ -44,6 +50,9 @@ export function StandaloneAgentSessionScreen({
   onNavigateToProduct,
   harnessManagementSource,
   agentIdentityForSession,
+  focusInvocationId,
+  focusEvidence,
+  returnOrigin,
 }: AgentSessionScreenProps) {
   const [localExpandedNodeIds, setLocalExpandedNodeIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -99,6 +108,28 @@ export function StandaloneAgentSessionScreen({
   const selectedIdentity = collection.selectedSessionId
     ? agentIdentityForSession?.(collection.selectedSessionId)
     : undefined;
+  const focusedInvocationId =
+    collection.selectedSessionId === returnOrigin?.sessionId ? focusInvocationId : undefined;
+  const evidenceRange =
+    focusedInvocationId &&
+    focusEvidence &&
+    collection.selectedSessionId === focusEvidence.sessionId &&
+    focusEvidence.invocationId === focusedInvocationId
+      ? evidenceTranscriptRange(focusEvidence)
+      : undefined;
+  useEffect(() => {
+    if (!focusedInvocationId || collection.selectedSessionId !== returnOrigin?.sessionId) return;
+    const element = document.querySelector<HTMLElement>(
+      `[data-invocation-id="${CSS.escape(focusedInvocationId)}"]`,
+    );
+    element?.focus();
+    element?.scrollIntoView({ block: 'center' });
+  }, [
+    collection.selectedSessionId,
+    focusedInvocationId,
+    session.transcript,
+    returnOrigin?.sessionId,
+  ]);
 
   return (
     <main className="agent-session-screen">
@@ -124,6 +155,15 @@ export function StandaloneAgentSessionScreen({
         }
         secondary={
           <div className="agent-session-content">
+            {returnOrigin ? (
+              <div
+                className="agent-session-return-context"
+                role="region"
+                aria-label={returnContextLabel(returnOrigin.location)}
+              >
+                <span>{returnContextText(returnOrigin.location)}</span>
+              </div>
+            ) : null}
             {collection.error && (
               <section className="agent-session-error" role="alert">
                 <AlertCircle size={17} aria-hidden="true" />
@@ -140,6 +180,15 @@ export function StandaloneAgentSessionScreen({
               >
                 <AgentSessionWorkspace
                   controller={session}
+                  transcriptRange={evidenceRange}
+                  inspection={
+                    focusEvidence
+                      ? {
+                          sessionId: focusEvidence.sessionId,
+                          invocationId: focusEvidence.invocationId,
+                        }
+                      : undefined
+                  }
                   presentation={
                     selectedIdentity
                       ? {
@@ -159,7 +208,18 @@ export function StandaloneAgentSessionScreen({
                 />
               </HarnessAwareAgentSessionPane>
             ) : (
-              <AgentSessionWorkspace controller={session} />
+              <AgentSessionWorkspace
+                controller={session}
+                transcriptRange={evidenceRange}
+                inspection={
+                  focusEvidence
+                    ? {
+                        sessionId: focusEvidence.sessionId,
+                        invocationId: focusEvidence.invocationId,
+                      }
+                    : undefined
+                }
+              />
             )}
             {selectedNavigation && onNavigateToProduct ? (
               <SessionProductNavigation
@@ -218,14 +278,37 @@ function directActionLabel(location: AgentSessionProductLocation) {
   return `Go to ${location.kind === 'epic' ? 'Epic' : 'Sprint'}`;
 }
 
+function returnContextLabel(location: AgentSessionProductLocation) {
+  return `${locationKindLabel(location)} return context`;
+}
+
+function returnContextText(location: AgentSessionProductLocation) {
+  return `Opened from ${locationKindLabel(location)}`;
+}
+
 function locationKindLabel(location: AgentSessionProductLocation) {
   return {
     epic: 'Epic',
+    epic_product_decisions: 'Product decisions',
     sprint: 'Sprint',
     work_slice_planning_point: 'Planning',
     work_unit: 'Work Unit',
     epic_planning_draft: 'Epic planning draft',
   }[location.kind];
+}
+
+function evidenceTranscriptRange(
+  destination: ProductDecisionEvidenceDestination,
+): TranscriptAnchorRange {
+  const anchor = {
+    sessionId: destination.sessionId,
+    invocationId: destination.invocationId,
+    kind: destination.passage.kind,
+    ...('runtimeEventId' in destination.passage
+      ? { runtimeEventId: destination.passage.runtimeEventId }
+      : {}),
+  } as TranscriptAnchorRange['start'];
+  return { start: anchor, end: anchor };
 }
 
 function locationKey(location: AgentSessionProductLocation) {

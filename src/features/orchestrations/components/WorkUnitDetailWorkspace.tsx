@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { SprintWorkspacePresentationV1 } from '../../../application/orchestrations';
-import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
+import {
+  AgentSessionTurnInspector,
+  type EmbeddedAgentSessionComposition,
+} from '../../agentSessions';
 import type { WorkUnitAgentSessionPresentation } from '../orchestrationModel';
 import { DetailWorkspace } from './DetailWorkspace';
-import { ResizableSplitSurface } from './ResizableSplitSurface';
-import { SharedAgentSessionPanel } from './SharedAgentSessionPanel';
 import type {
   ProductWorkUnitHandlerDecisionV1,
   ProductWorkUnitHandlerReviewV1,
   ProductWorkUnitIntegrationV1,
   ProductWorkUnitIncompleteDispositionV1,
   ProductWorkUnitImplementerOutcomeV1,
+  ProductWorkUnitInspectionActivityV1,
+  ProductWorkUnitInspectionV1,
   ProductWorkUnitRetryAttemptV1,
 } from '../../../application/orchestrations/productReadModels';
 import '../styles/orchestrationSubdetail.css';
@@ -21,17 +24,49 @@ export interface WorkUnitDetailWorkspaceProps {
   readonly lifecycleEntries: SprintWorkspacePresentationV1['workUnitLifecycle'];
   readonly workSlicePlanningPointGroupTitle: string;
   readonly sessions: readonly WorkUnitAgentSessionPresentation[];
+  /** Retained for callers during the read-only migration; this detail renders no embedded workspace. */
   readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly backLabel?: string;
   readonly onBack: () => void;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
+  readonly globalBackAvailable?: boolean;
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
+  readonly onOpenFileEvidence?: (
+    target: WorkUnitFileEvidenceTarget,
+    context?: WorkUnitFileEvidenceOpenContext,
+  ) => void;
+  readonly initialInspectionState?: WorkUnitInspectionState;
   readonly sprintControl?: ReactNode;
 }
 
-interface SessionFocusTarget {
+export interface WorkUnitActivitySessionTarget {
   readonly sessionId: string;
   readonly invocationId: string;
-  readonly request: number;
+  readonly activityId: string;
+}
+
+export interface WorkUnitFileEvidenceTarget {
+  readonly reviewId: string;
+  readonly changedFileId: string;
+}
+
+export interface WorkUnitFileEvidenceOpenContext {
+  readonly inspectionState?: WorkUnitInspectionState;
+}
+
+export interface WorkUnitInspectionState {
+  readonly tab: WorkUnitInspectionTab;
+  readonly activityId: string;
+  readonly sessionId: string;
+  readonly invocationId: string;
+}
+
+type WorkUnitInspectionTab = 'activity' | 'evidence';
+
+interface LifecycleActivityCorrelation {
+  readonly entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number];
+  readonly activity?: ProductWorkUnitInspectionActivityV1;
+  readonly session?: WorkUnitAgentSessionPresentation;
+  readonly isExact: boolean;
 }
 
 export function WorkUnitDetailWorkspace({
@@ -39,45 +74,109 @@ export function WorkUnitDetailWorkspace({
   lifecycleEntries,
   workSlicePlanningPointGroupTitle,
   sessions,
-  agentSessionComposition,
   backLabel = 'Back to Work Slice planning point',
   onBack,
-  onOpenAgentSession,
+  globalBackAvailable = false,
+  onOpenActivitySession,
+  onOpenFileEvidence,
+  initialInspectionState,
   sprintControl,
 }: WorkUnitDetailWorkspaceProps) {
   const workUnitId = unit.workUnitId;
-  const workSlicePlanner = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'work_slice_planner',
+  const validInitialState =
+    initialInspectionState &&
+    unit.inspection?.activities.some(
+      (activity) =>
+        activity.activityId === initialInspectionState.activityId &&
+        activity.agentSessionId === initialInspectionState.sessionId &&
+        activity.invocationId === initialInspectionState.invocationId,
+    )
+      ? initialInspectionState
+      : undefined;
+  const [inspectionTab, setInspectionTab] = useState<WorkUnitInspectionTab>(
+    validInitialState?.tab ?? 'activity',
   );
-  const handler = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'handler',
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(
+    validInitialState?.activityId ?? null,
   );
-  const implementer = sessions.find(
-    (session) => session.workUnitId === workUnitId && session.role === 'implementer',
-  );
-  const [primarySessionId, setPrimarySessionId] = useState(
-    handler?.sessionId ?? workSlicePlanner?.sessionId ?? '',
-  );
-  const [focusTarget, setFocusTarget] = useState<SessionFocusTarget | null>(null);
-  const primarySession =
-    sessions.find(({ sessionId }) => sessionId === primarySessionId) ?? handler ?? workSlicePlanner;
+  const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!validInitialState) return;
+    setInspectionTab(validInitialState.tab);
+    setSelectedActivityId(validInitialState.activityId);
+  }, [validInitialState]);
   const attemptHistory = unit.attemptHistory ?? [];
   const retryAttempts = unit.retryAttempts ?? [];
-  const activityOrdinals = [...new Set([
-    ...attemptHistory.map((attempt) => attempt.ordinal),
-    ...retryAttempts.map((retry) => retry.ordinal),
-  ])].sort((left, right) => left - right);
+  const activityOrdinals = [
+    ...new Set([
+      ...attemptHistory.map((attempt) => attempt.ordinal),
+      ...retryAttempts.map((retry) => retry.ordinal),
+    ]),
+  ].sort((left, right) => left - right);
 
-  const navigateToLifecycleTurn = (
-    entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
-  ) => {
-    if ([handler?.sessionId, workSlicePlanner?.sessionId].includes(entry.agentSessionId))
-      setPrimarySessionId(entry.agentSessionId);
-    setFocusTarget((current) => ({
-      sessionId: entry.agentSessionId,
-      invocationId: entry.invocationId,
-      request: (current?.request ?? 0) + 1,
-    }));
+  const lifecycleCorrelations = [...lifecycleEntries]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((entry) => lifecycleActivityCorrelation(entry, unit.inspection, sessions));
+  const plannerLifecycle = lifecycleCorrelations.filter(
+    ({ entry }) => entry.agentRole === 'work_slice_planner',
+  );
+  const agentLifecycleCandidates = lifecycleCorrelations.filter(
+    ({ entry }) =>
+      entry.agentRole === 'work_unit_handler' || entry.agentRole === 'work_unit_implementer',
+  );
+  const lifecycleActivityOccurrences = new Map<string, number>();
+  for (const correlation of agentLifecycleCandidates) {
+    if (!correlation.isExact || !correlation.activity) continue;
+    lifecycleActivityOccurrences.set(
+      correlation.activity.activityId,
+      (lifecycleActivityOccurrences.get(correlation.activity.activityId) ?? 0) + 1,
+    );
+  }
+  const agentLifecycle = agentLifecycleCandidates.map((correlation) => ({
+    ...correlation,
+    isExact:
+      correlation.isExact &&
+      correlation.activity !== undefined &&
+      lifecycleActivityOccurrences.get(correlation.activity.activityId) === 1,
+  }));
+  const correlatedActivityIds = new Set(
+    agentLifecycle.flatMap(({ activity, isExact }) =>
+      isExact && activity ? [activity.activityId] : [],
+    ),
+  );
+  const orderedActivities = agentLifecycle.flatMap(({ activity, isExact }) =>
+    isExact && activity ? [activity] : [],
+  );
+  const unsequencedActivities =
+    unit.inspection?.activities.filter(
+      ({ activityId }) => !correlatedActivityIds.has(activityId),
+    ) ?? [];
+  const allActivities = [...orderedActivities, ...unsequencedActivities];
+  const activityLabels = new Map(
+    allActivities.map((activity) => {
+      const lifecycle = agentLifecycle.find(
+        ({ activity: candidate, isExact }) =>
+          isExact && candidate?.activityId === activity.activityId,
+      );
+      return [activity.activityId, activityLabel(activity, lifecycle?.entry.kind)] as const;
+    }),
+  );
+
+  const selectLifecycleActivity = (correlation: LifecycleActivityCorrelation) => {
+    if (!correlation.isExact || !correlation.activity) return;
+    setInspectionTab('activity');
+    setSelectedActivityId(correlation.activity.activityId);
+  };
+
+  const highlightLifecycleActivity = (correlation: LifecycleActivityCorrelation | null) => {
+    setHighlightedActivityId(
+      correlation?.isExact && correlation.activity ? correlation.activity.activityId : null,
+    );
+  };
+  const highlightActivity = (activityId: string | null) => {
+    setHighlightedActivityId(
+      activityId && correlatedActivityIds.has(activityId) ? activityId : null,
+    );
   };
 
   return (
@@ -85,9 +184,10 @@ export function WorkUnitDetailWorkspace({
       ariaLabel={`Work Unit detail: ${workUnitId}`}
       controlsLabel="Work Unit controls"
       contextLabel="Work Unit context"
-      backLabel={backLabel}
+      backLabel={globalBackAvailable ? undefined : backLabel}
       onBack={onBack}
-      focusBackOnMount
+      showBack={!globalBackAvailable}
+      focusBackOnMount={!globalBackAvailable}
       hotbarContext={workSlicePlanningPointGroupTitle}
       control={
         <div className="sprint-header-controls">
@@ -106,7 +206,10 @@ export function WorkUnitDetailWorkspace({
           <p>{unit.summary}</p>
           <p>{unit.details}</p>
           {unit.executionState && (
-            <section className="work-unit-execution-progress" aria-label="Work Unit execution progress">
+            <section
+              className="work-unit-execution-progress"
+              aria-label="Work Unit execution progress"
+            >
               <h2>Execution progress</h2>
               <p>{executionStateDetail(unit.executionState.state)}</p>
             </section>
@@ -172,18 +275,38 @@ export function WorkUnitDetailWorkspace({
           )}
           <section className="work-unit-lifecycle" aria-label="Work Unit lifecycle turn log">
             <h2>Lifecycle</h2>
-            {lifecycleEntries.length ? (
+            {plannerLifecycle.length ? (
+              <section className="work-unit-lifecycle__planner" aria-label="Planner context">
+                <span className="work-unit-lifecycle__identity work-unit-lifecycle__identity--work_slice_planner">
+                  {agentInitial('work_slice_planner')}
+                </span>
+                <div>
+                  <strong>{plannerLifecycle[0]!.entry.title}</strong>
+                  <small>Planner context is recorded separately from agent Activity.</small>
+                </div>
+              </section>
+            ) : null}
+            {agentLifecycle.length ? (
               <ol>
-                {lifecycleEntries.map((entry) => {
-                  const session = sessions.find(
-                    ({ sessionId }) => sessionId === entry.agentSessionId,
-                  );
+                {agentLifecycle.map((correlation) => {
+                  const { entry, activity, session, isExact } = correlation;
                   return (
-                    <li key={entry.entryId}>
+                    <li
+                      key={entry.entryId}
+                      className={
+                        highlightedActivityId === activity?.activityId
+                          ? 'is-highlighted'
+                          : undefined
+                      }
+                    >
                       <button
                         type="button"
-                        onClick={() => navigateToLifecycleTurn(entry)}
-                        disabled={!session}
+                        onClick={() => selectLifecycleActivity(correlation)}
+                        onMouseEnter={() => highlightLifecycleActivity(correlation)}
+                        onMouseLeave={() => highlightLifecycleActivity(null)}
+                        onFocus={() => highlightLifecycleActivity(correlation)}
+                        onBlur={() => highlightLifecycleActivity(null)}
+                        disabled={!isExact}
                       >
                         <span
                           className={`work-unit-lifecycle__identity work-unit-lifecycle__identity--${entry.agentRole}`}
@@ -192,7 +315,9 @@ export function WorkUnitDetailWorkspace({
                           {agentInitial(entry.agentRole)}
                         </span>
                         <span>
-                          <strong>{entry.title}</strong>
+                          <strong>
+                            {activity ? activityLabels.get(activity.activityId) : entry.title}
+                          </strong>
                           <small>{session?.title ?? 'Recorded Agent Session unavailable'}</small>
                           <span>{entry.summary}</span>
                         </span>
@@ -208,100 +333,582 @@ export function WorkUnitDetailWorkspace({
         </div>
       }
       primary={
-        <section className="work-unit-sessions" aria-label="Work Unit Agent Sessions">
-          <ResizableSplitSurface
-            axis="horizontal"
-            primary={
-              <div className="work-unit-primary-session">
-                {workSlicePlanner && handler ? (
-                  <nav aria-label="Planning and handling Agent Session">
-                    {[workSlicePlanner, handler].map((session) => (
-                      <button
-                        key={session.sessionId}
-                        type="button"
-                        aria-pressed={primarySession?.sessionId === session.sessionId}
-                        onClick={() => setPrimarySessionId(session.sessionId)}
-                      >
-                        {session.role === 'work_slice_planner'
-                          ? 'Work Slice Planner'
-                          : 'Work Unit Handler'}
-                      </button>
-                    ))}
-                  </nav>
-                ) : null}
-                <SessionSlot
-                  label={
-                    primarySession?.role === 'work_slice_planner'
-                      ? 'Work Slice Planner'
-                      : 'Work Unit Handler'
+        <section className="work-unit-inspection" aria-label="Work Unit Activity and Evidence">
+          <nav
+            className="work-unit-inspection__tabs"
+            aria-label="Work Unit detail views"
+            role="tablist"
+          >
+            {(['activity', 'evidence'] as const).map((tab) => (
+              <button
+                key={tab}
+                id={`work-unit-${tab}-tab`}
+                type="button"
+                role="tab"
+                aria-selected={inspectionTab === tab}
+                aria-controls={`work-unit-${tab}-view`}
+                tabIndex={inspectionTab === tab ? 0 : -1}
+                onClick={() => setInspectionTab(tab)}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+                    event.preventDefault();
+                    const nextTab = tab === 'activity' ? 'evidence' : 'activity';
+                    setInspectionTab(nextTab);
+                    document.getElementById(`work-unit-${nextTab}-tab`)?.focus();
                   }
-                  session={primarySession}
-                  agentSessionComposition={agentSessionComposition}
-                  focusTarget={focusTarget}
-                  onOpenAgentSession={onOpenAgentSession}
-                />
-              </div>
-            }
-            secondary={
-              <div className="work-unit-execution-session">
-                <SessionSlot
-                  label="Work Unit Implementer"
-                  session={implementer}
-                  agentSessionComposition={agentSessionComposition}
-                  focusTarget={focusTarget}
-                  onOpenAgentSession={onOpenAgentSession}
-                />
-              </div>
-            }
-            primaryLabel="Planning and handling conversation"
-            secondaryLabel="Work Unit Implementer conversation"
-            initialPrimaryPercent={50}
-            minimumPrimaryPixels={220}
-            minimumSecondaryPixels={220}
-          />
+                }}
+              >
+                {tab === 'activity' ? 'Activity' : 'Evidence'}
+              </button>
+            ))}
+          </nav>
+          {inspectionTab === 'activity' ? (
+            <div
+              id="work-unit-activity-view"
+              role="tabpanel"
+              aria-labelledby="work-unit-activity-tab"
+            >
+              <WorkUnitActivityView
+                activities={orderedActivities}
+                unsequencedActivities={unsequencedActivities}
+                activityLabels={activityLabels}
+                selectedActivityId={selectedActivityId}
+                onSelectActivity={(activityId) => setSelectedActivityId(activityId)}
+                onHighlightActivity={highlightActivity}
+                highlightedActivityId={highlightedActivityId}
+                sessions={sessions}
+                onOpenActivitySession={onOpenActivitySession}
+              />
+            </div>
+          ) : (
+            <div
+              id="work-unit-evidence-view"
+              role="tabpanel"
+              aria-labelledby="work-unit-evidence-tab"
+            >
+              <WorkUnitEvidenceView
+                inspection={unit.inspection}
+                onSelectActivity={(activityId) => {
+                  setSelectedActivityId(activityId);
+                  setInspectionTab('activity');
+                }}
+                onOpenFileEvidence={onOpenFileEvidence}
+              />
+            </div>
+          )}
         </section>
       }
     />
   );
 }
 
-function SessionSlot({
-  label,
-  session,
-  agentSessionComposition,
-  onOpenAgentSession,
-  focusTarget,
+function WorkUnitActivityView({
+  activities,
+  unsequencedActivities,
+  activityLabels,
+  selectedActivityId,
+  onSelectActivity,
+  onHighlightActivity,
+  highlightedActivityId,
+  sessions,
+  onOpenActivitySession,
 }: {
-  readonly label: string;
-  readonly session?: WorkUnitAgentSessionPresentation;
-  readonly agentSessionComposition?: EmbeddedAgentSessionComposition;
-  readonly onOpenAgentSession?: (sessionId: string) => void;
-  readonly focusTarget: SessionFocusTarget | null;
+  readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly unsequencedActivities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly activityLabels: ReadonlyMap<string, string>;
+  readonly selectedActivityId: string | null;
+  readonly onSelectActivity: (activityId: string) => void;
+  readonly onHighlightActivity: (activityId: string | null) => void;
+  readonly highlightedActivityId: string | null;
+  readonly sessions: readonly WorkUnitAgentSessionPresentation[];
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
 }) {
-  return (
-    <div className="work-unit-session-slot">
-      <h2>{label}</h2>
-      {session ? (
-        <SharedAgentSessionPanel
-          ariaLabel={`${label} Agent Session`}
-          conversationAriaLabel={`${label} conversation`}
-          session={session}
-          composition={agentSessionComposition}
-          onOpenStandalone={onOpenAgentSession}
-          displayMode="always_open"
-          focusInvocationId={
-            focusTarget?.sessionId === session.sessionId ? focusTarget.invocationId : undefined
-          }
-          focusRequest={focusTarget?.request}
-        />
-      ) : (
-        <section className="work-unit-session-empty" aria-label={`${label} unavailable`}>
-          <strong>No recorded session</strong>
-          <p>This projected Work Unit has no manufactured launch or conversation.</p>
-        </section>
-      )}
-    </div>
+  const allActivities = [...activities, ...unsequencedActivities];
+  const selectedActivity = allActivities.find(
+    (activity) => activity.activityId === selectedActivityId,
   );
+  const renderActivity = (activity: ProductWorkUnitInspectionActivityV1) => {
+    const label = activityLabels.get(activity.activityId) ?? activityLabel(activity);
+    const isNestedActivityTarget = (target: EventTarget | null) =>
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          '[data-activity-nested], button, a, input, select, textarea, summary, [role="button"], [role="link"], [contenteditable="true"]',
+        ),
+      );
+
+    return (
+      <li
+        key={activity.activityId}
+        className={[
+          selectedActivityId === activity.activityId ? 'is-selected' : undefined,
+          highlightedActivityId === activity.activityId ? 'is-highlighted' : undefined,
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        data-activity-id={activity.activityId}
+        role="group"
+        aria-label={`Select activity ${label}`}
+        tabIndex={0}
+        onClick={(event) => {
+          if (!isNestedActivityTarget(event.target)) onSelectActivity(activity.activityId);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onSelectActivity(activity.activityId);
+          }
+        }}
+        onMouseEnter={() => onHighlightActivity(activity.activityId)}
+        onMouseLeave={() => onHighlightActivity(null)}
+      >
+        <button
+          type="button"
+          aria-pressed={selectedActivityId === activity.activityId}
+          onClick={() => onSelectActivity(activity.activityId)}
+          onFocus={() => onHighlightActivity(activity.activityId)}
+          onBlur={() => onHighlightActivity(null)}
+        >
+          <span className="work-unit-activity__role">{roleLabel(activity.role)}</span>
+          <strong>{label}</strong>
+          <small>{activity.invocationId}</small>
+        </button>
+        {activity.applicationSummary && (
+          <ApplicationActivitySummary
+            activity={activity}
+            activities={allActivities}
+            activityLabels={activityLabels}
+            onSelectActivity={onSelectActivity}
+          />
+        )}
+        {selectedActivityId === activity.activityId ? (
+          <SelectedActivityTurn
+            activity={activity}
+            activityLabel={activityLabels.get(activity.activityId) ?? activityLabel(activity)}
+            session={sessions.find((session) => session.sessionId === activity.agentSessionId)}
+            onOpenActivitySession={onOpenActivitySession}
+          />
+        ) : null}
+      </li>
+    );
+  };
+
+  return (
+    <section className="work-unit-activity" aria-label="Work Unit Activity">
+      <header className="work-unit-inspection__heading">
+        <div>
+          <span>Agent-only record</span>
+          <h2>Activity</h2>
+        </div>
+        <p>Application summaries are nested beneath their owning Handler or Implementer turn.</p>
+      </header>
+      {activities.length ? (
+        <ol className="work-unit-activity__list" aria-label="Chronological activity records">
+          {activities.map(renderActivity)}
+        </ol>
+      ) : (
+        <p className="work-unit-inspection__unavailable">
+          No exact chronological Activity correlation is available for this Work Unit.
+        </p>
+      )}
+      {unsequencedActivities.length ? (
+        <section
+          className="work-unit-activity__unsequenced"
+          aria-label="Unsequenced activity records"
+        >
+          <h3>Unsequenced activity records</h3>
+          <p>
+            Exact Lifecycle correlation is unavailable, so these agent records are not assigned a
+            chronological position.
+          </p>
+          <ol className="work-unit-activity__list">{unsequencedActivities.map(renderActivity)}</ol>
+        </section>
+      ) : null}
+      {!selectedActivity ? (
+        <p className="work-unit-inspection__selection-hint">
+          Select an activity to inspect its complete recorded turn.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function SelectedActivityTurn({
+  activity,
+  activityLabel,
+  session,
+  onOpenActivitySession,
+}: {
+  readonly activity: ProductWorkUnitInspectionActivityV1;
+  readonly activityLabel: string;
+  readonly session?: WorkUnitAgentSessionPresentation;
+  readonly onOpenActivitySession?: (target: WorkUnitActivitySessionTarget) => void;
+}) {
+  const invocationIndex = session?.transcript?.invocations.findIndex(
+    ({ id }) => id === activity.invocationId,
+  );
+  const previous =
+    invocationIndex !== undefined && invocationIndex > 0
+      ? session?.transcript?.invocations[invocationIndex - 1]
+      : undefined;
+  return (
+    <section
+      className="work-unit-activity__inspection"
+      aria-label="Selected activity turn"
+      data-activity-nested
+    >
+      <header>
+        <div>
+          <span>Recorded review detail</span>
+          <h3>{activityLabel}</h3>
+          <dl className="work-unit-activity__correlation" aria-label="Recorded correlation">
+            <div>
+              <dt>Activity</dt>
+              <dd>{activity.activityId}</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd>{activity.agentSessionId}</dd>
+            </div>
+            <div>
+              <dt>Invocation</dt>
+              <dd>{activity.invocationId}</dd>
+            </div>
+          </dl>
+        </div>
+        {onOpenActivitySession ? (
+          <button
+            type="button"
+            onClick={() =>
+              onOpenActivitySession({
+                sessionId: activity.agentSessionId,
+                invocationId: activity.invocationId,
+                activityId: activity.activityId,
+              })
+            }
+          >
+            Open in Agent Sessions
+          </button>
+        ) : null}
+      </header>
+      <AgentSessionTurnInspector
+        sessionId={activity.agentSessionId}
+        invocationId={activity.invocationId}
+        transcript={session?.transcript ?? null}
+        precedingInput={
+          previous
+            ? {
+                invocationId: previous.id,
+                text: previous.submittedText,
+                provenance: previous.inputProvenance,
+              }
+            : undefined
+        }
+        ariaLabel={`Agent Session turn: ${activity.invocationId}`}
+      />
+    </section>
+  );
+}
+
+function ApplicationActivitySummary({
+  activity,
+  activities,
+  activityLabels,
+  onSelectActivity,
+}: {
+  readonly activity: ProductWorkUnitInspectionActivityV1;
+  readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly activityLabels: ReadonlyMap<string, string>;
+  readonly onSelectActivity: (activityId: string) => void;
+}) {
+  const summary = activity.applicationSummary!;
+  return (
+    <section
+      className="work-unit-activity__application"
+      aria-label="Application summary"
+      data-activity-nested
+    >
+      <h4>Application summary</h4>
+      <ul>
+        {summary.applicationEvents.map((event) => (
+          <li key={event}>{applicationEventLabel(event)}</li>
+        ))}
+      </ul>
+      {summary.peerEvidenceActivityIds.length ? (
+        <div>
+          <strong>Related activity</strong>
+          {summary.peerEvidenceActivityIds.map((activityId) => {
+            const target = activities.find((candidate) => candidate.activityId === activityId);
+            return target ? (
+              <button key={activityId} type="button" onClick={() => onSelectActivity(activityId)}>
+                {activityLabels.get(target.activityId) ?? activityLabel(target)}
+              </button>
+            ) : (
+              <span key={activityId}>Related activity unavailable ({activityId})</span>
+            );
+          })}
+        </div>
+      ) : null}
+      <p>
+        <strong>MCP calls:</strong> {summary.mcpCallDetail.reason}
+      </p>
+    </section>
+  );
+}
+
+function WorkUnitEvidenceView({
+  inspection,
+  onSelectActivity,
+  onOpenFileEvidence,
+}: {
+  readonly inspection?: ProductWorkUnitInspectionV1;
+  readonly onSelectActivity: (activityId: string) => void;
+  readonly onOpenFileEvidence?: (
+    target: WorkUnitFileEvidenceTarget,
+    context?: WorkUnitFileEvidenceOpenContext,
+  ) => void;
+}) {
+  const fileEvidence = inspection?.fileEvidence;
+  const sourceActivity =
+    fileEvidence?.status === 'available'
+      ? inspection?.activities.find(
+          (activity) => activity.activityId === fileEvidence.sourceActivityId,
+        )
+      : undefined;
+  return (
+    <section className="work-unit-evidence" aria-label="Work Unit Evidence">
+      <header className="work-unit-inspection__heading">
+        <div>
+          <span>Application-owned detail</span>
+          <h2>Evidence</h2>
+        </div>
+        <p>Evidence is shown only where an explicit application owner and source are recorded.</p>
+      </header>
+      <section className="work-unit-evidence__group" aria-label="File evidence">
+        <h3>Files</h3>
+        {!fileEvidence ? (
+          <p>No application-owned file evidence is available for this Work Unit.</p>
+        ) : fileEvidence.status === 'unavailable' ? (
+          <p>Unavailable: {fileEvidence.reason}</p>
+        ) : (
+          <>
+            <p>
+              Owned by the application. Content fingerprints are recorded; file contents are not
+              exposed here.
+            </p>
+            <ul>
+              {fileEvidence.changedFiles.map((file) => (
+                <li
+                  key={file.evidenceRef}
+                  className={`work-unit-file-evidence work-unit-file-evidence--${isAvailableDiffDestination(file.diffDestination) && onOpenFileEvidence ? 'available' : 'unavailable'}`}
+                  data-evidence-id={file.evidenceRef}
+                  data-file-id={file.fileId}
+                  data-source-activity-id={fileEvidence.sourceActivityId}
+                >
+                  {isAvailableDiffDestination(file.diffDestination) && onOpenFileEvidence ? (
+                    <button
+                      type="button"
+                      aria-label={`Open exact diff for ${file.displayName}`}
+                      data-evidence-id={file.evidenceRef}
+                      data-file-id={file.fileId}
+                      onClick={() =>
+                        openFileEvidence(
+                          file.diffDestination,
+                          onOpenFileEvidence,
+                          sourceActivity
+                            ? {
+                                inspectionState: {
+                                  tab: 'evidence',
+                                  activityId: sourceActivity.activityId,
+                                  sessionId: sourceActivity.agentSessionId,
+                                  invocationId: sourceActivity.invocationId,
+                                },
+                              }
+                            : undefined,
+                        )
+                      }
+                    >
+                      <span className="work-unit-file-evidence__name">{file.displayName}</span>
+                      <span className="work-unit-file-evidence__status">Available diff</span>
+                      <small>Application-owned · {file.changeKind} · Open exact diff</small>
+                    </button>
+                  ) : (
+                    <span aria-disabled="true">
+                      <span className="work-unit-file-evidence__name">{file.displayName}</span>
+                      <span className="work-unit-file-evidence__status">Unavailable diff</span>
+                      <small>
+                        Application-owned · {file.changeKind} · Unavailable:{' '}
+                        {isAvailableDiffDestination(file.diffDestination)
+                          ? 'The application file-review destination is unavailable.'
+                          : file.diffDestination.reason}
+                      </small>
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {sourceActivity ? (
+              <button type="button" onClick={() => onSelectActivity(sourceActivity.activityId)}>
+                View owning activity
+              </button>
+            ) : (
+              <p>Owning activity unavailable; navigation is not supported.</p>
+            )}
+          </>
+        )}
+      </section>
+      <section className="work-unit-evidence__group" aria-label="Test evidence">
+        <h3>Tests</h3>
+        {!inspection?.testEvidence || !isAvailableTestEvidence(inspection.testEvidence) ? (
+          <p>
+            Unavailable:{' '}
+            {inspection?.testEvidence && !isAvailableTestEvidence(inspection.testEvidence)
+              ? inspection.testEvidence.reason
+              : 'No application-owned test detail is available for this Work Unit.'}
+          </p>
+        ) : (
+          <div className="work-unit-test-evidence">
+            <p>
+              <strong>{inspection.testEvidence.whatRan}</strong> · {inspection.testEvidence.result}
+            </p>
+            <dl>
+              <div>
+                <dt>Command</dt>
+                <dd>{inspection.testEvidence.command}</dd>
+              </div>
+              <div>
+                <dt>Environment</dt>
+                <dd>{inspection.testEvidence.environment}</dd>
+              </div>
+              <div>
+                <dt>Run</dt>
+                <dd>{inspection.testEvidence.runId}</dd>
+              </div>
+            </dl>
+            {inspection.testEvidence.cases.length ? (
+              <ul>
+                {inspection.testEvidence.cases.map((item) => (
+                  <li key={item.caseId}>
+                    {item.label} · {item.result}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {(() => {
+              const testEvidence = inspection.testEvidence;
+              if (!isAvailableTestEvidence(testEvidence)) return null;
+              const source = inspection.activities.find(
+                (activity) => activity.activityId === testEvidence.sourceActivityId,
+              );
+              return source ? (
+                <button type="button" onClick={() => onSelectActivity(source.activityId)}>
+                  View owning activity
+                </button>
+              ) : (
+                <p>Owning activity unavailable; navigation is not supported.</p>
+              );
+            })()}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function isAvailableTestEvidence(
+  evidence: NonNullable<ProductWorkUnitInspectionV1['testEvidence']>,
+): evidence is Extract<
+  NonNullable<ProductWorkUnitInspectionV1['testEvidence']>,
+  { readonly status: 'available' }
+> {
+  return 'status' in evidence && evidence.status === 'available';
+}
+
+function isAvailableDiffDestination(destination: unknown): destination is {
+  readonly status: 'available';
+  readonly owner: 'application';
+  readonly reviewId: string;
+  readonly changedFileId: string;
+} {
+  return Boolean(
+    destination &&
+    typeof destination === 'object' &&
+    (destination as { readonly status?: unknown }).status === 'available',
+  );
+}
+
+function openFileEvidence(
+  destination: unknown,
+  onOpen: (target: WorkUnitFileEvidenceTarget, context?: WorkUnitFileEvidenceOpenContext) => void,
+  context?: WorkUnitFileEvidenceOpenContext,
+) {
+  if (!isAvailableDiffDestination(destination)) return;
+  onOpen({ reviewId: destination.reviewId, changedFileId: destination.changedFileId }, context);
+}
+
+function roleLabel(role: ProductWorkUnitInspectionActivityV1['role']) {
+  return role === 'handler' ? 'Handler' : 'Implementer';
+}
+
+function lifecycleActivityCorrelation(
+  entry: SprintWorkspacePresentationV1['workUnitLifecycle'][number],
+  inspection: ProductWorkUnitInspectionV1 | undefined,
+  sessions: readonly WorkUnitAgentSessionPresentation[],
+): LifecycleActivityCorrelation {
+  const activityMatches = inspection?.activities.filter(
+    (candidate) =>
+      candidate.agentSessionId === entry.agentSessionId &&
+      candidate.invocationId === entry.invocationId,
+  );
+  const activity = activityMatches?.length === 1 ? activityMatches[0] : undefined;
+  const session = sessions.find(({ sessionId }) => sessionId === entry.agentSessionId);
+  return {
+    entry,
+    ...(activity ? { activity } : {}),
+    ...(session ? { session } : {}),
+    isExact: Boolean(activity && session && roleMatchesLifecycle(activity.role, entry.agentRole)),
+  };
+}
+
+function activityLabel(
+  activity: ProductWorkUnitInspectionActivityV1,
+  lifecycleKind?: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['kind'],
+) {
+  const events = activity.applicationSummary?.applicationEvents ?? [];
+  if (events.includes('application_acceptance_recorded')) return 'Application acceptance recorded';
+  if (events.includes('review_judgment_recorded')) return 'Review judgment recorded';
+  if (events.includes('review_delivery_persisted')) return 'Review delivery recorded';
+  if (events.includes('review_lifecycle_observed')) return 'Review lifecycle observed';
+  if (events.includes('review_conflict_recorded')) return 'Review conflict recorded';
+  if (lifecycleKind === 'renewed_work') return 'Corrected implementation returned';
+  if (lifecycleKind === 'work') return 'Implementation returned';
+  if (lifecycleKind === 'review') return 'Implementation reviewed';
+  if (events.includes('handler_review_ready')) return 'Handler review ready';
+  if (events.includes('semantic_completion_recorded')) return 'Semantic completion recorded';
+  if (events.includes('file_evidence_recorded')) return 'File evidence recorded';
+  if (events.includes('submission_recorded')) return 'Submission recorded';
+  if (events.includes('terminal_lifecycle_observed')) return 'Terminal lifecycle observed';
+  return 'Recorded activity detail unavailable';
+}
+
+function applicationEventLabel(
+  event: NonNullable<
+    ProductWorkUnitInspectionActivityV1['applicationSummary']
+  >['applicationEvents'][number],
+) {
+  return {
+    submission_recorded: 'Submission recorded',
+    file_evidence_recorded: 'File evidence recorded',
+    semantic_completion_recorded: 'Semantic completion recorded',
+    terminal_lifecycle_observed: 'Terminal lifecycle observed',
+    application_acceptance_recorded: 'Application acceptance recorded',
+    handler_review_ready: 'Handler review ready',
+    review_delivery_persisted: 'Review delivery persisted',
+    review_judgment_recorded: 'Review judgment recorded',
+    review_lifecycle_observed: 'Review lifecycle observed',
+    review_conflict_recorded: 'Review conflict recorded',
+  }[event];
 }
 
 function agentInitial(
@@ -315,6 +922,16 @@ function agentInitial(
     work_unit_implementer: 'I',
   }[role];
   return detail;
+}
+
+function roleMatchesLifecycle(
+  role: ProductWorkUnitInspectionActivityV1['role'],
+  lifecycleRole: SprintWorkspacePresentationV1['workUnitLifecycle'][number]['agentRole'],
+) {
+  return (
+    (role === 'handler' && lifecycleRole === 'work_unit_handler') ||
+    (role === 'implementer' && lifecycleRole === 'work_unit_implementer')
+  );
 }
 
 function workUnitStatusLabel(
@@ -355,7 +972,9 @@ function handlerActivity(
 }
 
 function executionStateDetail(
-  state: NonNullable<SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['executionState']>['state'],
+  state: NonNullable<
+    SprintWorkspacePresentationV1['revisionViews'][number]['workUnits'][number]['executionState']
+  >['state'],
 ) {
   return {
     waiting_on_prerequisites: 'Waiting on recorded prerequisite work.',
@@ -563,25 +1182,48 @@ function HandlerReviewActivity({
       <dl>
         <RecordedFact label="Attempt" value={review.attemptId} />
         <RecordedFact label="Handler Session" value={review.handlerSessionId} />
-        <RecordedFact label="Original Handler invocation" value={review.originalHandlerInvocationId} />
+        <RecordedFact
+          label="Original Handler invocation"
+          value={review.originalHandlerInvocationId}
+        />
         <RecordedFact label="Handler action invocation" value={review.actionHandlerInvocationId} />
-        <RecordedFact label="Implementer reporting invocation" value={review.reportingInvocationId} />
+        <RecordedFact
+          label="Implementer reporting invocation"
+          value={review.reportingInvocationId}
+        />
         <RecordedFact label="Review invocation" value={review.reviewInvocationId} />
         <RecordedFact label="Review Harness revision" value={review.reviewHarnessRevisionId} />
         <RecordedFact label="Delivery requested" value={review.deliveryRequestedAt} />
-        {review.deliveryPersistedAt && <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />}
-        {review.harnessBoundAt && <RecordedFact label="Harness bound" value={review.harnessBoundAt} />}
-        {review.launchRequestedAt && <RecordedFact label="Launch requested" value={review.launchRequestedAt} />}
-        {review.launchAcceptedAt && <RecordedFact label="Launch accepted" value={review.launchAcceptedAt} />}
+        {review.deliveryPersistedAt && (
+          <RecordedFact label="Delivery persisted" value={review.deliveryPersistedAt} />
+        )}
+        {review.harnessBoundAt && (
+          <RecordedFact label="Harness bound" value={review.harnessBoundAt} />
+        )}
+        {review.launchRequestedAt && (
+          <RecordedFact label="Launch requested" value={review.launchRequestedAt} />
+        )}
+        {review.launchAcceptedAt && (
+          <RecordedFact label="Launch accepted" value={review.launchAcceptedAt} />
+        )}
         {review.reviewReadyAt && <RecordedFact label="Review ready" value={review.reviewReadyAt} />}
       </dl>
       <details>
         <summary>Application-bound claims and evidence</summary>
         <dl>
           <RecordedFact label="Summary claim" value={review.delivered.summaryClaim} />
-          <RecordedFact label="Validation claim" value={review.delivered.validationStatementClaim} />
-          <RecordedFact label="Delivered payload fingerprint" value={review.delivered.deliveredPayloadFingerprint} />
-          <RecordedFact label="Comparison fingerprint" value={review.delivered.comparisonFingerprint} />
+          <RecordedFact
+            label="Validation claim"
+            value={review.delivered.validationStatementClaim}
+          />
+          <RecordedFact
+            label="Delivered payload fingerprint"
+            value={review.delivered.deliveredPayloadFingerprint}
+          />
+          <RecordedFact
+            label="Comparison fingerprint"
+            value={review.delivered.comparisonFingerprint}
+          />
         </dl>
         <ul>
           {review.delivered.changedFiles.map((file) => (
@@ -631,10 +1273,14 @@ function HandlerReviewActivity({
             </p>
           )}
           {decision.implementationAcceptedAt && (
-            <p>Implementation accepted by the Handler review at {decision.implementationAcceptedAt}.</p>
+            <p>
+              Implementation accepted by the Handler review at {decision.implementationAcceptedAt}.
+            </p>
           )}
           {decision.implementationReturnedAt && (
-            <p>Implementation returned by the Handler review at {decision.implementationReturnedAt}.</p>
+            <p>
+              Implementation returned by the Handler review at {decision.implementationReturnedAt}.
+            </p>
           )}
           {decision.retryRequiredAt && (
             <p>
@@ -658,16 +1304,42 @@ function HandlerReviewActivity({
   );
 }
 
-function IntegrationActivity({ integration }: { readonly integration: ProductWorkUnitIntegrationV1 }) {
+function IntegrationActivity({
+  integration,
+}: {
+  readonly integration: ProductWorkUnitIntegrationV1;
+}) {
   return (
     <div className="work-unit-integration">
       <h3>Integration and settlement</h3>
-      <p>Integration was requested at {integration.requestedAt} and authorized at {integration.authorizedAt}.</p>
-      {integration.progress && <p>Integration progress: {integration.progress.phase} at {integration.progress.recordedAt}.</p>}
-      {integration.attention && <p>Integration needs attention: {integration.attention.safeCode.replaceAll('_', ' ')}. No settlement or contribution is recorded.</p>}
-      {integration.success && <p>Integration success was recorded at {integration.success.recordedAt}.</p>}
-      {integration.settlement && <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>}
-      {integration.prerequisiteContribution && <p>Prerequisite contribution was recorded for {integration.prerequisiteContribution.dependentCount} dependent Work Unit{integration.prerequisiteContribution.dependentCount === 1 ? '' : 's'}.</p>}
+      <p>
+        Integration was requested at {integration.requestedAt} and authorized at{' '}
+        {integration.authorizedAt}.
+      </p>
+      {integration.progress && (
+        <p>
+          Integration progress: {integration.progress.phase} at {integration.progress.recordedAt}.
+        </p>
+      )}
+      {integration.attention && (
+        <p>
+          Integration needs attention: {integration.attention.safeCode.replaceAll('_', ' ')}. No
+          settlement or contribution is recorded.
+        </p>
+      )}
+      {integration.success && (
+        <p>Integration success was recorded at {integration.success.recordedAt}.</p>
+      )}
+      {integration.settlement && (
+        <p>Work Unit settlement was recorded at {integration.settlement.settledAt}.</p>
+      )}
+      {integration.prerequisiteContribution && (
+        <p>
+          Prerequisite contribution was recorded for{' '}
+          {integration.prerequisiteContribution.dependentCount} dependent Work Unit
+          {integration.prerequisiteContribution.dependentCount === 1 ? '' : 's'}.
+        </p>
+      )}
     </div>
   );
 }
@@ -843,7 +1515,9 @@ function RetryAttemptActivity({
         </p>
       )}
       {!retryAttempt.failureReason && !retryAttempt.retryReadyAt && (
-        <p>Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.</p>
+        <p>
+          Retry readiness is not yet recorded. This surface does not imply recovery or relaunch.
+        </p>
       )}
     </div>
   );

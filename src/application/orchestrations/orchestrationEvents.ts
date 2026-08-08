@@ -58,6 +58,8 @@ export interface OrchestrationEventsV1 {
   readonly agentSessionReferences: readonly {
     readonly agentSessionRefId: string;
     readonly agentSessionId: string;
+    /** Present only when the product owns an exact invocation-correlated inspection link. */
+    readonly agentInvocationId?: string;
     readonly targetKind: AgentSessionAssociationTargetKind;
     readonly targetId: string;
     readonly semanticRole: AgentSessionSemanticRole;

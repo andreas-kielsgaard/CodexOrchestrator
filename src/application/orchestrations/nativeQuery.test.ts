@@ -7,6 +7,7 @@ import {
 } from './nativeQuery';
 import { composeProductOrchestrationReadModels } from './productReadModelComposer';
 import { createEpicInitiationCapability } from './epicInitiationCapability';
+import { presentProductOrchestrations } from '../../app/orchestrationPresentation';
 
 const fixture = (name: string): unknown =>
   JSON.parse(
@@ -2215,6 +2216,262 @@ describe('orchestration native query v1', () => {
       'Invalid orchestration native query',
     );
   });
+
+  it('projects only exact productive Work Unit Session turns and application-owned inspection evidence', () => {
+    const value = implementerOutcomeNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    unit.handlerReview = handlerReviewFixture('accepted');
+    value.workUnitInspections = [workUnitInspectionFixture()];
+
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const inspection = query.workUnitInspections[0]!;
+    expect(inspection.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'handler',
+          agentSessionId: 'handler-session-1',
+          invocationId: 'review-invocation-1',
+          primaryStage: 'handler_review',
+          applicationSummary: expect.objectContaining({
+            peerEvidenceActivityIds: [
+              'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          role: 'implementer',
+          agentSessionId: 'implementer-session-1',
+          invocationId: 'reporting-invocation-1',
+          primaryStage: 'implementer_reporting',
+        }),
+      ]),
+    );
+    expect(inspection.fileEvidence).toMatchObject({
+      status: 'available',
+      owner: 'application',
+      sourceActivityId:
+        'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+    });
+    expect(inspection.testEvidence).toMatchObject({ owner: 'application' });
+
+    const input = nativeQueryProductCompositionInputV2(query);
+    expect(input.events.agentSessionReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentSessionId: 'handler-session-1',
+          agentInvocationId: 'review-invocation-1',
+          semanticRole: 'work_unit_handler',
+        }),
+        expect.objectContaining({
+          agentSessionId: 'implementer-session-1',
+          agentInvocationId: 'reporting-invocation-1',
+          semanticRole: 'work_unit_implementer',
+        }),
+      ]),
+    );
+    const readModels = composeProductOrchestrationReadModels(input);
+    expect(
+      readModels.epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.inspection,
+    ).toMatchObject({
+      fileEvidence: { status: 'available' },
+    });
+    expect(
+      presentProductOrchestrations(readModels).epics[0]!.plan.items[0]!.workspaceAdjunct
+        ?.workUnitSessions,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'implementer-session-1',
+          invocationId: 'reporting-invocation-1',
+          role: 'implementer',
+        }),
+      ]),
+    );
+
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (foreign.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.invocationId = 'foreign-invocation';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
+  });
+
+  it('fails closed for unprepared Handler and retry turns, and for canonical role or ID tampering', () => {
+    const unpreparedHandler = implementerOutcomeNativeFixture();
+    const handlerUnit = (unpreparedHandler.workUnits as Array<Record<string, unknown>>)[0]!;
+    const handler = handlerUnit.handlerActivation as Record<string, unknown>;
+    delete handler.handlerInvocationPreparedAt;
+    delete handler.handlerHarnessBoundAt;
+    delete handler.launchRequestedAt;
+    delete handler.launchAcceptedAt;
+    delete handler.handlerReadyAt;
+    delete handlerUnit.actionContinuation;
+    delete handlerUnit.implementerActivation;
+    unpreparedHandler.workUnitInspections = [
+      {
+        workUnitId: 'unit-1',
+        materializationId: 'materialization-1',
+        activities: [],
+        fileEvidence: {
+          status: 'unavailable',
+          owner: 'application',
+          reason: 'No application-owned changed-file evidence is available for this Work Unit.',
+        },
+        testEvidence: {
+          owner: 'application',
+          reason: 'No application-owned test-detail evidence is available for this Work Unit.',
+        },
+      },
+    ];
+    expect(
+      decodeOrchestrationNativeQueryV2(unpreparedHandler).workUnitInspections[0]!.activities,
+    ).toEqual([]);
+    const forgedHandler = JSON.parse(JSON.stringify(unpreparedHandler)) as Record<string, unknown>;
+    (forgedHandler.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities = [
+      (workUnitInspectionFixture().activities as Array<Record<string, unknown>>)[0]!,
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(forgedHandler)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
+
+    const preparedRetry = implementerOutcomeNativeFixture();
+    const retryUnit = (preparedRetry.workUnits as Array<Record<string, unknown>>)[0]!;
+    retryUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    retryUnit.handlerReview = handlerReviewFixture('returned');
+    retryUnit.handlerDecision = handlerDecisionFixture('returned');
+    retryUnit.retryAttempts = [retryAttemptFixture('partial')];
+    preparedRetry.workUnitInspections = [workUnitInspectionFixture(true)];
+    const query = decodeOrchestrationNativeQueryV2(preparedRetry);
+    expect(
+      query.workUnitInspections[0]!.activities.filter(
+        (activity) => activity.primaryStage === 'implementer_retry',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        attemptId: 'retry-attempt-1',
+        role: 'implementer',
+        agentSessionId: 'retry-implementer-session-1',
+        invocationId: 'retry-implementer-invocation-1',
+      }),
+    ]);
+    const input = nativeQueryProductCompositionInputV2(query);
+    expect(input.events.agentSessionReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentSessionId: 'retry-implementer-session-1',
+          agentInvocationId: 'retry-implementer-invocation-1',
+          semanticRole: 'work_unit_implementer',
+        }),
+      ]),
+    );
+    expect(
+      presentProductOrchestrations(composeProductOrchestrationReadModels(input)).epics[0]!.plan
+        .items[0]!.workspaceAdjunct?.workUnitSessions,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'retry-implementer-session-1',
+          invocationId: 'retry-implementer-invocation-1',
+          role: 'implementer',
+        }),
+      ]),
+    );
+
+    const unpreparedRetry = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
+    const retry = (
+      (unpreparedRetry.workUnits as Array<Record<string, unknown>>)[0]!.retryAttempts as Array<
+        Record<string, unknown>
+      >
+    )[0]!;
+    delete retry.implementerInvocationPreparedAt;
+    delete retry.implementerHarnessBoundAt;
+    (unpreparedRetry.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities =
+      workUnitInspectionFixture().activities as Array<Record<string, unknown>>;
+    expect(
+      decodeOrchestrationNativeQueryV2(unpreparedRetry).workUnitInspections[0]!.activities.some(
+        (activity) => activity.primaryStage === 'implementer_retry',
+      ),
+    ).toBe(false);
+
+    const roleTampered = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
+    (
+      (roleTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.role = 'implementer';
+    expect(() => decodeOrchestrationNativeQueryV2(roleTampered)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
+    const idTampered = JSON.parse(JSON.stringify(preparedRetry)) as Record<string, unknown>;
+    (
+      (idTampered.workUnitInspections as Array<Record<string, unknown>>)[0]!.activities as Array<
+        Record<string, unknown>
+      >
+    )[0]!.activityId = 'forged-activity-id';
+    expect(() => decodeOrchestrationNativeQueryV2(idTampered)).toThrow(
+      'Work Unit inspection activity is foreign, stale, mismatched, or duplicated',
+    );
+  });
+
+  it('accepts typed test detail only for its exact reporting activity and rejects a foreign correlation', () => {
+    const value = implementerOutcomeNativeFixture();
+    const unit = (value.workUnits as Array<Record<string, unknown>>)[0]!;
+    unit.implementerOutcome = implementerOutcomeFixture('review_ready');
+    unit.handlerReview = handlerReviewFixture('accepted');
+    const inspection = workUnitInspectionFixture() as Record<string, unknown>;
+    inspection.testEvidence = {
+      status: 'available',
+      owner: 'application',
+      sourceActivityId:
+        'work-unit-inspection:unit-1:attempt-1:implementer-reporting:reporting-invocation-1',
+      runId: 'run-1',
+      whatRan: 'Focused inspection checks',
+      command: 'npm exec vitest run inspection',
+      environment: 'recorded test environment',
+      result: 'passed',
+      cases: [{ caseId: 'case-1', label: 'Exact reporting correlation', result: 'passed' }],
+    };
+    value.workUnitInspections = [inspection];
+    expect(
+      decodeOrchestrationNativeQueryV2(value).workUnitInspections[0]!.testEvidence,
+    ).toMatchObject({
+      status: 'available',
+      runId: 'run-1',
+    });
+
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (foreign.workUnitInspections as Array<Record<string, unknown>>)[0]!.testEvidence as Record<
+        string,
+        unknown
+      >
+    ).sourceActivityId = 'foreign-activity';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow(
+      'Work Unit inspection test evidence has foreign activity correlation',
+    );
+
+    const foreignDiff = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    const changedFile = (
+      (
+        (foreignDiff.workUnitInspections as Array<Record<string, unknown>>)[0]!
+          .fileEvidence as Record<string, unknown>
+      ).changedFiles as Array<Record<string, unknown>>
+    )[0]!;
+    changedFile.fileId = 'file-1';
+    changedFile.diffDestination = {
+      status: 'available',
+      owner: 'application',
+      reviewId: 'review-1',
+      changedFileId: 'foreign-file',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(foreignDiff)).toThrow(
+      'Work Unit inspection diff destination has foreign file identity',
+    );
+  });
 });
 
 function implementerOutcomeNativeFixture(): Record<string, unknown> {
@@ -2368,6 +2625,122 @@ function primaryAttempt<
   T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] },
 >(unit: T): T['attemptHistory'][number] | undefined {
   return unit.attemptHistory.find((member) => member.ordinal === 0);
+}
+
+function workUnitInspectionFixture(includePreparedRetry = false): Record<string, unknown> {
+  const unavailable = (reason: string) => ({ owner: 'application', reason });
+  const activityId = (attemptId: string, stage: string, invocationId: string) =>
+    `work-unit-inspection:unit-1:${attemptId}:${stage}:${invocationId}`;
+  const reportingActivityId = activityId(
+    'attempt-1',
+    'implementer-reporting',
+    'reporting-invocation-1',
+  );
+  return {
+    workUnitId: 'unit-1',
+    materializationId: 'materialization-1',
+    activities: [
+      {
+        activityId: activityId('attempt-1', 'handler-activation', 'handler-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'handler-invocation-1',
+        primaryStage: 'handler_activation',
+      },
+      {
+        activityId: activityId('attempt-1', 'handler-action', 'handler-action-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'handler-action-1',
+        primaryStage: 'handler_action',
+      },
+      {
+        activityId: activityId('attempt-1', 'implementer-activation', 'implementer-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'implementer',
+        agentSessionId: 'implementer-session-1',
+        invocationId: 'implementer-invocation-1',
+        primaryStage: 'implementer_activation',
+      },
+      {
+        activityId: reportingActivityId,
+        attemptId: 'attempt-1',
+        role: 'implementer',
+        agentSessionId: 'implementer-session-1',
+        invocationId: 'reporting-invocation-1',
+        primaryStage: 'implementer_reporting',
+        applicationSummary: {
+          owner: 'application',
+          applicationEvents: [
+            'submission_recorded',
+            'file_evidence_recorded',
+            'semantic_completion_recorded',
+            'terminal_lifecycle_observed',
+            'application_acceptance_recorded',
+            'handler_review_ready',
+          ],
+          peerEvidenceActivityIds: [],
+          mcpCallDetail: unavailable(
+            'No application-owned MCP-call detail is available for this reporting turn.',
+          ),
+        },
+      },
+      {
+        activityId: activityId('attempt-1', 'handler-review', 'review-invocation-1'),
+        attemptId: 'attempt-1',
+        role: 'handler',
+        agentSessionId: 'handler-session-1',
+        invocationId: 'review-invocation-1',
+        primaryStage: 'handler_review',
+        applicationSummary: {
+          owner: 'application',
+          applicationEvents: [
+            'review_delivery_persisted',
+            'review_judgment_recorded',
+            'review_lifecycle_observed',
+          ],
+          peerEvidenceActivityIds: [reportingActivityId],
+          mcpCallDetail: unavailable(
+            'No application-owned MCP-call detail is available for this review turn.',
+          ),
+        },
+      },
+      ...(includePreparedRetry
+        ? [
+            {
+              activityId: activityId(
+                'retry-attempt-1',
+                'implementer-retry',
+                'retry-implementer-invocation-1',
+              ),
+              attemptId: 'retry-attempt-1',
+              role: 'implementer',
+              agentSessionId: 'retry-implementer-session-1',
+              invocationId: 'retry-implementer-invocation-1',
+              primaryStage: 'implementer_retry',
+            },
+          ]
+        : []),
+    ],
+    fileEvidence: {
+      status: 'available',
+      owner: 'application',
+      sourceActivityId: reportingActivityId,
+      changedFiles: [
+        {
+          evidenceRef: 'evidence-1',
+          displayName: 'src/feature.ts',
+          changeKind: 'modified',
+          contentFingerprint: 'content-1',
+        },
+      ],
+    },
+    testEvidence: unavailable(
+      'No application-owned test-detail evidence is available for this Work Unit.',
+    ),
+  };
 }
 
 function implementerOutcomeFixture(

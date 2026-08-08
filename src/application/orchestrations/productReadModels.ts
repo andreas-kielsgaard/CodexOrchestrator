@@ -191,6 +191,7 @@ export interface ProductReadReferenceIndexV1 {
     readonly retryAttempts: readonly ProductWorkUnitRetryAttemptV1[];
     readonly integration?: ProductWorkUnitIntegrationV1;
     readonly executionState?: ProductWorkUnitExecutionStateV1;
+    readonly inspection?: ProductWorkUnitInspectionV1;
     readonly dependencyActivationIntent?: {
       readonly eligibilityState: 'blocked' | 'eligible';
       readonly blockedReason?: string;
@@ -461,6 +462,109 @@ export type ProductWorkUnitExecutionStateV1 = Readonly<{
     | 'settled'
     | 'attention';
   readonly recordedAt: string;
+}>;
+
+/** Read-only inspection facts remain owned by the application, not by claim prose or UI history. */
+export type ProductWorkUnitInspectionUnavailableV1 = Readonly<{
+  readonly owner: 'application';
+  readonly reason: string;
+}>;
+
+export type ProductWorkUnitInspectionActivityV1 = Readonly<{
+  readonly activityId: string;
+  readonly attemptId: string;
+  readonly role: 'handler' | 'implementer';
+  /** The shared inspector edge is the exact Session and invocation pair. */
+  readonly agentSessionId: string;
+  readonly invocationId: string;
+  readonly primaryStage:
+    | 'handler_activation'
+    | 'handler_action'
+    | 'implementer_activation'
+    | 'implementer_retry'
+    | 'implementer_reporting'
+    | 'handler_review';
+  readonly applicationSummary?: Readonly<{
+    readonly owner: 'application';
+    readonly applicationEvents: readonly (
+      | 'submission_recorded'
+      | 'file_evidence_recorded'
+      | 'semantic_completion_recorded'
+      | 'terminal_lifecycle_observed'
+      | 'application_acceptance_recorded'
+      | 'handler_review_ready'
+      | 'review_delivery_persisted'
+      | 'review_judgment_recorded'
+      | 'review_lifecycle_observed'
+      | 'review_conflict_recorded'
+    )[];
+    readonly peerEvidenceActivityIds: readonly string[];
+    /** Deliberately unavailable until an application-owned call detail is recorded. */
+    readonly mcpCallDetail: ProductWorkUnitInspectionUnavailableV1;
+  }>;
+}>;
+
+export type ProductWorkUnitInspectionFileEvidenceV1 =
+  | Readonly<{
+      readonly status: 'available';
+      readonly owner: 'application';
+      readonly sourceActivityId: string;
+      readonly changedFiles: readonly Readonly<{
+        readonly evidenceRef: string;
+        /** Stable application-owned identity; never a filesystem path. */
+        readonly fileId: string;
+        readonly displayName: string;
+        readonly changeKind: 'added' | 'modified' | 'deleted' | 'renamed';
+        readonly contentFingerprint: string;
+        readonly diffDestination:
+          | Readonly<{
+              readonly status: 'available';
+              readonly owner: 'application';
+              readonly reviewId: string;
+              readonly changedFileId: string;
+            }>
+          | Readonly<{
+              readonly status: 'unavailable';
+              readonly owner: 'application';
+              readonly reason: string;
+            }>;
+      }>[];
+    }>
+  | Readonly<{
+      readonly status: 'unavailable';
+      readonly owner: 'application';
+      readonly reason: string;
+    }>;
+
+export type ProductWorkUnitInspectionTestEvidenceV1 =
+  | Readonly<{
+      readonly status: 'unavailable';
+      readonly owner: 'application';
+      readonly reason: string;
+    }>
+  | Readonly<{
+      readonly status: 'available';
+      readonly owner: 'application';
+      readonly sourceActivityId: string;
+      readonly runId: string;
+      readonly whatRan: string;
+      readonly command: string;
+      readonly environment: string;
+      readonly result: 'passed' | 'failed' | 'canceled' | 'timed_out' | 'inconclusive';
+      readonly cases: readonly Readonly<{
+        readonly caseId: string;
+        readonly label: string;
+        readonly result: 'passed' | 'failed' | 'skipped';
+      }>[];
+    }>;
+
+export type ProductWorkUnitInspectionV1 = Readonly<{
+  readonly workUnitId: string;
+  readonly materializationId: string;
+  readonly activities: readonly ProductWorkUnitInspectionActivityV1[];
+  readonly fileEvidence: ProductWorkUnitInspectionFileEvidenceV1;
+  /** Test detail is unavailable unless application-owned detail is separately recorded. */
+  readonly testEvidence: ProductWorkUnitInspectionTestEvidenceV1;
 }>;
 
 export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
@@ -766,6 +870,7 @@ export interface ProductSprintContinuationReadModelV1 {
 export interface ProductAgentSessionReferenceReadModelV1 {
   readonly agentSessionRefId: string;
   readonly agentSessionId: string;
+  readonly agentInvocationId?: string;
   readonly title: string;
   readonly source: ReadSourceAuthorityV1;
   readonly targetKind: AgentSessionAssociationTargetKind;
@@ -815,6 +920,7 @@ export interface ProductSprintRevisionViewV1 {
       readonly eligibilityRecordedAt: string;
       readonly activationIntendedAt?: string;
     };
+    readonly inspection?: ProductWorkUnitInspectionV1;
     readonly workUnitScopeId: string;
     readonly sprintPlanRevisionId: string;
     readonly fixedExecutionScopeIds: readonly string[];

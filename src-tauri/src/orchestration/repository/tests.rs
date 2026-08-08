@@ -1549,6 +1549,21 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
     drop(connection);
 
     let projected = repository.native_query().expect("durable projection");
+    let inspection = projected
+        .work_unit_inspections
+        .iter()
+        .find(|item| item.work_unit_id == "unit-1")
+        .expect("unit inspection");
+    assert!(inspection.activities.iter().any(|activity| {
+        activity.agent_session_id == "implementer-session-1"
+            && activity.invocation_id
+                == projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-1")
+    }));
+    assert!(matches!(
+        inspection.file_evidence,
+        super::WorkUnitInspectionFileEvidenceDto::Available { .. }
+    ));
+    assert!(inspection.test_evidence.reason.contains("test-detail"));
     let first = &projected.work_units[0].attempt_history[0].incomplete_disposition.as_ref().unwrap().no_progress_handback.as_ref().unwrap().epic_runner_receiver.as_ref().unwrap();
     assert_eq!(first.sprint_id, sprint);
     assert_eq!(first.epic_id, epic);
@@ -2048,6 +2063,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
         sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None, epic_settlement_states: None,
+        work_unit_inspections: vec![],
     }
 }
 
@@ -2069,6 +2085,10 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .as_object_mut()
         .unwrap()
         .insert("workUnitRelationships".into(), serde_json::json!([]));
+    fixture
+        .as_object_mut()
+        .unwrap()
+        .insert("workUnitInspections".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     Ok(fixture)
@@ -2667,6 +2687,28 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
         retry_attempts: Vec::new(),
         integration: None,
     }
+}
+
+#[test]
+fn work_unit_inspection_requires_prepared_turns_and_projects_prepared_retry() {
+    let mut work_unit = valid_work_unit_activation_projection();
+    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = None;
+    work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
+        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
+        implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
+        capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: None, authorized_at: None,
+        execution_support_granted_at: None, isolated_worktree_ready_at: None, implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
+        implementer_invocation_prepared_at: None, implementer_harness_bound_at: None, launch_requested_at: None,
+        launch_accepted_at: None, provider_activation_observed_at: None, retry_ready_at: None, failure_reason: None,
+    }];
+    let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
+    assert!(!inspection.activities.iter().any(|activity| matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation | WorkUnitInspectionStageDto::ImplementerRetry)));
+
+    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = Some("2026-08-04T00:00:07Z".into());
+    primary_retry_mut(&mut work_unit).implementer_invocation_prepared_at = Some("2026-08-04T00:00:08Z".into());
+    let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
+    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:attempt:handler-activation:handler-original" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation)));
+    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:retry-attempt:implementer-retry:retry-invocation" && activity.attempt_id == "retry-attempt" && activity.agent_session_id == "retry-session" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::ImplementerRetry)));
 }
 
 fn primary_outcome_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitImplementerOutcomeDto {

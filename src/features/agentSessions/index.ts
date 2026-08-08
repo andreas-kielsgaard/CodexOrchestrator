@@ -37,3 +37,7 @@ export {
   type EmbeddedAgentSessionComposition,
 } from './embeddedAgentSession';
 export { AgentMarkdown } from './AgentMarkdown';
+export {
+  AgentSessionTurnInspector,
+  type AgentSessionTurnInspectorProps,
+} from './AgentSessionTurnInspector';

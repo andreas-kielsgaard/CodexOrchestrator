@@ -28,6 +28,11 @@ import {
 } from '../conversationHarnesses/recordedHarnessInspectorSource';
 import { HarnessInspectorDevelopmentSurface } from '../../features/conversationHarnesses';
 import { createElement } from 'react';
+import {
+  addRecordedWorkUnitReviewInspection,
+  recordedWorkUnitReviewFileSource,
+} from './recordedWorkUnitReviewFixture';
+import { recordedEpicProductDecisionSource } from '../productDecisions/recordedEpicProductDecisionSource';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -50,21 +55,32 @@ export const recordedPlanBuilderAgentIdentity: AgentIdentity = {
 };
 
 /** Compatibility-only transcripts and workflow geometry are adjuncts, never product read facts. */
-export const recordedDevelopmentOrchestrationPresentation: OrchestrationPresentationAdapter = {
-  present(readModels) {
-    const product = readModels.epics[0];
-    if (!product) throw new Error('Recorded adjunct requires a canonical orchestration read.');
-    for (const sprintId of Object.keys(recordedPresentationAdjunct.sprints ?? {})) {
-      if (!product.sprints.some((sprint) => sprint.sprintId === sprintId))
-        throw new Error(`Recorded adjunct has no canonical Sprint read for ${sprintId}.`);
-    }
-    return presentProductOrchestrations(readModels, recordedPresentationAdjunct);
-  },
-};
+export function createRecordedDevelopmentOrchestrationPresentation(options?: {
+  readonly includeWorkUnitReview?: boolean;
+}): OrchestrationPresentationAdapter {
+  return {
+    present(readModels) {
+      const presentationReads = options?.includeWorkUnitReview
+        ? addRecordedWorkUnitReviewInspection(readModels)
+        : readModels;
+      const product = presentationReads.epics[0];
+      if (!product) throw new Error('Recorded adjunct requires a canonical orchestration read.');
+      for (const sprintId of Object.keys(recordedPresentationAdjunct.sprints ?? {})) {
+        if (!product.sprints.some((sprint) => sprint.sprintId === sprintId))
+          throw new Error(`Recorded adjunct has no canonical Sprint read for ${sprintId}.`);
+      }
+      return presentProductOrchestrations(presentationReads, recordedPresentationAdjunct);
+    },
+  };
+}
+
+export const recordedDevelopmentOrchestrationPresentation =
+  createRecordedDevelopmentOrchestrationPresentation();
 
 /** Development-only adapter: recorded reads use the product tree, while effects remain unsupported. */
 export function createRecordedDevelopmentApplicationComposition(options?: {
   readonly initialSurface?: AppProps['initialSurface'];
+  readonly includeWorkUnitReview?: boolean;
 }): AppProps {
   let harnessIdentity = recordedHarnessInspectorAgentIdentity;
   const harnessManagementSource = createRecordedHarnessManagementSource({
@@ -76,8 +92,13 @@ export function createRecordedDevelopmentApplicationComposition(options?: {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
     managedPlanBuilderAgentIdentity: recordedPlanBuilderAgentIdentity,
     orchestrationClient: recordedDevelopmentOrchestrationClient,
-    orchestrationPresentation: recordedDevelopmentOrchestrationPresentation,
+    orchestrationPresentation: createRecordedDevelopmentOrchestrationPresentation({
+      includeWorkUnitReview: options?.includeWorkUnitReview,
+    }),
     orchestrationAgentSessionComposition: { client: recordedDevelopmentAgentSessionClient },
+    fileReviewSourceForEvidence: (target) =>
+      recordedWorkUnitReviewFileSource(target.reviewId, target.changedFileId),
+    epicProductDecisionSource: recordedEpicProductDecisionSource,
     artifactAccessController: unsupportedArtifactAccessController,
     sprintAutomaticContinuationPolicyController:
       unsupportedProductSprintAutomaticContinuationPolicyController,

@@ -265,11 +265,20 @@ describe('OrchestrationSection', () => {
       <OrchestrationSection
         view={withTransition({
           label: 'Epic continuation invocation persisted; launch acceptance pending',
-          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
-          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
-          preStartSemanticOutcomeRecordedAt: 't', preStartLifecycleObservedAt: 't',
-          preStartOutcomeAcceptedAt: 't', parentContinuationDeliveryRequestedAt: 't',
-          parentContinuationDeliveryPersistedAt: 't', downstreamNotStarted: true,
+          requestedAt: 't',
+          authorizedAt: 't',
+          sessionCreatedAt: 't',
+          harnessAppliedAt: 't',
+          launchAcceptedAt: 't',
+          preStartReady: true,
+          lifecycleObserved: true,
+          accepted: true,
+          preStartSemanticOutcomeRecordedAt: 't',
+          preStartLifecycleObservedAt: 't',
+          preStartOutcomeAcceptedAt: 't',
+          parentContinuationDeliveryRequestedAt: 't',
+          parentContinuationDeliveryPersistedAt: 't',
+          downstreamNotStarted: true,
         })}
       />,
     );
@@ -285,11 +294,20 @@ describe('OrchestrationSection', () => {
       <OrchestrationSection
         view={withTransition({
           label: 'Sprint planning-ready; downstream not started',
-          requestedAt: 't', authorizedAt: 't', sessionCreatedAt: 't', harnessAppliedAt: 't',
-          launchAcceptedAt: 't', preStartReady: true, lifecycleObserved: true, accepted: true,
-          sprintStartAuthorizedAt: 't', sprintStartPersistedAt: 't',
-          sprintContinuationLaunchAcceptedAt: 't', repositoryBranchReevaluationRecordedAt: 't',
-          planningReadyAt: 't', providerReceiverActivationObservedAt: 't',
+          requestedAt: 't',
+          authorizedAt: 't',
+          sessionCreatedAt: 't',
+          harnessAppliedAt: 't',
+          launchAcceptedAt: 't',
+          preStartReady: true,
+          lifecycleObserved: true,
+          accepted: true,
+          sprintStartAuthorizedAt: 't',
+          sprintStartPersistedAt: 't',
+          sprintContinuationLaunchAcceptedAt: 't',
+          repositoryBranchReevaluationRecordedAt: 't',
+          planningReadyAt: 't',
+          providerReceiverActivationObservedAt: 't',
           downstreamNotStarted: true,
         })}
       />,
@@ -334,7 +352,10 @@ describe('OrchestrationSection', () => {
     fireEvent.click(action);
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
-    expect(requestFileReview).toHaveBeenCalledWith('sprint-control-surface');
+    expect(requestFileReview).toHaveBeenCalledWith(
+      'sprint-control-surface',
+      expect.objectContaining({ kind: 'sprint', sprintId: 'sprint-control-surface' }),
+    );
 
     await act(async () => {
       settle({
@@ -386,7 +407,14 @@ describe('OrchestrationSection', () => {
     fireEvent.click(action);
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
-    expect(requestFileReview).toHaveBeenNthCalledWith(1, 'sprint-control-surface');
+    expect(requestFileReview).toHaveBeenNthCalledWith(
+      1,
+      'sprint-control-surface',
+      expect.objectContaining({
+        kind: 'work_slice_planning_point',
+        workSlicePlanningPointId: 'planner-r4-integration',
+      }),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
@@ -396,7 +424,7 @@ describe('OrchestrationSection', () => {
     expect(action).toBeDisabled();
     expect(within(control).getByRole('status')).toHaveTextContent('Preparing File Review…');
     expect(requestFileReview).toHaveBeenCalledTimes(1);
-    expect(requestFileReview.mock.calls[0]).toEqual(['sprint-control-surface']);
+    expect(requestFileReview).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       settle({
@@ -451,35 +479,15 @@ describe('OrchestrationSection', () => {
     const workUnitOpener = screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ });
     fireEvent.click(workUnitOpener);
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    const handler = screen.getByRole('region', { name: 'Work Unit Handler Agent Session' });
-    expect(within(handler).getByLabelText('Work Unit Handler conversation')).toBeVisible();
-    expect(
-      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
-    const plannerSession = screen.getByRole('region', {
-      name: 'Work Slice Planner Agent Session',
-    });
-    expect(within(plannerSession).getByLabelText('Work Slice Planner conversation')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
-    expect(handler).toHaveTextContent('Reviewed the first return');
-    expect(
-      screen.getByRole('button', { name: /Plan Work Unit.*Recorded planner R4 integration/ }),
-    ).toBeVisible();
-    expect(screen.getByRole('button', { name: /Acceptance.*Work Unit Handler/ })).toBeVisible();
+    expect(screen.getByLabelText('Work Unit Activity and Evidence')).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
     expect(screen.getByLabelText('Work Unit context')).not.toHaveTextContent(
       'Recorded/theoretical fixture only',
     );
-    expect(
-      screen.getByRole('separator', {
-        name: 'Resize Planning and handling conversation and Work Unit Implementer conversation',
-      }),
-    ).toHaveAttribute('aria-orientation', 'vertical');
-    expect(within(handler).queryByRole('button', { name: /Collapse/ })).toBeNull();
-
     fireEvent.click(screen.getByRole('button', { name: 'Back to Work Slice planning point' }));
     expect(
       screen.getByRole('main', {
@@ -523,13 +531,8 @@ describe('OrchestrationSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Sprint' }));
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-ECS2E/ }));
-    const handler = screen.getByRole('region', { name: 'Work Unit Handler Agent Session' });
-    expect(await within(handler).findByRole('textbox', { name: 'Message' })).toBeVisible();
-    expect(
-      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
-    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
+    expect(screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
@@ -568,8 +571,12 @@ describe('OrchestrationSection', () => {
     expect(screen.getByLabelText('Work Unit context')).toHaveTextContent(
       'Superseded and never launched',
     );
-    expect(screen.getByLabelText('Work Unit Handler unavailable')).toBeVisible();
-    expect(screen.getByLabelText('Work Unit Implementer unavailable')).toBeVisible();
+    expect(
+      screen.getByText(
+        'No exact chronological Activity correlation is available for this Work Unit.',
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Work Slice planning point' }));
     expect(
@@ -632,13 +639,12 @@ describe('OrchestrationSection', () => {
       }),
     );
     expect(screen.getByRole('main', { name: 'Work Unit detail: WU-RD1' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Slice Planner' }));
-    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Work Unit Handler' }));
-    expect(screen.getByRole('region', { name: 'Work Unit Handler Agent Session' })).toBeVisible();
     expect(
-      screen.getByRole('region', { name: 'Work Unit Implementer Agent Session' }),
+      screen.getByText(
+        'No exact chronological Activity correlation is available for this Work Unit.',
+      ),
     ).toBeVisible();
+    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
   });
 
   it('describes Sprint Auto-flow without claiming eligibility or execution', () => {
@@ -998,7 +1004,7 @@ describe('OrchestrationSection', () => {
     );
     const detail = screen.getByRole('main', { name: 'Work Unit detail: WU-ECS2E' });
     expect(detail).toHaveTextContent('Plan Work Unit');
-    expect(detail).toHaveTextContent('Recorded planner R4 integration');
+    expect(detail).toHaveTextContent('Planner context is recorded separately from agent Activity.');
     expect(detail).toHaveTextContent('Review');
     expect(detail).toHaveTextContent('Acceptance');
     expect(detail).toHaveTextContent('Recorded WU-ECS2E Work Unit Handler');
@@ -1085,34 +1091,14 @@ describe('OrchestrationSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open Work Unit WU-RD1/ }));
 
     const lifecycle = screen.getByLabelText('Work Unit lifecycle turn log');
-    expect(within(lifecycle).getAllByRole('button')).toHaveLength(9);
-    fireEvent.click(within(lifecycle).getByRole('button', { name: /Plan Work Unit/ }));
-    expect(screen.getByRole('region', { name: 'Work Slice Planner Agent Session' })).toBeVisible();
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-invocation-id="recorded-planner-rd-r2-scope"]'),
-      ).toHaveFocus(),
-    );
-    fireEvent.click(within(lifecycle).getByRole('button', { name: /Reprompt/ }));
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-invocation-id="recorded-handler-WU-RD1-reprompt"]'),
-      ).toHaveFocus(),
-    );
-
-    fireEvent.click(within(lifecycle).getAllByRole('button', { name: /^Review/ })[1]);
-    expect(screen.getByRole('region', { name: 'Work Unit Handler Agent Session' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-invocation-id="recorded-handler-WU-RD1-second-review"]'),
-      ).toHaveFocus(),
-    );
+    const lifecycleTurns = within(lifecycle).getAllByRole('button');
+    expect(lifecycleTurns).toHaveLength(8);
+    lifecycleTurns.forEach((turn) => expect(turn).toBeDisabled());
     expect(
-      screen.getByRole('separator', {
-        name: 'Resize Planning and handling conversation and Work Unit Implementer conversation',
-      }),
-    ).toHaveAttribute('aria-orientation', 'vertical');
+      screen.getByText(
+        'No exact chronological Activity correlation is available for this Work Unit.',
+      ),
+    ).toBeVisible();
   });
 });
 

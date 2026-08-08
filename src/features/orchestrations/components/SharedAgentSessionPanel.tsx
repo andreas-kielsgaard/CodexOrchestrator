@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
   ConversationViewport,
   embeddedSessionIsWritable,
+  AgentSessionTurnInspector,
   type EmbeddedAgentSessionComposition,
   type ProjectedTranscript,
   type TranscriptAnchorRange,
@@ -28,6 +29,8 @@ export interface SharedAgentSessionPanelProps {
   readonly displayMode?: 'collapsible' | 'always_open';
   readonly focusInvocationId?: string;
   readonly focusRequest?: number;
+  /** Explicitly inspects one Session turn and suppresses all continuation controls. */
+  readonly inspection?: { readonly invocationId: string };
 }
 
 /** Shared embedded Agent Session presentation with an injected application boundary. */
@@ -43,6 +46,7 @@ export function SharedAgentSessionPanel({
   displayMode = 'collapsible',
   focusInvocationId,
   focusRequest,
+  inspection,
 }: SharedAgentSessionPanelProps) {
   const conversationId = useId();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
@@ -131,9 +135,14 @@ export function SharedAgentSessionPanel({
               session={session}
               composition={composition}
               ariaLabel={conversationAriaLabel}
+              inspection={inspection}
             />
           ) : (
-            <ReadOnlyAgentSessionConversation session={session} ariaLabel={conversationAriaLabel} />
+            <ReadOnlyAgentSessionConversation
+              session={session}
+              ariaLabel={conversationAriaLabel}
+              inspection={inspection}
+            />
           )}
         </div>
       )}
@@ -145,10 +154,12 @@ function ConnectedAgentSessionConversation({
   session,
   composition,
   ariaLabel,
+  inspection,
 }: {
   readonly session: SharedAgentSessionPresentation;
   readonly composition: EmbeddedAgentSessionComposition;
   readonly ariaLabel: string;
+  readonly inspection?: { readonly invocationId: string };
 }) {
   const controller = useAgentSession(composition.client, {
     selectedSessionId: session.sessionId,
@@ -156,6 +167,18 @@ function ConnectedAgentSessionConversation({
   const writable = embeddedSessionIsWritable(composition, session.sessionId);
   const ready = Boolean(controller.details) && !controller.error;
   const transcript = controller.transcript;
+
+  if (inspection) {
+    return (
+      <AgentSessionTurnInspector
+        sessionId={session.sessionId}
+        invocationId={inspection.invocationId}
+        transcript={transcript}
+        loading={controller.loading}
+        error={controller.error}
+      />
+    );
+  }
 
   return (
     <ConversationViewport
@@ -189,11 +212,22 @@ function ConnectedAgentSessionConversation({
 function ReadOnlyAgentSessionConversation({
   session,
   ariaLabel,
+  inspection,
 }: {
   readonly session: SharedAgentSessionPresentation;
   readonly ariaLabel: string;
+  readonly inspection?: { readonly invocationId: string };
 }) {
   const [expandedProcessing, setExpandedProcessing] = useState<ReadonlySet<string>>(new Set());
+  if (inspection) {
+    return (
+      <AgentSessionTurnInspector
+        sessionId={session.sessionId}
+        invocationId={inspection.invocationId}
+        transcript={session.transcript ?? null}
+      />
+    );
+  }
   return (
     <ConversationViewport
       segments={

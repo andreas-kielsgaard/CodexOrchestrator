@@ -19,12 +19,17 @@ import {
   unavailableEpicInitiationCapability,
   unsupportedArtifactAccessController,
 } from '../application/orchestrations';
-import { EpicPlanBuilder, OrchestrationSection } from '../features/orchestrations';
+import {
+  EpicPlanBuilder,
+  OrchestrationSection,
+  type OrchestrationNavigationChangeIntent,
+} from '../features/orchestrations';
 import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
 import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -38,7 +43,10 @@ import { useOrchestrationLoad } from './useOrchestrationLoad';
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
-import type { AgentSessionProductLocation } from '../application/agentSessionNavigation';
+import type {
+  AgentSessionProductLocation,
+  AgentSessionProductOrigin,
+} from '../application/agentSessionNavigation';
 import type { FileReviewSource } from '../application/fileReview';
 import type {
   ContextualFileReviewClient,
@@ -48,9 +56,39 @@ import { FileReviewScreen } from '../features/fileReview';
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileSettings';
+import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
+import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
+import { ProductCommandBar } from './ProductCommandBar';
+import {
+  canNavigateBack,
+  contextualOriginDestination,
+  createProductNavigation,
+  isAgentSessionProductOrigin,
+  isFileReviewProductOrigin,
+  productNavigationReducer,
+  sameFileReviewNavigationTarget,
+  sameProductNavigationDestination,
+  type FileReviewNavigationTarget,
+  type FileReviewProductOrigin,
+  type ProductNavigationDestination,
+} from '../application/productNavigation';
+import type {
+  EpicProductDecisionSource,
+  ProductDecisionClient,
+  ProductDecisionCorrectionClient,
+  ProductDecisionEvidenceDestination,
+  ProductDecisionEvidenceNavigationRequest,
+  ProductDecisionPublishTarget,
+} from '../application/productDecisions';
 
 export type ApplicationSurface =
-  | 'epics' | 'agent-sessions' | 'harness-inspector' | 'file-review' | 'worktree-review' | 'native-settings';
+  | 'epics'
+  | 'agent-sessions'
+  | 'harness-inspector'
+  | 'file-review'
+  | 'worktree-review'
+  | 'native-settings'
+  | 'product-decision-publish';
 
 export interface AppProps {
   readonly agentSessionClient: AgentSessionClient;
@@ -80,6 +118,17 @@ export interface AppProps {
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
   readonly nativeProfileClient?: NativeProfileClient;
   readonly nativeProfileApplicationConsumer?: NativeProfileApplicationConsumer;
+  /** Explicit application-owned destinations only; display names never become file-review input. */
+  readonly fileReviewSourceForEvidence?: (target: {
+    readonly reviewId: string;
+    readonly changedFileId: string;
+  }) => FileReviewSource | undefined;
+  /** Development-recorded read only; product boot deliberately leaves it absent. */
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  /** Product-owned durable decision command/query boundary for the productive Epic view. */
+  readonly productDecisionClient?: ProductDecisionClient;
+  /** Product-owned decision correction conversation boundary; it is never a general chat client. */
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
@@ -114,20 +163,136 @@ export function App({
   fileReviewSource,
   contextualFileReviewClient,
   nativeProfileClient,
+  fileReviewSourceForEvidence,
+  epicProductDecisionSource,
+  productDecisionClient,
+  productDecisionCorrectionClient,
   humanReviewLauncherView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
 }: AppProps) {
-  const [surface, setSurface] = useState<ApplicationSurface>(() =>
+  const initialApplicationSurface: ApplicationSurface =
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
     (initialSurface === 'worktree-review' && !humanReviewLauncherView)
       ? 'epics'
-      : initialSurface,
+      : initialSurface;
+  const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
+  const productNavigationEpoch = useRef(0);
+  type ContextualFileReviewState = {
+    readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
+    readonly source: FileReviewSource;
+    readonly initialFileId?: string;
+  };
+  const contextualFileReviewStateRef = useRef<ContextualFileReviewState | null>(null);
+  const fileReviewRequestSequence = useRef(0);
+  const [contextualFileReviewState, setContextualFileReviewStateState] =
+    useState<ContextualFileReviewState | null>(null);
+  const setContextualFileReviewState = useCallback((next: ContextualFileReviewState | null) => {
+    contextualFileReviewStateRef.current = next;
+    setContextualFileReviewStateState(next);
+  }, []);
+  const clearFileReviewState = useCallback(() => {
+    setContextualFileReviewState(null);
+  }, [setContextualFileReviewState]);
+  const supportsProductDestination = useCallback(
+    (destination: ProductNavigationDestination) => {
+      switch (destination.kind) {
+        case 'orchestration':
+        case 'plan_builder':
+        case 'agent_sessions':
+          return true;
+        case 'file_review':
+          if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
+          return sameFileReviewNavigationTarget(
+            contextualFileReviewStateRef.current?.target,
+            destination.target,
+          );
+        case 'harness_inspector':
+          return Boolean(harnessManagementPreviewSurface);
+        case 'worktree_review':
+          return Boolean(humanReviewLauncherView);
+        case 'product_decision_publish':
+          return Boolean(productDecisionClient);
+      }
+    },
+    [
+      fileReviewSource,
+      harnessManagementPreviewSurface,
+      humanReviewLauncherView,
+      productDecisionClient,
+    ],
   );
-  const [contextualFileReviewSource, setContextualFileReviewSource] = useState<FileReviewSource>();
-  const activeFileReviewSource = fileReviewSource ?? contextualFileReviewSource;
-  const [selectedAgentSessionId, setSelectedAgentSessionId] = useState<string | null>(null);
+  const initialNavigationDestination: ProductNavigationDestination =
+    initialApplicationSurface === 'agent-sessions'
+      ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
+      : initialApplicationSurface === 'file-review'
+        ? { kind: 'file_review', target: { kind: 'direct' } }
+        : initialApplicationSurface === 'harness-inspector'
+          ? { kind: 'harness_inspector' }
+          : initialApplicationSurface === 'worktree-review'
+            ? { kind: 'worktree_review' }
+            : { kind: 'orchestration', location: null };
+  const [productNavigation, dispatchProductNavigation] = useReducer(
+    (
+      state: ReturnType<typeof createProductNavigation>,
+      action: Parameters<typeof productNavigationReducer>[1],
+    ) => productNavigationReducer(state, action, supportsProductDestination),
+    createProductNavigation(initialNavigationDestination),
+  );
+  const selectedAgentSessionId =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? productNavigation.current.destination.selectedSessionId
+      : null;
+  const focusedAgentSessionInvocationId =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
+      : undefined;
+  const focusedAgentSessionEvidence =
+    productNavigation.current.destination.kind === 'agent_sessions'
+      ? productNavigation.current.destination.focusedEvidence
+      : undefined;
+  const currentProductDestination = productNavigation.current.destination;
+  const activeFileReviewSource =
+    currentProductDestination.kind === 'file_review'
+      ? currentProductDestination.target.kind === 'direct'
+        ? fileReviewSource
+        : sameFileReviewNavigationTarget(
+              contextualFileReviewState?.target,
+              currentProductDestination.target,
+            )
+          ? contextualFileReviewState?.source
+          : undefined
+      : undefined;
+  const productReturnOrigin =
+    productNavigation.contextualOrigin &&
+    ((isAgentSessionProductOrigin(productNavigation.contextualOrigin) &&
+      currentProductDestination.kind === 'agent_sessions' &&
+      supportsProductDestination({
+        kind: 'orchestration',
+        location: productNavigation.contextualOrigin.location,
+      })) ||
+      (isFileReviewProductOrigin(productNavigation.contextualOrigin) &&
+        currentProductDestination.kind === 'file_review' &&
+        sameFileReviewNavigationTarget(
+          currentProductDestination.target,
+          fileReviewTarget(productNavigation.contextualOrigin),
+        ) &&
+        supportsProductDestination(productNavigation.contextualOrigin.returnTo)))
+      ? productNavigation.contextualOrigin
+      : null;
+  const agentSessionReturnOrigin =
+    productReturnOrigin && isAgentSessionProductOrigin(productReturnOrigin)
+      ? productReturnOrigin
+      : null;
+  const canGoBack = canNavigateBack(productNavigation, supportsProductDestination);
+  const contextualReturnDuplicatesBack =
+    canGoBack &&
+    productReturnOrigin !== null &&
+    sameProductNavigationDestination(
+      productNavigation.history.at(-1)!.destination,
+      contextualOriginDestination(productReturnOrigin),
+    );
   const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -137,6 +302,34 @@ export function App({
     'overview',
   );
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
+  const hasSynchronizedProductDestination = useRef(false);
+
+  useEffect(() => {
+    if (!hasSynchronizedProductDestination.current) {
+      hasSynchronizedProductDestination.current = true;
+      return;
+    }
+    const destination = currentProductDestination;
+    if (destination.kind === 'orchestration') {
+      setSurface('epics');
+      setRequestedProductLocation(destination.location);
+      setSelectedDraft(null);
+      setOrchestrationRoute('overview');
+    } else if (destination.kind === 'plan_builder') {
+      setSurface('epics');
+      setOrchestrationRoute('plan-builder');
+    } else if (destination.kind === 'agent_sessions') {
+      setSurface('agent-sessions');
+    } else if (destination.kind === 'harness_inspector') {
+      setSurface('harness-inspector');
+    } else if (destination.kind === 'worktree_review') {
+      setSurface('worktree-review');
+    } else if (destination.kind === 'file_review') {
+      setSurface('file-review');
+    } else if (destination.kind === 'product_decision_publish') {
+      setSurface('product-decision-publish');
+    }
+  }, [currentProductDestination]);
 
   useEffect(() => {
     if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
@@ -144,7 +337,14 @@ export function App({
     const read = () =>
       void humanReviewLauncherNavigation().then(
         (route) => {
-          if (active && route === 'worktree-review') setSurface(route);
+          if (active && route === 'worktree-review') {
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'worktree_review' },
+            });
+            setSurface(route);
+          }
         },
         () => undefined,
       );
@@ -363,12 +563,115 @@ export function App({
     },
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
-  const openStandaloneAgentSession = useCallback((sessionId: string) => {
-    setSelectedAgentSessionId(sessionId);
+  const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
+    productNavigationEpoch.current += 1;
+    dispatchProductNavigation({
+      type: 'navigate',
+      intent: 'replace',
+      destination: { kind: 'orchestration', location: origin.location },
+    });
+    dispatchProductNavigation({
+      type: 'open_contextual_agent_session',
+      origin,
+      focusedInvocationId: null,
+    });
     setSurface('agent-sessions');
   }, []);
+  const openWorkUnitActivitySession = useCallback(
+    (target: WorkUnitActivitySessionTarget, origin: AgentSessionProductOrigin) => {
+      if (
+        origin.location.kind !== 'work_unit' ||
+        !origin.location.inspectionState ||
+        origin.sessionId !== target.sessionId ||
+        origin.invocationId !== target.invocationId ||
+        origin.location.inspectionState.sessionId !== target.sessionId ||
+        origin.location.inspectionState.invocationId !== target.invocationId ||
+        origin.location.inspectionState.activityId !== target.activityId
+      )
+        return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: target.invocationId,
+      });
+      setSurface('agent-sessions');
+    },
+    [],
+  );
+  const openProductDecisionEvidence = useCallback(
+    (request: ProductDecisionEvidenceNavigationRequest, origin: AgentSessionProductOrigin) => {
+      const resolution = epicProductDecisionSource?.resolveEvidenceNavigation(request);
+      if (
+        !resolution ||
+        resolution.kind !== 'available' ||
+        origin.location.kind !== 'epic_product_decisions' ||
+        origin.location.epicId !== request.epicId ||
+        origin.sessionId !== resolution.destination.sessionId ||
+        origin.invocationId !== resolution.destination.invocationId
+      )
+        return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: resolution.destination.invocationId,
+        focusedEvidence: resolution.destination,
+      });
+      setSurface('agent-sessions');
+    },
+    [epicProductDecisionSource],
+  );
+  const openProductiveDecisionEvidence = useCallback(
+    (destination: ProductDecisionEvidenceDestination, origin: AgentSessionProductOrigin) => {
+      if (
+        origin.location.kind !== 'epic_product_decisions' ||
+        origin.sessionId !== destination.sessionId ||
+        origin.invocationId !== destination.invocationId
+      )
+        return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'replace',
+        destination: { kind: 'orchestration', location: origin.location },
+      });
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
+        origin,
+        focusedInvocationId: destination.invocationId,
+        focusedEvidence: destination,
+      });
+      setSurface('agent-sessions');
+    },
+    [],
+  );
+  const openProductDecisionPublish = useCallback(
+    (target: ProductDecisionPublishTarget) => {
+      if (!productDecisionClient) return;
+      productNavigationEpoch.current += 1;
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'push',
+        destination: { kind: 'product_decision_publish', ...target },
+      });
+      setSurface('product-decision-publish');
+    },
+    [productDecisionClient],
+  );
   const navigateToProductLocation = useCallback(
     (location: AgentSessionProductLocation) => {
+      productNavigationEpoch.current += 1;
       if (location.kind === 'epic_planning_draft') {
         const draft = planningDrafts.find(
           ({ epicPlanningDraftId }) => epicPlanningDraftId === location.epicPlanningDraftId,
@@ -379,23 +682,66 @@ export function App({
           sessionId: draft.agentSessionId,
           ...(draft.title ? { title: draft.title } : {}),
         });
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: {
+            kind: 'plan_builder',
+            epicPlanningDraftId: draft.epicPlanningDraftId,
+          },
+        });
         setOrchestrationRoute('plan-builder');
       } else {
-        setRequestedProductLocation(location);
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: { kind: 'orchestration', location },
+        });
         setOrchestrationRoute('overview');
       }
       setSurface('epics');
     },
     [planningDrafts],
   );
+  const navigateFromOrchestration = useCallback(
+    (location: AgentSessionProductLocation | null, intent: OrchestrationNavigationChangeIntent) => {
+      productNavigationEpoch.current += 1;
+      const destination: ProductNavigationDestination = { kind: 'orchestration', location };
+      const previous = productNavigation.history.at(-1)?.destination;
+      const canRestorePrevious =
+        intent === 'back' &&
+        previous !== undefined &&
+        sameProductNavigationDestination(previous, destination) &&
+        !sameProductNavigationDestination(productNavigation.current.destination, destination);
+      dispatchProductNavigation(
+        canRestorePrevious
+          ? { type: 'back' }
+          : { type: 'navigate', intent: intent === 'push' ? 'push' : 'replace', destination },
+      );
+      setSurface('epics');
+      setOrchestrationRoute('overview');
+    },
+    [productNavigation],
+  );
   const requestContextualFileReview = useCallback(
-    async (sprintId: string): Promise<ContextualFileReviewResult> => {
+    async (
+      sprintId: string,
+      returnLocation?: AgentSessionProductLocation,
+    ): Promise<ContextualFileReviewResult> => {
       if (!contextualFileReviewClient)
         return {
           status: 'failed',
           reason: 'unavailable',
           message: 'File Review is unavailable right now.',
         };
+      const sequence = ++fileReviewRequestSequence.current;
+      const launchEpoch = productNavigationEpoch.current;
+      const returnTo = returnLocation
+        ? { kind: 'orchestration' as const, location: returnLocation }
+        : currentProductDestination.kind === 'orchestration'
+          ? currentProductDestination
+          : null;
+      clearFileReviewState();
       let result: ContextualFileReviewResult;
       try {
         result = await contextualFileReviewClient.requestForSprint(sprintId);
@@ -406,13 +752,81 @@ export function App({
           message: 'File Review is unavailable right now.',
         };
       }
-      if (result.status === 'ready') {
-        setContextualFileReviewSource(result.source);
+      if (
+        result.status === 'ready' &&
+        sequence === fileReviewRequestSequence.current &&
+        launchEpoch === productNavigationEpoch.current &&
+        returnTo
+      ) {
+        const target = { kind: 'contextual_sprint' as const, sprintId };
+        const origin: FileReviewProductOrigin = {
+          kind: 'file_review',
+          launchKind: 'contextual_sprint',
+          sprintId,
+          returnTo,
+        };
+        setContextualFileReviewState({ target, source: result.source });
+        dispatchProductNavigation({ type: 'open_contextual_file_review', target, origin });
         setSurface('file-review');
       }
       return result;
     },
-    [contextualFileReviewClient],
+    [
+      clearFileReviewState,
+      contextualFileReviewClient,
+      currentProductDestination,
+      setContextualFileReviewState,
+    ],
+  );
+  const openFileEvidence = useCallback(
+    (
+      target: { readonly reviewId: string; readonly changedFileId: string },
+      returnLocation?: AgentSessionProductLocation,
+    ) => {
+      productNavigationEpoch.current += 1;
+      fileReviewRequestSequence.current += 1;
+      clearFileReviewState();
+      const source = fileReviewSourceForEvidence?.(target);
+      if (!source) return;
+      const fileReviewTarget = { kind: 'file_evidence' as const, ...target };
+      const returnTo = returnLocation
+        ? { kind: 'orchestration' as const, location: returnLocation }
+        : currentProductDestination.kind === 'orchestration'
+          ? currentProductDestination
+          : null;
+      setContextualFileReviewState({
+        target: fileReviewTarget,
+        source,
+        initialFileId: target.changedFileId,
+      });
+      if (returnTo) {
+        const origin: FileReviewProductOrigin = {
+          kind: 'file_review',
+          launchKind: 'file_evidence',
+          reviewId: target.reviewId,
+          changedFileId: target.changedFileId,
+          returnTo,
+        };
+        dispatchProductNavigation({
+          type: 'open_contextual_file_review',
+          target: fileReviewTarget,
+          origin,
+        });
+      } else {
+        dispatchProductNavigation({
+          type: 'navigate',
+          intent: 'push',
+          destination: { kind: 'file_review', target: fileReviewTarget },
+        });
+      }
+      setSurface('file-review');
+    },
+    [
+      clearFileReviewState,
+      currentProductDestination,
+      fileReviewSourceForEvidence,
+      setContextualFileReviewState,
+    ],
   );
 
   return (
@@ -423,60 +837,122 @@ export function App({
         </p>
       )}
       <EpicInitiationConfirmationModal confirmation={confirmation} />
-      <nav className="surface-switcher" aria-label="Application surfaces">
-        <button
-          className={surface === 'epics' ? 'active' : undefined}
-          type="button"
-          aria-current={surface === 'epics' ? 'page' : undefined}
-          onClick={() => setSurface('epics')}
-        >
-          Orchestration
-        </button>
-        <button
-          className={surface === 'agent-sessions' ? 'active' : undefined}
-          type="button"
-          aria-current={surface === 'agent-sessions' ? 'page' : undefined}
-          onClick={() => setSurface('agent-sessions')}
-        >
-          Agent Sessions
-        </button>
-        {harnessManagementPreviewSurface && (
+      <div className="surface-switcher" role="navigation" aria-label="Application surfaces">
+        <div className="surface-switcher__surfaces">
           <button
-            className={surface === 'harness-inspector' ? 'active' : undefined}
+            className={surface === 'epics' ? 'active' : undefined}
             type="button"
-            aria-current={surface === 'harness-inspector' ? 'page' : undefined}
-            onClick={() => setSurface('harness-inspector')}
+            aria-current={surface === 'epics' ? 'page' : undefined}
+            onClick={() => {
+              productNavigationEpoch.current += 1;
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: { kind: 'orchestration', location: null },
+              });
+              setSurface('epics');
+            }}
           >
-            Harness Management
+            Orchestration
           </button>
-        )}
-        {humanReviewLauncherView && (
           <button
-            className={surface === 'worktree-review' ? 'active' : undefined}
+            className={surface === 'agent-sessions' ? 'active' : undefined}
             type="button"
-            aria-current={surface === 'worktree-review' ? 'page' : undefined}
-            onClick={() => setSurface('worktree-review')}
+            aria-current={surface === 'agent-sessions' ? 'page' : undefined}
+            onClick={() => {
+              productNavigationEpoch.current += 1;
+              dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
+              setSurface('agent-sessions');
+            }}
           >
-            Worktree Review <small>Dev</small>
+            Agent Sessions
           </button>
-        )}
-        {fileReviewSource ? (
-          <button
-            className={surface === 'file-review' ? 'active' : undefined}
-            type="button"
-            aria-current={surface === 'file-review' ? 'page' : undefined}
-            onClick={() => setSurface('file-review')}
-          >
-            Files &amp; diffs
-          </button>
-        ) : null}
-        {nativeProfileClient && (
-          <button className={surface === 'native-settings' ? 'active' : undefined} type="button" aria-current={surface === 'native-settings' ? 'page' : undefined} onClick={() => setSurface('native-settings')}>
-            Technical Settings
-          </button>
-        )}
-      </nav>
-      {surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
+          {harnessManagementPreviewSurface && (
+            <button
+              className={surface === 'harness-inspector' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'harness-inspector' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'harness_inspector' },
+                });
+                setSurface('harness-inspector');
+              }}
+            >
+              Harness Management
+            </button>
+          )}
+          {humanReviewLauncherView && (
+            <button
+              className={surface === 'worktree-review' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'worktree-review' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'worktree_review' },
+                });
+                setSurface('worktree-review');
+              }}
+            >
+              Worktree Review <small>Dev</small>
+            </button>
+          )}
+          {fileReviewSource ? (
+            <button
+              className={surface === 'file-review' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'file-review' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                fileReviewRequestSequence.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'file_review', target: { kind: 'direct' } },
+                });
+                setSurface('file-review');
+              }}
+            >
+              Files &amp; diffs
+            </button>
+          ) : null}
+          {nativeProfileClient && (
+            <button
+              className={surface === 'native-settings' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'native-settings' ? 'page' : undefined}
+              onClick={() => setSurface('native-settings')}
+            >
+              Technical Settings
+            </button>
+          )}
+        </div>
+        <ProductCommandBar
+          canGoBack={canGoBack}
+          onBack={() => {
+            productNavigationEpoch.current += 1;
+            fileReviewRequestSequence.current += 1;
+            dispatchProductNavigation({ type: 'back' });
+          }}
+          returnOrigin={contextualReturnDuplicatesBack ? null : productReturnOrigin}
+          onReturn={(origin) => {
+            if (origin !== productReturnOrigin) return;
+            productNavigationEpoch.current += 1;
+            fileReviewRequestSequence.current += 1;
+            dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
+          }}
+        />
+      </div>
+      {surface === 'product-decision-publish' &&
+      currentProductDestination.kind === 'product_decision_publish' ? (
+        <ProductDecisionPublishPlaceholder destination={currentProductDestination} />
+      ) : surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
           agentIdentity={managedPlanBuilderAgentIdentity}
@@ -489,8 +965,7 @@ export function App({
           harnessManagementSource={agentSessionHarnessManagementSource}
           onSessionCreated={bindCreatedPlanBuilderSession}
           onBack={() => {
-            setSelectedDraft(null);
-            setOrchestrationRoute('overview');
+            dispatchProductNavigation({ type: 'back' });
             void refreshDrafts();
           }}
         />
@@ -509,18 +984,53 @@ export function App({
               sessionId: draft.agentSessionId,
               ...(draft.title ? { title: draft.title } : {}),
             });
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: {
+                kind: 'plan_builder',
+                epicPlanningDraftId: draft.epicPlanningDraftId,
+              },
+            });
             setOrchestrationRoute('plan-builder');
           }}
           onPlanEpic={() => {
             setSelectedDraft(null);
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'plan_builder', epicPlanningDraftId: null },
+            });
             setOrchestrationRoute('plan-builder');
           }}
           requestedLocation={requestedProductLocation}
-          onOpenAgentSession={openStandaloneAgentSession}
+          onProductLocationChange={navigateFromOrchestration}
+          onOpenAgentSession={openProductAgentSession}
+          onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
+          onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
+          globalBackAvailable={canGoBack}
+          epicProductDecisionSource={epicProductDecisionSource}
+          productDecisionClient={productDecisionClient}
+          productDecisionCorrectionClient={productDecisionCorrectionClient}
+          onOpenProductDecisionEvidence={openProductDecisionEvidence}
+          onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
+          onPublishProductDecision={openProductDecisionPublish}
         />
       ) : surface === 'file-review' && activeFileReviewSource ? (
-        <FileReviewScreen source={activeFileReviewSource} />
+        <FileReviewScreen
+          source={activeFileReviewSource}
+          initialFileId={
+            currentProductDestination.kind === 'file_review' &&
+            currentProductDestination.target.kind !== 'direct' &&
+            sameFileReviewNavigationTarget(
+              contextualFileReviewState?.target,
+              currentProductDestination.target,
+            )
+              ? contextualFileReviewState?.initialFileId
+              : undefined
+          }
+        />
       ) : surface === 'worktree-review' && humanReviewLauncherView ? (
         humanReviewLauncherView
       ) : surface === 'agent-sessions' ? (
@@ -533,7 +1043,25 @@ export function App({
           }
           planningDrafts={planningDrafts}
           selectedSessionId={selectedAgentSessionId}
-          onSelectedSessionChange={setSelectedAgentSessionId}
+          focusInvocationId={focusedAgentSessionInvocationId}
+          focusEvidence={focusedAgentSessionEvidence}
+          returnOrigin={agentSessionReturnOrigin}
+          onSelectedSessionChange={(() => {
+            const renderEpoch = productNavigationEpoch.current;
+            return (sessionId: string | null) => {
+              if (currentProductDestination.kind !== 'agent_sessions') return;
+              if (renderEpoch !== productNavigationEpoch.current) return;
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'replace',
+                destination: {
+                  kind: 'agent_sessions',
+                  selectedSessionId: sessionId,
+                  focusedInvocationId: null,
+                },
+              });
+            };
+          })()}
           expandedNodeIds={expandedAgentSessionNodes}
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
@@ -558,8 +1086,18 @@ function OrchestrationSurface({
   planningDrafts,
   onOpenDraft,
   requestedLocation,
+  onProductLocationChange,
   onOpenAgentSession,
+  onOpenWorkUnitActivitySession,
   onRequestFileReview,
+  onOpenFileEvidence,
+  globalBackAvailable,
+  epicProductDecisionSource,
+  productDecisionClient,
+  productDecisionCorrectionClient,
+  onOpenProductDecisionEvidence,
+  onOpenProductiveDecisionEvidence,
+  onPublishProductDecision,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
   readonly presentation: OrchestrationPresentationAdapter;
@@ -571,8 +1109,39 @@ function OrchestrationSurface({
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
   readonly requestedLocation: AgentSessionProductLocation | null;
-  readonly onOpenAgentSession: (sessionId: string) => void;
-  readonly onRequestFileReview?: (sprintId: string) => Promise<ContextualFileReviewResult>;
+  readonly onProductLocationChange: (
+    location: AgentSessionProductLocation | null,
+    intent: OrchestrationNavigationChangeIntent,
+  ) => void;
+  readonly onOpenAgentSession: (origin: AgentSessionProductOrigin) => void;
+  readonly onOpenWorkUnitActivitySession: (
+    target: WorkUnitActivitySessionTarget,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
+  readonly globalBackAvailable: boolean;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly productDecisionClient?: ProductDecisionClient;
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
+  readonly onOpenProductDecisionEvidence: (
+    request: ProductDecisionEvidenceNavigationRequest,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onOpenProductiveDecisionEvidence: (
+    destination: ProductDecisionEvidenceDestination,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onPublishProductDecision: (target: ProductDecisionPublishTarget) => void;
 }) {
   if (load.kind === 'ready')
     return (
@@ -586,8 +1155,18 @@ function OrchestrationSurface({
         planningDrafts={planningDrafts}
         onOpenPlanningDraft={onOpenDraft}
         requestedLocation={requestedLocation}
+        onProductLocationChange={onProductLocationChange}
         onOpenAgentSession={onOpenAgentSession}
+        onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
         onRequestFileReview={onRequestFileReview}
+        onOpenFileEvidence={onOpenFileEvidence}
+        globalBackAvailable={globalBackAvailable}
+        epicProductDecisionSource={epicProductDecisionSource}
+        productDecisionClient={productDecisionClient}
+        productDecisionCorrectionClient={productDecisionCorrectionClient}
+        onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
+        onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
+        onPublishProductDecision={onPublishProductDecision}
       />
     );
   const copy =
@@ -640,4 +1219,16 @@ function OrchestrationSurface({
       )}
     </main>
   );
+}
+
+function fileReviewTarget(
+  origin: FileReviewProductOrigin,
+): Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }> {
+  return origin.launchKind === 'contextual_sprint'
+    ? { kind: 'contextual_sprint', sprintId: origin.sprintId }
+    : {
+        kind: 'file_evidence',
+        reviewId: origin.reviewId,
+        changedFileId: origin.changedFileId,
+      };
 }

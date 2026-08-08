@@ -21,6 +21,10 @@ import { createTauriConversationHarnessInspectorSource } from '../infrastructure
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
+import {
+  tauriProductDecisionClient,
+  tauriProductDecisionCorrectionClient,
+} from '../infrastructure/productDecisions/tauriProductDecisionClient';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
@@ -34,6 +38,8 @@ export function createProductApplicationComposition(): AppProps {
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
     nativeProfileApplicationConsumer: createNativeProfileApplicationConsumer(tauriNativeProfileClient),
+    productDecisionClient: tauriProductDecisionClient,
+    productDecisionCorrectionClient: tauriProductDecisionCorrectionClient,
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,

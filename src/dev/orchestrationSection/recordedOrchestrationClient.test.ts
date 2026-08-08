@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { recordedPresentationAdjunct } from './recordedPresentationAdjunct';
 import {
+  createRecordedDevelopmentOrchestrationPresentation,
   recordedDevelopmentOrchestrationClient,
   recordedDevelopmentOrchestrationPresentation,
 } from './recordedOrchestrationClient';
@@ -82,6 +83,103 @@ describe('recorded orchestration composition', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps the representative Work Unit inspection explicitly presentation-only', () => {
+    const reads = composeProductOrchestrationReadModels(recordedProductReadCompositionInput);
+    const canonicalUnit = reads.epics[0]!.sprints
+      .find(({ sprintId }) => sprintId === 'sprint-control-surface')!
+      .revisionViews.find(({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'ECS-R4')!
+      .workUnits.find(({ workUnitId }) => workUnitId === 'WU-ECS2E')!;
+    expect(canonicalUnit.inspection).toBeUndefined();
+
+    const view = createRecordedDevelopmentOrchestrationPresentation({
+      includeWorkUnitReview: true,
+    }).present(reads);
+    const workspace = view.epics[0]!.plan.items.find(
+      ({ id }) => id === 'sprint-control-surface',
+    )!.workspace!;
+    const inspectedUnit = workspace.revisionViews
+      .find(({ sprintPlanRevisionId }) => sprintPlanRevisionId === 'ECS-R4')!
+      .workUnits.find(({ workUnitId }) => workUnitId === 'WU-ECS2E')!;
+
+    expect(inspectedUnit.inspection).toMatchObject({
+      workUnitId: 'WU-ECS2E',
+      fileEvidence: { status: 'available', owner: 'application' },
+      testEvidence: { owner: 'application' },
+    });
+    expect(inspectedUnit.inspection!.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'handler',
+          agentSessionId: 'recorded-session-WU-ECS2E',
+          invocationId: 'recorded-handler-WU-ECS2E-first-review',
+        }),
+        expect.objectContaining({
+          role: 'implementer',
+          agentSessionId: 'recorded-implementer-WU-ECS2E',
+          invocationId: 'recorded-implementer-WU-ECS2E-first-return',
+        }),
+      ]),
+    );
+
+    const activities = inspectedUnit.inspection!.activities;
+    expect(activities.filter(({ applicationSummary }) => applicationSummary)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ primaryStage: 'implementer_reporting' }),
+        expect.objectContaining({ primaryStage: 'handler_review' }),
+      ]),
+    );
+    expect(activities.every(({ primaryStage, applicationSummary }) =>
+      (primaryStage === 'implementer_reporting' || primaryStage === 'handler_review') ===
+        (applicationSummary !== undefined),
+    )).toBe(true);
+    const reporting = activities.filter(({ primaryStage }) => primaryStage === 'implementer_reporting');
+    expect(reporting.every(({ applicationSummary }) => applicationSummary !== undefined)).toBe(true);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'implementer_reporting' && attemptId === 'WU-ECS2E-attempt-1',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual([
+      'submission_recorded',
+      'file_evidence_recorded',
+      'semantic_completion_recorded',
+      'terminal_lifecycle_observed',
+      'handler_review_ready',
+    ]);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'handler_review' && attemptId === 'WU-ECS2E-attempt-2',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual(['review_delivery_persisted', 'review_judgment_recorded']);
+    expect(
+      activities.find(
+        ({ primaryStage, attemptId }) =>
+          primaryStage === 'implementer_reporting' && attemptId === 'WU-ECS2E-attempt-2',
+      )!.applicationSummary!.applicationEvents,
+    ).toEqual([
+      'submission_recorded',
+      'file_evidence_recorded',
+      'semantic_completion_recorded',
+      'terminal_lifecycle_observed',
+      'application_acceptance_recorded',
+      'handler_review_ready',
+    ]);
+    const handlerReview = activities.find(({ primaryStage }) => primaryStage === 'handler_review')!;
+    const peer = activities.find(
+      ({ activityId }) => activityId === handlerReview.applicationSummary!.peerEvidenceActivityIds[0],
+    )!;
+    expect(peer.primaryStage).toBe('implementer_reporting');
+    expect(peer.attemptId).toBe(handlerReview.attemptId);
+    expect(inspectedUnit.inspection!.fileEvidence).toMatchObject({
+      status: 'available',
+      sourceActivityId: peer.activityId,
+    });
+    expect(inspectedUnit.inspection!.activities.some(({ activityId }) =>
+      activityId === 'recorded-wu-ecs2e-missing-activity',
+    )).toBe(false);
   });
 
   it('keeps feature tests off the disposable compatibility fixture', () => {
