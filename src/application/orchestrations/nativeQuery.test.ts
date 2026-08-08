@@ -900,6 +900,7 @@ describe('orchestration native query v1', () => {
         resultId: 'init-result',
         eventId: 'init-event',
         provenanceId: 'init-provenance',
+        rootBranch: 'codex/test-root',
       },
     ];
     value.initiatedSprints = [
@@ -917,6 +918,7 @@ describe('orchestration native query v1', () => {
     (value.planningDrafts as Array<Record<string, unknown>>)[0].status = 'initiated';
 
     const query = decodeOrchestrationNativeQueryV2(value);
+    expect(query.initiatedEpics[0]?.rootBranch).toBe('codex/test-root');
     expect(createEpicInitiationCapability(query, 'epic-planning-draft-fixture')).toMatchObject({
       status: 'already_initiated',
     });
@@ -929,6 +931,14 @@ describe('orchestration native query v1', () => {
     expect(input.events.reviews).toEqual([]);
     expect(input.events.agentSessionReferences).toEqual([]);
     expect(read.epics[0]?.agentSessionReferences).toEqual([]);
+
+    const misplacedRoot = fixture('valid-initiated-epic.json') as {
+      proposalRevisions: Array<Record<string, unknown>>;
+    };
+    misplacedRoot.proposalRevisions[0].rootBranch = 'codex/test-root';
+    expect(() => decodeOrchestrationNativeQueryV2(misplacedRoot)).toThrow(
+      'proposalRevision contains an unknown field',
+    );
   });
 
   it('projects only settled materialized responsibilities with their accepted revision and dependencies', () => {

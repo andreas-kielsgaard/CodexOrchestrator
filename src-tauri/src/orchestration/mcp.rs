@@ -625,7 +625,8 @@ impl ManagedPlanBuilderInvocation {
 mod tests {
     use super::*;
     use crate::orchestration::repository::{
-        FILE_REVIEW_FACTS_SCHEMA, ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA,
+        EPIC_ROOT_BRANCH_SCHEMA, FILE_REVIEW_FACTS_SCHEMA, ORCHESTRATION_INITIATION_SCHEMA,
+        ORCHESTRATION_SCHEMA,
     };
     use chrono::{TimeZone, Utc};
     use rusqlite::{params, Connection};
@@ -882,8 +883,14 @@ mod tests {
     fn agent_initiation_waits_for_shared_confirmation_and_reports_rejection_or_projection() {
         for decision in [
             super::super::confirmation::UserInitiationDecision::Rejected,
-            super::super::confirmation::UserInitiationDecision::Confirmed,
+            super::super::confirmation::UserInitiationDecision::ConfirmedWithRoot {
+                root_branch: "codex/test-root".into(),
+            },
         ] {
+            let projects = matches!(
+                &decision,
+                super::super::confirmation::UserInitiationDecision::ConfirmedWithRoot { .. }
+            );
             let (application, _, invocation, repository) = test_application();
             let (confirmations, events) = channel_confirmations(application.clone());
             let mcp = PlanBuilderMcp::new(application, confirmations.clone(), invocation);
@@ -894,6 +901,7 @@ mod tests {
                 .unwrap()["isError"],
                 false
             );
+            let resolution_decision = decision.clone();
             let resolver = std::thread::spawn(move || {
                 let requested = events.recv().unwrap();
                 assert_eq!(
@@ -906,16 +914,9 @@ mod tests {
                 ));
                 let before = serde_json::to_value(repository.native_query().unwrap()).unwrap();
                 assert!(before["initiatedEpics"].as_array().unwrap().is_empty());
-                let resolved = confirmations.resolve(&requested.request.request_id, decision);
+                let resolved = confirmations.resolve(&requested.request.request_id, resolution_decision);
                 let mut states = vec![];
-                let count = if matches!(
-                    decision,
-                    super::super::confirmation::UserInitiationDecision::Confirmed
-                ) {
-                    4
-                } else {
-                    1
-                };
+                let count = if projects { 4 } else { 1 };
                 for _ in 0..count {
                     states.push(events.recv().unwrap().state);
                 }
@@ -1191,6 +1192,9 @@ mod tests {
         connection
             .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
             .expect("initiation schema");
+        connection
+            .execute_batch(EPIC_ROOT_BRANCH_SCHEMA)
+            .expect("Epic root branch schema");
         let now = Utc
             .with_ymd_and_hms(2026, 7, 15, 12, 0, 0)
             .single()

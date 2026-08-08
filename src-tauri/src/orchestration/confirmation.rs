@@ -53,9 +53,10 @@ pub(crate) struct InitiationConfirmationEvent {
     pub(crate) initiation: Option<InitiateEpicResult>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum UserInitiationDecision {
     Confirmed,
+    ConfirmedWithRoot { root_branch: String },
     Rejected,
 }
 
@@ -255,7 +256,20 @@ impl InitiationConfirmationCoordinator {
                 ) {
                     Err(InitiationConfirmationError::ConfirmedButNotApplied(reason))
                 } else {
-                    self.apply_confirmed(request_id, &pending)
+                    self.apply_confirmed(request_id, &pending, pending.command.clone())
+                }
+            }
+            UserInitiationDecision::ConfirmedWithRoot { root_branch } => {
+                if let Err(reason) = self.publish(
+                    &pending.request,
+                    InitiationConfirmationState::UserConfirmed,
+                    None,
+                ) {
+                    Err(InitiationConfirmationError::ConfirmedButNotApplied(reason))
+                } else {
+                    let mut command = pending.command.clone();
+                    command.root_branch = Some(root_branch);
+                    self.apply_confirmed(request_id, &pending, command)
                 }
             }
         };
@@ -307,10 +321,11 @@ impl InitiationConfirmationCoordinator {
         &self,
         request_id: &str,
         pending: &PendingRequest,
+        command: InitiateEpicCommand,
     ) -> Result<InitiationConfirmationResolution, InitiationConfirmationError> {
         let initiation = self
             .application
-            .initiate_epic(pending.command.clone())
+            .initiate_epic(command)
             .map_err(InitiationConfirmationError::Apply)?;
         let mut notification_failures = Vec::new();
         let observer = self
@@ -522,6 +537,9 @@ mod tests {
             .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
             .unwrap();
         connection
+            .execute_batch(super::super::repository::EPIC_ROOT_BRANCH_SCHEMA)
+            .unwrap();
+        connection
             .execute_batch(super::super::repository::PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
             .unwrap();
         let now = Utc.with_ymd_and_hms(2026, 7, 16, 10, 0, 0).unwrap();
@@ -562,6 +580,7 @@ mod tests {
                 expected_revision_token: saved.revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: "button-confirmation".into(),
+                root_branch: Some("codex/test-root".into()),
             },
         )
     }

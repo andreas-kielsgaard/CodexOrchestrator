@@ -67,11 +67,11 @@ export interface EpicInitiationConfirmationClient {
     epicPlanningDraftId: string;
     expectedRevisionToken: string;
     idempotencyKey: string;
-    rootBranch: string;
   }): Promise<EpicInitiationConfirmationRequest>;
   resolve(
     requestId: string,
     decision: 'confirmed' | 'rejected',
+    rootBranch?: string,
   ): Promise<EpicInitiationConfirmationResolution>;
   subscribe(
     listener: (event: EpicInitiationConfirmationEvent) => void,

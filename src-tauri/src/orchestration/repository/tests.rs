@@ -156,6 +156,7 @@ fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -210,6 +211,7 @@ fn git_capture_authorization_is_private_replay_safe_and_reauthorized() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -651,6 +653,7 @@ fn file_review_store_rejects_wrong_provenance_without_writing() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -699,6 +702,7 @@ fn scoped_file_review_distinguishes_unknown_invalid_and_broken_membership() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "status-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -748,6 +752,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
             expected_revision_token: first.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "one-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let draft = EpicPlanningDraftId::new("epic-planning-draft-2").unwrap();
@@ -783,6 +788,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
             expected_revision_token: second.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "two-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -844,6 +850,7 @@ fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
         expected_revision_token: token,
         actor_id: "application-user".into(),
         idempotency_key: key.into(),
+        root_branch: Some("codex/test-root".into()),
     };
     let result = repository
         .initiate_epic(initiate("init", saved.revision_token.clone()))
@@ -867,6 +874,7 @@ fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
     ));
     let query = repository.native_query().expect("query");
     assert_eq!(query.planning_drafts[0].status, "initiated");
+    assert_eq!(query.initiated_epics[0].root_branch.as_deref(), Some("codex/test-root"));
     let connection = repository.lock().unwrap();
     for table in [
         "epic_initiation_commands",
@@ -899,6 +907,7 @@ fn button_context_claim_keeps_stable_invocation_identity_until_explicit_reconcil
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "context-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     repository
@@ -989,6 +998,7 @@ fn initiated_draft_is_terminal_for_managed_draft_mutations() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "terminal-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let draft = EpicPlanningDraftId::new("epic-planning-draft-1").unwrap();
@@ -1022,6 +1032,7 @@ fn initiation_failure_matrix_leaves_no_false_initiation_root() {
             expected_revision_token: token,
             actor_id: actor.into(),
             idempotency_key: key.into(),
+            root_branch: Some("codex/test-root".into()),
         };
     let repository = repository_at(time());
     let mut missing_draft = initiate("missing".into(), "application-user", "missing-draft");
@@ -1041,6 +1052,13 @@ fn initiation_failure_matrix_leaves_no_false_initiation_root() {
     let saved = repository
         .save_epic_plan_proposal(command(None, proposal("first"), "first"))
         .unwrap();
+    let mut missing_root = initiate(saved.revision_token.clone(), "application-user", "missing-root");
+    missing_root.root_branch = None;
+    assert!(matches!(
+        repository.initiate_epic(missing_root),
+        Err(super::super::domain::InitiateEpicError::InvalidInput(_))
+    ));
+    assert!(repository.native_query().unwrap().initiated_epics.is_empty());
     assert!(matches!(
         repository.initiate_epic(initiate("stale".into(), "application-user", "stale")),
         Err(super::super::domain::InitiateEpicError::RevisionConflict)
@@ -1440,6 +1458,7 @@ fn restart_preserves_initiated_epic_and_ordered_preparatory_sprints() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "restart-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiate");
     let before = repository.native_query_at(time()).expect("query");
@@ -1483,6 +1502,7 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "durable-escalation-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let baseline = repository.native_query().expect("baseline query");
@@ -1595,6 +1615,7 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "scs-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let sprint = repository.native_query().unwrap().initiated_sprints[0]
@@ -1639,6 +1660,7 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "repeated-attention-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let sprint = repository.native_query().unwrap().initiated_sprints[0]
@@ -1766,6 +1788,7 @@ fn initiated_repository_with_capture(
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "git-review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -1826,6 +1849,7 @@ fn initiate_second_epic(repository: &SqliteOrchestrationRepository) -> String {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "git-other-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     repository
@@ -1915,6 +1939,9 @@ fn initialize_connection(connection: &Connection) {
     connection
         .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
         .expect("initiation schema");
+    connection
+        .execute_batch(EPIC_ROOT_BRANCH_SCHEMA)
+        .expect("Epic root branch schema");
     connection
         .execute_batch(PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
         .expect("context delivery schema");
@@ -2091,6 +2118,11 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .insert("workUnitInspections".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
+    if let Some(initiated_epics) = fixture.get_mut("initiatedEpics").and_then(serde_json::Value::as_array_mut) {
+        for epic in initiated_epics {
+            epic.as_object_mut().expect("initiated Epic fixture").entry("rootBranch").or_insert(serde_json::Value::Null);
+        }
+    }
     Ok(fixture)
 }
 
@@ -2152,6 +2184,7 @@ fn canonical_initiated_query() -> NativeQueryV2 {
         result_id: "init-result-fixture".into(),
         event_id: "init-event-fixture".into(),
         provenance_id: "init-provenance-fixture".into(),
+        root_branch: None,
     }];
     query.initiated_sprints = vec![
         InitiatedSprintDto {

@@ -178,7 +178,6 @@ pub(crate) struct RequestEpicInitiationConfirmationInput {
     epic_planning_draft_id: String,
     expected_revision_token: String,
     idempotency_key: String,
-    root_branch: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,6 +190,7 @@ pub(crate) enum ResolveInitiationDecisionInput {
 pub(crate) struct ResolveEpicInitiationConfirmationInput {
     request_id: String,
     decision: ResolveInitiationDecisionInput,
+    root_branch: Option<String>,
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,7 +252,7 @@ pub(crate) fn request_epic_initiation_confirmation(
                 expected_revision_token: input.expected_revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: input.idempotency_key,
-                root_branch: Some(input.root_branch),
+                root_branch: None,
             },
         )
         .map_err(InitiationConfirmationTransportError::from)
@@ -272,7 +272,13 @@ pub(crate) fn resolve_epic_initiation_confirmation(
             &input.request_id,
             match input.decision {
                 ResolveInitiationDecisionInput::Confirmed => {
-                    super::confirmation::UserInitiationDecision::Confirmed
+                    super::confirmation::UserInitiationDecision::ConfirmedWithRoot {
+                        root_branch: input.root_branch.ok_or(
+                            InitiationConfirmationTransportError {
+                                code: "unavailable",
+                            },
+                        )?,
+                    }
                 }
                 ResolveInitiationDecisionInput::Rejected => {
                     super::confirmation::UserInitiationDecision::Rejected

@@ -2898,6 +2898,7 @@ mod tests {
                     expected_revision_token: saved.revision_token,
                     actor_id: "application-user".into(),
                     idempotency_key: "fixture-initiation".into(),
+                    root_branch: Some("codex/test-root".into()),
                 })
                 .unwrap();
 
@@ -3025,6 +3026,7 @@ mod tests {
                     current_object_id: "b".repeat(40),
                     runtime_instance_ref: "wsp-http-runtime".into(),
                     runtime_source_ref: "wsp-http-source".into(),
+                    root_branch: "codex/test-root".into(),
                     source_fingerprint: "c".repeat(64),
                 })
                 .unwrap();
@@ -4873,6 +4875,7 @@ mod tests {
                 expected_revision_token: saved.revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: "live-transition-initiation".into(),
+                root_branch: Some("codex/test-root".into()),
             })
             .unwrap();
 
@@ -5579,6 +5582,7 @@ mod tests {
                 current_object_id: "b".repeat(40),
                 runtime_instance_ref: String::new(),
                 runtime_source_ref: "application-source".into(),
+                root_branch: "codex/test-root".into(),
                 source_fingerprint: "c".repeat(64),
             },
         )));
@@ -5694,6 +5698,7 @@ mod tests {
                 worktree_root: worktree_root.to_string_lossy().into_owned(), baseline_object_id: "a".repeat(40),
                 current_object_id: "b".repeat(40), runtime_instance_ref: "wsp1-runtime".into(),
                 runtime_source_ref: "wsp1-source".into(), source_fingerprint: "c".repeat(64),
+                root_branch: "codex/test-root".into(),
             };
         let authority_repository = SqliteOrchestrationRepository::open(&fixture.database_path).unwrap();
         authority_repository.store_initiated_sprint_git_authority(initial_authority.clone()).unwrap();
@@ -6134,6 +6139,7 @@ mod tests {
             repository_common_dir: handler_common.to_string_lossy().into_owned(), worktree_id: "handler-sprint-worktree".into(),
             worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
             current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
+            root_branch: "codex/test-root".into(),
         }).unwrap();
         // A durable authorization without a grant is recoverable only after the authority
         // worktree becomes valid again. This test-owned dirty marker forces the real product
@@ -7132,6 +7138,7 @@ mod tests {
                 current_object_id: current,
                 runtime_instance_ref: "handler-drain-runtime".into(),
                 runtime_source_ref: "handler-drain-source".into(),
+                root_branch: "codex/test-root".into(),
                 source_fingerprint: "d".repeat(64),
             })
             .unwrap()
@@ -7903,6 +7910,7 @@ mod tests {
             repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
             worktree_id: "terminal-sprint-worktree".into(), worktree_root: sprint_root.to_string_lossy().into_owned(),
             baseline_object_id: baseline.clone(), current_object_id: current, runtime_instance_ref: "terminal-runtime".into(), runtime_source_ref: "terminal-source".into(), source_fingerprint: "f".repeat(64),
+            root_branch: "codex/test-root".into(),
         }).unwrap() {
             crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
             | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
@@ -8233,6 +8241,7 @@ mod tests {
                     current_object_id: current,
                     runtime_instance_ref: "implementer-reporting-runtime".into(),
                     runtime_source_ref: "implementer-reporting-source".into(),
+                    root_branch: "codex/test-root".into(),
                     source_fingerprint: "e".repeat(64),
                 },
             ).unwrap() {
@@ -8783,6 +8792,7 @@ mod tests {
             repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().expect("canonicalize owned Git metadata").to_string_lossy().into_owned(),
             worktree_id: "pip01h-live-sprint-worktree".into(), worktree_root: sprint_root.to_string_lossy().into_owned(), baseline_object_id: baseline.clone(),
             current_object_id: current.clone(), runtime_instance_ref: "pip01h-live-runtime".into(), runtime_source_ref: "pip01h-live-source".into(), source_fingerprint: "f".repeat(64),
+            root_branch: "codex/test-root".into(),
         }).expect("store owned Handler authority") {
             crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
             | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
