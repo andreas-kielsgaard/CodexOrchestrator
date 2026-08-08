@@ -7,6 +7,7 @@ use super::{
     repository::NativeQueryV2,
     sprint_runner_transition::{
         RecoverSprintPlanningControlRequest, RecoverSprintPlanningControlResult,
+        RecoverWorkUnitHandlerActionRequest, RecoverWorkUnitHandlerActionResult,
         SprintRunnerTransitionQueryV1, SprintRunnerTransitionService,
     },
 };
@@ -493,6 +494,17 @@ pub(crate) fn recover_sprint_planning_control(
     state
         .service
         .recover_planning_control(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn recover_work_unit_handler_action(
+    input: RecoverWorkUnitHandlerActionRequest,
+    state: State<'_, SprintRunnerTransitionTauriState>,
+) -> Result<RecoverWorkUnitHandlerActionResult, String> {
+    state
+        .service
+        .recover_work_unit_handler_action(input)
         .map_err(|error| error.to_string())
 }
 
