@@ -429,6 +429,39 @@ export function SprintWorkspace({
               ))}
             </section>
           )}
+          {(workspace.sprintResultProjections ?? []).length > 0 && (
+            <section aria-label="Sprint result and Epic receipt" className="orchestration-reassessment">
+              <p className="eyebrow">Sprint result and Epic receipt</p>
+              <p>
+                This view keeps the local result, Epic delivery, semantic consideration, and later
+                realization separate. Nothing here proves provider outcome, Epic settlement,
+                completion, later Work Slice execution, or user acceptance.
+              </p>
+              {(workspace.sprintResultProjections ?? []).map((result) => (
+                <div key={result.resultId}>
+                  <strong>Local Sprint result: {result.resultKind}</strong>
+                  <p>Recorded: {result.recordedAt}</p>
+                  {result.receiver ? (
+                    <ul>
+                      <li>Epic receipt requested: {result.receiver.deliveryRequestedAt}</li>
+                      {result.receiver.deliveryPersistedAt && <li>Receipt delivery persisted: {result.receiver.deliveryPersistedAt}</li>}
+                      {result.receiver.harnessBoundAt && <li>Application binding recorded: {result.receiver.harnessBoundAt}</li>}
+                      {result.receiver.launchAcceptedAt && <li>Receiver launch accepted: {result.receiver.launchAcceptedAt}</li>}
+                      {result.receiver.providerActivationObservedAt && <li>Provider activation observed separately: {result.receiver.providerActivationObservedAt}</li>}
+                      {result.receiver.semanticReassessmentRecordedAt && <li>Semantic consideration recorded: {result.receiver.semanticReassessmentRecordedAt}</li>}
+                    </ul>
+                  ) : <p>Epic receipt has not been recorded.</p>}
+                  {result.disposition && <p>Disposition recorded: {result.disposition.movementKind}. It preserves this result and does not select or start a Sprint.</p>}
+                  {result.realization?.outcomeKind === 'retained_attention' && <p>Retained concern/attention: {result.realization.retainedAttentionCode}. The concern remains open.</p>}
+                  {result.realization?.outcomeKind === 'terminal_readiness' && <p>Terminal readiness recorded: {result.realization.terminalReadinessRecordedAt}. This is not settlement, completion, or acceptance.</p>}
+                  {result.realization?.outcomeKind === 'successor_request' && <p>{result.realization.successorRequestRecordedAt ? `Exact successor request recorded: ${result.realization.successorRequestRecordedAt}.` : 'Successor realization recorded; exact successor request is not yet recorded.'}</p>}
+                </div>
+              ))}
+            </section>
+          )}
+          {workspace.sprintContinuation ? (
+            <SprintContinuationBoundary boundary={workspace.sprintContinuation} />
+          ) : null}
           {hasPreStartForecast ? (
             <section className="sprint-forecast" aria-label="Sprint Runner pre-start forecast">
               <p className="eyebrow">Sprint Runner forecast</p>
@@ -843,6 +876,79 @@ function executionSummary(
   if (execution.settlement) return 'Work Slice execution settlement is recorded.';
   if (execution.graphCompletion) return 'Graph completion is recorded; Work Slice execution settlement is not recorded.';
   return 'Execution progress is not recorded.';
+}
+
+export function SprintContinuationBoundary({
+  boundary,
+}: {
+  readonly boundary: NonNullable<SprintWorkspacePresentationV1['sprintContinuation']>;
+}) {
+  const current = boundary.current;
+  const currentDecision = current
+    ? boundary.history.find((decision) => decision.decisionId === current.decisionId)
+    : undefined;
+  if (!current || !currentDecision) {
+    return (
+      <section aria-label="Sprint continuation boundary">
+        <p className="eyebrow">Sprint decision</p>
+        <h2>Continuation boundary unavailable</h2>
+        <p>No current durable Sprint decision is available.</p>
+      </section>
+    );
+  }
+  const status = current.state === 'continuing'
+    ? 'Sprint is continuing'
+    : current.state === 'attention'
+      ? 'Sprint needs attention'
+      : 'Sprint is settled';
+  return (
+    <section aria-label="Sprint continuation boundary">
+      <p className="eyebrow">Sprint decision</p>
+      <h2>{status}</h2>
+      <p>{sprintContinuationReason(currentDecision.reason, currentDecision.state)}</p>
+      {currentDecision.attention?.structuredAttention ? (
+        <dl>
+          <dt>Reason</dt>
+          <dd>{currentDecision.attention.structuredAttention.reason}</dd>
+          <dt>Authority needed</dt>
+          <dd>{currentDecision.attention.structuredAttention.authorityNeeded}</dd>
+          <dt>Evidence</dt>
+          <dd>{currentDecision.attention.structuredAttention.evidenceContext}</dd>
+          <dt>Resumption</dt>
+          <dd>{currentDecision.attention.structuredAttention.resumptionPath}</dd>
+        </dl>
+      ) : null}
+      {boundary.upwardResults.some((result) => result.decisionId === current.decisionId) ? (
+        <small>
+          A local Sprint result is persisted for this decision only. It is not delivery, Epic
+          receipt, later-Sprint selection, continuation, or acceptance.
+        </small>
+      ) : null}
+    </section>
+  );
+}
+
+function sprintContinuationReason(
+  reason: string,
+  state: 'continuing' | 'attention' | 'settled',
+) {
+  if (state === 'settled')
+    return 'Authoritative Sprint work is settled. This does not imply Epic settlement, delivery, a later Sprint, or acceptance.';
+  if (reason === 'wait_for_agent_dependency')
+    return 'The Sprint is waiting for an exact agent-achievable dependency route; the unresolved dependency remains distinct from settlement.';
+  if (state === 'attention') {
+    if (reason === 'dependency_route_unavailable') return 'The required dependency route is unavailable.';
+    if (reason === 'stale_epic_context') return 'The Sprint has stale Epic context and needs reassessment.';
+    if (reason === 'correlation_or_chronology_unavailable') return 'Sprint chronology or correlation needs technical attention.';
+    if (reason === 'unresolved_handback') return 'An unresolved Handback still needs attention.';
+    if (reason === 'structured_human_or_external_attention') return 'Human or external attention is required before resumption.';
+    return 'The Sprint needs attention; the recorded reason is not a known authority-granting variant.';
+  }
+  if (reason === 'continue_eligible_work') return 'Eligible Sprint work remains to continue.';
+  if (reason === 'retry_reassessment_pending') return 'Retry reassessment remains pending.';
+  if (reason === 'continuation_pending') return 'A Sprint continuation remains pending.';
+  if (reason === 'planning_or_execution_pending') return 'Planning or execution remains pending.';
+  return 'The Sprint is continuing under an extensible recorded reason; no additional authority is inferred.';
 }
 
 function plannerObservationSummary(

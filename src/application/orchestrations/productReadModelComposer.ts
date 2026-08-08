@@ -36,6 +36,8 @@ export function composeProductOrchestrationReadModels(
     events.epics.map((epic) => epic.epicId),
   );
   validateSprintRunnerTransitions(input, events);
+  validateSprintResultProjections(input, events);
+  validateEpicSettlementStates(input, events);
 
   const index = indexReferenceData(input.referenceIndex);
   const sessions = events.agentSessionReferences.map((reference) => ({
@@ -57,6 +59,8 @@ export function composeProductOrchestrationReadModels(
           sprint.sprintId,
           input.selection,
           input.workUnitMaterializations,
+          input.sprintContinuation,
+          input.sprintResultProjections,
           input.sprintRunnerTransition?.query.transitions.find(
             (transition) => transition.sprintId === sprint.sprintId,
           ),
@@ -77,6 +81,20 @@ export function composeProductOrchestrationReadModels(
         belongsToEpic(events, reference, epic.epicId),
       ),
       continuation: composeContinuation(events, agentControl, 'epic', epic.epicId),
+      ...(input.sprintResultProjections
+        ? {
+            sprintResultProjections: input.sprintResultProjections.filter(
+              (projection) => projection.epicId === epic.epicId,
+            ),
+          }
+        : {}),
+      ...(input.epicSettlementStates
+        ? {
+            epicSettlement: input.epicSettlementStates.find(
+              (projection) => projection.epicId === epic.epicId,
+            )?.state,
+          }
+        : {}),
       ...(input.bootstrapTransition
         ? {
             bootstrapTransition: projectBootstrapTransitionStatus(
@@ -113,6 +131,174 @@ function validateSprintRunnerTransitions(
   }
 }
 
+function validateSprintResultProjections(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  const projections = input.sprintResultProjections;
+  if (!projections) return;
+  const resultById = new Set<string>();
+  const decisionById = new Set<string>();
+  const localResults = new Map(
+    (input.sprintContinuation?.upwardResults ?? []).map((result) => [result.resultId, result]),
+  );
+  const localDecisions = new Map(
+    (input.sprintContinuation?.decisions ?? []).map((decision) => [decision.decisionId, decision]),
+  );
+  if (projections.length !== localResults.size)
+    fail('Sprint-result projection bundle is incomplete');
+  const sprintById = new Map(events.sprints.map((sprint) => [sprint.sprintId, sprint]));
+  projections.forEach((projection) => {
+    if (resultById.has(projection.resultId) || decisionById.has(projection.decisionId))
+      fail('Sprint-result projections cannot repeat result or decision identities');
+    resultById.add(projection.resultId);
+    decisionById.add(projection.decisionId);
+    const localResult = localResults.get(projection.resultId);
+    const localDecision = localDecisions.get(projection.decisionId);
+    if (
+      !localResult ||
+      !localDecision ||
+      localResult.decisionId !== projection.decisionId ||
+      localResult.sprintId !== projection.sprintId ||
+      localResult.resultKind !== projection.resultKind ||
+      localResult.recordedAt !== projection.recordedAt ||
+      localDecision.sprintId !== projection.sprintId
+    )
+      fail('Sprint-result projection does not match its local Sprint result and decision');
+    const sprint = sprintById.get(projection.sprintId);
+    if (!sprint || sprint.epicId !== projection.epicId)
+      fail('Sprint-result projection has a foreign Sprint or Epic link');
+    if (
+      projection.realization &&
+      (!projection.disposition || !projection.receiver?.semanticReassessmentRecordedAt)
+    )
+      fail('Sprint-result realization lacks its exact disposition and semantic receiver');
+    if (
+      projection.realization &&
+      projection.realization.outcomeKind !== 'retained_attention' &&
+      (projection.resultKind !== 'settled' ||
+        localDecision.state !== 'settled' ||
+        projection.disposition?.movementKind !== 'advance_to_next_approved_sprint')
+    )
+      fail(
+        'Sprint-result successor or readiness is not authorized by the exact settled advance disposition',
+      );
+    if (projection.realization?.outcomeKind === 'successor_request') {
+      const successor = [...sprintById.values()].find(
+        (candidate) => candidate.sprintId === projection.realization?.successorSprintId,
+      );
+      const sourceOrdinal = events.sprints.findIndex(
+        (candidate) => candidate.sprintId === sprint.sprintId,
+      );
+      const successorOrdinal = events.sprints.findIndex(
+        (candidate) => candidate.sprintId === successor?.sprintId,
+      );
+      if (
+        !successor ||
+        successor.epicId !== projection.epicId ||
+        successorOrdinal !== sourceOrdinal + 1
+      )
+        fail('Sprint-result successor is foreign or non-consecutive');
+      const transition = input.sprintRunnerTransition?.query.transitions.find(
+        (candidate) =>
+          candidate.sprintId === successor.sprintId && candidate.epicId === projection.epicId,
+      );
+      if (!transition || !projection.realization.successorTransition)
+        fail('Sprint-result successor lacks its exact Sprint Runner transition');
+      const projectedTransition = projection.realization.successorTransition;
+      const transitionStages = [
+        ['requestedAt', transition.requestedAt],
+        ['authorizedAt', transition.authorizedAt],
+        ['sessionCreatedAt', transition.sessionCreatedAt],
+        ['harnessAppliedAt', transition.harnessAppliedAt],
+        ['launchAcceptedAt', transition.launchAcceptedAt],
+        ['preStartSemanticOutcomeRecordedAt', transition.preStartSemanticOutcomeRecordedAt],
+        ['preStartLifecycleObservedAt', transition.preStartLifecycleObservedAt],
+        ['preStartOutcomeAcceptedAt', transition.preStartOutcomeAcceptedAt],
+        ['parentContinuationDeliveryRequestedAt', transition.parentContinuationDeliveryRequestedAt],
+        ['parentContinuationDeliveryPersistedAt', transition.parentContinuationDeliveryPersistedAt],
+        ['epicContinuationLaunchAcceptedAt', transition.epicContinuationLaunchAcceptedAt],
+        ['providerReceiverActivationObservedAt', transition.providerReceiverActivationObservedAt],
+        ['sprintStartAuthorizedAt', transition.sprintStartAuthorizedAt],
+        ['sprintStartPersistedAt', transition.sprintStartPersistedAt],
+        ['sprintContinuationLaunchAcceptedAt', transition.sprintContinuationLaunchAcceptedAt],
+        [
+          'repositoryBranchReevaluationRecordedAt',
+          transition.repositoryBranchReevaluationRecordedAt,
+        ],
+        [
+          'startedReevaluationLifecycleObservedAt',
+          transition.startedReevaluationLifecycleObservedAt,
+        ],
+      ] as const;
+      for (const [stage, value] of transitionStages) {
+        if (projectedTransition[stage] !== value)
+          fail(
+            'Sprint-result successor transition does not match the productive Sprint Runner transition',
+          );
+      }
+      if (
+        projectedTransition.preStartReady !== transition.preStartReady ||
+        projectedTransition.lifecycleObserved !== transition.lifecycleObserved ||
+        projectedTransition.accepted !== transition.accepted
+      )
+        fail(
+          'Sprint-result successor transition lifecycle does not match the productive transition',
+        );
+    }
+  });
+}
+
+function validateEpicSettlementStates(
+  input: ProductReadCompositionInputV1,
+  events: ReturnType<typeof decodeOrchestrationEventsV1>,
+) {
+  const states = input.epicSettlementStates;
+  if (!states) return;
+  const epicIds = new Set(events.epics.map((epic) => epic.epicId));
+  if (new Set(states.map((state) => state.epicId)).size !== states.length)
+    fail('Epic settlement projections cannot repeat an Epic');
+  for (const projection of states) {
+    if (Object.keys(projection).some((key) => !['epicId', 'state'].includes(key)))
+      fail('Epic settlement projection contains an unknown field');
+    if (!epicIds.has(projection.epicId))
+      fail('Epic settlement projection references a foreign Epic');
+    const state = projection.state;
+    if (
+      !state ||
+      typeof state !== 'object' ||
+      Object.keys(state).some((key) =>
+        !['kind', 'settlementId', 'persistedAt', 'reasonCode', 'resumptionFact', 'recordedAt'].includes(
+          key,
+        ),
+      )
+    )
+      fail('Epic settlement state contains an unknown field');
+    if (state.kind === 'settled') {
+      if (
+        !boundedSettlementText(state.settlementId, 240) ||
+        !state.persistedAt.trim() ||
+        !isIsoTimestamp(state.persistedAt) ||
+        'reasonCode' in state ||
+        'resumptionFact' in state ||
+        'recordedAt' in state
+      )
+        fail('Epic settlement settled state is malformed or contradictory');
+    } else if (state.kind === 'unresolved') {
+      if (
+        !boundedSettlementText(state.reasonCode, 96) ||
+        !/^[A-Za-z0-9_.-]+$/.test(state.reasonCode) ||
+        !boundedSettlementText(state.resumptionFact, 4000) ||
+        !state.recordedAt.trim() ||
+        !isIsoTimestamp(state.recordedAt) ||
+        'settlementId' in state ||
+        'persistedAt' in state
+      )
+        fail('Epic settlement unresolved state is malformed or contradictory');
+    } else fail('Epic settlement state has an unknown variant');
+  }
+}
+
 function validateBootstrapTransitions(
   input: ProductReadCompositionInputV1,
   epicIds: readonly string[],
@@ -139,6 +325,8 @@ function composeSprint(
   sprintId: string,
   selection: ProductReadCompositionInputV1['selection'],
   workUnitMaterializations: ProductReadCompositionInputV1['workUnitMaterializations'],
+  sprintContinuation: ProductReadCompositionInputV1['sprintContinuation'],
+  sprintResultProjections: ProductReadCompositionInputV1['sprintResultProjections'],
   sprintRunnerTransition?: import('./sprintRunnerTransition').SprintRunnerTransitionV1,
 ): ProductSprintReadModelV1 {
   const sprint = required(index.sprints, sprintId, 'Sprint reference index');
@@ -197,12 +385,15 @@ function composeSprint(
     'current revision view',
   );
   const epicEscalationReceivers = currentWorkUnits.flatMap((unit) =>
-    (unit.attemptHistory ?? []).flatMap((attempt) =>
-      attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
+    (unit.attemptHistory ?? []).flatMap(
+      (attempt) => attempt.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver ?? [],
     ),
   );
   for (const receiver of epicEscalationReceivers) {
-    if (receiver.sprintId !== sprintId || receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? ''))
+    if (
+      receiver.sprintId !== sprintId ||
+      receiver.epicId !== (events.sprints.find((item) => item.sprintId === sprintId)?.epicId ?? '')
+    )
       fail('Epic escalation receiver does not match its Sprint and Epic owner');
   }
   return {
@@ -230,6 +421,18 @@ function composeSprint(
     workUnitMaterializations: (workUnitMaterializations ?? []).filter(
       (materialization) => materialization.sprintId === sprintId,
     ),
+    ...(sprintContinuation
+      ? {
+          sprintContinuation: projectSprintContinuation(sprintContinuation, sprintId),
+        }
+      : {}),
+    ...(sprintResultProjections
+      ? {
+          sprintResultProjections: sprintResultProjections.filter(
+            (projection) => projection.sprintId === sprintId,
+          ),
+        }
+      : {}),
     sprintPlan: {
       sprintPlanId: plan.sprintPlanId,
       currentSprintPlanRevisionId: current.sprintPlanRevisionId,
@@ -547,6 +750,48 @@ function composeWorkUnit(
       ),
     },
     presentationState: 'not_started' as ProductWorkUnitPresentationState,
+  };
+}
+
+function projectSprintContinuation(
+  projection: NonNullable<ProductReadCompositionInputV1['sprintContinuation']>,
+  sprintId: string,
+) {
+  const decisions = projection.decisions.filter((decision) => decision.sprintId === sprintId);
+  const current = projection.currentDecisions.find((decision) => decision.sprintId === sprintId);
+  return {
+    current: current
+      ? {
+          decisionId: current.decisionId,
+          state: current.state,
+          updatedAt: current.updatedAt,
+        }
+      : null,
+    history: decisions.map((decision) => ({
+      decisionId: decision.decisionId,
+      sequence: decision.decisionSequence,
+      state: decision.state,
+      reason: decision.reason,
+      recordedAt: decision.recordedAt,
+      ...(decision.attention
+        ? {
+            attention: {
+              code: decision.attention.code,
+              ...(decision.attention.structuredAttention
+                ? { structuredAttention: decision.attention.structuredAttention }
+                : {}),
+            },
+          }
+        : {}),
+    })),
+    upwardResults: projection.upwardResults
+      .filter((result) => result.sprintId === sprintId)
+      .map(({ resultId, decisionId, recordedAt, resultKind }) => ({
+        resultId,
+        decisionId,
+        recordedAt,
+        resultKind,
+      })),
   };
 }
 
@@ -1360,6 +1605,12 @@ function validateAvailableSource(
 }
 function sameMembers(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((item) => right.includes(item));
+}
+function isIsoTimestamp(value: string) {
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value));
+}
+function boundedSettlementText(value: string, maxBytes: number) {
+  return value.trim().length > 0 && new TextEncoder().encode(value).length <= maxBytes;
 }
 function fail(message: string): never {
   throw new Error(`Invalid product read-model composition: ${message}`);

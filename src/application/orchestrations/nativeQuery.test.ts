@@ -26,6 +26,76 @@ type MutableFixture = {
 };
 
 describe('orchestration native query v1', () => {
+  it('projects strict Epic settlement state into the product read model without private identity fields', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.epicSettlementStates = [
+      {
+        epicId: 'epic-fixture',
+        state: {
+          kind: 'settled',
+          settlementId: 'settlement-fixture',
+          persistedAt: '2026-08-05T00:00:00Z',
+        },
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const read = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query));
+    expect(read.epics[0]?.epicSettlement).toEqual({
+      kind: 'settled',
+      settlementId: 'settlement-fixture',
+      persistedAt: '2026-08-05T00:00:00Z',
+    });
+    expect(JSON.stringify(read.epics[0]?.epicSettlement)).not.toContain('session');
+    expect(JSON.stringify(read.epics[0]?.epicSettlement)).not.toContain('provider');
+
+    const recorded = nativeQueryProductCompositionInputV2(query);
+    const recordedState = recorded.epicSettlementStates![0]!.state as unknown as Record<
+      string,
+      unknown
+    >;
+    recordedState.privateSessionId = 'must-not-project';
+    expect(() => composeProductOrchestrationReadModels(recorded)).toThrow('unknown field');
+  });
+
+  it('fails closed on malformed variants, foreign correlation, and contradictory settlement shapes', () => {
+    const base = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    const malformed = structuredClone(base) as Record<string, unknown>;
+    malformed.epicSettlementStates = [
+      {
+        epicId: 'epic-fixture',
+        state: {
+          kind: 'settled',
+          settlementId: 'settlement-fixture',
+          persistedAt: '2026-08-05T00:00:00Z',
+          reasonCode: 'contradictory',
+        },
+      },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(malformed)).toThrow(
+      'contains unresolved facts',
+    );
+
+    const foreign = structuredClone(base) as Record<string, unknown>;
+    foreign.epicSettlementStates = [
+      {
+        epicId: 'foreign-epic',
+        state: {
+          kind: 'unresolved',
+          reasonCode: 'needs_attention',
+          resumptionFact: 'Restore the exact authority.',
+          recordedAt: '2026-08-05T00:00:00Z',
+        },
+      },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('foreign Epic');
+
+    const partial = structuredClone(base) as Record<string, unknown>;
+    partial.epicSettlementStates = [
+      { epicId: 'epic-fixture', state: { kind: 'unresolved', reasonCode: 'missing_resume' } },
+    ];
+    expect(() => decodeOrchestrationNativeQueryV2(partial)).toThrow('resumptionFact');
+  });
+
   it('decodes the Rust canonical proposal fixture and projects only its proposal', () => {
     const query = decodeOrchestrationNativeQueryV2(fixture('valid-proposal.json'));
     expect(projectEpicPlanProposal(query, 'epic-planning-draft-fixture')).toEqual({
@@ -58,15 +128,588 @@ describe('orchestration native query v1', () => {
   it('requires the productive execution bundle to be all present or all absent and rejects private additions', () => {
     const value = fixture('valid-empty.json') as Record<string, unknown>;
     value.workUnitExecutionStates = [];
-    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('execution projection bundle is incomplete');
+    expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow(
+      'execution projection bundle is incomplete',
+    );
     Object.assign(value, {
-      workSliceExecutionGraphCompletions: [], workSliceExecutionSettlements: [],
-      workSlicePlanningPointExecutionSettlements: [], workSliceExecutionAttentions: [],
+      workSliceExecutionGraphCompletions: [],
+      workSliceExecutionSettlements: [],
+      workSlicePlanningPointExecutionSettlements: [],
+      workSliceExecutionAttentions: [],
     });
     const query = decodeOrchestrationNativeQueryV2(value);
     expect(query.workUnitExecutionStates).toEqual([]);
-    (value.workUnitExecutionStates as unknown[]).push({ workUnitId: 'private', materializationId: 'private', acceptedRevisionId: 'private', state: 'ready', recordedAt: '2026-08-05T00:00:00Z', graphFingerprint: 'private' });
+    (value.workUnitExecutionStates as unknown[]).push({
+      workUnitId: 'private',
+      materializationId: 'private',
+      acceptedRevisionId: 'private',
+      state: 'ready',
+      recordedAt: '2026-08-05T00:00:00Z',
+      graphFingerprint: 'private',
+    });
     expect(() => decodeOrchestrationNativeQueryV2(value)).toThrow('unknown field');
+  });
+
+  it('strictly decodes ordered Sprint decisions, neutralizes unknown safe variants, and preserves local results', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.sprintContinuationDecisions = [
+      {
+        decisionId: 'decision-1',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 1,
+        state: 'continuing',
+        reason: 'continue_eligible_work',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+      {
+        decisionId: 'decision-2',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 2,
+        state: 'continuing',
+        reason: 'future_safe_continuing_variant',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:01Z',
+      },
+      {
+        decisionId: 'decision-3',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 3,
+        state: 'attention',
+        reason: 'structured_human_or_external_attention',
+        acceptedMaterializationCount: 0,
+        recordedAt: '2026-08-05T00:00:02Z',
+        attention: {
+          attentionId: 'attention-3',
+          code: 'structured_human_or_external_attention',
+          structuredAttention: {
+            reason: 'A bounded policy decision is required.',
+            authorityNeeded: 'designated product authority',
+            evidenceContext: 'The unresolved Sprint concern.',
+            resumptionPath: 'Resume this exact Sprint decision.',
+          },
+        },
+      },
+    ];
+    value.sprintContinuationCurrentDecisions = [
+      {
+        sprintId: 'sprint-fixture',
+        decisionId: 'decision-3',
+        state: 'attention',
+        updatedAt: '2026-08-05T00:00:02Z',
+      },
+    ];
+    value.sprintUpwardResults = [
+      {
+        resultId: 'result-1',
+        decisionId: 'decision-1',
+        sprintId: 'sprint-fixture',
+        resultKind: 'continuing',
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+      {
+        resultId: 'result-2',
+        decisionId: 'decision-2',
+        sprintId: 'sprint-fixture',
+        resultKind: 'continuing',
+        recordedAt: '2026-08-05T00:00:01Z',
+      },
+      {
+        resultId: 'result-3',
+        decisionId: 'decision-3',
+        sprintId: 'sprint-fixture',
+        resultKind: 'attention',
+        recordedAt: '2026-08-05T00:00:02Z',
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const sprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    ).epics[0]!.sprints[0]!;
+    expect(sprint.sprintContinuation).toMatchObject({
+      current: { decisionId: 'decision-3', state: 'attention' },
+      history: [
+        { sequence: 1, state: 'continuing' },
+        { sequence: 2, reason: 'future_safe_continuing_variant' },
+        {
+          sequence: 3,
+          attention: {
+            structuredAttention: { authorityNeeded: 'designated product authority' },
+          },
+        },
+      ],
+      upwardResults: [{ resultId: 'result-1' }, { resultId: 'result-2' }, { resultId: 'result-3' }],
+    });
+
+    const partial = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    delete partial.sprintContinuationCurrentDecisions;
+    expect(() => decodeOrchestrationNativeQueryV2(partial)).toThrow(
+      'projection bundle is incomplete',
+    );
+    const gapped = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (gapped.sprintContinuationDecisions as Array<Record<string, unknown>>)[1]!.decisionSequence = 4;
+    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow('chronology has a gap');
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (foreign.sprintUpwardResults as Array<Record<string, unknown>>)[0]!.sprintId = 'foreign-sprint';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('correlation or chronology');
+    const privateShape = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (privateShape.sprintUpwardResults as Array<Record<string, unknown>>)[0]!.chronologyFingerprint =
+      'private';
+    expect(() => decodeOrchestrationNativeQueryV2(privateShape)).toThrow('unknown field');
+    const contradictory = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (contradictory.sprintContinuationDecisions as Array<Record<string, unknown>>)[0]!.state =
+      'settled';
+    expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow(
+      'state and reason contradict',
+    );
+  });
+
+  it('projects direct Sprint-result receipt and realization stages without private identities', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.sprintContinuationDecisions = [
+      {
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 1,
+        state: 'settled',
+        reason: 'all_authoritative_sprint_work_settled',
+        acceptedMaterializationCount: 1,
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintContinuationCurrentDecisions = [
+      {
+        sprintId: 'sprint-fixture',
+        decisionId: 'decision-result',
+        state: 'settled',
+        updatedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintUpwardResults = [
+      {
+        resultId: 'result-result',
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        resultKind: 'settled',
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.workUnitMaterializations = [
+      {
+        materializationId: 'materialization-result',
+        planningPointId: 'point-result',
+        acceptedRevisionId: 'revision-result',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'slice-result',
+        authorizationRecordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintResultProjections = [
+      {
+        resultId: 'result-result',
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        epicId: 'epic-fixture',
+        resultKind: 'settled',
+        recordedAt: '2026-08-05T00:00:00Z',
+        receiver: {
+          deliveryRequestedAt: '2026-08-05T00:00:01Z',
+          deliveryPersistedAt: '2026-08-05T00:00:02Z',
+          harnessBoundAt: '2026-08-05T00:00:03Z',
+          launchRequestedAt: '2026-08-05T00:00:04Z',
+          launchAcceptedAt: '2026-08-05T00:00:05Z',
+          reassessmentLifecycleStatus: 'completed',
+          reassessmentLifecycleObservedAt: '2026-08-05T00:00:12Z',
+          semanticReassessmentRecordedAt: '2026-08-05T00:00:07Z',
+        },
+        dispositionRecordedAt: '2026-08-05T00:00:08Z',
+        disposition: {
+          movementKind: 'advance_to_next_approved_sprint',
+          rationale: 'The local result remains preserved.',
+          consideredIntent: 'advance the approved Sprint sequence',
+        },
+        realization: {
+          outcomeKind: 'terminal_readiness',
+          consideredAt: '2026-08-05T00:00:09Z',
+          terminalReadinessRecordedAt: '2026-08-05T00:00:11Z',
+        },
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const readModels = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(query),
+    );
+    expect(readModels.epics[0]!.sprintResultProjections).toMatchObject([
+      { resultKind: 'settled', realization: { outcomeKind: 'terminal_readiness' } },
+    ]);
+    expect(readModels.epics[0]!.sprints[0]!.sprintResultProjections).toHaveLength(1);
+
+    const inverseTerminal = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (inverseTerminal.sprintResultProjections as Array<Record<string, unknown>>)[0]!.realization = {
+      ...((inverseTerminal.sprintResultProjections as Array<Record<string, unknown>>)[0]!
+        .realization as Record<string, unknown>),
+      terminalReadinessRecordedAt: '2026-08-05T00:00:13Z',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(inverseTerminal)).toThrow('precedes');
+
+    const inverseRetained = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (inverseRetained.sprintResultProjections as Array<Record<string, unknown>>)[0]!.realization = {
+      outcomeKind: 'retained_attention',
+      consideredAt: '2026-08-05T00:00:09Z',
+      retainedAttentionCode: 'retained_concern',
+      retainedAttentionRecordedAt: '2026-08-05T00:00:13Z',
+    };
+    expect(() => decodeOrchestrationNativeQueryV2(inverseRetained)).toThrow('precedes');
+
+    const privateShape = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      privateShape.sprintResultProjections as Array<Record<string, unknown>>
+    )[0]!.correlationFingerprint = 'private';
+    expect(() => decodeOrchestrationNativeQueryV2(privateShape)).toThrow('unknown field');
+    const foreign = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (foreign.sprintResultProjections as Array<Record<string, unknown>>)[0]!.epicId = 'foreign-epic';
+    expect(() => decodeOrchestrationNativeQueryV2(foreign)).toThrow('foreign');
+    const contradictory = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      contradictory.sprintResultProjections as Array<Record<string, unknown>>
+    )[0]!.dispositionRecordedAt = '2026-08-05T00:00:06Z';
+    expect(() => decodeOrchestrationNativeQueryV2(contradictory)).toThrow('precedes');
+    const realizationWithoutDisposition = JSON.parse(JSON.stringify(value)) as Record<
+      string,
+      unknown
+    >;
+    delete (
+      realizationWithoutDisposition.sprintResultProjections as Array<Record<string, unknown>>
+    )[0]!.disposition;
+    delete (
+      realizationWithoutDisposition.sprintResultProjections as Array<Record<string, unknown>>
+    )[0]!.dispositionRecordedAt;
+    expect(() => decodeOrchestrationNativeQueryV2(realizationWithoutDisposition)).toThrow(
+      'realization lacks',
+    );
+    const realizationWithoutReceiver = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    delete (
+      realizationWithoutReceiver.sprintResultProjections as Array<Record<string, unknown>>
+    )[0]!.receiver;
+    expect(() => decodeOrchestrationNativeQueryV2(realizationWithoutReceiver)).toThrow(
+      'semantic reassessment',
+    );
+    const nonSettledReadiness = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (nonSettledReadiness.sprintResultProjections as Array<Record<string, unknown>>)[0]!.resultKind =
+      'continuing';
+    (nonSettledReadiness.sprintUpwardResults as Array<Record<string, unknown>>)[0]!.resultKind =
+      'continuing';
+    (nonSettledReadiness.sprintContinuationDecisions as Array<Record<string, unknown>>)[0]!.state =
+      'continuing';
+    (nonSettledReadiness.sprintContinuationDecisions as Array<Record<string, unknown>>)[0]!.reason =
+      'future_safe_continuing_variant';
+    (
+      nonSettledReadiness.sprintContinuationCurrentDecisions as Array<Record<string, unknown>>
+    )[0]!.state = 'continuing';
+    expect(() => decodeOrchestrationNativeQueryV2(nonSettledReadiness)).toThrow(
+      'exact settled advance disposition',
+    );
+    const privateSuccessorField = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    (
+      (privateSuccessorField.sprintResultProjections as Array<Record<string, unknown>>)[0]!
+        .realization as Record<string, unknown>
+    ).privateRequestId = 'private';
+    expect(() => decodeOrchestrationNativeQueryV2(privateSuccessorField)).toThrow('unknown field');
+    const higherEffectInference = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    delete (higherEffectInference.sprintResultProjections as Array<Record<string, unknown>>)[0]!
+      .realization;
+    const noRealization = decodeOrchestrationNativeQueryV2(higherEffectInference);
+    expect(noRealization.sprintResultProjections?.[0]?.realization).toBeUndefined();
+  });
+
+  it('rejects a successor projection whose public stages do not match the exact transition query', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    value.sprintContinuationDecisions = [
+      {
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        decisionSequence: 1,
+        state: 'settled',
+        reason: 'all_authoritative_sprint_work_settled',
+        acceptedMaterializationCount: 1,
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.workUnitMaterializations = [
+      {
+        materializationId: 'materialization-result',
+        planningPointId: 'point-result',
+        acceptedRevisionId: 'revision-result',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'slice-result',
+        authorizationRecordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintContinuationCurrentDecisions = [
+      {
+        sprintId: 'sprint-fixture',
+        decisionId: 'decision-result',
+        state: 'settled',
+        updatedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintUpwardResults = [
+      {
+        resultId: 'result-result',
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        resultKind: 'settled',
+        recordedAt: '2026-08-05T00:00:00Z',
+      },
+    ];
+    value.sprintResultProjections = [
+      {
+        resultId: 'result-result',
+        decisionId: 'decision-result',
+        sprintId: 'sprint-fixture',
+        epicId: 'epic-fixture',
+        resultKind: 'settled',
+        recordedAt: '2026-08-05T00:00:00Z',
+        receiver: {
+          deliveryRequestedAt: '2026-08-05T00:00:01Z',
+          deliveryPersistedAt: '2026-08-05T00:00:02Z',
+          harnessBoundAt: '2026-08-05T00:00:03Z',
+          launchRequestedAt: '2026-08-05T00:00:04Z',
+          launchAcceptedAt: '2026-08-05T00:00:05Z',
+          semanticReassessmentRecordedAt: '2026-08-05T00:00:07Z',
+        },
+        dispositionRecordedAt: '2026-08-05T00:00:08Z',
+        disposition: {
+          movementKind: 'advance_to_next_approved_sprint',
+          rationale: 'advance exact successor',
+          consideredIntent: 'advance the approved Sprint sequence',
+        },
+        realization: {
+          outcomeKind: 'successor_request',
+          consideredAt: '2026-08-05T00:00:09Z',
+          successorSprintId: 'sprint-fixture-2',
+          successorRequestRecordedAt: '2026-08-05T00:00:12Z',
+          successorTransition: {
+            requestedAt: '2026-08-05T00:00:10Z',
+            authorizedAt: '2026-08-05T00:00:11Z',
+            preStartReady: true,
+            lifecycleObserved: false,
+            accepted: false,
+          },
+        },
+      },
+    ];
+    const query = decodeOrchestrationNativeQueryV2(value);
+    const transition = {
+      query: {
+        contract: 'sprint-runner-transition-query/v1',
+        transitions: [
+          {
+            sprintId: 'sprint-fixture-2',
+            epicId: 'epic-fixture',
+            requestId: 'private-request',
+            epicRunnerInvocationId: 'epic-runner',
+            sprintRunnerSessionId: 'private-session',
+            sprintRunnerInvocationId: 'private-invocation',
+            requestedAt: '2026-08-05T00:00:10Z',
+            authorizedAt: '2026-08-05T00:00:11Z',
+            preStartReady: true,
+            lifecycleObserved: false,
+            accepted: false,
+            downstreamNotStarted: true,
+          },
+        ],
+      },
+    };
+    const bootstrap = {
+      query: {
+        contract: 'epic-bootstrap-transition-query/v2',
+        schemaVersion: 2,
+        transitions: [
+          {
+            initiationId: 'initiation-fixture',
+            epicId: 'epic-fixture',
+            preparationId: 'preparation',
+            preparedRoot: 'root',
+            approvedPlanPath: 'plan',
+            manifestPath: 'manifest',
+            overviewPath: 'overview',
+            runnerBriefPath: 'brief',
+            bootstrapSessionId: 'bootstrap-session',
+            bootstrapInvocationId: 'bootstrap-invocation',
+            runnerSessionId: 'runner-session',
+            runnerInvocationId: 'epic-runner',
+            currentAttemptId: 'attempt',
+            retryState: 'active',
+            bootstrapAttempts: [],
+          },
+        ],
+      },
+      initiationIdsByEpic: { 'epic-fixture': 'initiation-fixture' },
+    };
+    expect(() =>
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(
+          query,
+          bootstrap.query as never,
+          transition.query as never,
+        ),
+      ),
+    ).not.toThrow();
+    const mismatched = JSON.parse(JSON.stringify(transition)) as {
+      query: { transitions: Array<Record<string, unknown>> };
+    };
+    mismatched.query.transitions[0]!.requestedAt = '2026-08-05T00:00:13Z';
+    expect(() =>
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(
+          query,
+          bootstrap.query as never,
+          mismatched.query as never,
+        ),
+      ),
+    ).toThrow('does not match the productive Sprint Runner transition');
+    const missing = JSON.parse(JSON.stringify(transition)) as {
+      query: { transitions: Array<Record<string, unknown>> };
+    };
+    missing.query.transitions.length = 0;
+    expect(() =>
+      composeProductOrchestrationReadModels(
+        nativeQueryProductCompositionInputV2(
+          query,
+          bootstrap.query as never,
+          missing.query as never,
+        ),
+      ),
+    ).toThrow('lacks its exact Sprint Runner transition');
+  });
+
+  it('preserves historical materialization snapshots while requiring the latest snapshot to be current', () => {
+    const materializations = [
+      {
+        materializationId: 'materialization-1',
+        planningPointId: 'planning-point-1',
+        acceptedRevisionId: 'revision-1',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'work-slice-1',
+        authorizationRecordedAt: '2026-08-05T00:00:00Z',
+      },
+      {
+        materializationId: 'materialization-2',
+        planningPointId: 'planning-point-2',
+        acceptedRevisionId: 'revision-2',
+        epicId: 'epic-fixture',
+        sprintId: 'sprint-fixture',
+        workSliceId: 'work-slice-2',
+        authorizationRecordedAt: '2026-08-05T00:00:01Z',
+      },
+    ];
+    const makeValue = (counts: [number, number]) => {
+      const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+      value.workUnitMaterializations = materializations;
+      value.sprintContinuationDecisions = counts.map((acceptedMaterializationCount, index) => ({
+        decisionId: `decision-${index + 1}`,
+        sprintId: 'sprint-fixture',
+        decisionSequence: index + 1,
+        state: 'continuing',
+        reason: 'continue_eligible_work',
+        acceptedMaterializationCount,
+        recordedAt: `2026-08-05T00:00:0${index}Z`,
+      }));
+      value.sprintContinuationCurrentDecisions = [
+        {
+          sprintId: 'sprint-fixture',
+          decisionId: 'decision-2',
+          state: 'continuing',
+          updatedAt: '2026-08-05T00:00:02Z',
+        },
+      ];
+      value.sprintUpwardResults = counts.map((_, index) => ({
+        resultId: `result-${index + 1}`,
+        decisionId: `decision-${index + 1}`,
+        sprintId: 'sprint-fixture',
+        resultKind: 'continuing',
+        recordedAt: `2026-08-05T00:00:0${index}Z`,
+      }));
+      return value;
+    };
+
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([1, 2]))).not.toThrow();
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([2, 1]))).toThrow('snapshot decreases');
+    expect(() => decodeOrchestrationNativeQueryV2(makeValue([1, 3]))).toThrow('from the future');
+    const stale = makeValue([1, 1]);
+    expect(() => decodeOrchestrationNativeQueryV2(stale)).toThrow(
+      'latest materialization snapshot is stale',
+    );
+  });
+
+  it('projects repeated structured-attention history with distinct bounded contexts', () => {
+    const value = fixture('valid-initiated-epic.json') as Record<string, unknown>;
+    const structuredAttention = (attentionId: string, reason: string) => ({
+      attentionId,
+      code: 'structured_human_or_external_attention',
+      structuredAttention: {
+        reason,
+        authorityNeeded: 'designated product authority',
+        evidenceContext: `Evidence for ${attentionId}.`,
+        resumptionPath: 'Resume this exact Sprint decision.',
+      },
+    });
+    value.sprintContinuationDecisions = [1, 2].map((decisionSequence) => ({
+      decisionId: `decision-${decisionSequence}`,
+      sprintId: 'sprint-fixture',
+      decisionSequence,
+      state: 'attention',
+      reason: 'structured_human_or_external_attention',
+      acceptedMaterializationCount: 0,
+      recordedAt: `2026-08-05T00:00:0${decisionSequence}Z`,
+      attention: structuredAttention(
+        `attention-${decisionSequence}`,
+        `Reason ${decisionSequence}.`,
+      ),
+    }));
+    value.sprintContinuationCurrentDecisions = [
+      {
+        sprintId: 'sprint-fixture',
+        decisionId: 'decision-2',
+        state: 'attention',
+        updatedAt: '2026-08-05T00:00:02Z',
+      },
+    ];
+    value.sprintUpwardResults = [1, 2].map((decisionSequence) => ({
+      resultId: `result-${decisionSequence}`,
+      decisionId: `decision-${decisionSequence}`,
+      sprintId: 'sprint-fixture',
+      resultKind: 'attention',
+      recordedAt: `2026-08-05T00:00:0${decisionSequence}Z`,
+    }));
+
+    const sprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
+    ).epics[0]!.sprints[0]!;
+    expect(
+      sprint.sprintContinuation?.history.map((item) => item.attention?.structuredAttention?.reason),
+    ).toEqual(['Reason 1.', 'Reason 2.']);
+
+    const withoutAttributableContext = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+    for (const decision of withoutAttributableContext.sprintContinuationDecisions as Array<
+      Record<string, unknown>
+    >) {
+      delete (decision.attention as Record<string, unknown>).structuredAttention;
+    }
+    const boundedSprint = composeProductOrchestrationReadModels(
+      nativeQueryProductCompositionInputV2(
+        decodeOrchestrationNativeQueryV2(withoutAttributableContext),
+      ),
+    ).epics[0]!.sprints[0]!;
+    expect(
+      boundedSprint.sprintContinuation?.history.every(
+        (item) => !item.attention?.structuredAttention,
+      ),
+    ).toBe(true);
   });
 
   it('decodes the Rust-authored settled multi-root execution graph into product read models', () => {
@@ -114,7 +757,10 @@ describe('orchestration native query v1', () => {
     value.workSliceExecutionSettlements = [];
     value.workSlicePlanningPointExecutionSettlements = [];
     value.workSliceExecutionAttentions = [
-      { materializationId: 'execution-materialization-fixture', recordedAt: '2026-08-05T00:00:01Z' },
+      {
+        materializationId: 'execution-materialization-fixture',
+        recordedAt: '2026-08-05T00:00:01Z',
+      },
     ];
     const states = value.workUnitExecutionStates as Array<Record<string, unknown>>;
     states[0]!.state = 'ready';
@@ -122,12 +768,18 @@ describe('orchestration native query v1', () => {
     states[2]!.state = 'retry_authorized';
     states[3]!.state = 'handed_back';
     states.push({
-      ...states[0], workUnitId: 'execution-root-a', state: 'attention', recordedAt: '2026-08-05T00:00:01Z',
+      ...states[0],
+      workUnitId: 'execution-root-a',
+      state: 'attention',
+      recordedAt: '2026-08-05T00:00:01Z',
     });
     states.splice(0, 1);
     const query = decodeOrchestrationNativeQueryV2(value);
     expect(query.workUnitExecutionStates.map((state) => state.state).sort()).toEqual([
-      'active', 'attention', 'handed_back', 'retry_authorized',
+      'active',
+      'attention',
+      'handed_back',
+      'retry_authorized',
     ]);
     expect(query.workSliceExecutionGraphCompletions).toEqual([]);
     expect(query.workSliceExecutionSettlements).toEqual([]);
@@ -645,13 +1297,15 @@ describe('orchestration native query v1', () => {
     const inProgressInput = nativeQueryProductCompositionInputV2(
       decodeOrchestrationNativeQueryV2(inProgress),
     );
-    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).toMatchObject({
+    expect(
+      primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome,
+    ).toMatchObject({
       reportingRequestedAt: '2026-08-04T00:00:00Z',
       reportingPreparedAt: '2026-08-04T00:00:01Z',
     });
-    expect(primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome).not.toHaveProperty(
-      'submittedOutcome',
-    );
+    expect(
+      primaryAttempt(inProgressInput.referenceIndex.workUnits[0]!)?.implementerOutcome,
+    ).not.toHaveProperty('submittedOutcome');
 
     for (const status of ['failed', 'canceled'] as const) {
       const terminal = implementerOutcomeNativeFixture();
@@ -680,7 +1334,8 @@ describe('orchestration native query v1', () => {
     expect(readyOutcome.handlerReviewReadyAt).toBe('2026-08-04T00:00:11Z');
     expect(
       composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(readyQuery))
-        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]?.implementerOutcome,
+        .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]
+        ?.implementerOutcome,
     ).toEqual(readyOutcome);
 
     const malformed = [
@@ -755,14 +1410,18 @@ describe('orchestration native query v1', () => {
       expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.semanticJudgment?.variant).toBe(
         variant === 'accepted' ? 'accept' : 'return',
       );
-      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.lifecycle?.status).toBe('completed');
+      expect(primaryAttempt(query.workUnits[0]!)?.handlerReview?.lifecycle?.status).toBe(
+        'completed',
+      );
     }
 
     const failed = implementerOutcomeNativeFixture();
     const failedUnit = (failed.workUnits as Array<Record<string, unknown>>)[0]!;
     failedUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     failedUnit.handlerReview = handlerReviewFixture('failed');
-    expect(primaryAttempt(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!)?.handlerDecision).toBeUndefined();
+    expect(
+      primaryAttempt(decodeOrchestrationNativeQueryV2(failed).workUnits[0]!)?.handlerDecision,
+    ).toBeUndefined();
 
     const malformed = [
       (() => {
@@ -825,9 +1484,8 @@ describe('orchestration native query v1', () => {
       providerActivationObservedAt: '2026-08-04T00:00:31Z',
       retryReadyAt: '2026-08-04T00:00:32Z',
     });
-    const model = composeProductOrchestrationReadModels(
-      nativeQueryProductCompositionInputV2(query),
-    ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
+    const model = composeProductOrchestrationReadModels(nativeQueryProductCompositionInputV2(query))
+      .epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
     expect(model.retryAttempts).toEqual(query.workUnits[0]!.retryAttempts);
     expect(model.retryAttempts[0]).not.toHaveProperty('candidateCommitId');
     expect(model.retryAttempts[0]).not.toHaveProperty('candidateTreeId');
@@ -863,7 +1521,9 @@ describe('orchestration native query v1', () => {
     extensibleUnit.implementerOutcome = implementerOutcomeFixture('review_ready');
     extensibleUnit.handlerReview = handlerReviewFixture('returned');
     extensibleUnit.handlerDecision = handlerDecisionFixture('returned');
-    extensibleUnit.retryAttempts = [{ ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' }];
+    extensibleUnit.retryAttempts = [
+      { ...retryAttemptFixture('partial'), ordinal: 2, retryAttemptId: 'retry-attempt-2' },
+    ];
     expect(() => decodeOrchestrationNativeQueryV2(structurallyExtensible)).toThrow(
       'exact predecessor history member',
     );
@@ -881,7 +1541,11 @@ describe('orchestration native query v1', () => {
         launchAcceptedAt: undefined,
       },
       { ...retryAttemptFixture('ready'), failureReason: 'retry_failed' },
-      { ...retryAttemptFixture('partial'), providerActivationObservedAt: '2026-08-04T00:00:28Z', launchRequestedAt: undefined },
+      {
+        ...retryAttemptFixture('partial'),
+        providerActivationObservedAt: '2026-08-04T00:00:28Z',
+        launchRequestedAt: undefined,
+      },
       { ...retryAttemptFixture('ready'), providerActivationObservedAt: '2026-08-04T00:00:29Z' },
     ];
     for (const retryAttempt of malformed) {
@@ -954,12 +1618,21 @@ describe('orchestration native query v1', () => {
     const gapped = implementerOutcomeNativeFixture();
     const gappedUnit = (gapped.workUnits as Array<Record<string, unknown>>)[0]!;
     gappedUnit.attemptHistory = [
-      { ordinal: 0, attemptId: 'attempt-1', implementerOutcome: implementerOutcomeFixture('review_ready') },
-      { ordinal: 2, attemptId: 'attempt-3', implementerOutcome: { ...implementerOutcomeFixture('review_ready'), attemptId: 'attempt-3' } },
+      {
+        ordinal: 0,
+        attemptId: 'attempt-1',
+        implementerOutcome: implementerOutcomeFixture('review_ready'),
+      },
+      {
+        ordinal: 2,
+        attemptId: 'attempt-3',
+        implementerOutcome: {
+          ...implementerOutcomeFixture('review_ready'),
+          attemptId: 'attempt-3',
+        },
+      },
     ];
-    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow(
-      'strictly ordered without gaps',
-    );
+    expect(() => decodeOrchestrationNativeQueryV2(gapped)).toThrow('strictly ordered without gaps');
   });
 
   it('projects factual Handback phases and structured movement while failing closed on impossible effects', () => {
@@ -1000,16 +1673,19 @@ describe('orchestration native query v1', () => {
     const partialModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(partial)),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(partialModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback).toMatchObject({
-      persistedAt: '2026-08-04T00:00:19Z',
-      sprintRunnerDelivery: { deliveryRequestedAt: '2026-08-04T00:00:21Z' },
-    });
+    expect(partialModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback).toMatchObject(
+      {
+        persistedAt: '2026-08-04T00:00:19Z',
+        sprintRunnerDelivery: { deliveryRequestedAt: '2026-08-04T00:00:21Z' },
+      },
+    );
 
     const reopened = JSON.parse(JSON.stringify(partial)) as Record<string, unknown>;
     const reopenedDisposition = (
-      ((reopened.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!
-        .incompleteDisposition as Record<string, unknown>
-    );
+      (reopened.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+        Record<string, unknown>
+      >
+    )[0]!.incompleteDisposition as Record<string, unknown>;
     const reopenedHandback = reopenedDisposition.noProgressHandback as Record<string, unknown>;
     reopenedHandback.sprintRunnerDelivery = {
       deliveryRequestedAt: '2026-08-04T00:00:21Z',
@@ -1051,7 +1727,10 @@ describe('orchestration native query v1', () => {
     const reopenedModel = composeProductOrchestrationReadModels(
       nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(reopened)),
     ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject({
+    expect(
+      reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback
+        ?.sprintRunnerDelivery,
+    ).toMatchObject({
       launchAcceptedAt: '2026-08-04T00:00:25Z',
       selectedMovement: {
         dependencyOwner: 'bounded Work Unit Handler',
@@ -1059,14 +1738,23 @@ describe('orchestration native query v1', () => {
         resumptionPath: 'Reconcile this exact Handback after that result.',
       },
     });
-    expect(reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.epicRunnerReceiver).toMatchObject({
+    expect(
+      reopenedModel.attemptHistory[0]!.incompleteDisposition?.noProgressHandback
+        ?.epicRunnerReceiver,
+    ).toMatchObject({
       sprintId: 'sprint-fixture',
       epicId: 'epic-fixture',
       disposition: { movementKind: 'return_context_to_sprint_runner' },
     });
 
     const attention = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-    const attentionHandback = (((attention.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    const attentionHandback = (
+      (
+        (attention.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>
+    ).noProgressHandback as Record<string, unknown>;
     const attentionReceiver = attentionHandback.epicRunnerReceiver as Record<string, unknown>;
     delete attentionReceiver.disposition;
     attentionReceiver.disposition = {
@@ -1108,7 +1796,11 @@ describe('orchestration native query v1', () => {
       },
     ]) {
       const value = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-      const disposition = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
+      const disposition = (
+        (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>;
       const handback = disposition.noProgressHandback as Record<string, unknown>;
       const delivery = handback.sprintRunnerDelivery as Record<string, unknown>;
       delete delivery.selectedMovement;
@@ -1119,11 +1811,19 @@ describe('orchestration native query v1', () => {
       const model = composeProductOrchestrationReadModels(
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(value)),
       ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!;
-      expect(model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery).toMatchObject(movement);
+      expect(
+        model.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
+      ).toMatchObject(movement);
     }
 
     const boundedMovement = JSON.parse(JSON.stringify(reopened)) as Record<string, unknown>;
-    const boundedDelivery = (((boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+    const boundedDelivery = (
+      (
+        (boundedMovement.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+          Record<string, unknown>
+        >
+      )[0]!.incompleteDisposition as Record<string, unknown>
+    ).noProgressHandback as Record<string, unknown>;
     boundedDelivery.sprintRunnerDelivery = {
       deliveryRequestedAt: '2026-08-04T00:00:21Z',
       deliveryPersistedAt: '2026-08-04T00:00:22Z',
@@ -1148,7 +1848,8 @@ describe('orchestration native query v1', () => {
     expect(
       composeProductOrchestrationReadModels(
         nativeQueryProductCompositionInputV2(decodeOrchestrationNativeQueryV2(boundedMovement)),
-      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]!.incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
+      ).epics[0]!.sprints[0]!.revisionViews[0]!.workUnits[0]!.attemptHistory[0]!
+        .incompleteDisposition?.noProgressHandback?.sprintRunnerDelivery,
     ).toMatchObject({
       selectedMovement: {
         movementKind: 'future_bounded_move',
@@ -1166,51 +1867,166 @@ describe('orchestration native query v1', () => {
 
     const invalid = [
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:20Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          deliveryPersistedAt: '2026-08-04T00:00:20Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', deliveryPersistedAt: '2026-08-04T00:00:22Z', harnessBoundAt: '2026-08-04T00:00:23Z', launchRequestedAt: '2026-08-04T00:00:24Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'wait_for_agent_dependency', selectedMovement: { movementKind: 'wait_for_agent_dependency', rationale: 'x', dependencyOwner: 'human approval', dependencyOwnerClassification: 'work_unit_handler', enablingResult: 'x', resumptionPath: 'x' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          deliveryPersistedAt: '2026-08-04T00:00:22Z',
+          harnessBoundAt: '2026-08-04T00:00:23Z',
+          launchRequestedAt: '2026-08-04T00:00:24Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'wait_for_agent_dependency',
+          selectedMovement: {
+            movementKind: 'wait_for_agent_dependency',
+            rationale: 'x',
+            dependencyOwner: 'human approval',
+            dependencyOwnerClassification: 'work_unit_handler',
+            enablingResult: 'x',
+            resumptionPath: 'x',
+          },
+        };
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         handback.receiverSessionId = 'private';
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
         receiver.epicId = 'foreign-epic';
       },
       (value: Record<string, unknown>) => {
-        const handback = (((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>).noProgressHandback as Record<string, unknown>;
+        const handback = (
+          (
+            (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+              Record<string, unknown>
+            >
+          )[0]!.incompleteDisposition as Record<string, unknown>
+        ).noProgressHandback as Record<string, unknown>;
         const receiver = handback.epicRunnerReceiver as Record<string, unknown>;
         receiver.launchAcceptedAt = '2026-08-04T00:00:30Z';
         receiver.launchRequestedAt = '2026-08-04T00:00:31Z';
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x', dependencyOwner: 'bounded Work Unit Handler' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'future_bounded_move',
+          selectedMovement: {
+            movementKind: 'future_bounded_move',
+            rationale: 'x',
+            dependencyOwner: 'bounded Work Unit Handler',
+          },
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'future_bounded_move' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'future_bounded_move',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x' } };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovement: { movementKind: 'future_bounded_move', rationale: 'x' },
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'local_exhaustion_escalate',
+          selectedMovement: {
+            movementKind: 'local_exhaustion_escalate',
+            rationale: 'x',
+            localExhaustionSummary: 'x',
+          },
+          escalationDeliveryRequestedAt: '2026-08-04T00:00:28Z',
+        };
       },
       (value: Record<string, unknown>) => {
-        const delivery = ((value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<Record<string, unknown>>)[0]!.incompleteDisposition as Record<string, unknown>;
-        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = { deliveryRequestedAt: '2026-08-04T00:00:21Z', launchAcceptedAt: '2026-08-04T00:00:25Z', semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z', selectedMovementKind: 'local_exhaustion_escalate', selectedMovement: { movementKind: 'local_exhaustion_escalate', rationale: 'x', localExhaustionSummary: 'x' }, escalationIntentRecordedAt: '2026-08-04T00:00:28Z', escalationDeliveryRequestedAt: '2026-08-04T00:00:27Z' };
+        const delivery = (
+          (value.workUnits as Array<Record<string, unknown>>)[0]!.attemptHistory as Array<
+            Record<string, unknown>
+          >
+        )[0]!.incompleteDisposition as Record<string, unknown>;
+        (delivery.noProgressHandback as Record<string, unknown>).sprintRunnerDelivery = {
+          deliveryRequestedAt: '2026-08-04T00:00:21Z',
+          launchAcceptedAt: '2026-08-04T00:00:25Z',
+          semanticReassessmentRecordedAt: '2026-08-04T00:00:26Z',
+          selectedMovementKind: 'local_exhaustion_escalate',
+          selectedMovement: {
+            movementKind: 'local_exhaustion_escalate',
+            rationale: 'x',
+            localExhaustionSummary: 'x',
+          },
+          escalationIntentRecordedAt: '2026-08-04T00:00:28Z',
+          escalationDeliveryRequestedAt: '2026-08-04T00:00:27Z',
+        };
       },
     ];
     for (const mutate of invalid) {
@@ -1491,9 +2307,27 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
     return created;
   };
   Object.defineProperties(unit, {
-    implementerOutcome: { enumerable: false, get: () => member().implementerOutcome, set: (value) => { member().implementerOutcome = value; } },
-    handlerReview: { enumerable: false, get: () => member().handlerReview, set: (value) => { member().handlerReview = value; } },
-    handlerDecision: { enumerable: false, get: () => member().handlerDecision, set: (value) => { member().handlerDecision = value; } },
+    implementerOutcome: {
+      enumerable: false,
+      get: () => member().implementerOutcome,
+      set: (value) => {
+        member().implementerOutcome = value;
+      },
+    },
+    handlerReview: {
+      enumerable: false,
+      get: () => member().handlerReview,
+      set: (value) => {
+        member().handlerReview = value;
+      },
+    },
+    handlerDecision: {
+      enumerable: false,
+      get: () => member().handlerDecision,
+      set: (value) => {
+        member().handlerDecision = value;
+      },
+    },
   });
   value.workUnitRelationships = [
     {
@@ -1530,9 +2364,9 @@ function implementerOutcomeNativeFixture(): Record<string, unknown> {
   return value;
 }
 
-function primaryAttempt<T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] }>(
-  unit: T,
-): T['attemptHistory'][number] | undefined {
+function primaryAttempt<
+  T extends { readonly attemptHistory: readonly { readonly ordinal: number }[] },
+>(unit: T): T['attemptHistory'][number] | undefined {
   return unit.attemptHistory.find((member) => member.ordinal === 0);
 }
 

@@ -1171,6 +1171,19 @@ impl SqliteOrchestrationRepository {
         let work_slice_execution_settlements = if execution_enabled { collect(&connection, "SELECT materialization_id,graph_completion_materialization_id,settled_at FROM work_slice_execution_settlements ORDER BY materialization_id", |row| Ok(WorkSliceExecutionSettlementDto { materialization_id:row.get(0)?, graph_completion_materialization_id:row.get(1)?, settled_at:row.get(2)? }))? } else { Vec::new() };
         let work_slice_planning_point_execution_settlements = if execution_enabled { collect(&connection, "SELECT planning_point_id,materialization_id,work_slice_execution_materialization_id,settled_at FROM work_slice_planning_point_execution_settlements ORDER BY planning_point_id", |row| Ok(WorkSlicePlanningPointExecutionSettlementDto { planning_point_id:row.get(0)?, materialization_id:row.get(1)?, work_slice_execution_materialization_id:row.get(2)?, settled_at:row.get(3)? }))? } else { Vec::new() };
         let work_slice_execution_attentions = if execution_enabled { collect(&connection, "SELECT materialization_id,recorded_at FROM work_slice_execution_attentions ORDER BY materialization_id", |row| Ok(WorkSliceExecutionAttentionDto { materialization_id:row.get(0)?, recorded_at:row.get(1)? }))? } else { Vec::new() };
+        let (sprint_continuation_decisions, sprint_continuation_current_decisions, sprint_upward_results) =
+            sprint_continuation_projection(&connection, &initiated_sprints)?;
+        let sprint_result_projections = sprint_result_projection(
+            &connection,
+            &initiated_sprints,
+            &sprint_upward_results,
+        )?;
+        let initiated_epic_ids = initiated_epics
+            .iter()
+            .map(|epic| epic.epic_id.clone())
+            .collect::<Vec<_>>();
+        let epic_settlement_states =
+            crate::orchestration::epic_settlement::native_projection(&connection, &initiated_epic_ids)?;
         let action_continuations = activation_rows(&connection, "work_unit_handler_action_continuations", "attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at,blocked_reason,failure_reason", |row| Ok(WorkUnitHandlerActionContinuationDto { attempt_id:row.get(1)?, handler_session_id:row.get(2)?, original_handler_invocation_id:row.get(3)?, action_invocation_id:row.get(4)?, action_harness_revision_id:row.get(5)?, action_harness_configuration_digest:row.get(6)?, action_harness_repository_commit_ref:row.get(7)?, requested_at:row.get(8)?, authorized_at:row.get(9)?, invocation_prepared_at:row.get(10)?, harness_bound_at:row.get(11)?, launch_requested_at:row.get(12)?, launch_accepted_at:row.get(13)?, provider_activation_observed_at:row.get(14)?, action_ready_at:row.get(15)?, blocked_reason:row.get(16)?, failure_reason:row.get(17)? }))?;
         let implementer_activations = activation_rows(&connection, "work_unit_implementer_activations", "attempt_id,handler_invocation_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,implementer_ready_at,failure_reason", map_implementer_activation)?;
         let mut implementer_outcomes = implementer_outcome_rows(&connection)?;
@@ -1243,6 +1256,11 @@ impl SqliteOrchestrationRepository {
             work_unit_relationships,
             dependency_activation_intents,
             work_unit_execution_states, work_slice_execution_graph_completions, work_slice_execution_settlements, work_slice_planning_point_execution_settlements, work_slice_execution_attentions,
+            sprint_continuation_decisions,
+            sprint_continuation_current_decisions,
+            sprint_upward_results,
+            sprint_result_projections,
+            epic_settlement_states,
         })
     }
 
@@ -2418,6 +2436,20 @@ fn collect<T>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
 }
+fn table_has_columns(
+    connection: &Connection,
+    table: &str,
+    required: &[&str],
+) -> Result<bool, String> {
+    let columns = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<std::collections::HashSet<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(required.iter().all(|column| columns.contains(*column)))
+}
 fn fingerprint(command: &SaveEpicPlanProposalCommand) -> Result<String, SaveProposalError> {
     serde_json::to_string(&(
         command.epic_planning_draft_id.as_str(),
@@ -2785,6 +2817,750 @@ fn parse_proposal_json(value: String) -> rusqlite::Result<PlanBuilderProposal> {
     Ok(proposal)
 }
 
+fn sprint_continuation_projection(
+    connection: &Connection,
+    initiated_sprints: &[InitiatedSprintDto],
+) -> Result<(
+    Vec<SprintContinuationDecisionDto>,
+    Vec<SprintContinuationCurrentDecisionDto>,
+    Vec<SprintUpwardResultDto>,
+), String> {
+    let tables = [
+        "sprint_continuation_decisions",
+        "sprint_continuation_current_decisions",
+        "sprint_continuation_attentions",
+        "sprint_upward_results",
+    ];
+    let present = tables
+        .iter()
+        .map(|name| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let present_count = present.iter().filter(|value| **value).count();
+    if present_count == 0 {
+        return Ok((Vec::new(), Vec::new(), Vec::new()));
+    }
+    if present_count != tables.len() {
+        return Err("Productive Sprint continuation projection tables are incomplete".into());
+    }
+
+    let sprint_ids = initiated_sprints
+        .iter()
+        .map(|sprint| sprint.sprint_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let decisions = collect(
+        connection,
+        "SELECT d.decision_id,d.sprint_id,d.decision_sequence,d.decision_state,d.continuation_kind,d.accepted_materialization_count,d.recorded_at,a.attention_id,a.attention_code,a.source_attention_id FROM sprint_continuation_decisions d LEFT JOIN sprint_continuation_attentions a ON a.decision_id=d.decision_id ORDER BY d.sprint_id,d.decision_sequence",
+        |row| {
+            let source_attention_id = row.get::<_, Option<String>>(9)?;
+            Ok(SprintContinuationDecisionDto {
+                    decision_id: row.get(0)?,
+                    sprint_id: row.get(1)?,
+                    decision_sequence: row.get(2)?,
+                    state: row.get(3)?,
+                    reason: row.get(4)?,
+                    accepted_materialization_count: row.get(5)?,
+                    recorded_at: row.get(6)?,
+                    attention: row
+                        .get::<_, Option<String>>(7)?
+                        .zip(row.get::<_, Option<String>>(8)?)
+                        .map(|(attention_id, code)| SprintContinuationAttentionDto {
+                            attention_id,
+                            code,
+                            structured_attention: None,
+                            source_attention_id,
+                        }),
+            })
+        },
+    )?;
+    let current = collect(
+        connection,
+        "SELECT sprint_id,decision_id,decision_state,updated_at FROM sprint_continuation_current_decisions ORDER BY sprint_id",
+        |row| {
+            Ok(SprintContinuationCurrentDecisionDto {
+                sprint_id: row.get(0)?,
+                decision_id: row.get(1)?,
+                state: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        },
+    )?;
+    let results = collect(
+        connection,
+        "SELECT result_id,decision_id,sprint_id,result_kind,recorded_at FROM sprint_upward_results ORDER BY sprint_id,recorded_at,result_id",
+        |row| {
+            Ok(SprintUpwardResultDto {
+                result_id: row.get(0)?,
+                decision_id: row.get(1)?,
+                sprint_id: row.get(2)?,
+                result_kind: row.get(3)?,
+                recorded_at: row.get(4)?,
+            })
+        },
+    )?;
+    let mut public_attention_by_id = std::collections::HashMap::<
+        String,
+        (String, EpicRunnerEscalationAttentionDto),
+    >::new();
+    let escalation_tables = [
+        "epic_runner_escalation_receivers",
+        "epic_runner_escalation_attentions",
+    ];
+    let escalation_present = escalation_tables
+        .iter()
+        .map(|name| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    if escalation_present.iter().all(|value| *value)
+        && table_has_columns(
+            connection,
+            "epic_runner_escalation_attentions",
+            &["attention_id", "attention_json"],
+        )?
+    {
+        for (sprint_id, attention_id, attention_json) in collect(
+            connection,
+            "SELECT receiver.sprint_id,attention.attention_id,attention.attention_json FROM epic_runner_escalation_receivers receiver JOIN epic_runner_escalation_attentions attention ON attention.handback_id=receiver.handback_id ORDER BY receiver.sprint_id,attention.attention_id",
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )? {
+            let attention = serde_json::from_str::<EpicRunnerEscalationAttentionDto>(&attention_json)
+                .map_err(|error| format!("invalid public Sprint attention: {error}"))?;
+            if public_attention_by_id
+                .insert(attention_id, (sprint_id, attention))
+                .is_some()
+            {
+                return Err("duplicate public Sprint attention correlation".into());
+            }
+        }
+    }
+    let mut decisions = decisions;
+    for decision in &mut decisions {
+        if !sprint_ids.contains(decision.sprint_id.as_str()) {
+            return Err("Sprint continuation decision references an unknown Sprint".into());
+        }
+        if decision.decision_id.trim().is_empty()
+            || decision.decision_sequence < 1
+            || decision.accepted_materialization_count < 0
+            || decision.recorded_at.trim().is_empty()
+            || decision.reason.trim().is_empty()
+        {
+            return Err("Sprint continuation decision is malformed".into());
+        }
+        if !matches!(decision.state.as_str(), "continuing" | "attention" | "settled") {
+            return Err("Sprint continuation decision has an unsupported state".into());
+        }
+        let known_state = match decision.reason.as_str() {
+            "continue_eligible_work"
+            | "wait_for_agent_dependency"
+            | "retry_reassessment_pending"
+            | "continuation_pending"
+            | "planning_or_execution_pending" => "continuing",
+            "structured_human_or_external_attention"
+            | "stale_epic_context"
+            | "dependency_route_unavailable"
+            | "correlation_or_chronology_unavailable"
+            | "unresolved_handback" => "attention",
+            "all_authoritative_sprint_work_settled" => "settled",
+            _ => "unknown",
+        };
+        if (known_state != "unknown" && known_state != decision.state)
+            || (decision.state == "settled" && known_state != "settled")
+        {
+            return Err("Sprint continuation decision state and reason contradict".into());
+        }
+        if decision.state == "settled" && decision.accepted_materialization_count < 1 {
+            return Err("Sprint settlement lacks accepted materialization".into());
+        }
+        if decision.state != "attention" && decision.attention.is_some() {
+            return Err("non-attention Sprint decision has attention context".into());
+        }
+        if decision.state == "attention" && decision.attention.is_none() {
+            return Err("attention Sprint decision has no attention record".into());
+        }
+        chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+    }
+    for decision in &mut decisions {
+        if let Some(attention) = decision.attention.as_mut() {
+            if let Some(source_id) = attention.source_attention_id.as_ref() {
+                if decision.reason != "structured_human_or_external_attention" {
+                    return Err("non-structured Sprint attention has source correlation".into());
+                }
+                let (source_sprint, structured) = public_attention_by_id
+                    .get(source_id)
+                    .ok_or_else(|| "structured Sprint attention source is missing".to_owned())?;
+                if source_sprint != &decision.sprint_id {
+                    return Err("structured Sprint attention source is foreign".into());
+                }
+                attention.structured_attention = Some(structured.clone());
+            }
+        }
+    }
+    let mut last_sprint = None;
+    let mut expected_sequence = 1;
+    for decision in &decisions {
+        if last_sprint == Some(decision.sprint_id.as_str()) {
+            if decision.decision_sequence != expected_sequence {
+                return Err("Sprint continuation decision chronology has a gap".into());
+            }
+            expected_sequence += 1;
+        } else {
+            if decision.decision_sequence != 1 {
+                return Err("Sprint continuation decision chronology has a gap".into());
+            }
+            last_sprint = Some(decision.sprint_id.as_str());
+            expected_sequence = 2;
+        }
+    }
+    for result in &results {
+        chrono::DateTime::parse_from_rfc3339(&result.recorded_at)
+            .map_err(|_| "Sprint upward result chronology is invalid".to_owned())?;
+    }
+    for pointer in &current {
+        chrono::DateTime::parse_from_rfc3339(&pointer.updated_at)
+            .map_err(|_| "Sprint current decision chronology is invalid".to_owned())?;
+    }
+    let decision_by_id = decisions
+        .iter()
+        .map(|decision| (decision.decision_id.as_str(), decision))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut result_decision_ids = std::collections::HashSet::new();
+    for result in &results {
+        let decision = decision_by_id
+            .get(result.decision_id.as_str())
+            .ok_or_else(|| "Sprint upward result references an unknown decision".to_owned())?;
+        let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+        let result_time = chrono::DateTime::parse_from_rfc3339(&result.recorded_at)
+            .map_err(|_| "Sprint upward result chronology is invalid".to_owned())?;
+        if !result_decision_ids.insert(result.decision_id.as_str())
+            || result.sprint_id != decision.sprint_id
+            || result.result_kind != decision.state
+            || result.recorded_at != decision.recorded_at
+            || result_time < decision_time
+        {
+            return Err("Sprint upward result correlation is invalid".into());
+        }
+    }
+    if result_decision_ids.len() != decisions.len() {
+        return Err("Sprint continuation decision has no separate upward result".into());
+    }
+    let decision_by_sprint = decisions
+        .iter()
+        .filter(|decision| decision.decision_sequence > 0)
+        .fold(std::collections::HashMap::<&str, &SprintContinuationDecisionDto>::new(), |mut map, decision| {
+            map.insert(decision.sprint_id.as_str(), decision);
+            map
+        });
+    let mut current_sprints = std::collections::HashSet::new();
+    for pointer in &current {
+        let decision = decision_by_id
+            .get(pointer.decision_id.as_str())
+            .ok_or_else(|| "Sprint current decision references an unknown decision".to_owned())?;
+        let decision_time = chrono::DateTime::parse_from_rfc3339(&decision.recorded_at)
+            .map_err(|_| "Sprint continuation decision chronology is invalid".to_owned())?;
+        let pointer_time = chrono::DateTime::parse_from_rfc3339(&pointer.updated_at)
+            .map_err(|_| "Sprint current decision chronology is invalid".to_owned())?;
+        if !current_sprints.insert(pointer.sprint_id.as_str())
+            || pointer.sprint_id != decision.sprint_id
+            || pointer.state != decision.state
+            || pointer_time < decision_time
+            || decision_by_sprint.get(pointer.sprint_id.as_str()).map(|item| item.decision_id.as_str())
+                != Some(pointer.decision_id.as_str())
+        {
+            return Err("Sprint current decision correlation is invalid".into());
+        }
+    }
+    if current.iter().any(|pointer| !sprint_ids.contains(pointer.sprint_id.as_str())) {
+        return Err("Sprint current decision references an unknown Sprint".into());
+    }
+    if decisions.iter().any(|decision| !current_sprints.contains(decision.sprint_id.as_str())) {
+        return Err("Sprint continuation history lacks its current decision pointer".into());
+    }
+    Ok((decisions, current, results))
+}
+
+fn sprint_result_projection(
+    connection: &Connection,
+    initiated_sprints: &[InitiatedSprintDto],
+    results: &[SprintUpwardResultDto],
+) -> Result<Option<Vec<SprintResultProjectionDto>>, String> {
+    let tables = [
+        "epic_runner_sprint_result_receivers",
+        "epic_runner_sprint_result_dispositions",
+        "epic_runner_sprint_result_downstream_requests",
+        "epic_runner_sprint_result_attentions",
+        "epic_runner_sprint_result_realizations",
+        "epic_runner_sprint_result_terminal_readiness",
+        "epic_runner_sprint_result_retained_attentions",
+    ];
+    let present = tables
+        .iter()
+        .map(|name| {
+            connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let present_count = present.iter().filter(|value| **value).count();
+    if present_count == 0 {
+        return Ok(None);
+    }
+    if present_count != tables.len() {
+        return Err("Productive Sprint-result projection tables are incomplete".into());
+    }
+    if results.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    let sprint_by_id = initiated_sprints
+        .iter()
+        .map(|sprint| (sprint.sprint_id.as_str(), sprint))
+        .collect::<std::collections::HashMap<_, _>>();
+    let rows = collect(
+        connection,
+        "SELECT r.result_id,r.decision_id,r.sprint_id,s.epic_id,r.result_kind,r.recorded_at,
+                x.decision_id,x.sprint_id,x.epic_id,x.delivery_requested_at,x.delivery_persisted_at,
+                x.harness_bound_at,x.launch_requested_at,x.launch_accepted_at,
+                x.provider_activation_observed_at,x.reassessment_lifecycle_status,
+                x.reassessment_lifecycle_observed_at,x.semantic_reassessment_recorded_at,
+                d.selected_at,d.details_json,dr.requested_at,dr.request_json,
+                a.attention_json,z.outcome_kind,z.successor_sprint_id,z.successor_request_id,z.considered_at,
+                z.successor_request_recorded_at,tr.recorded_at,ra.attention_code,ra.recorded_at
+         FROM sprint_upward_results r
+         JOIN initiated_sprints s ON s.id=r.sprint_id
+         LEFT JOIN epic_runner_sprint_result_receivers x ON x.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_dispositions d ON d.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_downstream_requests dr ON dr.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_attentions a ON a.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_realizations z ON z.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_terminal_readiness tr ON tr.result_id=r.result_id
+         LEFT JOIN epic_runner_sprint_result_retained_attentions ra ON ra.result_id=r.result_id
+         ORDER BY r.sprint_id,r.recorded_at,r.result_id",
+        |row| {
+            let result_id: String = row.get(0)?;
+            let decision_id: String = row.get(1)?;
+            let sprint_id: String = row.get(2)?;
+            let epic_id: String = row.get(3)?;
+            let result_kind: String = row.get(4)?;
+            let recorded_at: String = row.get(5)?;
+            let sprint = sprint_by_id
+                .get(sprint_id.as_str())
+                .ok_or_else(|| to_sql_error("Sprint-result references an unknown Sprint".into()))?;
+            if results.iter().filter(|result| result.result_id == result_id).count() != 1
+                || results.iter().any(|result| {
+                    result.result_id == result_id
+                        && (result.decision_id != decision_id
+                            || result.sprint_id != sprint_id
+                            || result.result_kind != result_kind
+                            || result.recorded_at != recorded_at)
+                })
+                || epic_id != sprint.epic_id
+            {
+                return Err(to_sql_error("Sprint-result local correlation is invalid".into()));
+            }
+            let receiver_decision: Option<String> = row.get(6)?;
+            let receiver_sprint: Option<String> = row.get(7)?;
+            let receiver_epic: Option<String> = row.get(8)?;
+            let receiver_delivery_requested: Option<String> = row.get(9)?;
+            let receiver = match (
+                receiver_decision,
+                receiver_sprint,
+                receiver_epic,
+                receiver_delivery_requested,
+            ) {
+                (None, None, None, None) => None,
+                (Some(receiver_decision), Some(receiver_sprint), Some(receiver_epic), Some(delivery_requested_at)) => {
+                    if receiver_decision != decision_id
+                        || receiver_sprint != sprint_id
+                        || receiver_epic != epic_id
+                    {
+                        return Err(to_sql_error("Sprint-result receiver has foreign correlation".into()));
+                    }
+                    Some(SprintResultReceiverProjectionDto {
+                        delivery_requested_at,
+                        delivery_persisted_at: row.get(10)?,
+                        harness_bound_at: row.get(11)?,
+                        launch_requested_at: row.get(12)?,
+                        launch_accepted_at: row.get(13)?,
+                        provider_activation_observed_at: row.get(14)?,
+                        reassessment_lifecycle_status: row.get(15)?,
+                        reassessment_lifecycle_observed_at: row.get(16)?,
+                        semantic_reassessment_recorded_at: row.get(17)?,
+                    })
+                }
+                _ => return Err(to_sql_error("Sprint-result receiver bundle is partial".into())),
+            };
+            let disposition_details: Option<String> = row.get(19)?;
+            let disposition = match disposition_details {
+                None => None,
+                Some(details) => Some(
+                    serde_json::from_str::<EpicRunnerEscalationDispositionDto>(&details)
+                        .map_err(|error| to_sql_error(format!("invalid Sprint-result disposition: {error}")))?,
+                ),
+            };
+            let disposition_recorded_at: Option<String> = row.get(18)?;
+            if disposition.is_some() != disposition_recorded_at.is_some() {
+                return Err(to_sql_error("Sprint-result disposition bundle is partial".into()));
+            }
+            let downstream_requested_at: Option<String> = row.get(20)?;
+            let downstream_request_json: Option<String> = row.get(21)?;
+            if downstream_requested_at.is_some() != downstream_request_json.is_some() {
+                return Err(to_sql_error("Sprint-result successor request bundle is partial".into()));
+            }
+            if let Some(request_json) = downstream_request_json.as_deref() {
+                let request = serde_json::from_str::<EpicRunnerEscalationDownstreamRequestDto>(request_json)
+                    .map_err(|error| to_sql_error(format!("invalid Sprint-result successor request: {error}")))?;
+                let matches_disposition = disposition
+                    .as_ref()
+                    .and_then(|item| item.downstream_request.as_ref())
+                    .is_some_and(|item| item == &request);
+                if !matches_disposition {
+                    return Err(to_sql_error("Sprint-result successor request does not match its disposition".into()));
+                }
+            }
+            let attention_json: Option<String> = row.get(22)?;
+            if let Some(attention_json) = attention_json.as_deref() {
+                let attention = serde_json::from_str::<EpicRunnerEscalationAttentionDto>(attention_json)
+                    .map_err(|error| to_sql_error(format!("invalid Sprint-result attention: {error}")))?;
+                if disposition
+                    .as_ref()
+                    .and_then(|item| item.human_external_attention.as_ref())
+                    != Some(&attention)
+                {
+                    return Err(to_sql_error("Sprint-result attention does not match its disposition".into()));
+                }
+            }
+            let outcome_kind: Option<String> = row.get(23)?;
+            let successor_sprint_id: Option<String> = row.get(24)?;
+            let successor_request_id: Option<String> = row.get(25)?;
+            let considered_at: Option<String> = row.get(26)?;
+            let successor_request_recorded_at: Option<String> = row.get(27)?;
+            let terminal_readiness_recorded_at: Option<String> = row.get(28)?;
+            let retained_attention_code: Option<String> = row.get(29)?;
+            let retained_attention_recorded_at: Option<String> = row.get(30)?;
+            let realization = match (outcome_kind, considered_at) {
+                (None, None) => None,
+                (Some(outcome_kind), Some(considered_at)) => {
+                    if !matches!(outcome_kind.as_str(), "successor_request" | "terminal_readiness" | "retained_attention")
+                        || disposition.is_none()
+                        || receiver.as_ref().and_then(|item| item.semantic_reassessment_recorded_at.as_ref()).is_none()
+                    {
+                        return Err(to_sql_error("Sprint-result realization is incoherent".into()));
+                    }
+                    if outcome_kind != "retained_attention" {
+                        let exact_settled: bool = connection
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM sprint_continuation_decisions d JOIN sprint_continuation_current_decisions current ON current.sprint_id=d.sprint_id AND current.decision_id=d.decision_id WHERE d.decision_id=?1 AND d.sprint_id=?2 AND d.decision_state='settled')",
+                                params![decision_id, sprint_id],
+                                |query| query.get(0),
+                            )?;
+                        if result_kind != "settled" || !exact_settled {
+                            return Err(to_sql_error("Sprint-result realization requires the exact settled result and decision".into()));
+                        }
+                        if disposition.as_ref().map(|item| item.movement_kind.as_str()) != Some("advance_to_next_approved_sprint") {
+                            return Err(to_sql_error("Sprint-result successor or readiness requires the advance disposition".into()));
+                        }
+                    }
+                    let successor = successor_sprint_id.as_deref().map(|id| {
+                        sprint_by_id
+                            .get(id)
+                            .ok_or_else(|| to_sql_error("Sprint-result successor references an unknown Sprint".into()))
+                    }).transpose()?;
+                    let successor_transition = if outcome_kind == "successor_request" {
+                        let successor = successor.ok_or_else(|| to_sql_error("Sprint-result successor realization lacks its Sprint".into()))?;
+                        if successor.epic_id != epic_id || successor.ordinal != sprint.ordinal + 1 {
+                            return Err(to_sql_error("Sprint-result successor is foreign or non-consecutive".into()));
+                        }
+                        let successor_request_id = successor_request_id
+                            .as_deref()
+                            .ok_or_else(|| to_sql_error("Sprint-result successor realization lacks its exact request".into()))?;
+                        let successor_transition = successor_transition_projection(
+                            connection,
+                            successor_request_id,
+                            successor_sprint_id.as_deref().expect("validated successor"),
+                            epic_id.as_str(),
+                        )?;
+                        validate_successor_transition_phases(&successor_transition)?;
+                        if successor_request_recorded_at.is_none() {
+                            return Err(to_sql_error("Sprint-result successor request persistence is incoherent".into()));
+                        }
+                        if downstream_requested_at.is_some() != downstream_request_json.is_some() {
+                            return Err(to_sql_error("Sprint-result semantic disposition request bundle is partial".into()));
+                        }
+                        Some(successor_transition)
+                    } else if successor.is_some() || successor_request_recorded_at.is_some() || downstream_requested_at.is_some() {
+                        return Err(to_sql_error("non-successor Sprint-result realization has successor facts".into()));
+                    } else if successor_request_id.is_some() {
+                        return Err(to_sql_error("non-successor Sprint-result realization has a successor request identity".into()));
+                    } else {
+                        None
+                    };
+                    match outcome_kind.as_str() {
+                        "terminal_readiness" if terminal_readiness_recorded_at.is_none() || retained_attention_code.is_some() || retained_attention_recorded_at.is_some() => {
+                            return Err(to_sql_error("Sprint-result terminal readiness is incoherent".into()))
+                        }
+                        "retained_attention" if retained_attention_code.is_none() || retained_attention_recorded_at.is_none() || terminal_readiness_recorded_at.is_some() => {
+                            return Err(to_sql_error("Sprint-result retained attention is incoherent".into()))
+                        }
+                        "successor_request" if terminal_readiness_recorded_at.is_some() || retained_attention_code.is_some() || retained_attention_recorded_at.is_some() => {
+                            return Err(to_sql_error("Sprint-result successor realization has terminal facts".into()))
+                        }
+                        _ => {}
+                    }
+                    Some(SprintResultRealizationDto {
+                        outcome_kind,
+                        considered_at,
+                        successor_sprint_id,
+                        successor_transition,
+                        successor_request_recorded_at,
+                        terminal_readiness_recorded_at,
+                        retained_attention_code,
+                        retained_attention_recorded_at,
+                    })
+                }
+                _ => return Err(to_sql_error("Sprint-result realization bundle is partial".into())),
+            };
+            let mut chronology = vec![Some(recorded_at.as_str())];
+            if let Some(receiver) = receiver.as_ref() {
+                chronology.extend([
+                    Some(receiver.delivery_requested_at.as_str()),
+                    receiver.delivery_persisted_at.as_deref(),
+                    receiver.harness_bound_at.as_deref(),
+                    receiver.launch_requested_at.as_deref(),
+                    receiver.launch_accepted_at.as_deref(),
+                    receiver.semantic_reassessment_recorded_at.as_deref(),
+                ]);
+            }
+            chronology.extend([
+                disposition_recorded_at.as_deref(),
+                realization.as_ref().map(|item| item.considered_at.as_str()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .map(|item| item.requested_at.as_str()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .map(|item| item.authorized_at.as_str()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.session_created_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.harness_applied_at.as_deref()),
+                realization
+                    .as_ref()
+                    .and_then(|item| item.successor_transition.as_ref())
+                    .and_then(|item| item.launch_accepted_at.as_deref()),
+                realization.as_ref().and_then(|item| item.successor_request_recorded_at.as_deref()),
+            ]);
+            if matches!(realization.as_ref().map(|item| item.outcome_kind.as_str()), Some("successor_request")) {
+                if let Some(receiver) = receiver.as_ref() {
+                    chronology.extend([
+                        receiver.provider_activation_observed_at.as_deref(),
+                        receiver.reassessment_lifecycle_observed_at.as_deref(),
+                    ]);
+                }
+                chronology.extend([
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_semantic_outcome_recorded_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_lifecycle_observed_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.pre_start_outcome_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.parent_continuation_delivery_requested_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.parent_continuation_delivery_persisted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.epic_continuation_launch_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.provider_receiver_activation_observed_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_start_authorized_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_start_persisted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.sprint_continuation_launch_accepted_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.repository_branch_reevaluation_recorded_at.as_deref()),
+                    realization
+                        .as_ref()
+                        .and_then(|item| item.successor_transition.as_ref())
+                        .and_then(|item| item.started_reevaluation_lifecycle_observed_at.as_deref()),
+                ]);
+            } else {
+                chronology.extend([
+                    realization.as_ref().and_then(|item| item.terminal_readiness_recorded_at.as_deref()),
+                    realization.as_ref().and_then(|item| item.retained_attention_recorded_at.as_deref()),
+                ]);
+                if let Some(receiver) = receiver.as_ref() {
+                    chronology.extend([
+                        receiver.provider_activation_observed_at.as_deref(),
+                        receiver.reassessment_lifecycle_observed_at.as_deref(),
+                    ]);
+                }
+            }
+            validate_public_chronology(&chronology)?;
+            if disposition.is_some() && receiver.as_ref().and_then(|item| item.semantic_reassessment_recorded_at.as_ref()).is_none() {
+                return Err(to_sql_error("Sprint-result disposition lacks semantic reassessment".into()));
+            }
+            Ok(SprintResultProjectionDto {
+                result_id,
+                decision_id,
+                sprint_id,
+                epic_id,
+                result_kind,
+                recorded_at,
+                receiver,
+                disposition_recorded_at,
+                disposition,
+                realization,
+            })
+        },
+    )?;
+    Ok(Some(rows))
+}
+
+fn successor_transition_projection(
+    connection: &Connection,
+    request_id: &str,
+    successor_sprint_id: &str,
+    epic_id: &str,
+) -> Result<SprintResultSuccessorTransitionDto, rusqlite::Error> {
+    connection
+        .query_row(
+            "SELECT requested_at,authorized_at,session_created_at,harness_applied_at,launch_accepted_at,
+                    pre_start_semantic_outcome_recorded_at,pre_start_lifecycle_observed_at,pre_start_outcome_accepted_at,
+                    parent_continuation_delivery_requested_at,parent_continuation_delivery_persisted_at,
+                    epic_continuation_launch_accepted_at,provider_receiver_activation_observed_at,
+                    sprint_start_authorized_at,sprint_start_persisted_at,sprint_continuation_launch_accepted_at,
+                    repository_branch_reevaluation_recorded_at,started_reevaluation_lifecycle_observed_at
+             FROM sprint_runner_transitions
+             WHERE request_id=?1 AND sprint_id=?2 AND epic_id=?3",
+            params![request_id, successor_sprint_id, epic_id],
+            |row| {
+                let launch_accepted_at: Option<String> = row.get(4)?;
+                Ok(SprintResultSuccessorTransitionDto {
+                    requested_at: row.get(0)?,
+                    authorized_at: row.get(1)?,
+                    session_created_at: row.get(2)?,
+                    harness_applied_at: row.get(3)?,
+                    launch_accepted_at: launch_accepted_at.clone(),
+                    pre_start_ready: launch_accepted_at.is_some(),
+                    lifecycle_observed: row.get::<_, Option<String>>(6)?.is_some(),
+                    accepted: row.get::<_, Option<String>>(7)?.is_some(),
+                    pre_start_semantic_outcome_recorded_at: row.get(5)?,
+                    pre_start_lifecycle_observed_at: row.get(6)?,
+                    pre_start_outcome_accepted_at: row.get(7)?,
+                    parent_continuation_delivery_requested_at: row.get(8)?,
+                    parent_continuation_delivery_persisted_at: row.get(9)?,
+                    epic_continuation_launch_accepted_at: row.get(10)?,
+                    provider_receiver_activation_observed_at: row.get(11)?,
+                    sprint_start_authorized_at: row.get(12)?,
+                    sprint_start_persisted_at: row.get(13)?,
+                    sprint_continuation_launch_accepted_at: row.get(14)?,
+                    repository_branch_reevaluation_recorded_at: row.get(15)?,
+                    started_reevaluation_lifecycle_observed_at: row.get(16)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| to_sql_error("Sprint-result successor request lacks its exact Sprint Runner transition".into()))
+}
+
+fn validate_successor_transition_phases(
+    transition: &SprintResultSuccessorTransitionDto,
+) -> Result<(), rusqlite::Error> {
+    if transition.harness_applied_at.is_some() && transition.session_created_at.is_none()
+        || transition.launch_accepted_at.is_some() && transition.harness_applied_at.is_none()
+        || transition.pre_start_lifecycle_observed_at.is_some()
+            && transition.pre_start_semantic_outcome_recorded_at.is_none()
+        || transition.pre_start_outcome_accepted_at.is_some()
+            && transition.pre_start_lifecycle_observed_at.is_none()
+        || transition.parent_continuation_delivery_persisted_at.is_some()
+            && transition.parent_continuation_delivery_requested_at.is_none()
+        || transition.epic_continuation_launch_accepted_at.is_some()
+            && transition.parent_continuation_delivery_persisted_at.is_none()
+        || transition.provider_receiver_activation_observed_at.is_some()
+            && transition.epic_continuation_launch_accepted_at.is_none()
+        || transition.sprint_start_authorized_at.is_some()
+            && transition.epic_continuation_launch_accepted_at.is_none()
+        || transition.sprint_start_persisted_at.is_some()
+            && transition.sprint_start_authorized_at.is_none()
+        || transition.sprint_continuation_launch_accepted_at.is_some()
+            && transition.sprint_start_persisted_at.is_none()
+        || transition.repository_branch_reevaluation_recorded_at.is_some()
+            && transition.sprint_continuation_launch_accepted_at.is_none()
+        || transition.started_reevaluation_lifecycle_observed_at.is_some()
+            && transition.repository_branch_reevaluation_recorded_at.is_none()
+    {
+        return Err(to_sql_error("Sprint-result successor transition has an incomplete phase prefix".into()));
+    }
+    Ok(())
+}
+
+fn validate_public_chronology(values: &[Option<&str>]) -> Result<(), rusqlite::Error> {
+    let mut previous = None;
+    for value in values.iter().flatten() {
+        let current = DateTime::parse_from_rfc3339(value)
+            .map_err(|_| to_sql_error("Sprint-result public chronology is invalid".into()))?;
+        if let Some(prior) = previous {
+            if current < prior {
+                return Err(to_sql_error("Sprint-result public chronology is out of order".into()));
+            }
+        }
+        previous = Some(current);
+    }
+    Ok(())
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeQueryV2 {
@@ -2808,6 +3584,109 @@ pub(crate) struct NativeQueryV2 {
     work_unit_relationships: Vec<WorkUnitRelationshipDto>,
     dependency_activation_intents: Vec<WorkUnitDependencyActivationIntentDto>,
     work_unit_execution_states: Vec<WorkUnitExecutionStateDto>, work_slice_execution_graph_completions: Vec<WorkSliceExecutionGraphCompletionDto>, work_slice_execution_settlements: Vec<WorkSliceExecutionSettlementDto>, work_slice_planning_point_execution_settlements: Vec<WorkSlicePlanningPointExecutionSettlementDto>, work_slice_execution_attentions: Vec<WorkSliceExecutionAttentionDto>,
+    sprint_continuation_decisions: Vec<SprintContinuationDecisionDto>,
+    sprint_continuation_current_decisions: Vec<SprintContinuationCurrentDecisionDto>,
+    sprint_upward_results: Vec<SprintUpwardResultDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_result_projections: Option<Vec<SprintResultProjectionDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    epic_settlement_states: Option<Vec<super::epic_settlement::EpicSettlementProjection>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintResultProjectionDto {
+    result_id: String,
+    decision_id: String,
+    sprint_id: String,
+    epic_id: String,
+    result_kind: String,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receiver: Option<SprintResultReceiverProjectionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disposition_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disposition: Option<EpicRunnerEscalationDispositionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    realization: Option<SprintResultRealizationDto>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintResultReceiverProjectionDto {
+    delivery_requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_bound_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reassessment_lifecycle_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reassessment_lifecycle_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_reassessment_recorded_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintResultRealizationDto {
+    outcome_kind: String,
+    considered_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    successor_sprint_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    successor_transition: Option<SprintResultSuccessorTransitionDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    successor_request_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_readiness_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retained_attention_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retained_attention_recorded_at: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintResultSuccessorTransitionDto {
+    requested_at: String,
+    authorized_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_applied_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch_accepted_at: Option<String>,
+    pre_start_ready: bool,
+    lifecycle_observed: bool,
+    accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_semantic_outcome_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_lifecycle_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_start_outcome_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_continuation_delivery_requested_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_continuation_delivery_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    epic_continuation_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_receiver_activation_observed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_start_authorized_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_start_persisted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sprint_continuation_launch_accepted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository_branch_reevaluation_recorded_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_reevaluation_lifecycle_observed_at: Option<String>,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2987,6 +3866,46 @@ struct WorkSliceExecutionSettlementDto { materialization_id: String, graph_compl
 struct WorkSlicePlanningPointExecutionSettlementDto { planning_point_id: String, materialization_id: String, work_slice_execution_materialization_id: String, settled_at: String }
 #[derive(Debug, PartialEq, Eq, Serialize)] #[serde(rename_all = "camelCase")]
 struct WorkSliceExecutionAttentionDto { materialization_id: String, recorded_at: String }
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationDecisionDto {
+    decision_id: String,
+    sprint_id: String,
+    decision_sequence: i64,
+    state: String,
+    reason: String,
+    accepted_materialization_count: i64,
+    recorded_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attention: Option<SprintContinuationAttentionDto>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationAttentionDto {
+    attention_id: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structured_attention: Option<EpicRunnerEscalationAttentionDto>,
+    #[serde(skip)]
+    source_attention_id: Option<String>,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintContinuationCurrentDecisionDto {
+    sprint_id: String,
+    decision_id: String,
+    state: String,
+    updated_at: String,
+}
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SprintUpwardResultDto {
+    result_id: String,
+    decision_id: String,
+    sprint_id: String,
+    result_kind: String,
+    recorded_at: String,
+}
 fn validate_execution_projection(states:&[WorkUnitExecutionStateDto], completions:&[WorkSliceExecutionGraphCompletionDto], settlements:&[WorkSliceExecutionSettlementDto], planning:&[WorkSlicePlanningPointExecutionSettlementDto], attentions:&[WorkSliceExecutionAttentionDto], materializations:&[WorkUnitMaterializationDto], units:&[WorkUnitDto])->Result<(),String>{
  let mut seen=std::collections::HashSet::new(); for state in states { if !seen.insert(&state.work_unit_id)||!matches!(state.state.as_str(),"waiting_on_prerequisites"|"ready"|"active"|"retry_authorized"|"handed_back"|"settled"|"attention"){return Err("Productive Work Unit execution state is duplicate or unknown".into())} let unit=units.iter().find(|u|u.work_unit_id==state.work_unit_id).ok_or_else(||"Productive Work Unit execution state references an unknown Work Unit".to_string())?; if unit.materialization_id!=state.materialization_id||unit.accepted_revision_id!=state.accepted_revision_id{return Err("Productive Work Unit execution state has foreign correlation".into())} }
  if !states.is_empty()&&states.len()!=units.len(){return Err("Productive execution state is incomplete".into())} let mut ids=std::collections::HashSet::new(); for c in completions {if !ids.insert(&c.materialization_id){return Err("Productive graph completion is duplicated".into())} let m=materializations.iter().find(|m|m.materialization_id==c.materialization_id).ok_or_else(||"Productive graph completion references an unknown materialization".to_string())?;if m.accepted_revision_id!=c.accepted_revision_id||attentions.iter().any(|a|a.materialization_id==c.materialization_id)||units.iter().filter(|u|u.materialization_id==c.materialization_id).any(|u|!states.iter().any(|s|s.work_unit_id==u.work_unit_id&&s.state=="settled")){return Err("Productive graph completion is incoherent".into())}} ids.clear(); for a in attentions {if !ids.insert(&a.materialization_id)||!materializations.iter().any(|m|m.materialization_id==a.materialization_id){return Err("Productive Work Slice attention is duplicate or foreign".into())}}

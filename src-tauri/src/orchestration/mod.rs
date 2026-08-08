@@ -16,6 +16,8 @@ pub(crate) mod initiated_sprint_git_authority;
 pub(crate) mod mcp;
 pub(crate) mod repository;
 pub(crate) mod sprint_runner_transition;
+pub(crate) mod sprint_continuation_settlement;
+pub(crate) mod epic_settlement;
 pub(crate) mod transport;
 pub(crate) mod work_unit_execution_harness;
 pub(crate) mod work_unit_dependency_wave;

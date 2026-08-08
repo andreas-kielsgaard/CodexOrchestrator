@@ -33,6 +33,94 @@ fn handback_native_dto_exposes_only_factual_stages() {
 }
 
 #[test]
+fn sprint_result_native_projection_redacts_private_receiver_and_realization_identity() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(
+        "CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT,ordinal INTEGER,title TEXT,intended_movement TEXT,concern_summaries_json TEXT,sprint_plan_id TEXT,sprint_plan_revision_id TEXT);
+         CREATE TABLE sprint_continuation_decisions(decision_id TEXT,sprint_id TEXT,decision_sequence INTEGER,decision_state TEXT,reason TEXT,accepted_materialization_count INTEGER,input_fingerprint TEXT,recorded_at TEXT);
+         CREATE TABLE sprint_continuation_current_decisions(sprint_id TEXT,decision_id TEXT,state TEXT,updated_at TEXT);
+         CREATE TABLE sprint_upward_results(result_id TEXT PRIMARY KEY,decision_id TEXT,sprint_id TEXT,result_kind TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_receivers(result_id TEXT,decision_id TEXT,sprint_id TEXT,epic_id TEXT,delivery_requested_at TEXT,delivery_persisted_at TEXT,harness_bound_at TEXT,launch_requested_at TEXT,launch_accepted_at TEXT,provider_activation_observed_at TEXT,reassessment_lifecycle_status TEXT,reassessment_lifecycle_observed_at TEXT,semantic_reassessment_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_dispositions(result_id TEXT,selected_at TEXT,details_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_downstream_requests(result_id TEXT,requested_at TEXT,request_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_attentions(result_id TEXT,attention_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_realizations(result_id TEXT,outcome_kind TEXT,successor_sprint_id TEXT,successor_request_id TEXT,considered_at TEXT,successor_request_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_terminal_readiness(result_id TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_retained_attentions(result_id TEXT,attention_code TEXT,recorded_at TEXT);
+         INSERT INTO initiated_sprints VALUES('sprint','epic',0,'Sprint','','[]','plan','revision');
+         INSERT INTO sprint_continuation_decisions VALUES('decision','sprint',1,'settled','settled',1,'input','2026-08-05T00:00:00Z');
+         INSERT INTO sprint_continuation_current_decisions VALUES('sprint','decision','settled','2026-08-05T00:00:00Z');
+         INSERT INTO sprint_upward_results VALUES('result','decision','sprint','settled','2026-08-05T00:00:00Z');
+         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','sprint','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:11Z','2026-08-05T00:00:07Z');
+         INSERT INTO epic_runner_sprint_result_dispositions VALUES('result','2026-08-05T00:00:08Z','{\"movementKind\":\"advance_to_next_approved_sprint\",\"rationale\":\"All local Sprint facts are present.\",\"consideredIntent\":\"advance the approved Sprint sequence\"}');
+         INSERT INTO epic_runner_sprint_result_realizations VALUES('result','terminal_readiness',NULL,NULL,'2026-08-05T00:00:09Z',NULL);
+         INSERT INTO epic_runner_sprint_result_terminal_readiness VALUES('result','2026-08-05T00:00:10Z');",
+    ).unwrap();
+    let sprints = vec![InitiatedSprintDto {
+        sprint_id: "sprint".into(), epic_id: "epic".into(), ordinal: 0,
+        title: "Sprint".into(), intended_movement: "".into(), concern_summaries: vec![],
+        sprint_plan_id: "plan".into(), sprint_plan_revision_id: "revision".into(),
+    }];
+    let results = vec![SprintUpwardResultDto {
+        result_id: "result".into(), decision_id: "decision".into(), sprint_id: "sprint".into(),
+        result_kind: "settled".into(), recorded_at: "2026-08-05T00:00:00Z".into(),
+    }];
+    let projection = sprint_result_projection(&connection, &sprints, &results).unwrap().unwrap();
+    let value = serde_json::to_value(projection).unwrap();
+    assert_eq!(value[0]["realization"]["outcomeKind"], "terminal_readiness");
+    assert!(value[0]["receiver"].get("harnessKey").is_none());
+    assert!(value[0]["receiver"].get("harnessVersion").is_none());
+    assert!(value[0].get("correlationFingerprint").is_none());
+    assert!(value[0].get("realization").unwrap().get("realizationId").is_none());
+    connection.execute("UPDATE epic_runner_sprint_result_terminal_readiness SET recorded_at='2026-08-05T00:00:12Z' WHERE result_id='result'", []).unwrap();
+    assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
+}
+
+#[test]
+fn sprint_result_native_projection_uses_exact_successor_transition_correlation() {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection.execute_batch(
+        "CREATE TABLE initiated_sprints(id TEXT PRIMARY KEY,epic_id TEXT,ordinal INTEGER,title TEXT,intended_movement TEXT,concern_summaries_json TEXT,sprint_plan_id TEXT,sprint_plan_revision_id TEXT);
+         CREATE TABLE sprint_continuation_decisions(decision_id TEXT,sprint_id TEXT,decision_sequence INTEGER,decision_state TEXT,reason TEXT,accepted_materialization_count INTEGER,input_fingerprint TEXT,recorded_at TEXT);
+         CREATE TABLE sprint_continuation_current_decisions(sprint_id TEXT,decision_id TEXT,state TEXT,updated_at TEXT);
+         CREATE TABLE sprint_upward_results(result_id TEXT PRIMARY KEY,decision_id TEXT,sprint_id TEXT,result_kind TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_receivers(result_id TEXT,decision_id TEXT,sprint_id TEXT,epic_id TEXT,delivery_requested_at TEXT,delivery_persisted_at TEXT,harness_bound_at TEXT,launch_requested_at TEXT,launch_accepted_at TEXT,provider_activation_observed_at TEXT,reassessment_lifecycle_status TEXT,reassessment_lifecycle_observed_at TEXT,semantic_reassessment_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_dispositions(result_id TEXT,selected_at TEXT,details_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_downstream_requests(result_id TEXT,requested_at TEXT,request_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_attentions(result_id TEXT,attention_json TEXT);
+         CREATE TABLE epic_runner_sprint_result_realizations(result_id TEXT,outcome_kind TEXT,successor_sprint_id TEXT,successor_request_id TEXT,considered_at TEXT,successor_request_recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_terminal_readiness(result_id TEXT,recorded_at TEXT);
+         CREATE TABLE epic_runner_sprint_result_retained_attentions(result_id TEXT,attention_code TEXT,recorded_at TEXT);
+         CREATE TABLE sprint_runner_transitions(sprint_id TEXT,epic_id TEXT,request_id TEXT,requested_at TEXT,authorized_at TEXT,session_created_at TEXT,harness_applied_at TEXT,launch_accepted_at TEXT,pre_start_semantic_outcome_recorded_at TEXT,pre_start_lifecycle_observed_at TEXT,pre_start_outcome_accepted_at TEXT,parent_continuation_delivery_requested_at TEXT,parent_continuation_delivery_persisted_at TEXT,epic_continuation_launch_accepted_at TEXT,provider_receiver_activation_observed_at TEXT,sprint_start_authorized_at TEXT,sprint_start_persisted_at TEXT,sprint_continuation_launch_accepted_at TEXT,repository_branch_reevaluation_recorded_at TEXT,started_reevaluation_lifecycle_observed_at TEXT);
+         INSERT INTO initiated_sprints VALUES('source','epic',0,'Source','','[]','plan','revision'),('successor','epic',1,'Successor','','[]','plan-2','revision-2');
+         INSERT INTO sprint_continuation_decisions VALUES('decision','source',1,'settled','settled',1,'input','2026-08-05T00:00:00Z');
+         INSERT INTO sprint_continuation_current_decisions VALUES('source','decision','settled','2026-08-05T00:00:00Z');
+         INSERT INTO sprint_upward_results VALUES('result','decision','source','settled','2026-08-05T00:00:00Z');
+         INSERT INTO epic_runner_sprint_result_receivers VALUES('result','decision','source','epic','2026-08-05T00:00:01Z','2026-08-05T00:00:02Z','2026-08-05T00:00:03Z','2026-08-05T00:00:04Z','2026-08-05T00:00:05Z',NULL,'completed','2026-08-05T00:00:15Z','2026-08-05T00:00:07Z');
+         INSERT INTO epic_runner_sprint_result_dispositions VALUES('result','2026-08-05T00:00:08Z','{\"movementKind\":\"advance_to_next_approved_sprint\",\"rationale\":\"advance exact successor\",\"consideredIntent\":\"advance the approved Sprint sequence\"}');
+         INSERT INTO epic_runner_sprint_result_realizations VALUES('result','successor_request','successor','successor-request','2026-08-05T00:00:09Z','2026-08-05T00:00:15Z');
+         INSERT INTO sprint_runner_transitions VALUES('successor','epic','successor-request','2026-08-05T00:00:10Z','2026-08-05T00:00:11Z','2026-08-05T00:00:12Z','2026-08-05T00:00:13Z','2026-08-05T00:00:14Z','2026-08-05T00:00:15Z','2026-08-05T00:00:16Z','2026-08-05T00:00:17Z','2026-08-05T00:00:18Z','2026-08-05T00:00:19Z','2026-08-05T00:00:20Z','2026-08-05T00:00:21Z','2026-08-05T00:00:22Z','2026-08-05T00:00:23Z','2026-08-05T00:00:24Z','2026-08-05T00:00:25Z','2026-08-05T00:00:25Z');",
+    ).unwrap();
+    let sprints = vec![
+        InitiatedSprintDto { sprint_id: "source".into(), epic_id: "epic".into(), ordinal: 0, title: "Source".into(), intended_movement: "".into(), concern_summaries: vec![], sprint_plan_id: "plan".into(), sprint_plan_revision_id: "revision".into() },
+        InitiatedSprintDto { sprint_id: "successor".into(), epic_id: "epic".into(), ordinal: 1, title: "Successor".into(), intended_movement: "".into(), concern_summaries: vec![], sprint_plan_id: "plan-2".into(), sprint_plan_revision_id: "revision-2".into() },
+    ];
+    let results = vec![SprintUpwardResultDto { result_id: "result".into(), decision_id: "decision".into(), sprint_id: "source".into(), result_kind: "settled".into(), recorded_at: "2026-08-05T00:00:00Z".into() }];
+    let projection = sprint_result_projection(&connection, &sprints, &results).unwrap().unwrap();
+    let realization = projection[0].realization.as_ref().unwrap();
+    assert_eq!(realization.successor_transition.as_ref().unwrap().requested_at, "2026-08-05T00:00:10Z");
+    assert!(serde_json::to_string(&projection).unwrap().find("successor-request").is_none());
+    connection.execute("UPDATE sprint_runner_transitions SET epic_id='foreign-epic' WHERE request_id='successor-request'", []).unwrap();
+    assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
+    connection.execute("UPDATE sprint_runner_transitions SET epic_id='epic' WHERE request_id='successor-request'", []).unwrap();
+    connection.execute("UPDATE sprint_runner_transitions SET sprint_id='source' WHERE request_id='successor-request'", []).unwrap();
+    assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
+    connection.execute("UPDATE sprint_runner_transitions SET sprint_id='successor' WHERE request_id='successor-request'", []).unwrap();
+    connection.execute("DELETE FROM sprint_runner_transitions WHERE request_id='successor-request'", []).unwrap();
+    assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
+}
+
+#[test]
 fn handback_native_dto_exposes_qualified_dependency_movement_without_private_identity() {
     let dto = WorkUnitNoProgressHandbackDto {
         handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
@@ -1480,6 +1568,133 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
     assert!(repository.native_query().is_err());
 }
 
+#[test]
+fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_boundary() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("SCS projection"), "scs-save"))
+        .expect("proposal");
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "scs-init".into(),
+        })
+        .expect("initiation");
+    let sprint = repository.native_query().unwrap().initiated_sprints[0]
+        .sprint_id
+        .clone();
+    let connection = repository.connection.lock().unwrap();
+    crate::orchestration::sprint_continuation_settlement::initialize(&connection).unwrap();
+    connection.execute_batch(&format!(
+        "INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'continuing','continue_eligible_work',0,'private-input-1','2030-01-01T00:00:01Z'),('decision-2','{sprint}',2,'attention','dependency_route_unavailable',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-2','attention-2','dependency_route_unavailable','private-attention',NULL,'2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','continuing','private-chronology-1','2030-01-01T00:00:01Z'),('result-2','decision-2','{sprint}','attention','private-chronology-2','2030-01-01T00:00:02Z');"
+    )).unwrap();
+    drop(connection);
+
+    let projected = repository.native_query().expect("SCS projection");
+    assert_eq!(projected.sprint_continuation_decisions.len(), 2);
+    assert_eq!(projected.sprint_continuation_current_decisions[0].decision_id, "decision-2");
+    assert_eq!(projected.sprint_upward_results.len(), 2);
+    let json = serde_json::to_string(&projected).unwrap();
+    assert!(!json.contains("private-input"));
+    assert!(!json.contains("private-chronology"));
+    assert!(!json.contains("private-attention"));
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_current_decisions SET sprint_id='foreign-sprint' WHERE sprint_id=?1",
+            [&sprint],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+}
+
+#[test]
+fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambiguous_sources() {
+    let repository = repository_at(time());
+    let saved = repository
+        .save_epic_plan_proposal(command(None, proposal("repeated attention"), "repeated-attention-save"))
+        .expect("proposal");
+    repository
+        .initiate_epic(super::super::domain::InitiateEpicCommand {
+            epic_planning_draft_id: EpicPlanningDraftId::new("epic-planning-draft-1").unwrap(),
+            expected_revision_token: saved.revision_token,
+            actor_id: "application-user".into(),
+            idempotency_key: "repeated-attention-init".into(),
+        })
+        .expect("initiation");
+    let sprint = repository.native_query().unwrap().initiated_sprints[0]
+        .sprint_id
+        .clone();
+    let epic = repository.native_query().unwrap().initiated_epics[0]
+        .epic_id
+        .clone();
+    let connection = repository.connection.lock().unwrap();
+    crate::orchestration::sprint_continuation_settlement::initialize(&connection).unwrap();
+    connection
+        .execute_batch(
+            &format!(
+                "PRAGMA foreign_keys=OFF;DROP TABLE epic_runner_escalation_attentions;INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES ('handback-1','epic-intent-1','epic-request-1','{sprint}','{epic}','private-session-1','private-invocation-1','private-reassessment-1','private-delivery-1','2030-01-01T00:00:00Z','epic-harness',1,'correlation-1'),('handback-2','epic-intent-2','epic-request-2','{sprint}','{epic}','private-session-2','private-invocation-2','private-reassessment-2','private-delivery-2','2030-01-01T00:00:01Z','epic-harness',1,'correlation-2');PRAGMA foreign_keys=ON;CREATE TABLE epic_runner_escalation_attentions (handback_id TEXT PRIMARY KEY, attention_id TEXT NOT NULL, attention_json TEXT NOT NULL, requested_at TEXT NOT NULL);INSERT INTO epic_runner_escalation_attentions VALUES ('handback-1','public-attention-1','{{\"reason\":\"First decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-1\",\"resumptionPath\":\"resume-1\"}}','2030-01-01T00:00:00Z'),('handback-2','public-attention-2','{{\"reason\":\"Second decision.\",\"authorityNeeded\":\"authority\",\"evidenceContext\":\"evidence-2\",\"resumptionPath\":\"resume-2\"}}','2030-01-01T00:00:01Z');INSERT INTO sprint_continuation_decisions VALUES ('decision-1','{sprint}',1,'attention','structured_human_or_external_attention',0,'private-input-1','2030-01-01T00:00:00Z'),('decision-2','{sprint}',2,'attention','structured_human_or_external_attention',0,'private-input-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_attentions VALUES ('decision-1','attention-1','structured_human_or_external_attention','private-attention-1','public-attention-1','2030-01-01T00:00:00Z'),('decision-2','attention-2','structured_human_or_external_attention','private-attention-2','public-attention-2','2030-01-01T00:00:02Z');INSERT INTO sprint_continuation_current_decisions VALUES ('{sprint}','decision-2','attention','2030-01-01T00:00:02Z');INSERT INTO sprint_upward_results VALUES ('result-1','decision-1','{sprint}','attention','private-result-1','2030-01-01T00:00:00Z'),('result-2','decision-2','{sprint}','attention','private-result-2','2030-01-01T00:00:02Z');"
+            ),
+        )
+        .unwrap();
+    drop(connection);
+
+    let projected = repository.native_query().expect("repeated attention projection");
+    assert_eq!(
+        projected.sprint_continuation_decisions[0]
+            .attention
+            .as_ref()
+            .unwrap()
+            .structured_attention
+            .as_ref()
+            .unwrap()
+            .reason,
+        "First decision."
+    );
+    assert_eq!(
+        projected.sprint_continuation_decisions[1]
+            .attention
+            .as_ref()
+            .unwrap()
+            .structured_attention
+            .as_ref()
+            .unwrap()
+            .reason,
+        "Second decision."
+    );
+    let json = serde_json::to_string(&projected).unwrap();
+    assert!(!json.contains("private-input"));
+    assert!(!json.contains("private-attention"));
+    assert!(!json.contains("private-result"));
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_attentions SET source_attention_id='foreign-attention' WHERE decision_id='decision-2'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+
+    let connection = repository.connection.lock().unwrap();
+    connection
+        .execute(
+            "UPDATE sprint_continuation_attentions SET source_attention_id='public-attention-2' WHERE decision_id='decision-2'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute("DELETE FROM epic_runner_escalation_attentions WHERE handback_id='handback-2'", [])
+        .unwrap();
+    drop(connection);
+    assert!(repository.native_query().is_err());
+}
+
 fn connection_reopen_for_native_query_mutation(repository: &SqliteOrchestrationRepository, sql: &str) {
     let connection = repository.connection.lock().unwrap();
     if sql.contains("?1") { connection.execute(sql, ["epic-1"]).unwrap(); } else { connection.execute_batch(sql).unwrap(); }
@@ -1832,6 +2047,7 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
         work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
+        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None, epic_settlement_states: None,
     }
 }
 
@@ -1854,6 +2070,7 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .unwrap()
         .insert("workUnitRelationships".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
+    for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     Ok(fixture)
 }
 

@@ -153,6 +153,66 @@ export function EpicDetail({
                 ))}
               </section>
             )}
+            {(epic.sprintResultProjections ?? []).length > 0 && (
+              <section aria-label="Sprint result receipt" className="orchestration-reassessment">
+                <p className="eyebrow">Sprint result receipt</p>
+                <p>
+                  These are separate local Sprint results and Epic receipt stages. They do not settle
+                  the Epic, complete later Work Slices, record provider outcomes, or establish user
+                  acceptance.
+                </p>
+                {(epic.sprintResultProjections ?? []).map((result) => {
+                  const successorId = result.realization?.successorSprintId;
+                  const successor = epic.plan.items.find((item) => item.id === successorId);
+                  const successorTransition = successor?.workspace?.sprint.sprintRunnerTransition;
+                  return (
+                    <div key={result.resultId}>
+                      <strong>Local Sprint result: {result.resultKind}</strong>
+                      <p>Recorded: {result.recordedAt}</p>
+                      {result.receiver ? (
+                        <ul>
+                          <li>Epic receipt requested: {result.receiver.deliveryRequestedAt}</li>
+                          {result.receiver.deliveryPersistedAt && <li>Receipt delivery persisted: {result.receiver.deliveryPersistedAt}</li>}
+                          {result.receiver.harnessBoundAt && <li>Application binding recorded: {result.receiver.harnessBoundAt}</li>}
+                          {result.receiver.launchAcceptedAt && <li>Receiver launch accepted: {result.receiver.launchAcceptedAt}</li>}
+                          {result.receiver.providerActivationObservedAt && <li>Provider activation observed separately: {result.receiver.providerActivationObservedAt}</li>}
+                          {result.receiver.semanticReassessmentRecordedAt && <li>Semantic consideration recorded: {result.receiver.semanticReassessmentRecordedAt}</li>}
+                        </ul>
+                      ) : <p>Epic receipt has not been recorded.</p>}
+                      {result.disposition && <p>Disposition recorded: {result.disposition.movementKind}. This preserves the result and grants no Sprint selection, start, settlement, completion, or acceptance authority.</p>}
+                      {result.realization?.outcomeKind === 'retained_attention' && <p>Retained concern/attention recorded: {result.realization.retainedAttentionCode}. The concern remains open.</p>}
+                      {result.realization?.outcomeKind === 'terminal_readiness' && <p>Terminal readiness recorded: {result.realization.terminalReadinessRecordedAt}. This is not Epic settlement, completion, or acceptance.</p>}
+                      {result.realization?.outcomeKind === 'successor_request' && (
+                        <>
+                          {result.realization.successorRequestRecordedAt ? <p>Exact successor request recorded for {successor?.name ?? 'the next Sprint'}: {result.realization.successorRequestRecordedAt}.</p> : <p>Successor realization recorded; the exact successor request is not yet recorded.</p>}
+                          {successorTransition?.launchAcceptedAt && <p>Successor pre-start launch accepted: {successorTransition.launchAcceptedAt}.</p>}
+                          {successorTransition?.sprintStartPersistedAt && <p>Successor start persisted: {successorTransition.sprintStartPersistedAt}.</p>}
+                          {successorTransition?.repositoryBranchReevaluationRecordedAt && <p>Successor repository/branch reevaluation recorded: {successorTransition.repositoryBranchReevaluationRecordedAt}.</p>}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+            {epic.epicSettlement && (
+              <section aria-label="Epic settlement" className="orchestration-reassessment">
+                <p className="eyebrow">Epic settlement</p>
+                {epic.epicSettlement.kind === 'settled' ? (
+                  <p>
+                    Settlement was recorded at {epic.epicSettlement.persistedAt}. This records the
+                    Epic settlement only; other downstream outcomes are not established here.
+                  </p>
+                ) : (
+                  <>
+                    <p>Epic settlement remains unresolved.</p>
+                    <p>Reason recorded: {epic.epicSettlement.reasonCode}.</p>
+                    <p>Resume by: {epic.epicSettlement.resumptionFact}</p>
+                    <p>Unresolved state recorded at {epic.epicSettlement.recordedAt}.</p>
+                  </>
+                )}
+              </section>
+            )}
             <SprintPlan
               items={epic.plan.items}
               onOpen={(sprint, opener) => {

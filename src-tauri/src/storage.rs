@@ -28,7 +28,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
     if current_version == ACTIVE_SCHEMA_VERSION {
-        if native_profile_schema_is_present(connection)? {
+        if active_schema_is_present(connection)? {
             return Ok(());
         }
         let transaction = connection
@@ -40,6 +40,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
         transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
+        crate::orchestration::epic_settlement::initialize(&transaction)
+            .map_err(|error| format!("Unable to evolve Epic settlement schema: {error}"))?;
         transaction
             .commit()
             .map_err(|error| format!("Unable to commit active v22 schema evolution: {error}"))?;
@@ -271,6 +273,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     format!("Unable to migrate native MCP reporting dispatch claims: {error}")
                 })?;
         }
+        crate::orchestration::epic_settlement::initialize(&transaction)
+            .map_err(|error| format!("Unable to migrate Epic settlement schema: {error}"))?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -354,6 +358,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
     transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
+    crate::orchestration::epic_settlement::initialize(&transaction)
+        .map_err(|error| format!("Unable to initialize Epic settlement schema: {error}"))?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -363,15 +369,24 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     Ok(())
 }
 
-fn native_profile_schema_is_present(connection: &Connection) -> Result<bool, String> {
-    connection
+fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    let native_profile_schema_is_present = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
             [],
             |row| row.get::<_, i64>(0),
         )
         .map(|present| present != 0)
-        .map_err(|error| format!("Unable to inspect active native-profile schema: {error}"))
+        .map_err(|error| format!("Unable to inspect active native-profile schema: {error}"))?;
+    let epic_settlement_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('epic_settlement_requests','epic_settlement_authorizations','epic_settlement_evidence','epic_settlements','epic_settlement_unresolved','epic_settlement_current_states')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 6)
+        .map_err(|error| format!("Unable to inspect active Epic-settlement schema: {error}"))?;
+    Ok(native_profile_schema_is_present && epic_settlement_schema_is_present)
 }
 use std::time::Duration;
 
@@ -484,6 +499,12 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "epic_settlement_authorizations",
+                "epic_settlement_current_states",
+                "epic_settlement_evidence",
+                "epic_settlement_requests",
+                "epic_settlement_unresolved",
+                "epic_settlements",
                 "execution_support_attempt_authorizations",
                 "execution_support_grants",
                 "file_review_changed_files",
@@ -754,6 +775,42 @@ mod tests {
             "2026-08-04T00:00:00Z"
         );
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn current_schema_recovers_missing_epic_settlement_capability() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        configure_sqlite_connection(&connection).expect("configure connection");
+        initialize_active_database(&connection).expect("initialize active database");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                 DROP TABLE epic_settlement_current_states;
+                 DROP TABLE epic_settlement_unresolved;
+                 DROP TABLE epic_settlements;
+                 DROP TABLE epic_settlement_evidence;
+                 DROP TABLE epic_settlement_authorizations;
+                 DROP TABLE epic_settlement_requests;
+                 PRAGMA foreign_keys=ON;",
+            )
+            .expect("remove settlement capability from current schema");
+
+        initialize_active_database(&connection).expect("recover current schema");
+
+        for table in [
+            "epic_settlement_requests",
+            "epic_settlement_authorizations",
+            "epic_settlement_evidence",
+            "epic_settlements",
+            "epic_settlement_unresolved",
+            "epic_settlement_current_states",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
     }
 
     #[test]

@@ -29,6 +29,24 @@ export type ProductEpicMovementV1 =
   | { readonly kind: 'reevaluating_direction' };
 export type ProductEpicStateV1 =
   'running' | 'ready_to_continue' | 'paused' | 'blocked' | 'completed';
+
+export type ProductEpicSettlementV1 =
+  | {
+      readonly kind: 'settled';
+      readonly settlementId: string;
+      readonly persistedAt: string;
+    }
+  | {
+      readonly kind: 'unresolved';
+      readonly reasonCode: string;
+      readonly resumptionFact: string;
+      readonly recordedAt: string;
+    };
+
+export interface ProductEpicSettlementProjectionV1 {
+  readonly epicId: string;
+  readonly state: ProductEpicSettlementV1;
+}
 export type ProductSourcedReadValueV1<T> =
   | {
       readonly source: Extract<ReadSourceAuthorityV1, { readonly status: 'available' }>;
@@ -251,6 +269,42 @@ export interface ProductReadCompositionInputV1 {
       readonly attention?: Readonly<{ readonly recordedAt: string }>;
     }>;
   }[];
+  readonly sprintContinuation?: Readonly<{
+    readonly decisions: readonly {
+      readonly decisionId: string;
+      readonly sprintId: string;
+      readonly decisionSequence: number;
+      readonly state: 'continuing' | 'attention' | 'settled';
+      readonly reason: string;
+      readonly acceptedMaterializationCount: number;
+      readonly recordedAt: string;
+      readonly attention?: Readonly<{
+        readonly attentionId: string;
+        readonly code: string;
+        readonly structuredAttention?: Readonly<{
+          readonly reason: string;
+          readonly authorityNeeded: string;
+          readonly evidenceContext: string;
+          readonly resumptionPath: string;
+        }>;
+      }>;
+    }[];
+    readonly currentDecisions: readonly {
+      readonly sprintId: string;
+      readonly decisionId: string;
+      readonly state: 'continuing' | 'attention' | 'settled';
+      readonly updatedAt: string;
+    }[];
+    readonly upwardResults: readonly {
+      readonly resultId: string;
+      readonly decisionId: string;
+      readonly sprintId: string;
+      readonly resultKind: 'continuing' | 'attention' | 'settled';
+      readonly recordedAt: string;
+    }[];
+  }>;
+  readonly sprintResultProjections?: readonly ProductSprintResultProjectionV1[];
+  readonly epicSettlementStates?: readonly ProductEpicSettlementProjectionV1[];
   readonly selection?: ProductReadSelectionV1;
   readonly bootstrapTransition?: Readonly<{
     readonly query: import('./epicBootstrapTransition').EpicBootstrapTransitionQueryV2;
@@ -398,7 +452,14 @@ export type ProductWorkUnitIntegrationV1 = Readonly<{
   }>;
 }>;
 export type ProductWorkUnitExecutionStateV1 = Readonly<{
-  readonly state: 'waiting_on_prerequisites' | 'ready' | 'active' | 'retry_authorized' | 'handed_back' | 'settled' | 'attention';
+  readonly state:
+    | 'waiting_on_prerequisites'
+    | 'ready'
+    | 'active'
+    | 'retry_authorized'
+    | 'handed_back'
+    | 'settled'
+    | 'attention';
   readonly recordedAt: string;
 }>;
 
@@ -425,10 +486,7 @@ export type ProductWorkUnitIncompleteDispositionV1 = Readonly<{
 }>;
 
 export type ProductSprintRunnerHandbackDependencyOwnerClassificationV1 =
-  | 'work_unit_handler'
-  | 'work_unit_implementer'
-  | 'work_slice_planner'
-  | 'sprint_runner';
+  'work_unit_handler' | 'work_unit_implementer' | 'work_slice_planner' | 'sprint_runner';
 
 export type ProductSprintRunnerHandbackBoundedDetailV1 = Readonly<{
   readonly label: string;
@@ -440,9 +498,7 @@ export type ProductSprintRunnerHandbackUnknownMovementKindV1 = string & {
 };
 
 export type ProductSprintRunnerHandbackKnownMovementKindV1 =
-  | 'continue_eligible_work'
-  | 'wait_for_agent_dependency'
-  | 'local_exhaustion_escalate';
+  'continue_eligible_work' | 'wait_for_agent_dependency' | 'local_exhaustion_escalate';
 
 export type ProductSprintRunnerHandbackMovementV1 = Readonly<
   | {
@@ -515,6 +571,59 @@ export type ProductEpicEscalationReceiverV1 = Readonly<{
   readonly reassessmentLifecycleObservedAt?: string;
   readonly semanticReassessmentRecordedAt?: string;
   readonly disposition?: ProductEpicEscalationDispositionV1;
+}>;
+
+export type ProductSprintResultProjectionV1 = Readonly<{
+  readonly resultId: string;
+  readonly decisionId: string;
+  readonly sprintId: string;
+  readonly epicId: string;
+  readonly resultKind: 'continuing' | 'attention' | 'settled';
+  readonly recordedAt: string;
+  readonly receiver?: Readonly<{
+    readonly deliveryRequestedAt: string;
+    readonly deliveryPersistedAt?: string;
+    readonly harnessBoundAt?: string;
+    readonly launchRequestedAt?: string;
+    readonly launchAcceptedAt?: string;
+    readonly providerActivationObservedAt?: string;
+    readonly reassessmentLifecycleStatus?: string;
+    readonly reassessmentLifecycleObservedAt?: string;
+    readonly semanticReassessmentRecordedAt?: string;
+  }>;
+  readonly dispositionRecordedAt?: string;
+  readonly disposition?: ProductEpicEscalationDispositionV1;
+  readonly realization?: Readonly<{
+    readonly outcomeKind: 'successor_request' | 'terminal_readiness' | 'retained_attention';
+    readonly consideredAt: string;
+    readonly successorSprintId?: string;
+    readonly successorTransition?: Readonly<{
+      readonly requestedAt: string;
+      readonly authorizedAt: string;
+      readonly sessionCreatedAt?: string;
+      readonly harnessAppliedAt?: string;
+      readonly launchAcceptedAt?: string;
+      readonly preStartReady: boolean;
+      readonly lifecycleObserved: boolean;
+      readonly accepted: boolean;
+      readonly preStartSemanticOutcomeRecordedAt?: string;
+      readonly preStartLifecycleObservedAt?: string;
+      readonly preStartOutcomeAcceptedAt?: string;
+      readonly parentContinuationDeliveryRequestedAt?: string;
+      readonly parentContinuationDeliveryPersistedAt?: string;
+      readonly epicContinuationLaunchAcceptedAt?: string;
+      readonly providerReceiverActivationObservedAt?: string;
+      readonly sprintStartAuthorizedAt?: string;
+      readonly sprintStartPersistedAt?: string;
+      readonly sprintContinuationLaunchAcceptedAt?: string;
+      readonly repositoryBranchReevaluationRecordedAt?: string;
+      readonly startedReevaluationLifecycleObservedAt?: string;
+    }>;
+    readonly successorRequestRecordedAt?: string;
+    readonly terminalReadinessRecordedAt?: string;
+    readonly retainedAttentionCode?: string;
+    readonly retainedAttentionRecordedAt?: string;
+  }>;
 }>;
 
 export type ProductWorkUnitRetryAttemptV1 = Readonly<{
@@ -621,6 +730,37 @@ export interface ProductContinuationReadModelV1 {
   readonly observedContinuationIds: readonly string[];
   /** True only from an observed continuation Event; policy, eligibility, and command results stay separate. */
   readonly initiationObserved: boolean;
+}
+
+export interface ProductSprintContinuationReadModelV1 {
+  readonly current: Readonly<{
+    readonly decisionId: string;
+    readonly state: 'continuing' | 'attention' | 'settled';
+    readonly updatedAt: string;
+  }> | null;
+  readonly history: readonly Readonly<{
+    readonly decisionId: string;
+    readonly sequence: number;
+    readonly state: 'continuing' | 'attention' | 'settled';
+    readonly reason: string;
+    readonly recordedAt: string;
+    readonly attention?: Readonly<{
+      readonly code: string;
+      readonly structuredAttention?: Readonly<{
+        readonly reason: string;
+        readonly authorityNeeded: string;
+        readonly evidenceContext: string;
+        readonly resumptionPath: string;
+      }>;
+    }>;
+  }>[];
+  /** Local persistence only; this does not imply delivery, receipt, or higher continuation. */
+  readonly upwardResults: readonly Readonly<{
+    readonly resultId: string;
+    readonly decisionId: string;
+    readonly recordedAt: string;
+    readonly resultKind: 'continuing' | 'attention' | 'settled';
+  }>[];
 }
 
 export interface ProductAgentSessionReferenceReadModelV1 {
@@ -830,6 +970,8 @@ export interface ProductSprintReadModelV1 {
   }>;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
+  readonly sprintContinuation?: ProductSprintContinuationReadModelV1;
+  readonly sprintResultProjections?: readonly ProductSprintResultProjectionV1[];
 }
 
 export interface ProductEpicReadModelV1 {
@@ -843,6 +985,8 @@ export interface ProductEpicReadModelV1 {
   };
   readonly sprints: readonly ProductSprintReadModelV1[];
   readonly epicEscalationReceivers?: readonly ProductEpicEscalationReceiverV1[];
+  readonly sprintResultProjections?: readonly ProductSprintResultProjectionV1[];
+  readonly epicSettlement?: ProductEpicSettlementV1;
   readonly agentSessionReferences: readonly ProductAgentSessionReferenceReadModelV1[];
   readonly continuation: ProductContinuationReadModelV1;
   readonly bootstrapTransition?: import('./epicBootstrapTransition').ProductBootstrapTransitionStatusV2;

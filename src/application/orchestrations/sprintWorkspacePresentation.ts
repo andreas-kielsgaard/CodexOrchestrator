@@ -14,6 +14,7 @@ type AgentSessionReference = ProductSprintReadModelV1['agentSessionReferences'][
 
 export interface SprintWorkspacePresentationV1 {
   readonly epicEscalationReceivers: ProductSprintReadModelV1['epicEscalationReceivers'];
+  readonly sprintResultProjections?: ProductSprintReadModelV1['sprintResultProjections'];
   readonly sprint: Readonly<{
     readonly sprintId: string;
     readonly epicId: string;
@@ -62,6 +63,7 @@ export interface SprintWorkspacePresentationV1 {
   readonly internalArtifacts: readonly Artifact[];
   readonly agentSessionReferences: readonly AgentSessionReference[];
   readonly continuation: ProductSprintReadModelV1['continuation'];
+  readonly sprintContinuation?: ProductSprintReadModelV1['sprintContinuation'];
   readonly narratives?: ProductSprintReadModelV1['workspacePresentation']['narratives'];
 }
 
@@ -77,6 +79,7 @@ export function projectSprintWorkspacePresentation(
   );
   return {
     epicEscalationReceivers: sprint.epicEscalationReceivers,
+    sprintResultProjections: sprint.sprintResultProjections,
     sprint: {
       sprintId: sprint.sprintId,
       epicId: sprint.epicId,
@@ -140,6 +143,9 @@ export function projectSprintWorkspacePresentation(
     internalArtifacts: sprint.internalArtifacts.map((artifact) => ({ ...artifact })),
     agentSessionReferences: sprint.agentSessionReferences.map((reference) => ({ ...reference })),
     continuation: sprint.continuation,
+    ...(sprint.sprintContinuation
+      ? { sprintContinuation: sprint.sprintContinuation }
+      : {}),
     ...(sprint.workspacePresentation.narratives
       ? { narratives: sprint.workspacePresentation.narratives }
       : {}),

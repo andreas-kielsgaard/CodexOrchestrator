@@ -4,6 +4,66 @@ Status: **partial**. Deterministic convergence and isolated installed-Codex Plan
 Bootstrap Generator, and Epic Runner paths pass. The production user-confirmation click and the
 integrated post-click chain remain a manual gate; no confirmation was bypassed.
 
+## SCS-01: durable Sprint continuation and settlement boundary
+
+- The application now reconciles one exact initiated Sprint against its accepted materializations,
+  graph completion, Work Slice settlement, and planning-point settlement facts. It records a
+  durable `continuing`, `attention`, or `settled` Sprint decision and an independently persisted
+  upward Sprint result. The result contains no delivery, receiver, Epic settlement, next-Sprint,
+  acceptance, repository, worktree, or internal correlation fact.
+- Settlement requires every correlated materialization to have all three terminal facts and no
+  unresolved retry, Handback, attention, dependency wait, or continuation. Foreign, stale, or
+  malformed chronology fails closed into attention rather than settling.
+- Focused local Rust evidence: `cargo test --manifest-path src-tauri/Cargo.toml
+  sprint_continuation_settlement --lib -- --test-threads=1` passed **14/14**. The tests cover eligible-work, retry, and
+  agent-dependency continuing paths; structured attention and Handback preservation; exact
+  settlement/result separation; conflicting persisted-result failure without overwrite;
+  incomplete, foreign, stale, or malformed facts; and reopened replay after partial
+  result/current-state recovery. Valid exact Handback and Epic dependency routes remain active
+  only while their bound Handler is eligible, ready, and unsettled; only settlement of that exact
+  Handler resolves the wait. Missing, foreign, fingerprint-invalid, ineligible, or unready
+  unsettled routes produce `dependency_route_unavailable` attention. Both dependency origins are
+  covered, no settled upward result appears before both exact enabling routes settle, and replay
+  preserves decision/result counts. File-backed fresh-open recovery proves legacy Handback and
+  Epic agent-dependency waits either bind one exact private unresolved Handler route or remain
+  attention when the route is ambiguous. A conflicting persisted route remains untouched and
+  fails closed into attention.
+- The real completed Handler-review terminal regression passed **1/1** (400 filtered). In one
+  service activation, after accepted integrations are durable, it records graph completion, Work
+  Slice settlement, planning-point settlement, one settled Sprint decision/current pointer, and
+  one separate settled upward result before the terminal-movement call returns. The test does not
+  reopen the service for that movement.
+  No live provider, Epic receipt, Epic settlement, delivery, activation, or user acceptance is
+  claimed.
+
+## SCS-02: strict productive Sprint decision projection and bounded presentation
+
+- The productive Rust native query now projects ordered Sprint decision history, the exact current
+  decision pointer, and one separate local upward result per decision. Public attention carries
+  only its bounded code and, when durably available, structured reason, authority, evidence, and
+  resumption context. Input, route, chronology, repository, worktree, and other internal
+  correlation fingerprints remain private.
+- The TypeScript decoder rejects partial Sprint bundles, duplicate or gapped chronology, foreign
+  Sprint/current/result references, contradictory known state/reason pairs, stale chronology,
+  private fields, and higher-effect result shapes. Unknown continuing and attention reasons remain
+  neutral; unknown settlement reasons cannot grant settlement authority. Historical materialization
+  counts are accepted as nondecreasing snapshots only when the latest/current snapshot matches the
+  productive current total; decreases, future counts, and stale latest snapshots are rejected.
+- Repeated structured attention is projected only through an application-owned durable source
+  correlation. The same source may safely support repeated decisions; multiple uncorrelated sources
+  remain readable without context, while foreign, private, missing, or conflicting correlations fail
+  closed rather than receiving arbitrary context.
+- Focused producer evidence: the new native-query SCS projection test passed **1/1**; the existing
+  SCS-01 durable reconciliation group remains **14/14**; the repository projection suite passed
+  **42/42**. Consumer evidence in an isolated exact-checkpoint dependency-ready copy passed
+  **31/31** native-query tests, **3/3** workspace-presentation tests, and **11/11** bounded
+  Sprint Workspace tests. `npm run build` passed with TypeScript and Vite.
+- The Sprint Workspace visibly distinguishes continuing, dependency waiting, structured or
+  technical attention, and settled. Settled wording does not imply Epic settlement, delivery,
+  later-Sprint selection, or acceptance; local result wording does not imply receipt or
+  continuation. No broad layout redesign, live-provider proof, publication, push, or user
+  acceptance is claimed.
+
 ## ER-3 strict public projection checkpoint (2026-08-05)
 
 - Fresh routed validation: Rust `cargo check -p codex-orchestrator` passed (**0 errors**; existing
@@ -29,6 +89,37 @@ integrated post-click chain remain a manual gate; no confirmation was bypassed.
   retention, private-field omission, and fail-closed foreign-correlation and out-of-order facts.
   This remains deterministic local serialization evidence only; it does not claim receiver
   activation, downstream delivery, Sprint selection/start, settlement, completion, or acceptance.
+
+## ER-4 independent integrated convergence checkpoint (2026-08-05)
+
+- Independent review covered `9e918cc1ec252c3ca27662e3ca3c1e6e94543dfd..92dbc00` at a clean
+  `92dbc00` worktree. The range is confined to the direct Sprint-result producer/receiver,
+  reassessment realization, native-query/read-model composition, and existing Epic/Sprint
+  presentation paths. `git diff --check` passed; no slice-local correction was exposed.
+- Deterministic Rust evidence: the production-equivalent
+  `terminal_authority_fixture_converges_product_materialization_and_real_git_gateway` passed
+  **1/1**. It exercises settled Sprint result receipt, one exact Epic reassessment/disposition,
+  immediate approved-successor request/pre-start/start/reevaluation, reopen recovery, native
+  projection, and zero successor Work Slice planning or Work Unit effects. Direct-result
+  replay/concurrency/foreign/conflict checks passed **3/3**; terminal-readiness and retained-
+  attention checks passed **2/2**; and the distinct receiver-schema check passed **1/1**. These
+  checks include delivery, launch acceptance, observed reassessment lifecycle, semantic
+  disposition, terminal readiness/attention, private-field redaction, and no final Epic
+  settlement.
+- Strict frontend evidence: the native-query, read-model composition, Sprint presentation, Epic
+  Detail, and Sprint Workspace reassessment suites passed **72/72**. `npm run build` and
+  `npm run lint` passed. The broad frontend aggregate reported **740 passed / 24 failed** across
+  **114** files; the observed failures are Harness-management availability/presentation paths
+  outside this checkpoint's changed files, so no ER-4 source was altered. `prettier --check`
+  reports existing drift in **50** files (including historical artifacts); no formatting mutation
+  was made.
+- Broad Rust-library aggregate remains an explicit residual: Cargo independently enumerated
+  **422** library tests, but serialized runs bounded at 15 and 30 minutes and a normal-concurrency
+  run bounded at 10 minutes produced no terminal harness count. The timed-out child processes
+  were stopped; no aggregate pass or failure is claimed. No live/provider prompt was attempted:
+  the deterministic tests above exercise the product-owned lifecycle, but do not prove a live
+  provider, production receiver activation, Epic settlement, publication, merge, or user
+  acceptance.
 
 ## CPS-1: dependent execution and generalized attempts convergence
 
