@@ -5,7 +5,10 @@ use super::{
         FileReviewOriginatingEntryError, FileReviewOriginatingEntryService,
     },
     repository::NativeQueryV2,
-    sprint_runner_transition::{SprintRunnerTransitionQueryV1, SprintRunnerTransitionService},
+    sprint_runner_transition::{
+        RecoverSprintPlanningControlRequest, RecoverSprintPlanningControlResult,
+        SprintRunnerTransitionQueryV1, SprintRunnerTransitionService,
+    },
 };
 use crate::agent_sessions::{
     application::SendAgentSessionMessageResult,
@@ -480,6 +483,17 @@ pub(crate) fn load_sprint_runner_transition_query(
     state: State<'_, SprintRunnerTransitionTauriState>,
 ) -> Result<SprintRunnerTransitionQueryV1, String> {
     state.service.query().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn recover_sprint_planning_control(
+    input: RecoverSprintPlanningControlRequest,
+    state: State<'_, SprintRunnerTransitionTauriState>,
+) -> Result<RecoverSprintPlanningControlResult, String> {
+    state
+        .service
+        .recover_planning_control(input)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

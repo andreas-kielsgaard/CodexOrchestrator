@@ -124,6 +124,25 @@ CREATE TABLE IF NOT EXISTS sprint_runner_transitions (
   FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT
 );
 
+-- One explicit operator recovery is retained separately from the immutable failed planning
+-- control. It can only exist while every descendant effect for this Sprint remains absent.
+CREATE TABLE IF NOT EXISTS sprint_planning_control_recoveries (
+  sprint_id TEXT PRIMARY KEY REFERENCES sprint_runner_transitions(sprint_id) ON DELETE RESTRICT,
+  initiation_id TEXT NOT NULL,
+  epic_id TEXT NOT NULL,
+  accepted_root_branch TEXT NOT NULL,
+  failed_invocation_id TEXT NOT NULL UNIQUE,
+  recovery_invocation_id TEXT NOT NULL UNIQUE,
+  recovery_harness_key TEXT NOT NULL,
+  recovery_harness_version INTEGER NOT NULL,
+  requested_at TEXT NOT NULL,
+  invocation_prepared_at TEXT,
+  harness_applied_at TEXT,
+  launch_requested_at TEXT,
+  launch_accepted_at TEXT,
+  terminal_failure_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS work_slice_planning_requests (
   planning_point_id TEXT PRIMARY KEY,
   sprint_id TEXT NOT NULL,
@@ -923,6 +942,30 @@ pub(crate) struct StartedReevaluation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WorkSlicePlannerRequest {}
 
+/// Explicit product recovery for the retained completed planning-control invocation. Caller
+/// values are correlation only; the accepted root is always loaded from durable Epic state.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RecoverSprintPlanningControlRequest {
+    pub(crate) initiation_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) failed_invocation_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoverSprintPlanningControlResult {
+    pub(crate) initiation_id: String,
+    pub(crate) epic_id: String,
+    pub(crate) sprint_id: String,
+    pub(crate) accepted_root_branch: String,
+    pub(crate) failed_invocation_id: String,
+    pub(crate) recovery_invocation_id: String,
+    pub(crate) idempotent_replay: bool,
+    pub(crate) launch_accepted: bool,
+}
+
 /// All identity, route, authority, and acceptance facts are application-owned. The planner may
 /// describe only a bounded proposal.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -1711,6 +1754,31 @@ impl SprintRunnerTransitionService {
             drop(_transition_guard);
             self.reconcile_sprint(id)?;
         }
+        let pending_recoveries = {
+            let connection = self.connection.lock().map_err(|_| {
+                SprintRunnerTransitionError::Unavailable(
+                    "Sprint Runner transition database lock is poisoned".into(),
+                )
+            })?;
+            let mut statement = connection
+                .prepare("SELECT sprint_id FROM sprint_planning_control_recoveries WHERE launch_accepted_at IS NULL AND terminal_failure_at IS NULL ORDER BY requested_at,sprint_id")
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let pending = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            pending
+        };
+        for sprint_id in pending_recoveries {
+            let transition_lock = planning_control_recovery_lock(&self.database_lock_key, &sprint_id)?;
+            let _guard = transition_lock.lock().map_err(|_| {
+                SprintRunnerTransitionError::Unavailable(
+                    "Sprint planning-control recovery lock is poisoned".into(),
+                )
+            })?;
+            self.reconcile_planning_control_recovery(&sprint_id)?;
+        }
         self.reconcile_work_unit_handlers()?;
         self.reconcile_implementer_outcomes_v3()?;
         self.reconcile_handler_reviews()?;
@@ -1923,7 +1991,7 @@ impl SprintRunnerTransitionService {
         let unblocked_escalation: bool = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("planning database lock is poisoned".into()))?.query_row("SELECT EXISTS(SELECT 1 FROM epic_runner_escalation_receivers WHERE governing_runner_session_id=?1 AND launch_accepted_at IS NULL)",[invocation.session_id.as_str()],|row|row.get(0)).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         if unblocked_escalation { return self.reconcile_epic_escalation_receivers(); }
         let sprint: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
-            "SELECT sprint_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1 OR sprint_runner_invocation_id=?1 OR pre_start_upgrade_invocation_id=?1 OR epic_continuation_invocation_id=?1 OR sprint_continuation_invocation_id=?1 OR planning_control_invocation_id=?1 UNION SELECT sprint_id FROM work_slice_planning_requests WHERE planner_invocation_id=?1",
+            "SELECT sprint_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1 OR sprint_runner_invocation_id=?1 OR pre_start_upgrade_invocation_id=?1 OR epic_continuation_invocation_id=?1 OR sprint_continuation_invocation_id=?1 OR planning_control_invocation_id=?1 UNION SELECT sprint_id FROM sprint_planning_control_recoveries WHERE recovery_invocation_id=?1 UNION SELECT sprint_id FROM work_slice_planning_requests WHERE planner_invocation_id=?1",
             [invocation.id.as_str()], |row| row.get(0),
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let Some(sprint_id) = sprint else { return Ok(()) };
@@ -2264,11 +2332,310 @@ impl SprintRunnerTransitionService {
         Ok(())
     }
 
+    /// Creates at most one fresh planning-control invocation for the exact retained failure.
+    /// The original invocation and accepted Epic root remain immutable correlation facts.
+    pub(crate) fn recover_planning_control(
+        self: &Arc<Self>,
+        request: RecoverSprintPlanningControlRequest,
+    ) -> Result<RecoverSprintPlanningControlResult, SprintRunnerTransitionError> {
+        if [
+            request.initiation_id.as_str(),
+            request.epic_id.as_str(),
+            request.sprint_id.as_str(),
+            request.failed_invocation_id.as_str(),
+        ]
+        .iter()
+        .any(|value| value.len() > 128 || !safe_id(value))
+        {
+            return Err(SprintRunnerTransitionError::Invalid);
+        }
+        let transition_lock = planning_control_recovery_lock(
+            &self.database_lock_key,
+            &request.sprint_id,
+        )?;
+        let _guard = transition_lock.lock().map_err(|_| {
+            SprintRunnerTransitionError::Unavailable(
+                "Sprint planning-control recovery lock is poisoned".into(),
+            )
+        })?;
+        let harness = conversation_harness::profile(
+            ConversationHarnessRole::SprintRunnerPlanningControl,
+        )
+        .map_err(SprintRunnerTransitionError::Unavailable)?;
+        let recovery_invocation_id = stable_id(
+            "sprint-runner-planning-control-recovery",
+            &request.failed_invocation_id,
+        );
+        let (accepted_root_branch, idempotent_replay) = {
+            let mut connection = self.connection.lock().map_err(|_| {
+                SprintRunnerTransitionError::Unavailable(
+                    "Sprint Runner transition database lock is poisoned".into(),
+                )
+            })?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let eligible: Option<String> = transaction
+                .query_row(
+                    "SELECT root.root_branch
+                     FROM sprint_runner_transitions transition
+                     JOIN initiated_sprints sprint ON sprint.id=transition.sprint_id AND sprint.epic_id=transition.epic_id
+                     JOIN epic_initiations initiation ON initiation.epic_id=transition.epic_id
+                     JOIN epic_root_branches root ON root.epic_id=transition.epic_id
+                     JOIN agent_session_invocations invocation ON invocation.id=transition.planning_control_invocation_id
+                       AND invocation.session_id=transition.sprint_runner_session_id
+                       AND invocation.input_provenance='application' AND invocation.status='completed'
+                     JOIN agent_session_invocation_launch_acceptances acceptance ON acceptance.invocation_id=invocation.id
+                     WHERE transition.sprint_id=?1 AND transition.epic_id=?2 AND initiation.id=?3
+                       AND transition.planning_control_invocation_id=?4
+                       AND transition.repository_branch_reevaluation_fact_id IS NOT NULL
+                       AND transition.started_reevaluation_lifecycle_status='completed'
+                       AND transition.planning_control_delivery_persisted_at IS NOT NULL
+                       AND transition.planning_control_harness_key IS NOT NULL
+                       AND transition.planning_control_harness_version IS NOT NULL
+                       AND transition.planning_control_harness_applied_at IS NOT NULL
+                       AND transition.planning_control_launch_accepted_at IS NOT NULL
+                       AND transition.planning_ready_at IS NOT NULL",
+                    params![
+                        request.sprint_id,
+                        request.epic_id,
+                        request.initiation_id,
+                        request.failed_invocation_id,
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let accepted_root_branch = eligible.ok_or(SprintRunnerTransitionError::Forbidden)?;
+            if !super::domain::valid_root_branch(&accepted_root_branch) {
+                return Err(SprintRunnerTransitionError::Conflict);
+            }
+            if planning_control_has_downstream_effects(&transaction, &request.sprint_id)? {
+                return Err(SprintRunnerTransitionError::Conflict);
+            }
+            let existing: Option<(String, String, String, String, String, String, i64)> = transaction
+                .query_row(
+                    "SELECT initiation_id,epic_id,accepted_root_branch,failed_invocation_id,recovery_invocation_id,recovery_harness_key,recovery_harness_version
+                     FROM sprint_planning_control_recoveries WHERE sprint_id=?1",
+                    [&request.sprint_id],
+                    |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)),
+                )
+                .optional()
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            let idempotent_replay = if let Some(existing) = existing {
+                if existing
+                    != (
+                        request.initiation_id.clone(),
+                        request.epic_id.clone(),
+                        accepted_root_branch.clone(),
+                        request.failed_invocation_id.clone(),
+                        recovery_invocation_id.clone(),
+                        harness.key.clone(),
+                        i64::from(harness.version),
+                    )
+                {
+                    return Err(SprintRunnerTransitionError::Conflict);
+                }
+                true
+            } else {
+                transaction.execute(
+                    "INSERT INTO sprint_planning_control_recoveries
+                     (sprint_id,initiation_id,epic_id,accepted_root_branch,failed_invocation_id,recovery_invocation_id,recovery_harness_key,recovery_harness_version,requested_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    params![
+                        request.sprint_id,
+                        request.initiation_id,
+                        request.epic_id,
+                        accepted_root_branch,
+                        request.failed_invocation_id,
+                        recovery_invocation_id,
+                        harness.key,
+                        harness.version,
+                        chrono::Utc::now().to_rfc3339(),
+                    ],
+                ).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                false
+            };
+            transaction.commit().map_err(|error| {
+                SprintRunnerTransitionError::Unavailable(error.to_string())
+            })?;
+            (accepted_root_branch, idempotent_replay)
+        };
+        let launch_accepted = self.reconcile_planning_control_recovery(&request.sprint_id)?;
+        Ok(RecoverSprintPlanningControlResult {
+            initiation_id: request.initiation_id,
+            epic_id: request.epic_id,
+            sprint_id: request.sprint_id,
+            accepted_root_branch,
+            failed_invocation_id: request.failed_invocation_id,
+            recovery_invocation_id,
+            idempotent_replay,
+            launch_accepted,
+        })
+    }
+
+    fn reconcile_planning_control_recovery(
+        self: &Arc<Self>,
+        sprint_id: &str,
+    ) -> Result<bool, SprintRunnerTransitionError> {
+        let record: Option<(String, String, String, String, String, String, String, i64, Option<String>, Option<String>)> = self
+            .connection
+            .lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?
+            .query_row(
+                "SELECT transition.sprint_runner_session_id,recovery.initiation_id,recovery.epic_id,recovery.accepted_root_branch,recovery.failed_invocation_id,recovery.recovery_invocation_id,recovery.recovery_harness_key,recovery.recovery_harness_version,recovery.launch_accepted_at,recovery.terminal_failure_at
+                 FROM sprint_planning_control_recoveries recovery
+                 JOIN sprint_runner_transitions transition ON transition.sprint_id=recovery.sprint_id AND transition.epic_id=recovery.epic_id
+                 JOIN initiated_sprints sprint ON sprint.id=recovery.sprint_id AND sprint.epic_id=recovery.epic_id
+                 JOIN epic_initiations initiation ON initiation.id=recovery.initiation_id AND initiation.epic_id=recovery.epic_id
+                 JOIN epic_root_branches root ON root.epic_id=recovery.epic_id AND root.root_branch=recovery.accepted_root_branch
+                 JOIN agent_session_invocations failed ON failed.id=recovery.failed_invocation_id AND failed.session_id=transition.sprint_runner_session_id AND failed.input_provenance='application' AND failed.status='completed'
+                 JOIN agent_session_invocation_launch_acceptances acceptance ON acceptance.invocation_id=failed.id
+                 WHERE recovery.sprint_id=?1 AND transition.planning_control_invocation_id=recovery.failed_invocation_id",
+                [sprint_id],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),
+            )
+            .optional()
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        let Some((session_id, initiation_id, epic_id, accepted_root_branch, failed_invocation_id, recovery_invocation_id, harness_key, harness_version, recorded_launch, terminal_failure)) = record else {
+            return Err(SprintRunnerTransitionError::Conflict);
+        };
+        let harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl)
+            .map_err(SprintRunnerTransitionError::Unavailable)?;
+        if harness_key != harness.key
+            || harness_version != i64::from(harness.version)
+            || !super::domain::valid_root_branch(&accepted_root_branch)
+        {
+            return Err(SprintRunnerTransitionError::Conflict);
+        }
+        let has_downstream_effects = {
+            let connection = self.connection.lock().map_err(|_| {
+                SprintRunnerTransitionError::Unavailable(
+                    "Sprint Runner transition database lock is poisoned".into(),
+                )
+            })?;
+            planning_control_has_downstream_effects(&connection, sprint_id)?
+        };
+        if has_downstream_effects {
+            return Err(SprintRunnerTransitionError::Conflict);
+        }
+        if recorded_launch.is_some() {
+            return Ok(true);
+        }
+        if terminal_failure.is_some() {
+            return Ok(false);
+        }
+        let session = AgentSessionId::new(session_id)
+            .map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let invocation = AgentInvocationId::new(recovery_invocation_id.clone())
+            .map_err(|_| SprintRunnerTransitionError::Conflict)?;
+        let command = SendIdempotentApplicationAgentSessionMessageCommand {
+            invocation_id: invocation.clone(),
+            message: SendAgentSessionMessageCommand {
+                session_id: Some(session.clone()),
+                submitted_text: format!(
+                    "Application-authorized recovery of the exact completed zero-effects planning-control invocation. Request exactly one Work Slice Planner through request_work_slice_planner if this Sprint still needs its first temporal planning decision. The accepted Epic root is retained application authority; ambient checkout branch state is not authority. Do not create Work Units, Handlers, or Implementers.\n\nInitiation ID: {initiation_id}\nEpic ID: {epic_id}\nSprint ID: {sprint_id}\nAccepted root: {accepted_root_branch}\nFailed planning-control invocation: {failed_invocation_id}"
+                ),
+                title: None,
+                working_directory: Some(
+                    conversation_harness::role_discovery_root(
+                        ConversationHarnessRole::SprintRunnerPlanningControl,
+                    )
+                    .map_err(SprintRunnerTransitionError::Unavailable)?,
+                ),
+                requested_options: Some(harness.runtime_options()),
+            },
+        };
+        let evidence = self
+            .sessions
+            .application_invocation_launch_evidence(&invocation, &session)
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if evidence == ApplicationInvocationLaunchEvidence::LaunchAccepted {
+            self.mark_planning_control_recovery(sprint_id, "launch_accepted_at")?;
+            return Ok(true);
+        }
+        let injection = self.prepare_planning_control_action(invocation.clone())?;
+        match evidence {
+            ApplicationInvocationLaunchEvidence::NeverPersisted => {
+                self.sessions
+                    .prepare_idempotent_application_invocation(command.clone())
+                    .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            }
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
+                self.sessions
+                    .recover_pre_acceptance_application_invocation(&invocation, &session)
+                    .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            }
+            ApplicationInvocationLaunchEvidence::LaunchAccepted => unreachable!(),
+        }
+        self.mark_planning_control_recovery(sprint_id, "invocation_prepared_at")?;
+        self.mark_planning_control_recovery(sprint_id, "harness_applied_at")?;
+        self.mark_planning_control_recovery(sprint_id, "launch_requested_at")?;
+        let mut additional_args = harness.runtime_configuration_args();
+        additional_args.extend(injection.configuration_args);
+        let launch = self
+            .sessions
+            .launch_prepared_application_invocation_with_launch_observation(
+                command,
+                Some(RuntimeLaunchExtension {
+                    additional_args,
+                    environment: vec![injection.environment],
+                    initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
+                }),
+            )
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        if launch.launch_accepted {
+            self.mark_planning_control_recovery(sprint_id, "launch_accepted_at")?;
+        } else {
+            let history = self.sessions.load_session(&session)
+                .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+            if history.invocations.iter().any(|entry| {
+                entry.invocation.id == invocation && entry.invocation.status.is_terminal()
+            }) {
+                self.mark_planning_control_recovery(sprint_id, "terminal_failure_at")?;
+            }
+        }
+        Ok(launch.launch_accepted)
+    }
+
+    fn mark_planning_control_recovery(
+        &self,
+        sprint_id: &str,
+        column: &str,
+    ) -> Result<(), SprintRunnerTransitionError> {
+        if ![
+            "invocation_prepared_at",
+            "harness_applied_at",
+            "launch_requested_at",
+            "launch_accepted_at",
+            "terminal_failure_at",
+        ]
+        .contains(&column)
+        {
+            return Err(SprintRunnerTransitionError::Invalid);
+        }
+        self.connection
+            .lock()
+            .map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?
+            .execute(
+                &format!("UPDATE sprint_planning_control_recoveries SET {column}=COALESCE({column},?2) WHERE sprint_id=?1"),
+                params![sprint_id, chrono::Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+        Ok(())
+    }
+
     /// Accept exactly one identity-free request from the exact applied, launch-accepted planning
     /// control. This persists intent only; child Session creation, Harness application, and launch
     /// reconciliation are deliberately owned by later steps.
     pub(crate) fn request_work_slice_planner(self: &Arc<Self>, invocation_id: &AgentInvocationId, _input: WorkSlicePlannerRequest) -> Result<SprintRunnerTransitionStatus, SprintRunnerTransitionError> {
-        let sprint_id: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row("SELECT sprint_id FROM sprint_runner_transitions WHERE planning_control_invocation_id=?1", [invocation_id.as_str()], |r| r.get(0)).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+        let sprint_id: Option<String> = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?.query_row(
+            "SELECT sprint_id FROM sprint_runner_transitions transition
+             WHERE planning_control_invocation_id=?1
+               AND NOT EXISTS(SELECT 1 FROM sprint_planning_control_recoveries recovery WHERE recovery.sprint_id=transition.sprint_id)
+             UNION
+             SELECT sprint_id FROM sprint_planning_control_recoveries WHERE recovery_invocation_id=?1",
+            [invocation_id.as_str()], |r| r.get(0)).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let Some(sprint_id) = sprint_id else { return Err(SprintRunnerTransitionError::Forbidden) };
         let planning_control = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?;
         let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).map_err(SprintRunnerTransitionError::Unavailable)?;
@@ -2282,7 +2649,20 @@ impl SprintRunnerTransitionService {
         let mut conn = self.connection.lock().map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint Runner transition database lock is poisoned".into()))?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
         let session_id: Option<String> = tx.query_row(
-            "SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE sprint_id=?1 AND planning_control_invocation_id=?2 AND planning_ready_at IS NOT NULL AND planning_control_harness_key=?3 AND planning_control_harness_version=?4 AND planning_control_harness_applied_at IS NOT NULL AND planning_control_launch_accepted_at IS NOT NULL",
+            "SELECT transition.sprint_runner_session_id
+             FROM sprint_runner_transitions transition
+             LEFT JOIN sprint_planning_control_recoveries recovery ON recovery.sprint_id=transition.sprint_id
+             WHERE transition.sprint_id=?1 AND transition.planning_ready_at IS NOT NULL AND (
+               (recovery.sprint_id IS NULL AND transition.planning_control_invocation_id=?2
+                 AND transition.planning_control_harness_key=?3 AND transition.planning_control_harness_version=?4
+                 AND transition.planning_control_harness_applied_at IS NOT NULL
+                 AND transition.planning_control_launch_accepted_at IS NOT NULL)
+               OR
+               (recovery.recovery_invocation_id=?2 AND recovery.recovery_harness_key=?3
+                 AND recovery.recovery_harness_version=?4 AND recovery.invocation_prepared_at IS NOT NULL
+                 AND recovery.harness_applied_at IS NOT NULL AND recovery.launch_requested_at IS NOT NULL
+                 AND recovery.launch_accepted_at IS NOT NULL)
+             )",
             params![sprint_id, invocation_id.as_str(), planning_control.key, planning_control.version],
             |r| r.get(0),
         ).optional().map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
@@ -4220,6 +4600,21 @@ fn handler_review_reconciliation_lock(
         .clone())
 }
 
+fn planning_control_recovery_lock(
+    database_lock_key: &str,
+    sprint_id: &str,
+) -> Result<Arc<Mutex<()>>, SprintRunnerTransitionError> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| SprintRunnerTransitionError::Unavailable("Sprint planning-control recovery lock registry is poisoned".into()))?;
+    Ok(locks
+        .entry(format!("{database_lock_key}:{sprint_id}"))
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone())
+}
+
 fn sprint_result_realization_lock(
     database_lock_key: &str,
     epic_id: &str,
@@ -4262,6 +4657,31 @@ fn safe_id(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
+
+fn planning_control_has_downstream_effects(
+    connection: &Connection,
+    sprint_id: &str,
+) -> Result<bool, SprintRunnerTransitionError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM initiated_sprint_git_authorities WHERE sprint_id=?1
+                UNION ALL SELECT 1 FROM work_slice_planning_requests WHERE sprint_id=?1
+                UNION ALL SELECT 1 FROM work_unit_materializations WHERE sprint_id=?1
+                UNION ALL SELECT 1 FROM work_unit_handler_activations WHERE sprint_id=?1
+                UNION ALL SELECT 1 FROM execution_support_grants WHERE sprint_id=?1
+                UNION ALL
+                  SELECT 1 FROM work_unit_implementer_activations implementer
+                  JOIN work_units unit ON unit.work_unit_id=implementer.work_unit_id
+                  JOIN work_unit_materializations materialization ON materialization.materialization_id=unit.materialization_id
+                  WHERE materialization.sprint_id=?1
+            )",
+            [sprint_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))
+}
+
 fn validate_outcome(value: &str) -> Result<(), SprintRunnerTransitionError> {
     if value.trim().is_empty() || value.len() > 20_000 {
         Err(SprintRunnerTransitionError::Invalid)
@@ -4390,15 +4810,68 @@ impl ApplicationSprintGitAuthorityRuntime {
             .map(|value| value.trim().to_owned())
             .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
     }
+
+    fn accepted_root_commit(
+        &self,
+        accepted_root_ref: &str,
+    ) -> Result<String, BindInitiatedSprintGitAuthorityError> {
+        let expression = format!("{accepted_root_ref}^{{commit}}");
+        let output = Command::new("git")
+            .args(["rev-parse", "--verify", &expression])
+            .current_dir(&self.source_root)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
+        if !output.status.success() || output.stdout.len() > 256_000 || output.stderr.len() > 256_000 {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale);
+        }
+        String::from_utf8(output.stdout)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)
+    }
+
+    fn unsafe_operation_exists(&self) -> Result<bool, BindInitiatedSprintGitAuthorityError> {
+        for marker in [
+            "MERGE_HEAD",
+            "CHERRY_PICK_HEAD",
+            "REVERT_HEAD",
+            "BISECT_LOG",
+            "rebase-apply",
+            "rebase-merge",
+        ] {
+            let path = PathBuf::from(self.git(&["rev-parse", "--git-path", marker])?);
+            let path = if path.is_absolute() {
+                path
+            } else {
+                self.source_root.join(path)
+            };
+            if path.exists() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
     fn resolve_verified_comparison(
         &self,
+        _runtime_instance_ref: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        // Productive Sprint authority is never allowed to infer a root from ambient HEAD.
+        Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible)
+    }
+
+    fn resolve_verified_comparison_for_accepted_root(
+        &self,
         runtime_instance_ref: &str,
+        accepted_root_branch: &str,
     ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
         if runtime_instance_ref.is_empty() || runtime_instance_ref.len() > 128 {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
+        }
+        if !super::domain::valid_root_branch(accepted_root_branch) {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
         }
         if self.git(&["rev-parse", "--is-inside-work-tree"])? != "true" {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
@@ -4407,6 +4880,9 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
             .git(&["status", "--porcelain=v1", "--untracked-files=all"])?
             .is_empty()
         {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
+        }
+        if self.unsafe_operation_exists()? {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
         }
         let repository_root = PathBuf::from(self.git(&["rev-parse", "--show-toplevel"])? )
@@ -4422,9 +4898,15 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
         ])?)
         .canonicalize()
         .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
-        let current_object_id = self.git(&["rev-parse", "--verify", "HEAD^{commit}"])?
+        let accepted_root_ref = format!("refs/heads/{accepted_root_branch}");
+        let current_object_id = self.accepted_root_commit(&accepted_root_ref)?;
+        let runtime_object_id = self.git(&["rev-parse", "--verify", "HEAD^{commit}"])?
             .to_ascii_lowercase();
-        let baseline_object_id = self.git(&["rev-parse", "--verify", "HEAD^1^{commit}"])?
+        if runtime_object_id != current_object_id {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale);
+        }
+        let baseline_expression = format!("{accepted_root_ref}^1^{{commit}}");
+        let baseline_object_id = self.git(&["rev-parse", "--verify", &baseline_expression])?
             .to_ascii_lowercase();
         if !valid_git_object_id(&current_object_id)
             || !valid_git_object_id(&baseline_object_id)
@@ -4432,18 +4914,15 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
         {
             return Err(BindInitiatedSprintGitAuthorityError::ComparisonUnavailable);
         }
-        let root_branch = self.git(&["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-        if !super::domain::valid_root_branch(&root_branch) {
-            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
-        }
         let root = repository_root.to_string_lossy().replace('\\', "/");
         let common = repository_common_dir.to_string_lossy().replace('\\', "/");
         let worktree_id = stable_id("application-sprint-worktree", &root);
         let repository_id = stable_id("application-sprint-repository", &common);
         let source_fingerprint = sha256_hex(&[
-            "application-sprint-git-authority/v1",
+            "application-sprint-git-authority/v2",
             &root,
             &common,
+            &accepted_root_ref,
             &baseline_object_id,
             &current_object_id,
         ]);
@@ -4456,8 +4935,8 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
             baseline_object_id,
             current_object_id,
             runtime_instance_ref: runtime_instance_ref.to_owned(),
-            runtime_source_ref: "application-sprint-source-v1".into(),
-            root_branch,
+            runtime_source_ref: accepted_root_ref,
+            root_branch: accepted_root_branch.to_owned(),
             source_fingerprint,
         })
     }
@@ -4476,6 +4955,150 @@ fn sha256_hex(parts: &[&str]) -> String {
         hash.update(part.as_bytes());
     }
     format!("{:x}", hash.finalize())
+}
+
+#[cfg(test)]
+mod exact_root_git_authority_tests {
+    use super::*;
+    use std::fs;
+
+    fn git(root: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(root)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn detached_repository() -> (tempfile::TempDir, PathBuf, String, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init"]);
+        git(&root, &["config", "user.name", "Codex Test"]);
+        git(&root, &["config", "user.email", "codex-test@example.invalid"]);
+        git(&root, &["symbolic-ref", "HEAD", "refs/heads/codex/accepted-root"]);
+        fs::write(root.join("authority.txt"), "baseline\n").unwrap();
+        git(&root, &["add", "authority.txt"]);
+        git(&root, &["commit", "-m", "baseline"]);
+        let baseline = git(&root, &["rev-parse", "HEAD"]);
+        fs::write(root.join("authority.txt"), "accepted root\n").unwrap();
+        git(&root, &["add", "authority.txt"]);
+        git(&root, &["commit", "-m", "accepted root"]);
+        let accepted = git(&root, &["rev-parse", "HEAD"]);
+        git(&root, &["checkout", "--detach", &accepted]);
+        (directory, root.canonicalize().unwrap(), baseline, accepted)
+    }
+
+    #[test]
+    fn detached_host_resolves_only_the_exact_accepted_root_ref() {
+        let (_directory, root, baseline, accepted) = detached_repository();
+        assert!(!Command::new("git")
+            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .current_dir(&root)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let runtime = ApplicationSprintGitAuthorityRuntime { source_root: root.clone() };
+        let comparison = runtime
+            .resolve_verified_comparison_for_accepted_root(
+                "runtime-instance-detached",
+                "codex/accepted-root",
+            )
+            .unwrap();
+        assert_eq!(comparison.root_branch, "codex/accepted-root");
+        assert_eq!(comparison.runtime_source_ref, "refs/heads/codex/accepted-root");
+        assert_eq!(comparison.baseline_object_id, baseline);
+        assert_eq!(comparison.current_object_id, accepted);
+        assert_eq!(PathBuf::from(comparison.worktree_root).canonicalize().unwrap(), root);
+    }
+
+    #[test]
+    fn malformed_missing_foreign_deleted_dirty_and_unsafe_roots_fail_closed() {
+        let (_directory, root, _baseline, accepted) = detached_repository();
+        let runtime = ApplicationSprintGitAuthorityRuntime { source_root: root.clone() };
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "../accepted"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible)
+        );
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "codex/missing"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale)
+        );
+        git(&root, &["branch", "codex/foreign", "HEAD^1"]);
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "codex/foreign"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale)
+        );
+        fs::write(root.join("dirty.txt"), "dirty\n").unwrap();
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "codex/accepted-root"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty)
+        );
+        fs::remove_file(root.join("dirty.txt")).unwrap();
+        let merge_head = PathBuf::from(git(&root, &["rev-parse", "--git-path", "MERGE_HEAD"]));
+        let merge_head = if merge_head.is_absolute() { merge_head } else { root.join(merge_head) };
+        fs::write(&merge_head, format!("{accepted}\n")).unwrap();
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "codex/accepted-root"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty)
+        );
+        fs::remove_file(merge_head).unwrap();
+        git(&root, &["branch", "-D", "codex/accepted-root"]);
+        assert_eq!(
+            runtime.resolve_verified_comparison_for_accepted_root("runtime", "codex/accepted-root"),
+            Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceStale)
+        );
+    }
+
+    #[test]
+    fn recovery_effect_guard_refuses_each_downstream_effect_root() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE initiated_sprint_git_authorities (sprint_id TEXT);
+             CREATE TABLE work_slice_planning_requests (sprint_id TEXT);
+             CREATE TABLE work_unit_materializations (materialization_id TEXT, sprint_id TEXT);
+             CREATE TABLE work_units (work_unit_id TEXT, materialization_id TEXT);
+             CREATE TABLE work_unit_handler_activations (sprint_id TEXT);
+             CREATE TABLE work_unit_implementer_activations (work_unit_id TEXT);
+             CREATE TABLE execution_support_grants (sprint_id TEXT);",
+        ).unwrap();
+        assert!(!planning_control_has_downstream_effects(&connection, "sprint-1").unwrap());
+        for (table, insert) in [
+            ("authority", "INSERT INTO initiated_sprint_git_authorities VALUES ('sprint-1')"),
+            ("planning", "INSERT INTO work_slice_planning_requests VALUES ('sprint-1')"),
+            ("work_unit", "INSERT INTO work_unit_materializations VALUES ('materialization-1','sprint-1')"),
+            ("handler", "INSERT INTO work_unit_handler_activations VALUES ('sprint-1')"),
+            ("descendant_worktree", "INSERT INTO execution_support_grants VALUES ('sprint-1')"),
+        ] {
+            connection.execute(insert, []).unwrap();
+            assert!(
+                planning_control_has_downstream_effects(&connection, "sprint-1").unwrap(),
+                "{table} effect must refuse recovery"
+            );
+            connection.execute_batch(
+                "DELETE FROM initiated_sprint_git_authorities;
+                 DELETE FROM work_slice_planning_requests;
+                 DELETE FROM work_unit_materializations;
+                 DELETE FROM work_unit_handler_activations;
+                 DELETE FROM execution_support_grants;",
+            ).unwrap();
+        }
+        connection.execute_batch(
+            "INSERT INTO work_unit_materializations VALUES ('materialization-implementer','sprint-1');
+             INSERT INTO work_units VALUES ('work-unit-implementer','materialization-implementer');
+             INSERT INTO work_unit_implementer_activations VALUES ('work-unit-implementer');",
+        ).unwrap();
+        assert!(planning_control_has_downstream_effects(&connection, "sprint-1").unwrap());
+    }
 }
 
 fn fingerprint_bytes(prefix: &str,value:&[u8])->String{stable_id(prefix,&value.iter().map(|byte|format!("{byte:02x}")).collect::<String>())}

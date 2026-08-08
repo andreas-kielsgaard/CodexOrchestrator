@@ -3044,6 +3044,121 @@ mod tests {
             (service, planner_invocation, sprint_id)
         }
 
+        fn completed_zero_effects_planning_control(
+            &self,
+        ) -> (
+            Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            crate::orchestration::sprint_runner_transition::RecoverSprintPlanningControlRequest,
+        ) {
+            let bootstrap = self.status();
+            self.service
+                .complete_bootstrap(
+                    &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                    Self::materials(),
+                )
+                .unwrap();
+            self.runtime.finish(
+                &bootstrap.bootstrap_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            );
+            let runner = self.status();
+            let sprint_id: String = Connection::open(&self.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal LIMIT 1",
+                    [&runner.epic_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &self.database_path,
+                self.sessions.clone(),
+            )
+            .unwrap();
+            let sprint = service
+                .request_next_sprint_runner(
+                    &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+                    crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                        sprint_id: sprint_id.clone(),
+                    },
+                )
+                .unwrap();
+            let now = Utc::now().to_rfc3339();
+            Connection::open(&self.database_path)
+                .unwrap()
+                .execute(
+                    "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+                    params![sprint.sprint_runner_invocation_id, now],
+                )
+                .unwrap();
+            let control = AgentInvocationId::new("failed-zero-effects-planning-control").unwrap();
+            let harness = conversation_harness::profile(
+                ConversationHarnessRole::SprintRunnerPlanningControl,
+            )
+            .unwrap();
+            self.sessions
+                .send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: control.clone(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(
+                                AgentSessionId::new(sprint.sprint_runner_session_id.clone())
+                                    .unwrap(),
+                            ),
+                            submitted_text: "Original one-shot planning control.".into(),
+                            title: None,
+                            working_directory: Some(
+                                conversation_harness::role_discovery_root(
+                                    ConversationHarnessRole::SprintRunnerPlanningControl,
+                                )
+                                .unwrap(),
+                            ),
+                            requested_options: Some(harness.runtime_options()),
+                        },
+                    },
+                    None,
+                )
+                .unwrap();
+            let connection = Connection::open(&self.database_path).unwrap();
+            connection.execute(
+                "UPDATE sprint_runner_transitions SET
+                   repository_branch_reevaluation_fact_id='zero-effects-reevaluation',
+                   repository_branch_reevaluation_recorded_at=?2,
+                   started_reevaluation_lifecycle_status='completed',
+                   started_reevaluation_lifecycle_observed_at=?2,
+                   planning_control_delivery_requested_at=?2,
+                   planning_control_delivery_persisted_at=?2,
+                   planning_control_invocation_id=?3,
+                   planning_control_harness_key=?4,
+                   planning_control_harness_version=?5,
+                   planning_control_harness_applied_at=?2,
+                   planning_control_launch_accepted_at=?2,
+                   planning_ready_at=?2
+                 WHERE sprint_id=?1",
+                params![sprint_id, now, control.as_str(), harness.key, harness.version],
+            ).unwrap();
+            connection.execute(
+                "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+                params![control.as_str(), now],
+            ).unwrap();
+            assert_eq!(connection.query_row::<i64,_,_>(
+                "SELECT (SELECT COUNT(*) FROM initiated_sprint_git_authorities WHERE sprint_id=?1)
+                      +(SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1)
+                      +(SELECT COUNT(*) FROM work_unit_materializations WHERE sprint_id=?1)
+                      +(SELECT COUNT(*) FROM work_unit_handler_activations WHERE sprint_id=?1)
+                      +(SELECT COUNT(*) FROM execution_support_grants WHERE sprint_id=?1)",
+                [&sprint_id], |row| row.get(0)).unwrap(), 0);
+            (
+                service,
+                crate::orchestration::sprint_runner_transition::RecoverSprintPlanningControlRequest {
+                    initiation_id: self.initiation_id.clone(),
+                    epic_id: runner.epic_id,
+                    sprint_id,
+                    failed_invocation_id: control.as_str().to_owned(),
+                },
+            )
+        }
+
         fn materials() -> BootstrapMaterialInput {
             BootstrapMaterialInput {
                 epic_overview_markdown:
@@ -5655,6 +5770,185 @@ mod tests {
             ),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
         ));
+    }
+
+    #[test]
+    fn zero_effects_planning_control_recovers_once_reopens_and_creates_one_planner() {
+        let fixture = Fixture::new();
+        let (service, request) = fixture.completed_zero_effects_planning_control();
+        let concurrent_service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        let mut foreign = request.clone();
+        foreign.initiation_id = "foreign-initiation".into();
+        assert!(matches!(
+            service.recover_planning_control(foreign),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='running',completed_at=NULL WHERE id=?1",
+            [&request.failed_invocation_id],
+        ).unwrap();
+        assert!(matches!(
+            service.recover_planning_control(request.clone()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        Connection::open(&fixture.database_path).unwrap().execute(
+            "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
+            params![request.failed_invocation_id,Utc::now().to_rfc3339()],
+        ).unwrap();
+        let launches_before = fixture.runtime.requests().len();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = [service.clone(), concurrent_service]
+            .into_iter()
+            .map(|service| {
+                let request = request.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.recover_planning_control(request)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results[0].recovery_invocation_id, results[1].recovery_invocation_id);
+        assert!(results.iter().all(|result| result.launch_accepted));
+        assert_eq!(results.iter().filter(|result| !result.idempotent_replay).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.idempotent_replay).count(), 1);
+        assert!(results.iter().all(|result| {
+            result.initiation_id == request.initiation_id
+                && result.epic_id == request.epic_id
+                && result.sprint_id == request.sprint_id
+                && result.accepted_root_branch == "codex/test-root"
+        }));
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM sprint_planning_control_recoveries WHERE sprint_id=?1 AND initiation_id=?2 AND epic_id=?3 AND accepted_root_branch='codex/test-root' AND failed_invocation_id=?4 AND launch_accepted_at IS NOT NULL",
+            params![request.sprint_id,request.initiation_id,request.epic_id,request.failed_invocation_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1 AND input_provenance='application'",
+            [&results[0].recovery_invocation_id], |row| row.get(0)).unwrap(), 1);
+        drop(connection);
+
+        assert!(matches!(
+            service.request_work_slice_planner(
+                &AgentInvocationId::new(request.failed_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+            ),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
+        ));
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        reopened.reconcile_startup().unwrap();
+        let replay = reopened.recover_planning_control(request.clone()).unwrap();
+        assert!(replay.idempotent_replay && replay.launch_accepted);
+        assert_eq!(replay.recovery_invocation_id, results[0].recovery_invocation_id);
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
+
+        let repository_root = fixture._directory.path().join("recovery-sprint-repository");
+        let worktree_root = repository_root.join("worktree");
+        fs::create_dir_all(&worktree_root).unwrap();
+        SqliteOrchestrationRepository::open(&fixture.database_path)
+            .unwrap()
+            .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+                sprint_id: request.sprint_id.clone(),
+                idempotency_key: "recovery-route-authority".into(),
+                repository_id: "recovery-repository".into(),
+                repository_root: repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: repository_root.to_string_lossy().into_owned(),
+                worktree_id: "recovery-worktree".into(),
+                worktree_root: worktree_root.to_string_lossy().into_owned(),
+                baseline_object_id: "a".repeat(40),
+                current_object_id: "b".repeat(40),
+                runtime_instance_ref: "recovery-runtime".into(),
+                runtime_source_ref: "refs/heads/codex/test-root".into(),
+                root_branch: "codex/test-root".into(),
+                source_fingerprint: "c".repeat(64),
+            })
+            .unwrap();
+        assert!(matches!(
+            reopened.recover_planning_control(request.clone()),
+            Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
+        ));
+
+        let recovery_invocation = AgentInvocationId::new(replay.recovery_invocation_id).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let planner_calls = (0..2).map(|_| {
+            let service = reopened.clone();
+            let invocation = recovery_invocation.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.request_work_slice_planner(
+                    &invocation,
+                    crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+                )
+            })
+        }).collect::<Vec<_>>();
+        let planners = planner_calls.into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(planners[0].work_slice_planner_request_id, planners[1].work_slice_planner_request_id);
+        assert_eq!(planners[0].work_slice_planner_session_id, planners[1].work_slice_planner_session_id);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1 AND parent_planning_control_invocation_id=?2",
+            params![request.sprint_id,recovery_invocation.as_str()], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+            [planners[0].work_slice_planner_session_id.as_ref().unwrap()], |row| row.get(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn terminally_failed_zero_effects_recovery_reopens_without_relaunch() {
+        let fixture = Fixture::new();
+        let (service, request) = fixture.completed_zero_effects_planning_control();
+        fixture.runtime.fail_next_launch();
+        let launches_before = fixture.runtime.requests().len();
+        let interrupted = service.recover_planning_control(request.clone()).unwrap();
+        assert!(!interrupted.launch_accepted);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let retained: (String,Option<String>,Option<String>,i64) = connection.query_row(
+            "SELECT recovery_invocation_id,launch_accepted_at,terminal_failure_at,(SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=recovery.sprint_id) FROM sprint_planning_control_recoveries recovery WHERE sprint_id=?1",
+            [&request.sprint_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+        assert_eq!(retained.1, None);
+        assert!(retained.2.is_some());
+        assert_eq!(retained.3, 0);
+        drop(connection);
+
+        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        reopened.reconcile_startup().unwrap();
+        let replay = reopened.recover_planning_control(request.clone()).unwrap();
+        assert!(replay.idempotent_replay);
+        assert!(!replay.launch_accepted);
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        assert!(connection.query_row::<Option<String>,_,_>(
+            "SELECT launch_accepted_at FROM sprint_planning_control_recoveries WHERE sprint_id=?1",
+            [&request.sprint_id], |row| row.get(0)).unwrap().is_none());
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+            [&retained.0], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(connection.query_row::<i64,_,_>(
+            "SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+            [&retained.0], |row| row.get(0)).unwrap(), 0);
+        drop(connection);
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
+        let second_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+            &fixture.database_path,
+            fixture.sessions.clone(),
+        ).unwrap();
+        second_reopen.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
     }
 
     #[test]

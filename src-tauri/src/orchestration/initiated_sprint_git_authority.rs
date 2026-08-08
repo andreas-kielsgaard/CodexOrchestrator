@@ -34,6 +34,18 @@ pub(crate) trait WorktreeRuntimeGitComparison: Send + Sync {
         &self,
         runtime_instance_ref: &str,
     ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError>;
+
+    fn resolve_verified_comparison_for_accepted_root(
+        &self,
+        runtime_instance_ref: &str,
+        accepted_root_branch: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        let comparison = self.resolve_verified_comparison(runtime_instance_ref)?;
+        if comparison.root_branch != accepted_root_branch {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
+        Ok(comparison)
+    }
 }
 
 pub(crate) struct InitiatedSprintGitAuthorityService {
@@ -62,13 +74,16 @@ impl InitiatedSprintGitAuthorityService {
         {
             return Err(BindInitiatedSprintGitAuthorityError::InvalidRequest);
         }
-        let comparison = self
-            .runtime
-            .resolve_verified_comparison(&request.runtime_instance_ref)?;
         let root_branch = self
             .repository
             .load_epic_root_branch_for_sprint(&request.sprint_id)
             .map_err(|_| BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
+        let comparison = self
+            .runtime
+            .resolve_verified_comparison_for_accepted_root(
+                &request.runtime_instance_ref,
+                &root_branch,
+            )?;
         if comparison.root_branch != root_branch {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
         }
@@ -122,7 +137,10 @@ impl InitiatedSprintGitAuthorityService {
             .ok_or(BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
         let comparison = self
             .runtime
-            .resolve_verified_comparison(&authority.runtime_instance_ref)?;
+            .resolve_verified_comparison_for_accepted_root(
+                &authority.runtime_instance_ref,
+                &authority.root_branch,
+            )?;
         if comparison.repository_id != authority.repository_id
             || comparison.repository_root != authority.repository_root
             || comparison.repository_common_dir != authority.repository_common_dir
