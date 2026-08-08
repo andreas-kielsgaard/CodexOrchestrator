@@ -8,7 +8,7 @@ rename later sessions or claim that a declarative frontend field activates a ski
 The Plan Builder uses the narrow `send_managed_plan_builder_message` command: first send
 creates/acknowledges an Agent Session and later sends resume the acknowledged session ID. The
 orchestration service sets the Codex child working directory to the repository root after validating
-`.agents/product-skills/epic-plan-builder/SKILL.md` metadata. Ordinary Agent Session launches keep
+`product/skills/epic-plan-builder/SKILL.md` metadata. Ordinary Agent Session launches keep
 their own working-directory behavior.
 
 The Epic Plan Builder product context owns a versioned Conversation Harness configuration. In this implementation, a harness does one thing: it supplies a lightweight application-provenance prefix immediately before the first user query. Generic Agent Session code accepts only a neutral optional initial-prefix value and knows no Plan Builder role or harness schema. The user's submitted text is persisted unchanged, and durable invocation history prevents prefix reinjection after restart.

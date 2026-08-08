@@ -2,9 +2,22 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Component, Path},
+};
 
 pub(crate) const HARNESS_EFFECTIVE_CONFIGURATION_V1: &str = "harness-effective-configuration/v1";
+pub(crate) const PRODUCT_ROLE_SKILL_ROOT: &str = "product/skills";
+const PRODUCT_ROLE_SKILL_NAMES: &[&str] = &[
+    "epic-bootstrap-generator",
+    "epic-plan-builder",
+    "epic-runner",
+    "sprint-runner",
+    "work-slice-planner",
+    "work-unit-handler",
+    "work-unit-implementer",
+];
 
 pub(crate) const HARNESS_WORKING_COPY_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS harness_working_copies (
@@ -400,19 +413,9 @@ pub(crate) fn validate_draft_configuration(
     }
     let mut skill_names = HashSet::new();
     for skill in &configuration.skills.items {
-        let path = Path::new(&skill.path);
         if !bounded_token(&skill.name, 160)
             || !skill_names.insert(skill.name.as_str())
-            || !required_text(&skill.path, 500)
-            || !path.is_relative()
-            || path.components().any(|part| {
-                matches!(
-                    part,
-                    std::path::Component::ParentDir
-                        | std::path::Component::RootDir
-                        | std::path::Component::Prefix(_)
-                )
-            })
+            || !is_product_role_skill_path(&skill.name, &skill.path)
             || !draft_text(&skill.purpose, 4_000)
             || !draft_text(&skill.use_when, 4_000)
         {
@@ -520,6 +523,19 @@ fn valid_harness_key(value: &str) -> bool {
         })
 }
 
+pub(crate) fn is_product_role_skill_path(name: &str, value: &str) -> bool {
+    let expected = format!("{PRODUCT_ROLE_SKILL_ROOT}/{name}/SKILL.md");
+    PRODUCT_ROLE_SKILL_NAMES.contains(&name)
+        && value == expected
+        && Path::new(value).is_relative()
+        && !Path::new(value).components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+}
+
 fn draft_text(value: &str, maximum: usize) -> bool {
     value.len() <= maximum
         && value
@@ -599,7 +615,7 @@ mod tests {
                 available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
                 items: vec![HarnessSkillConfiguration {
                     name: "epic-plan-builder".into(),
-                    path: ".agents/product-skills/epic-plan-builder/SKILL.md".into(),
+                    path: "product/skills/epic-plan-builder/SKILL.md".into(),
                     purpose: "Build one Epic proposal.".into(),
                     use_when: "The product owns an Epic planning Session.".into(),
                     policy: HarnessSkillPolicy::AlwaysApplicable,
@@ -801,6 +817,14 @@ mod tests {
         let mut invalid_path = command("epic_plan_builder", 0, "invalid-path");
         invalid_path.configuration.skills.items[0].path = "../outside/SKILL.md".into();
         cases.push(invalid_path);
+        let mut stale_product_path = command("epic_plan_builder", 0, "stale-product-path");
+        stale_product_path.configuration.skills.items[0].path =
+            ".agents/product-skills/epic-plan-builder/SKILL.md".into();
+        cases.push(stale_product_path);
+        let mut ad_hoc_path = command("epic_plan_builder", 0, "ad-hoc-path");
+        ad_hoc_path.configuration.skills.items[0].path =
+            ".agents/skills/epic-plan-builder/SKILL.md".into();
+        cases.push(ad_hoc_path);
         let mut invalid_control = command("epic_plan_builder", 0, "invalid-control");
         invalid_control.configuration.prompt_prefix.content = "unsafe\u{0007}control".into();
         cases.push(invalid_control);

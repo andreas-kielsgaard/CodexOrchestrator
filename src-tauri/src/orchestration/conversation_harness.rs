@@ -7,14 +7,14 @@ use super::conversation_harness_working_copy::{
     HarnessModelConstraint, HarnessModelPolicyMode, HarnessPromptPrefixConfiguration,
     HarnessReasoningLevel, HarnessRuntimeConfiguration, HarnessSandbox, HarnessSkillConfiguration,
     HarnessSkillPolicy, HarnessSkillsConfiguration, HarnessToolConfiguration, HarnessToolPolicy, HarnessToolsConfiguration, HarnessUpdatePolicy,
-    HarnessVisualIdentity,
+    HarnessVisualIdentity, is_product_role_skill_path,
 };
 use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
     ports::InitialPromptPrefix,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 const CATALOG_JSON: &str = include_str!("conversation_harness_catalog.json");
 
@@ -444,7 +444,7 @@ fn validate_profile(profile: &ConversationHarnessProfile) -> Result<(), String> 
     }
     if profile.skill_guidance.iter().any(|skill| {
         skill.canonical_name.trim().is_empty()
-            || !is_safe_repository_skill_path(&skill.canonical_path)
+            || !is_product_role_skill_path(&skill.canonical_name, &skill.canonical_path)
             || skill.purpose.trim().is_empty()
             || skill.use_when.trim().is_empty()
     }) || profile
@@ -528,6 +528,10 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         .parent()
         .ok_or_else(|| "Codex Orchestrator repository root is unavailable".to_string())?
         .to_path_buf();
+    role_discovery_root_from_root(&root, role)
+}
+
+fn role_discovery_root_from_root(root: &Path, role: ConversationHarnessRole) -> Result<String, String> {
     let profile = profile(role)?;
     let required_skill = match role {
         ConversationHarnessRole::EpicPlanBuilder => "epic-plan-builder",
@@ -547,7 +551,7 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
         .iter()
         .find(|skill| skill.canonical_name == required_skill)
         .ok_or_else(|| format!("canonical {required_skill} skill guidance is unavailable"))?;
-    if !is_safe_repository_skill_path(&skill.canonical_path) {
+    if !is_product_role_skill_path(&skill.canonical_name, &skill.canonical_path) {
         return Err(format!("canonical {required_skill} skill path is invalid"));
     }
     let source = root.join(&skill.canonical_path);
@@ -568,19 +572,6 @@ pub(crate) fn role_discovery_root(role: ConversationHarnessRole) -> Result<Strin
     root.to_str()
         .map(str::to_owned)
         .ok_or_else(|| "Codex Orchestrator repository root is not valid UTF-8".into())
-}
-
-fn is_safe_repository_skill_path(value: &str) -> bool {
-    let path = Path::new(value);
-    !value.trim().is_empty()
-        && path.is_relative()
-        && path.extension().is_some_and(|extension| extension == "md")
-        && !path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
 }
 
 #[cfg(test)]
@@ -758,7 +749,7 @@ mod tests {
         );
         let root = PathBuf::from(epic_plan_builder_discovery_root().unwrap());
         assert!(root
-            .join(".agents/product-skills/epic-plan-builder/SKILL.md")
+            .join("product/skills/epic-plan-builder/SKILL.md")
             .is_file());
     }
 
@@ -775,5 +766,20 @@ mod tests {
         assert!(profile_from_catalog(missing, "epic_plan_builder")
             .unwrap_err()
             .contains("unavailable"));
+        let stale = CATALOG_JSON.replace("product/skills/epic-plan-builder/SKILL.md", ".agents/product-skills/epic-plan-builder/SKILL.md");
+        assert!(profile_from_catalog(&stale, "epic_plan_builder").is_err());
+        let ad_hoc = CATALOG_JSON.replace("product/skills/epic-plan-builder/SKILL.md", ".agents/skills/epic-plan-builder/SKILL.md");
+        assert!(profile_from_catalog(&ad_hoc, "epic_plan_builder").is_err());
+    }
+
+    #[test]
+    fn discovery_requires_the_product_catalogue_without_stale_fallbacks() {
+        let directory = tempfile::tempdir().unwrap();
+        let stale = directory.path().join(".agents/product-skills/epic-plan-builder");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("SKILL.md"), "---\nname: epic-plan-builder\n---\n").unwrap();
+        assert!(role_discovery_root_from_root(directory.path(), ConversationHarnessRole::EpicPlanBuilder)
+            .unwrap_err()
+            .contains("product/skills/epic-plan-builder/SKILL.md"));
     }
 }

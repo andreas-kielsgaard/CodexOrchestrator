@@ -8,7 +8,7 @@
       "skillGuidance": [
         {
           "canonicalName": "epic-plan-builder",
-          "canonicalPath": ".agents/product-skills/epic-plan-builder/SKILL.md",
+          "canonicalPath": "product/skills/epic-plan-builder/SKILL.md",
           "purpose": "Shape and submit one structured Epic proposal before initiation.",
           "useWhen": "the user asks to build, structure, or revise the proposal."
         }
@@ -35,7 +35,7 @@
       "skillGuidance": [
         {
           "canonicalName": "epic-bootstrap-generator",
-          "canonicalPath": ".agents/product-skills/epic-bootstrap-generator/SKILL.md",
+          "canonicalPath": "product/skills/epic-bootstrap-generator/SKILL.md",
           "purpose": "Generate the approved materials required for one Epic Runner.",
           "useWhen": "the application has supplied an initiated Epic and prepared working root."
         }
@@ -62,7 +62,7 @@
       "skillGuidance": [
         {
           "canonicalName": "epic-runner",
-          "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
+          "canonicalPath": "product/skills/epic-runner/SKILL.md",
           "purpose": "Advance one initiated Epic from durable product state.",
           "useWhen": "the application has supplied accepted bootstrap materials and ready-state authority."
         }
@@ -89,7 +89,7 @@
       "skillGuidance": [
         {
           "canonicalName": "epic-runner",
-          "canonicalPath": ".agents/product-skills/epic-runner/SKILL.md",
+          "canonicalPath": "product/skills/epic-runner/SKILL.md",
           "purpose": "Reassess one application-delivered local-exhaustion escalation.",
           "useWhen": "the application has supplied the dedicated Epic reassessment receiver."
         }
@@ -113,7 +113,7 @@
       "key": "epic_runner_sprint_result_reassessment",
       "version": 1,
       "context": "You are the Epic Runner reassessing one exact application-delivered Sprint result. Read only the correlated context and record one identity-free, concern-preserving disposition. A request is not delivery, activation, continuation, Sprint selection or start. Do not settle, complete, or accept the Epic or Sprint.",
-      "skillGuidance": [{"canonicalName":"epic-runner","canonicalPath":".agents/product-skills/epic-runner/SKILL.md","purpose":"Reassess one durable Sprint result.","useWhen":"the application has supplied the dedicated result receiver."}],
+      "skillGuidance": [{"canonicalName":"epic-runner","canonicalPath":"product/skills/epic-runner/SKILL.md","purpose":"Reassess one durable Sprint result.","useWhen":"the application has supplied the dedicated result receiver."}],
       "runtime": {"model":null,"reasoningEffort":null,"sandbox":"read_only","approvalPolicy":"never"},
       "mcp": {"required":true,"enabledTools":["read_epic_sprint_result_reassessment_context","record_epic_sprint_result_disposition"]},
       "lifecycle": {"contextDelivery":"first_query","completionCriteria":["one_epic_sprint_result_disposition_or_application_observed_state"]}
@@ -125,7 +125,7 @@
       "skillGuidance": [
         {
           "canonicalName": "sprint-runner",
-          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "canonicalPath": "product/skills/sprint-runner/SKILL.md",
           "purpose": "Maintain one Sprint in its pre-start ready state.",
           "useWhen": "the application has authorized and launch-accepted one Sprint Runner."
         }
@@ -152,7 +152,7 @@
       "skillGuidance": [
         {
           "canonicalName": "sprint-runner",
-          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "canonicalPath": "product/skills/sprint-runner/SKILL.md",
           "purpose": "Request one current Work Slice Planner through the application-owned action.",
           "useWhen": "the application has supplied the planning-control continuation."
         }
@@ -179,7 +179,7 @@
       "skillGuidance": [
         {
           "canonicalName": "sprint-runner",
-          "canonicalPath": ".agents/product-skills/sprint-runner/SKILL.md",
+          "canonicalPath": "product/skills/sprint-runner/SKILL.md",
           "purpose": "Reassess one delivered no-progress concern.",
           "useWhen": "the application has supplied the handback reassessment continuation."
         }
@@ -206,7 +206,7 @@
       "skillGuidance": [
         {
           "canonicalName": "work-slice-planner",
-          "canonicalPath": ".agents/product-skills/work-slice-planner/SKILL.md",
+          "canonicalPath": "product/skills/work-slice-planner/SKILL.md",
           "purpose": "Submit and complete one bounded proposal-local Work Slice revision.",
           "useWhen": "the application has created and launch-accepted one Work Slice Planner Session with planning actions."
         }
@@ -233,7 +233,7 @@
       "skillGuidance": [
         {
           "canonicalName": "work-unit-handler",
-          "canonicalPath": ".agents/product-skills/work-unit-handler/SKILL.md",
+          "canonicalPath": "product/skills/work-unit-handler/SKILL.md",
           "purpose": "Inspect one already-authorized attempt's bounded evidence.",
           "useWhen": "the application has constructed the Handler capability package for an existing authorization."
         }
@@ -260,7 +260,7 @@
       "skillGuidance": [
         {
           "canonicalName": "work-unit-implementer",
-          "canonicalPath": ".agents/product-skills/work-unit-implementer/SKILL.md",
+          "canonicalPath": "product/skills/work-unit-implementer/SKILL.md",
           "purpose": "Implement one already-authorized bounded Work Unit attempt.",
           "useWhen": "the application has constructed the Implementer capability package for an existing authorization."
         }
