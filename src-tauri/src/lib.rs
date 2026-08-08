@@ -20,6 +20,7 @@ mod orchestration;
 mod product_decisions;
 mod runtime;
 mod storage;
+mod workflows;
 #[cfg(debug_assertions)]
 mod worktree_review;
 #[allow(dead_code)]

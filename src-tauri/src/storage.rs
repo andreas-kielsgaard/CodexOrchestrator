@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 37;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 38;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v37 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v38 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -46,11 +46,14 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
             .map_err(|error| format!("Unable to evolve Product Decision schema: {error}"))?;
         transaction
+            .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Workflow schema: {error}"))?;
+        transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v37 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v38 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=36).contains(&current_version) {
+    if (1..=37).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -281,6 +284,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
             .map_err(|error| format!("Unable to migrate Product Decision schema: {error}"))?;
+        transaction
+            .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Workflow schema: {error}"))?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -370,6 +376,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
         .map_err(|error| format!("Unable to initialize Product Decision schema: {error}"))?;
     transaction
+        .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Workflow schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
@@ -403,10 +412,19 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 8)
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
+    let workflow_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_types','workflow_nodes','workflow_connections','workflow_effective_recipes')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 4)
+        .map_err(|error| format!("Unable to inspect active Workflow schema: {error}"))?;
     Ok(
         native_profile_schema_is_present
             && epic_settlement_schema_is_present
-            && product_decision_schema_is_present,
+            && product_decision_schema_is_present
+            && workflow_schema_is_present,
     )
 }
 use std::time::Duration;
@@ -579,6 +597,10 @@ mod tests {
                 "work_unit_execution_states",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
+                "workflow_connections",
+                "workflow_effective_recipes",
+                "workflow_nodes",
+                "workflow_types",
             ]
         );
         assert_eq!(
@@ -712,6 +734,34 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn v38_migration_adds_workflow_definition_storage() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        configure_sqlite_connection(&connection).expect("configure connection");
+        initialize_active_database(&connection).expect("initialize active database");
+        connection
+            .execute_batch(
+                "DROP TABLE workflow_connections;
+                 DROP TABLE workflow_nodes;
+                 DROP TABLE workflow_effective_recipes;
+                 DROP TABLE workflow_types;
+                 PRAGMA user_version=37;",
+            )
+            .expect("restore v37 predecessor");
+
+        initialize_active_database(&connection).expect("migrate Workflow schema");
+
+        for table in [
+            "workflow_types",
+            "workflow_nodes",
+            "workflow_connections",
+            "workflow_effective_recipes",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
+        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 
     #[test]

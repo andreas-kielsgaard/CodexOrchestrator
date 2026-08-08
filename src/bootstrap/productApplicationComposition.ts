@@ -25,11 +25,13 @@ import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
+import { tauriWorkflowClient } from '../infrastructure/workflows/tauriWorkflowClient';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
+    workflowClient: tauriWorkflowClient,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
@@ -37,7 +39,8 @@ export function createProductApplicationComposition(): AppProps {
     agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
-    nativeProfileApplicationConsumer: createNativeProfileApplicationConsumer(tauriNativeProfileClient),
+    nativeProfileApplicationConsumer:
+      createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,
     productDecisionCorrectionClient: tauriProductDecisionCorrectionClient,
     orchestrationClient: createNativeQueryOrchestrationClient(

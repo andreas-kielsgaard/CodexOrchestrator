@@ -111,6 +111,14 @@ pub(crate) fn run() {
                 crate::product_decisions::ProductDecisionRepository::open(&database_path)
                     .map_err(|_| "Unable to open Product Decision storage.".to_string())?,
             );
+            let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
+                Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
+                    &database_path,
+                )?),
+            ));
+            app.manage(crate::workflows::transport::WorkflowTauriState::new(
+                workflows,
+            ));
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 &database_path,
@@ -327,6 +335,16 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::workflows::transport::list_workflow_types,
+            crate::workflows::transport::create_workflow_type,
+            crate::workflows::transport::load_workflow_type,
+            crate::workflows::transport::update_workflow_type,
+            crate::workflows::transport::save_workflow_node_draft,
+            crate::workflows::transport::delete_workflow_node_draft,
+            crate::workflows::transport::save_workflow_connection_draft,
+            crate::workflows::transport::delete_workflow_connection_draft,
+            crate::workflows::transport::activate_workflow_changes,
+            crate::workflows::transport::load_workflow_native_query,
             crate::native_profiles::load_native_profile_query,
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,
