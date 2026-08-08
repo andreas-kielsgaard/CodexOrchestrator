@@ -25,6 +25,7 @@ pub(crate) struct VerifiedRuntimeGitComparison {
     pub(crate) current_object_id: String,
     pub(crate) runtime_instance_ref: String,
     pub(crate) runtime_source_ref: String,
+    pub(crate) root_branch: String,
     pub(crate) source_fingerprint: String,
 }
 
@@ -64,6 +65,13 @@ impl InitiatedSprintGitAuthorityService {
         let comparison = self
             .runtime
             .resolve_verified_comparison(&request.runtime_instance_ref)?;
+        let root_branch = self
+            .repository
+            .load_epic_root_branch_for_sprint(&request.sprint_id)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
+        if comparison.root_branch != root_branch {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
         if comparison.runtime_instance_ref != request.runtime_instance_ref {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
         }
@@ -80,6 +88,7 @@ impl InitiatedSprintGitAuthorityService {
                 current_object_id: comparison.current_object_id,
                 runtime_instance_ref: comparison.runtime_instance_ref,
                 runtime_source_ref: comparison.runtime_source_ref,
+                root_branch,
                 source_fingerprint: comparison.source_fingerprint,
             })
             .map(|result| match result {
@@ -127,6 +136,7 @@ impl InitiatedSprintGitAuthorityService {
                 .eq_ignore_ascii_case(&authority.current_object_id)
             || comparison.runtime_instance_ref != authority.runtime_instance_ref
             || comparison.runtime_source_ref != authority.runtime_source_ref
+            || comparison.root_branch != authority.root_branch
             || comparison.source_fingerprint != authority.source_fingerprint
         {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);

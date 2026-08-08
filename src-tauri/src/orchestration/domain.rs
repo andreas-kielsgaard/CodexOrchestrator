@@ -194,6 +194,7 @@ pub(crate) struct InitiateEpicCommand {
     pub(crate) expected_revision_token: String,
     pub(crate) actor_id: String,
     pub(crate) idempotency_key: String,
+    pub(crate) root_branch: Option<String>,
 }
 impl InitiateEpicCommand {
     pub(crate) fn validate(&self) -> Result<(), InitiateEpicError> {
@@ -208,8 +209,19 @@ impl InitiateEpicCommand {
                 "initiation identifiers must be non-empty and bounded".into(),
             ));
         }
+        if let Some(root_branch) = &self.root_branch {
+            if !valid_root_branch(root_branch) {
+                return Err(InitiateEpicError::InvalidInput("Epic root branch is invalid".into()));
+            }
+        }
         Ok(())
     }
+}
+
+pub(crate) fn valid_root_branch(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 240 && !value.starts_with('-') && !value.starts_with('/')
+        && !value.ends_with('/') && !value.contains("..") && !value.contains("//")
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

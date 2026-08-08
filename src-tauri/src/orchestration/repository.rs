@@ -300,10 +300,16 @@ CREATE TABLE IF NOT EXISTS initiated_sprint_git_authorities (
  worktree_id TEXT NOT NULL, worktree_root TEXT NOT NULL,
  baseline_object_id TEXT NOT NULL, current_object_id TEXT NOT NULL,
  runtime_instance_ref TEXT NOT NULL UNIQUE, runtime_source_ref TEXT NOT NULL,
- source_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL,
+ root_branch TEXT NOT NULL, source_fingerprint TEXT NOT NULL, recorded_at TEXT NOT NULL,
  FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT,
  FOREIGN KEY (sprint_id) REFERENCES initiated_sprints(id) ON DELETE RESTRICT,
  FOREIGN KEY (provenance_id) REFERENCES epic_initiation_provenance(id) ON DELETE RESTRICT
+);
+"#;
+pub(crate) const EPIC_ROOT_BRANCH_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS epic_root_branches (
+ epic_id TEXT PRIMARY KEY, root_branch TEXT NOT NULL,
+ FOREIGN KEY (epic_id) REFERENCES epic_initiations(epic_id) ON DELETE RESTRICT
 );
 "#;
 pub(crate) const STORED_FILE_REVIEW_ARTIFACT_V1: &str = "stored-file-review-artifact/v1";
@@ -370,6 +376,7 @@ pub(crate) struct InitiatedSprintGitAuthorityWrite {
     pub(crate) current_object_id: String,
     pub(crate) runtime_instance_ref: String,
     pub(crate) runtime_source_ref: String,
+    pub(crate) root_branch: String,
     pub(crate) source_fingerprint: String,
 }
 
@@ -388,6 +395,7 @@ pub(crate) struct InitiatedSprintGitAuthority {
     pub(crate) current_object_id: String,
     pub(crate) runtime_instance_ref: String,
     pub(crate) runtime_source_ref: String,
+    pub(crate) root_branch: String,
     pub(crate) source_fingerprint: String,
 }
 
@@ -1149,7 +1157,7 @@ impl SqliteOrchestrationRepository {
         let initiation_events = collect(&connection, "SELECT id, command_id, result_id, recorded_at FROM epic_initiation_events ORDER BY recorded_at, id", |row| Ok(InitiationEventDto { event_id: row.get(0)?, command_id: row.get(1)?, result_id: row.get(2)?, recorded_at: row.get(3)? }))?;
         let initiation_provenance = collect(&connection, "SELECT id, command_id, result_id, event_id, recorded_at FROM epic_initiation_provenance ORDER BY recorded_at, id", |row| Ok(InitiationProvenanceDto { provenance_id: row.get(0)?, command_id: row.get(1)?, result_id: row.get(2)?, event_id: row.get(3)?, recorded_at: row.get(4)? }))?;
         let material_snapshots = collect(&connection, "SELECT id, draft_id, proposal_revision_id, version, proposal_json, content_hash, recorded_at FROM epic_initiation_material_snapshots ORDER BY recorded_at, id", |row| Ok(MaterialSnapshotDto { material_snapshot_id: row.get(0)?, epic_planning_draft_id: row.get(1)?, proposal_revision_id: row.get(2)?, version: row.get(3)?, proposal: parse_proposal_json(row.get::<_, String>(4)?)?, content_hash: row.get(5)?, recorded_at: row.get(6)? }))?;
-        let initiated_epics = collect(&connection, "SELECT id, draft_id, proposal_revision_id, material_snapshot_id, epic_id, recorded_at, command_id, result_id, event_id, provenance_id FROM epic_initiations ORDER BY recorded_at, id", |row| Ok(InitiatedEpicDto { initiation_id: row.get(0)?, epic_planning_draft_id: row.get(1)?, proposal_revision_id: row.get(2)?, material_snapshot_id: row.get(3)?, epic_id: row.get(4)?, recorded_at: row.get(5)?, command_id: row.get(6)?, result_id: row.get(7)?, event_id: row.get(8)?, provenance_id: row.get(9)? }))?;
+        let initiated_epics = collect(&connection, "SELECT initiation.id, initiation.draft_id, initiation.proposal_revision_id, initiation.material_snapshot_id, initiation.epic_id, initiation.recorded_at, initiation.command_id, initiation.result_id, initiation.event_id, initiation.provenance_id, root.root_branch FROM epic_initiations initiation JOIN epic_root_branches root ON root.epic_id=initiation.epic_id ORDER BY initiation.recorded_at, initiation.id", |row| Ok(InitiatedEpicDto { initiation_id: row.get(0)?, epic_planning_draft_id: row.get(1)?, proposal_revision_id: row.get(2)?, material_snapshot_id: row.get(3)?, epic_id: row.get(4)?, recorded_at: row.get(5)?, command_id: row.get(6)?, result_id: row.get(7)?, event_id: row.get(8)?, provenance_id: row.get(9)?, root_branch: row.get(10)? }))?;
         let initiated_sprints = collect(&connection, "SELECT id, epic_id, ordinal, title, intended_movement, concern_summaries_json, sprint_plan_id, sprint_plan_revision_id FROM initiated_sprints ORDER BY epic_id, ordinal", |row| Ok(InitiatedSprintDto { sprint_id: row.get(0)?, epic_id: row.get(1)?, ordinal: row.get(2)?, title: row.get(3)?, intended_movement: row.get(4)?, concern_summaries: serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| to_sql_error(e.to_string()))?, sprint_plan_id: row.get(6)?, sprint_plan_revision_id: row.get(7)? }))?;
         let file_review_documents = collect(&connection, "SELECT document.document_ref_id, document.epic_id, document.sprint_id, document.provenance_id, document.title, document.summary, artifact.artifact_id FROM file_review_documents document JOIN initiated_sprints sprint ON sprint.id = document.sprint_id AND sprint.epic_id = document.epic_id JOIN epic_initiations epic ON epic.epic_id = document.epic_id AND epic.provenance_id = document.provenance_id JOIN stored_file_review_artifacts artifact ON artifact.document_ref_id = document.document_ref_id AND artifact.provenance_id = document.provenance_id AND artifact.contract_version = 'stored-file-review-artifact/v1' AND artifact.payload_bytes > 0 AND artifact.payload_bytes <= 1000000 ORDER BY document.recorded_at, document.document_ref_id", |row| Ok(FileReviewDocumentDto { document_ref_id: row.get(0)?, epic_id: row.get(1)?, sprint_id: row.get(2)?, provenance_id: row.get(3)?, title: row.get(4)?, summary: row.get(5)?, artifact_id: row.get(6)?, changed_files: Vec::new() }))?;
         let mut file_review_documents = file_review_documents;
@@ -1282,11 +1290,15 @@ impl SqliteOrchestrationRepository {
         if command.actor_id != "application-user" {
             return Err(InitiateEpicError::Forbidden);
         }
+        let root_branch = command.root_branch.clone().ok_or_else(|| {
+            InitiateEpicError::InvalidInput("an explicit Epic root branch is required".into())
+        })?;
         let fingerprint = format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             command.epic_planning_draft_id.as_str(),
             command.expected_revision_token,
-            command.actor_id
+            command.actor_id,
+            root_branch,
         );
         let now = timestamp(self.clock.now());
         let mut connection = self.connection.lock().map_err(|_| {
@@ -1364,6 +1376,7 @@ impl SqliteOrchestrationRepository {
         tx.execute("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES (?1,?2,?3,?4,?5)", params![provenance_id,command_id,result_id,event_id,now]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
         tx.execute("INSERT INTO epic_initiation_material_snapshots (id,draft_id,proposal_revision_id,version,proposal_json,content_hash,recorded_at) VALUES (?1,?2,?3,1,?4,?5,?6)", params![snapshot_id,command.epic_planning_draft_id.as_str(),revision_id,proposal_json,hash,now]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
         tx.execute("INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![initiation_id,command_id,result_id,event_id,provenance_id,command.epic_planning_draft_id.as_str(),revision_id,snapshot_id,epic_id,now]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
+        tx.execute("INSERT INTO epic_root_branches (epic_id,root_branch) VALUES (?1,?2)", params![epic_id,root_branch]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
         for (ordinal, sprint) in proposal.sprints.iter().enumerate() {
             let sprint_id = new_id("sprint");
             tx.execute("INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![sprint_id, epic_id, ordinal as i64, sprint.title, sprint.intended_movement, serde_json::to_string(&sprint.concern_summaries).unwrap(), new_id("sprint-plan"), new_id("sprint-plan-revision")]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
@@ -1832,17 +1845,20 @@ impl SqliteOrchestrationRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        let ownership: Option<(String, String)> = tx
+        let ownership: Option<(String, String, String)> = tx
             .query_row(
-                "SELECT sprint.epic_id, epic.provenance_id FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id JOIN epic_initiation_provenance provenance ON provenance.id=epic.provenance_id WHERE sprint.id=?1",
+                "SELECT sprint.epic_id, epic.provenance_id, root.root_branch FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id JOIN epic_root_branches root ON root.epic_id=epic.epic_id JOIN epic_initiation_provenance provenance ON provenance.id=epic.provenance_id WHERE sprint.id=?1",
                 [&value.sprint_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        let Some((epic_id, provenance_id)) = ownership else {
+        let Some((epic_id, provenance_id, root_branch)) = ownership else {
             return Err(InitiatedSprintGitAuthorityError::Forbidden);
         };
+        if value.root_branch != root_branch {
+            return Err(InitiatedSprintGitAuthorityError::Conflict);
+        }
         let fingerprint = initiated_sprint_git_authority_fingerprint(
             &authority_id,
             &epic_id,
@@ -1867,8 +1883,8 @@ impl SqliteOrchestrationRepository {
             };
         }
         tx.execute(
-            "INSERT INTO initiated_sprint_git_authorities (authority_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,repository_common_dir,worktree_id,worktree_root,baseline_object_id,current_object_id,runtime_instance_ref,runtime_source_ref,source_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
-            params![authority_id, value.idempotency_key, fingerprint, epic_id, value.sprint_id, provenance_id, value.repository_id, value.repository_root, value.repository_common_dir, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, value.runtime_instance_ref, value.runtime_source_ref, value.source_fingerprint, timestamp(self.clock.now())],
+            "INSERT INTO initiated_sprint_git_authorities (authority_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,repository_common_dir,worktree_id,worktree_root,baseline_object_id,current_object_id,runtime_instance_ref,runtime_source_ref,root_branch,source_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            params![authority_id, value.idempotency_key, fingerprint, epic_id, value.sprint_id, provenance_id, value.repository_id, value.repository_root, value.repository_common_dir, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, value.runtime_instance_ref, value.runtime_source_ref, &value.root_branch, value.source_fingerprint, timestamp(self.clock.now())],
         )
         .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
         tx.commit()
@@ -1888,7 +1904,7 @@ impl SqliteOrchestrationRepository {
             .connection
             .lock()
             .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        let loaded = connection.query_row("SELECT authority.authority_id,authority.epic_id,authority.sprint_id,authority.provenance_id,authority.repository_id,authority.repository_root,authority.repository_common_dir,authority.worktree_id,authority.worktree_root,authority.baseline_object_id,authority.current_object_id,authority.runtime_instance_ref,authority.runtime_source_ref,authority.source_fingerprint,authority.idempotency_key,authority.payload_fingerprint FROM initiated_sprint_git_authorities authority JOIN initiated_sprints sprint ON sprint.id=authority.sprint_id AND sprint.epic_id=authority.epic_id JOIN epic_initiations epic ON epic.epic_id=authority.epic_id AND epic.provenance_id=authority.provenance_id JOIN epic_initiation_provenance provenance ON provenance.id=authority.provenance_id WHERE authority.authority_id=?1", [authority_id], |row| Ok((InitiatedSprintGitAuthority { authority_id:row.get(0)?, epic_id:row.get(1)?, sprint_id:row.get(2)?, provenance_id:row.get(3)?, repository_id:row.get(4)?, repository_root:row.get(5)?, repository_common_dir:row.get(6)?, worktree_id:row.get(7)?, worktree_root:row.get(8)?, baseline_object_id:row.get(9)?, current_object_id:row.get(10)?, runtime_instance_ref:row.get(11)?, runtime_source_ref:row.get(12)?, source_fingerprint:row.get(13)? }, row.get::<_, String>(14)?, row.get::<_, String>(15)?))).optional().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let loaded = connection.query_row("SELECT authority.authority_id,authority.epic_id,authority.sprint_id,authority.provenance_id,authority.repository_id,authority.repository_root,authority.repository_common_dir,authority.worktree_id,authority.worktree_root,authority.baseline_object_id,authority.current_object_id,authority.runtime_instance_ref,authority.runtime_source_ref,authority.root_branch,authority.source_fingerprint,authority.idempotency_key,authority.payload_fingerprint FROM initiated_sprint_git_authorities authority JOIN initiated_sprints sprint ON sprint.id=authority.sprint_id AND sprint.epic_id=authority.epic_id JOIN epic_initiations epic ON epic.epic_id=authority.epic_id AND epic.provenance_id=authority.provenance_id JOIN epic_root_branches root ON root.epic_id=authority.epic_id AND root.root_branch=authority.root_branch JOIN epic_initiation_provenance provenance ON provenance.id=authority.provenance_id WHERE authority.authority_id=?1", [authority_id], |row| Ok((InitiatedSprintGitAuthority { authority_id:row.get(0)?, epic_id:row.get(1)?, sprint_id:row.get(2)?, provenance_id:row.get(3)?, repository_id:row.get(4)?, repository_root:row.get(5)?, repository_common_dir:row.get(6)?, worktree_id:row.get(7)?, worktree_root:row.get(8)?, baseline_object_id:row.get(9)?, current_object_id:row.get(10)?, runtime_instance_ref:row.get(11)?, runtime_source_ref:row.get(12)?, root_branch:row.get(13)?, source_fingerprint:row.get(14)? }, row.get::<_, String>(15)?, row.get::<_, String>(16)?))).optional().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
         let Some((authority, idempotency_key, fingerprint)) = loaded else {
             return Ok(None);
         };
@@ -1904,6 +1920,7 @@ impl SqliteOrchestrationRepository {
             current_object_id: authority.current_object_id.clone(),
             runtime_instance_ref: authority.runtime_instance_ref.clone(),
             runtime_source_ref: authority.runtime_source_ref.clone(),
+            root_branch: authority.root_branch.clone(),
             source_fingerprint: authority.source_fingerprint.clone(),
         };
         validate_initiated_sprint_git_authority(&write)?;
@@ -1951,6 +1968,25 @@ impl SqliteOrchestrationRepository {
             [authority_id] => self.load_initiated_sprint_git_authority(authority_id),
             _ => Err(InitiatedSprintGitAuthorityError::Conflict),
         }
+    }
+
+    pub(crate) fn load_epic_root_branch_for_sprint(
+        &self,
+        sprint_id: &str,
+    ) -> Result<String, InitiatedSprintGitAuthorityError> {
+        if !bounded_application_id(sprint_id) {
+            return Err(InitiatedSprintGitAuthorityError::Invalid);
+        }
+        let connection = self.connection.lock().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        connection
+            .query_row(
+                "SELECT root.root_branch FROM initiated_sprints sprint JOIN epic_root_branches root ON root.epic_id=sprint.epic_id WHERE sprint.id=?1",
+                [sprint_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?
+            .ok_or(InitiatedSprintGitAuthorityError::Forbidden)
     }
 
     /// Producer-only application seam. No Tauri command accepts these facts.
@@ -2302,6 +2338,7 @@ fn validate_initiated_sprint_git_authority(
         &value.worktree_id,
         &value.runtime_instance_ref,
         &value.runtime_source_ref,
+        &value.root_branch,
     ]
     .iter()
     .all(|value| bounded_application_id(value))
@@ -2310,6 +2347,7 @@ fn validate_initiated_sprint_git_authority(
         || !canonical_absolute_root(&value.worktree_root)
         || !git_object_id(&value.baseline_object_id)
         || !git_object_id(&value.current_object_id)
+        || !super::domain::valid_root_branch(&value.root_branch)
         || value
             .baseline_object_id
             .eq_ignore_ascii_case(&value.current_object_id)
@@ -2370,6 +2408,7 @@ fn initiated_sprint_git_authority_fingerprint(
         &value.current_object_id,
         &value.runtime_instance_ref,
         &value.runtime_source_ref,
+        &value.root_branch,
         &value.source_fingerprint,
     ] {
         hash.update((part.len() as u64).to_be_bytes());
@@ -3821,6 +3860,7 @@ struct InitiatedEpicDto {
     result_id: String,
     event_id: String,
     provenance_id: String,
+    root_branch: String,
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

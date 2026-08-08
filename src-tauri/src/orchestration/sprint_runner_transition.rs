@@ -4432,6 +4432,10 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
         {
             return Err(BindInitiatedSprintGitAuthorityError::ComparisonUnavailable);
         }
+        let root_branch = self.git(&["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+        if !super::domain::valid_root_branch(&root_branch) {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
         let root = repository_root.to_string_lossy().replace('\\', "/");
         let common = repository_common_dir.to_string_lossy().replace('\\', "/");
         let worktree_id = stable_id("application-sprint-worktree", &root);
@@ -4453,6 +4457,7 @@ impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
             current_object_id,
             runtime_instance_ref: runtime_instance_ref.to_owned(),
             runtime_source_ref: "application-sprint-source-v1".into(),
+            root_branch,
             source_fingerprint,
         })
     }

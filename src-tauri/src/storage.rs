@@ -1,9 +1,9 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 37;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 38;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v37 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v38 schema evolution: {error}"))?;
+        initialize_epic_root_branch_schema(&transaction)?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -50,7 +51,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to commit active v37 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=36).contains(&current_version) {
+    if (1..=37).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -125,6 +126,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| {
                 format!("Unable to migrate initiated Sprint Git authority schema: {error}")
             })?;
+        initialize_epic_root_branch_schema(&transaction)?;
         transaction
             .execute_batch(
                 crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
@@ -327,7 +329,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA)
         .map_err(|error| {
             format!("Unable to initialize orchestration initiation schema: {error}")
-        })?;
+            })?;
     transaction
         .execute_batch(crate::orchestration::bootstrap_transition::POST_CONFIRMATION_SCHEMA)
         .map_err(|error| format!("Unable to initialize post-confirmation schema: {error}"))?;
@@ -341,10 +343,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
         .map_err(|error| format!("Unable to initialize File Review facts schema: {error}"))?;
     transaction
-        .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
+            .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
         .map_err(|error| {
             format!("Unable to initialize initiated Sprint Git authority schema: {error}")
         })?;
+    initialize_epic_root_branch_schema(&transaction)?;
     transaction
         .execute_batch(
             crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
@@ -379,6 +382,14 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 }
 
 fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    let epic_root_branch_schema_is_present = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='epic_root_branches') AND EXISTS(SELECT 1 FROM pragma_table_info('initiated_sprint_git_authorities') WHERE name='root_branch')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|present| present != 0)
+        .map_err(|error| format!("Unable to inspect Epic root-branch schema: {error}"))?;
     let native_profile_schema_is_present = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
@@ -404,10 +415,31 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map(|table_count| table_count == 8)
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     Ok(
-        native_profile_schema_is_present
+        epic_root_branch_schema_is_present
+            && native_profile_schema_is_present
             && epic_settlement_schema_is_present
             && product_decision_schema_is_present,
     )
+}
+
+fn initialize_epic_root_branch_schema(transaction: &Transaction<'_>) -> Result<(), String> {
+    transaction
+        .execute_batch(crate::orchestration::repository::EPIC_ROOT_BRANCH_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Epic root-branch schema: {error}"))?;
+    let has_root_branch = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('initiated_sprint_git_authorities') WHERE name='root_branch')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Unable to inspect Sprint Git authority root branch: {error}"))?
+        != 0;
+    if !has_root_branch {
+        transaction
+            .execute_batch("ALTER TABLE initiated_sprint_git_authorities ADD COLUMN root_branch TEXT NOT NULL DEFAULT '';" )
+            .map_err(|error| format!("Unable to evolve Sprint Git authority root branch: {error}"))?;
+    }
+    Ok(())
 }
 use std::time::Duration;
 
