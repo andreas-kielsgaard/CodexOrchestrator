@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 39;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 40;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v39 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v40 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -51,11 +51,14 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         crate::workflows::repository::initialize_workflow_role_schema(&transaction)
             .map_err(|error| format!("Unable to evolve Workflow Role schema: {error}"))?;
         transaction
+            .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Workflow instance schema: {error}"))?;
+        transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v39 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v40 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=38).contains(&current_version) {
+    if (1..=39).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -293,6 +296,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             crate::workflows::repository::initialize_workflow_role_schema(&transaction)
                 .map_err(|error| format!("Unable to migrate Workflow Role schema: {error}"))?;
         }
+        if current_version <= 39 {
+            transaction
+                .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
+                .map_err(|error| format!("Unable to migrate Workflow instance schema: {error}"))?;
+        }
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -387,6 +395,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     crate::workflows::repository::initialize_workflow_role_schema(&transaction)
         .map_err(|error| format!("Unable to initialize Workflow Role schema: {error}"))?;
     transaction
+        .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Workflow instance schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
@@ -438,11 +449,20 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             |row| row.get::<_, bool>(0),
         )
         .map_err(|error| format!("Unable to inspect active Workflow Role schema: {error}"))?;
+    let workflow_instance_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_instances','workflow_instance_sessions','workflow_activations')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 3)
+        .map_err(|error| format!("Unable to inspect active Workflow instance schema: {error}"))?;
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && workflow_schema_is_present
-        && workflow_role_schema_is_present)
+        && workflow_role_schema_is_present
+        && workflow_instance_schema_is_present)
 }
 use std::time::Duration;
 
@@ -614,8 +634,11 @@ mod tests {
                 "work_unit_execution_states",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
+                "workflow_activations",
                 "workflow_connections",
                 "workflow_effective_recipes",
+                "workflow_instance_sessions",
+                "workflow_instances",
                 "workflow_nodes",
                 "workflow_roles",
                 "workflow_types",
@@ -898,6 +921,38 @@ mod tests {
                 .unwrap(),
             (draft_json.to_string(), draft_json.to_string())
         );
+    }
+
+    #[test]
+    fn migrates_v39_to_workflow_instance_storage_and_reopens_idempotently() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v39.sqlite");
+        {
+            let connection = open_active_database(&path).expect("current database");
+            connection
+                .execute_batch(
+                    "DROP TABLE workflow_activations;
+                     DROP TABLE workflow_instance_sessions;
+                     DROP TABLE workflow_instances;
+                     PRAGMA user_version=39;",
+                )
+                .expect("restore v39 predecessor");
+        }
+
+        let migrated = open_active_database(&path).expect("migrate v39");
+        for table in [
+            "workflow_instances",
+            "workflow_instance_sessions",
+            "workflow_activations",
+        ] {
+            assert!(table_exists(&migrated, table), "missing {table}");
+        }
+        assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
+        drop(migrated);
+
+        let reopened = open_active_database(&path).expect("reopen migrated database");
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert!(table_exists(&reopened, "workflow_activations"));
     }
 
     #[test]

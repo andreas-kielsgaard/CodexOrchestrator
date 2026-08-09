@@ -137,6 +137,64 @@ export interface WorkflowDefinition {
   readonly activeRecipe: EffectiveWorkflowRecipe | null;
 }
 
+export type WorkflowLaunchStatus =
+  | 'requested'
+  | 'associated'
+  | 'launch_requested'
+  | 'launch_accepted'
+  | 'failed';
+
+export interface WorkflowInstanceSummary {
+  readonly id: string;
+  readonly workflowTypeId: string;
+  readonly workflowTypeName: string;
+  readonly recipeId: string;
+  readonly name: string;
+  readonly sessionCount: number;
+  readonly activeSessionCount: number;
+  readonly idleSessionCount: number;
+  readonly launchStatus: WorkflowLaunchStatus;
+  readonly createdAt: string;
+}
+
+export interface WorkflowInstanceSession {
+  readonly nodeId: string;
+  readonly sessionId: string;
+  readonly title: string;
+  readonly activity: 'active' | 'idle';
+  readonly latestTurnSummary: string | null;
+  readonly associatedAt: string;
+}
+
+export interface WorkflowActivation {
+  readonly id: string;
+  readonly sourceKind: 'human';
+  readonly targetNodeId: string;
+  readonly targetSessionId: string;
+  readonly targetInvocationId: string;
+  readonly deliveryKind: 'direct_prompt_runtime_v1';
+  readonly sessionMode: 'fresh';
+  readonly contextInheritance: 'none';
+  readonly compression: 'none';
+  readonly status: WorkflowLaunchStatus;
+  readonly requestedAt: string;
+  readonly associatedAt: string | null;
+  readonly launchRequestedAt: string | null;
+  readonly launchAcceptedAt: string | null;
+  readonly failedAt: string | null;
+  readonly failureStage: string | null;
+  readonly failureReason: string | null;
+}
+
+export interface WorkflowInstance {
+  readonly summary: WorkflowInstanceSummary;
+  readonly startingPrompt: string;
+  readonly workingDirectory: string;
+  readonly recipe: EffectiveWorkflowRecipe;
+  readonly sessions: readonly WorkflowInstanceSession[];
+  readonly launchActivation: WorkflowActivation;
+}
+
 export type WorkflowElementRef = {
   readonly kind: 'node' | 'connection';
   readonly id: string;
@@ -144,6 +202,13 @@ export type WorkflowElementRef = {
 
 export interface WorkflowApplicationClient {
   listWorkflowTypes(): Promise<readonly WorkflowTypeSummary[]>;
+  listWorkflowInstances(): Promise<readonly WorkflowInstanceSummary[]>;
+  launchWorkflowInstance(input: {
+    readonly workflowTypeId: string;
+    readonly name?: string | null;
+    readonly startingPrompt: string;
+  }): Promise<WorkflowInstance>;
+  loadWorkflowInstance(workflowInstanceId: string): Promise<WorkflowInstance>;
   listRoles(): Promise<readonly WorkflowRole[]>;
   createRole(input: {
     readonly name: string;

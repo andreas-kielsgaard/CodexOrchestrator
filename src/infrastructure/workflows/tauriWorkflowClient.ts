@@ -4,6 +4,8 @@ import type {
   WorkflowConnectionConfig,
   WorkflowDefinition,
   WorkflowElementRef,
+  WorkflowInstance,
+  WorkflowInstanceSummary,
   WorkflowNodeConfig,
   WorkflowRole,
   WorkflowTypeSummary,
@@ -16,6 +18,14 @@ export function createTauriWorkflowClient(
 ): WorkflowApplicationClient {
   return {
     listWorkflowTypes: () => invokeCommand<WorkflowTypeSummary[]>('list_workflow_types'),
+    listWorkflowInstances: () =>
+      invokeCommand<WorkflowInstanceSummary[]>('list_workflow_instances'),
+    launchWorkflowInstance: (input) =>
+      invokeCommand<WorkflowInstance>('launch_workflow_instance', { input }),
+    loadWorkflowInstance: (workflowInstanceId) =>
+      invokeCommand<WorkflowInstance>('load_workflow_instance', {
+        query: { workflowInstanceId },
+      }),
     listRoles: () => invokeCommand<WorkflowRole[]>('list_workflow_roles'),
     createRole: (input) => invokeCommand<WorkflowRole>('create_workflow_role', { input }),
     updateRole: (input) => invokeCommand<WorkflowRole>('update_workflow_role', { input }),

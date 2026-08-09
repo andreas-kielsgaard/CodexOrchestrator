@@ -72,7 +72,9 @@ fn prepare_model(
         CapabilitySupport::Unsupported => return Err(unsupported(
             "the installed Codex CLI does not support the requested model option for this command",
         )),
-        CapabilitySupport::Unknown => Ok(None),
+        CapabilitySupport::Unknown => Err(unsupported(
+            "the installed Codex CLI model-selection support is unknown; refusing to launch without the requested model",
+        )),
     }
 }
 

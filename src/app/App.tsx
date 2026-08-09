@@ -236,7 +236,7 @@ export function App({
     initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
       : initialApplicationSurface === 'workflows'
-        ? { kind: 'workflow', workflowTypeId: null }
+        ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
         : initialApplicationSurface === 'file-review'
           ? { kind: 'file_review', target: { kind: 'direct' } }
           : initialApplicationSurface === 'harness-inspector'
@@ -878,7 +878,11 @@ export function App({
                 dispatchProductNavigation({
                   type: 'navigate',
                   intent: 'push',
-                  destination: { kind: 'workflow', workflowTypeId: null },
+                  destination: {
+                    kind: 'workflow',
+                    workflowTypeId: null,
+                    workflowInstanceId: null,
+                  },
                 });
                 setSurface('workflows');
               }}
@@ -1054,12 +1058,21 @@ export function App({
         <WorkflowScreen
           client={workflowClient}
           workflowTypeId={currentProductDestination.workflowTypeId}
+          workflowInstanceId={currentProductDestination.workflowInstanceId}
           onOpenWorkflowType={(workflowTypeId) => {
             productNavigationEpoch.current += 1;
             dispatchProductNavigation({
               type: 'navigate',
               intent: 'push',
-              destination: { kind: 'workflow', workflowTypeId },
+              destination: { kind: 'workflow', workflowTypeId, workflowInstanceId: null },
+            });
+          }}
+          onOpenWorkflowInstance={(workflowInstanceId) => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'workflow', workflowTypeId: null, workflowInstanceId },
             });
           }}
         />

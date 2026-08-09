@@ -54,6 +54,16 @@ export function workflowPersistenceCoordinator(
   };
 
   const coordinated: WorkflowApplicationClient = {
+    listWorkflowInstances: async () => {
+      await waitForAll();
+      return client.listWorkflowInstances();
+    },
+    launchWorkflowInstance: async (input) => {
+      await waitForWorkflow(input.workflowTypeId);
+      return client.launchWorkflowInstance(input);
+    },
+    loadWorkflowInstance: (workflowInstanceId) =>
+      client.loadWorkflowInstance(workflowInstanceId),
     listWorkflowTypes: async () => {
       await waitForAll();
       return client.listWorkflowTypes();

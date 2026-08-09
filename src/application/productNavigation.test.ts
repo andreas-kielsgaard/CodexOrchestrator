@@ -68,8 +68,16 @@ describe('Product navigation history', () => {
   });
 
   it('keeps a Workflow type as a typed destination and returns to its landing page', () => {
-    const landing = { kind: 'workflow', workflowTypeId: null } as const;
-    const editor = { kind: 'workflow', workflowTypeId: 'workflow-1' } as const;
+    const landing = {
+      kind: 'workflow',
+      workflowTypeId: null,
+      workflowInstanceId: null,
+    } as const;
+    const editor = {
+      kind: 'workflow',
+      workflowTypeId: 'workflow-1',
+      workflowInstanceId: null,
+    } as const;
     let state = createProductNavigation(landing);
 
     state = productNavigationReducer(state, {

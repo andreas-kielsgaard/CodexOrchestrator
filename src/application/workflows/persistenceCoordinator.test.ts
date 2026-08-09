@@ -82,6 +82,13 @@ function client(overrides: Partial<WorkflowApplicationClient> = {}): WorkflowApp
   const definition = workflowDefinition();
   return {
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
+    listWorkflowInstances: vi.fn(async () => []),
+    launchWorkflowInstance: vi.fn(async () => {
+      throw new Error('not configured');
+    }),
+    loadWorkflowInstance: vi.fn(async () => {
+      throw new Error('not configured');
+    }),
     listRoles: vi.fn(async () => []),
     createRole: vi.fn(async ({ name, harness }) => ({
       id: 'role-1',

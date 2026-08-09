@@ -2,7 +2,8 @@ use super::{
     application::WorkflowApplication,
     domain::{
         WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
-        WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowTypeSummary,
+        WorkflowInstance, WorkflowInstanceSummary, WorkflowNativeQuery, WorkflowNodeConfig,
+        WorkflowRole, WorkflowTypeSummary,
     },
 };
 use serde::Deserialize;
@@ -101,6 +102,20 @@ pub(crate) struct DeleteWorkflowConnectionDraftInput {
 pub(crate) struct ActivateWorkflowChangesInput {
     workflow_type_id: String,
     elements: Vec<WorkflowElementRef>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchWorkflowInstanceInput {
+    workflow_type_id: String,
+    name: Option<String>,
+    starting_prompt: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LoadWorkflowInstanceQuery {
+    workflow_instance_id: String,
 }
 
 #[tauri::command]
@@ -238,4 +253,33 @@ pub(crate) fn load_workflow_native_query(
     state: State<'_, WorkflowTauriState>,
 ) -> Result<WorkflowNativeQuery, String> {
     state.application.native_query()
+}
+
+#[tauri::command]
+pub(crate) fn launch_workflow_instance(
+    state: State<'_, WorkflowTauriState>,
+    input: LaunchWorkflowInstanceInput,
+) -> Result<WorkflowInstance, String> {
+    state.application.launch_workflow_instance(
+        &input.workflow_type_id,
+        input.name.as_deref(),
+        &input.starting_prompt,
+    )
+}
+
+#[tauri::command]
+pub(crate) fn list_workflow_instances(
+    state: State<'_, WorkflowTauriState>,
+) -> Result<Vec<WorkflowInstanceSummary>, String> {
+    state.application.list_workflow_instances()
+}
+
+#[tauri::command]
+pub(crate) fn load_workflow_instance(
+    state: State<'_, WorkflowTauriState>,
+    query: LoadWorkflowInstanceQuery,
+) -> Result<WorkflowInstance, String> {
+    state
+        .application
+        .load_workflow_instance(&query.workflow_instance_id)
 }

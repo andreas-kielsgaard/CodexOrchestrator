@@ -32,6 +32,13 @@ describe('Tauri Workflow client', () => {
     };
 
     await client.listWorkflowTypes();
+    await client.listWorkflowInstances();
+    await client.launchWorkflowInstance({
+      workflowTypeId: 'workflow-1',
+      name: null,
+      startingPrompt: 'Start the review.',
+    });
+    await client.loadWorkflowInstance('instance-1');
     await client.listRoles();
     await client.createRole({ name: 'Reviewer', harness });
     await client.updateRole({ roleId: 'role-1', name: 'Senior reviewer', harness });
@@ -47,6 +54,18 @@ describe('Tauri Workflow client', () => {
 
     expect(invoke.mock.calls).toEqual([
       ['list_workflow_types'],
+      ['list_workflow_instances'],
+      [
+        'launch_workflow_instance',
+        {
+          input: {
+            workflowTypeId: 'workflow-1',
+            name: null,
+            startingPrompt: 'Start the review.',
+          },
+        },
+      ],
+      ['load_workflow_instance', { query: { workflowInstanceId: 'instance-1' } }],
       ['list_workflow_roles'],
       ['create_workflow_role', { input: { name: 'Reviewer', harness } }],
       ['update_workflow_role', { input: { roleId: 'role-1', name: 'Senior reviewer', harness } }],

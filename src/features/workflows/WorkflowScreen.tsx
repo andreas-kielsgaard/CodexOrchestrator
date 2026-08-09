@@ -27,6 +27,8 @@ import type {
   WorkflowElementRef,
   WorkflowHarnessConfig,
   WorkflowHarnessOverrides,
+  WorkflowInstance,
+  WorkflowInstanceSummary,
   WorkflowMcpServerExposure,
   WorkflowNodeConfig,
   WorkflowNodeElement,
@@ -40,7 +42,9 @@ import './workflow.css';
 export interface WorkflowScreenProps {
   readonly client: WorkflowApplicationClient;
   readonly workflowTypeId: string | null;
+  readonly workflowInstanceId?: string | null;
   onOpenWorkflowType(workflowTypeId: string): void;
+  onOpenWorkflowInstance?(workflowInstanceId: string): void;
 }
 
 type LoadState<T> =
@@ -72,24 +76,43 @@ interface ConnectionListState {
 export function WorkflowScreen({
   client,
   workflowTypeId,
+  workflowInstanceId,
   onOpenWorkflowType,
+  onOpenWorkflowInstance,
 }: WorkflowScreenProps) {
   const persistentClient = workflowPersistenceCoordinator(client);
-  return workflowTypeId ? (
-    <WorkflowTypeEditor client={persistentClient} workflowTypeId={workflowTypeId} />
+  return workflowInstanceId ? (
+    <WorkflowInstanceView client={persistentClient} workflowInstanceId={workflowInstanceId} />
+  ) : workflowTypeId ? (
+    <WorkflowTypeEditor
+      client={persistentClient}
+      workflowTypeId={workflowTypeId}
+      onOpenWorkflowInstance={onOpenWorkflowInstance ?? (() => undefined)}
+    />
   ) : (
-    <WorkflowLanding client={persistentClient} onOpenWorkflowType={onOpenWorkflowType} />
+    <WorkflowLanding
+      client={persistentClient}
+      onOpenWorkflowType={onOpenWorkflowType}
+      onOpenWorkflowInstance={onOpenWorkflowInstance ?? (() => undefined)}
+    />
   );
 }
 
 function WorkflowLanding({
   client,
   onOpenWorkflowType,
-}: Pick<WorkflowScreenProps, 'client' | 'onOpenWorkflowType'>) {
+  onOpenWorkflowInstance,
+}: Pick<WorkflowScreenProps, 'client' | 'onOpenWorkflowType'> & {
+  readonly onOpenWorkflowInstance: (workflowInstanceId: string) => void;
+}) {
   const [tab, setTab] = useState<'launched' | 'types'>('launched');
   const [types, setTypes] = useState<LoadState<readonly WorkflowTypeSummary[]>>({
     kind: 'loading',
   });
+  const [instances, setInstances] = useState<LoadState<readonly WorkflowInstanceSummary[]>>({
+    kind: 'loading',
+  });
+  const [launchType, setLaunchType] = useState<WorkflowTypeSummary | null>(null);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -99,6 +122,11 @@ function WorkflowLanding({
     void client.listWorkflowTypes().then(
       (value) => current && setTypes({ kind: 'ready', value }),
       (error: unknown) => current && setTypes({ kind: 'failed', message: errorMessage(error) }),
+    );
+    void client.listWorkflowInstances().then(
+      (value) => current && setInstances({ kind: 'ready', value }),
+      (error: unknown) =>
+        current && setInstances({ kind: 'failed', message: errorMessage(error) }),
     );
     return () => {
       current = false;
@@ -151,10 +179,38 @@ function WorkflowLanding({
       </div>
 
       {tab === 'launched' ? (
-        <section className="workflow-empty" role="tabpanel">
-          <GitBranch aria-hidden="true" />
-          <h2>No launched workflows</h2>
-          <p>Workflow launching and instance history are not connected in this increment.</p>
+        <section className="workflow-type-list" role="tabpanel">
+          {instances.kind === 'loading' ? (
+            <p className="workflow-status">Loading launched workflows…</p>
+          ) : instances.kind === 'failed' ? (
+            <p className="workflow-error" role="alert">
+              {instances.message}
+            </p>
+          ) : instances.value.length === 0 ? (
+            <div className="workflow-empty">
+              <GitBranch aria-hidden="true" />
+              <h2>No launched workflows</h2>
+              <p>Start one from an activated Workflow type.</p>
+            </div>
+          ) : (
+            <ul className="workflow-type-cards" aria-label="Launched workflows">
+              {instances.value.map((instance) => (
+                <li key={instance.id}>
+                  <button type="button" onClick={() => onOpenWorkflowInstance(instance.id)}>
+                    <span>
+                      <strong>{instance.name}</strong>
+                      <small>
+                        {instance.workflowTypeName} · {launchStatusLabel(instance.launchStatus)}
+                      </small>
+                    </span>
+                    <span className="workflow-draft-badge">
+                      {instance.sessionCount} {instance.sessionCount === 1 ? 'Session' : 'Sessions'}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       ) : (
         <section className="workflow-type-list" role="tabpanel">
@@ -214,12 +270,28 @@ function WorkflowLanding({
                       </span>
                     ) : null}
                   </button>
+                  <button
+                    type="button"
+                    className="workflow-card-launch"
+                    disabled={!workflowType.activeRecipeId}
+                    onClick={() => setLaunchType(workflowType)}
+                  >
+                    Start new
+                  </button>
                 </li>
               ))}
             </ul>
           )}
         </section>
       )}
+      {launchType ? (
+        <LaunchWorkflowDialog
+          workflowType={launchType}
+          client={client}
+          onClose={() => setLaunchType(null)}
+          onLaunched={(instance) => onOpenWorkflowInstance(instance.summary.id)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -227,7 +299,11 @@ function WorkflowLanding({
 function WorkflowTypeEditor({
   client,
   workflowTypeId,
-}: Pick<WorkflowScreenProps, 'client'> & { readonly workflowTypeId: string }) {
+  onOpenWorkflowInstance,
+}: Pick<WorkflowScreenProps, 'client'> & {
+  readonly workflowTypeId: string;
+  readonly onOpenWorkflowInstance: (workflowInstanceId: string) => void;
+}) {
   const [load, setLoad] = useState<LoadState<WorkflowDefinition>>({ kind: 'loading' });
   const [nodeBrush, setNodeBrush] = useState(false);
   const [copyBrush, setCopyBrush] = useState(false);
@@ -263,6 +339,7 @@ function WorkflowTypeEditor({
   const mountedRef = useRef(true);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [launchOpen, setLaunchOpen] = useState(false);
 
   const replaceWorkingNodes = useCallback((next: ReadonlyMap<string, WorkflowNodeConfig>) => {
     workingNodesRef.current = next;
@@ -675,6 +752,14 @@ function WorkflowTypeEditor({
               : 'Not activated'}
           </span>
         </div>
+        <button
+          type="button"
+          className="workflow-primary-button"
+          disabled={!definition.activeRecipe || saving}
+          onClick={() => setLaunchOpen(true)}
+        >
+          Start workflow
+        </button>
       </header>
 
       <div className="workflow-editor__toolbar" role="toolbar" aria-label="Workflow tools">
@@ -1083,8 +1168,212 @@ function WorkflowTypeEditor({
           </p>
         ) : null}
       </div>
+      {launchOpen ? (
+        <LaunchWorkflowDialog
+          workflowType={definition.workflowType}
+          client={client}
+          onClose={() => setLaunchOpen(false)}
+          onLaunched={(instance) => onOpenWorkflowInstance(instance.summary.id)}
+        />
+      ) : null}
     </main>
   );
+}
+
+function LaunchWorkflowDialog({
+  workflowType,
+  client,
+  onClose,
+  onLaunched,
+}: {
+  readonly workflowType: WorkflowTypeSummary;
+  readonly client: WorkflowApplicationClient;
+  onClose(): void;
+  onLaunched(instance: WorkflowInstance): void;
+}) {
+  const [name, setName] = useState('');
+  const [startingPrompt, setStartingPrompt] = useState('');
+  const [launching, setLaunching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const launch = async () => {
+    if (launching || !startingPrompt.trim()) return;
+    setLaunching(true);
+    setError(null);
+    try {
+      const instance = await client.launchWorkflowInstance({
+        workflowTypeId: workflowType.id,
+        name: name.trim() || null,
+        startingPrompt,
+      });
+      onLaunched(instance);
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setLaunching(false);
+    }
+  };
+  return (
+    <div className="workflow-dialog-backdrop" onClick={onClose}>
+      <form
+        className="workflow-launch-dialog"
+        role="dialog"
+        aria-label={`Start ${workflowType.name}`}
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void launch();
+        }}
+      >
+        <header>
+          <div>
+            <p className="eyebrow">New Workflow instance</p>
+            <h2>Start {workflowType.name}</h2>
+          </div>
+          <button type="button" aria-label="Close Workflow launch" onClick={onClose} disabled={launching}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <label>
+          Name <small>Optional</small>
+          <input
+            value={name}
+            disabled={launching}
+            placeholder="Generated from the starting prompt"
+            onChange={(event) => setName(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          Starting prompt
+          <textarea
+            autoFocus
+            required
+            value={startingPrompt}
+            disabled={launching}
+            onChange={(event) => setStartingPrompt(event.currentTarget.value)}
+          />
+        </label>
+        <p className="workflow-draft-note">
+          Starts one fresh Agent Session without inherited or compressed context.
+        </p>
+        {error ? <p className="workflow-error" role="alert">{error}</p> : null}
+        <footer>
+          <button type="button" onClick={onClose} disabled={launching}>Cancel</button>
+          <button className="workflow-primary-button" type="submit" disabled={launching || !startingPrompt.trim()}>
+            {launching ? 'Starting…' : 'Start workflow'}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function WorkflowInstanceView({
+  client,
+  workflowInstanceId,
+}: {
+  readonly client: WorkflowApplicationClient;
+  readonly workflowInstanceId: string;
+}) {
+  const [load, setLoad] = useState<LoadState<WorkflowInstance>>({ kind: 'loading' });
+  useEffect(() => {
+    let current = true;
+    void client.loadWorkflowInstance(workflowInstanceId).then(
+      (value) => current && setLoad({ kind: 'ready', value }),
+      (error: unknown) => current && setLoad({ kind: 'failed', message: errorMessage(error) }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, workflowInstanceId]);
+
+  if (load.kind === 'loading')
+    return <main className="workflow-screen workflow-status" aria-label="Workflow instance">Loading Workflow instance…</main>;
+  if (load.kind === 'failed')
+    return <main className="workflow-screen workflow-error" aria-label="Workflow instance">{load.message}</main>;
+
+  const instance = load.value;
+  return (
+    <main className="workflow-screen workflow-editor workflow-instance" aria-label={`Workflow instance ${instance.summary.name}`}>
+      <header className="workflow-editor__header">
+        <div>
+          <p className="eyebrow">{instance.summary.workflowTypeName} · Recipe {instance.recipe.ordinal}</p>
+          <h1>{instance.summary.name}</h1>
+        </div>
+        <div className="workflow-editor__summary" aria-label="Workflow instance summary">
+          <span>{launchStatusLabel(instance.launchActivation.status)}</span>
+          <span>{instance.summary.activeSessionCount} active</span>
+          <span>{instance.summary.idleSessionCount} idle</span>
+        </div>
+      </header>
+      <section className="workflow-instance__activation" aria-label="Starting activation">
+        <div>
+          <strong>Human launch</strong>
+          <span>{instance.startingPrompt}</span>
+        </div>
+        <dl>
+          <div><dt>Delivery</dt><dd>Direct prompt</dd></div>
+          <div><dt>Context</dt><dd>Fresh · no inheritance · no compression</dd></div>
+          <div><dt>Runtime</dt><dd>{launchStatusLabel(instance.launchActivation.status)}</dd></div>
+        </dl>
+        {instance.launchActivation.failureReason ? (
+          <p className="workflow-error" role="alert">{instance.launchActivation.failureReason}</p>
+        ) : null}
+      </section>
+      <div className="workflow-canvas workflow-instance__canvas" aria-label="Workflow instance graph">
+        <svg className="workflow-canvas__connections" aria-label="Workflow instance connections">
+          <defs>
+            <marker id="workflow-instance-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 z" />
+            </marker>
+          </defs>
+          {instance.recipe.connections.map((connection) => {
+            const sender = instance.recipe.nodes.find((node) => node.id === connection.senderNodeId);
+            const receiver = instance.recipe.nodes.find((node) => node.id === connection.receiverNodeId);
+            if (!sender || !receiver) return null;
+            return (
+              <line
+                key={connection.id}
+                className="workflow-connection__visible"
+                x1={sender.positionX + 210}
+                y1={sender.positionY + 56}
+                x2={receiver.positionX}
+                y2={receiver.positionY + 56}
+                markerEnd="url(#workflow-instance-arrow)"
+              />
+            );
+          })}
+        </svg>
+        {instance.recipe.nodes.map((node) => {
+          const sessions = instance.sessions.filter((session) => session.nodeId === node.id);
+          const active = sessions.filter((session) => session.activity === 'active').length;
+          const latest = sessions.at(-1);
+          return (
+            <article
+              key={node.id}
+              className={`workflow-node workflow-instance-node${node.isStartingPoint ? ' is-start' : ''}`}
+              style={{ left: node.positionX, top: node.positionY }}
+              title={latest?.latestTurnSummary ?? 'No Agent Session turns for this node'}
+            >
+              <span className="workflow-node__badges">{node.isStartingPoint ? <small>Start</small> : null}</span>
+              <strong>{node.harness.harnessName || 'Harness'}</strong>
+              <span>{node.name}</span>
+              <small>{sessions.length} {sessions.length === 1 ? 'Session' : 'Sessions'} · {active} active · {sessions.length - active} idle</small>
+              {latest?.latestTurnSummary ? <p>{latest.latestTurnSummary}</p> : null}
+            </article>
+          );
+        })}
+      </div>
+    </main>
+  );
+}
+
+function launchStatusLabel(status: WorkflowInstanceSummary['launchStatus']): string {
+  switch (status) {
+    case 'requested': return 'Launch requested';
+    case 'associated': return 'Session associated';
+    case 'launch_requested': return 'Runtime launch requested';
+    case 'launch_accepted': return 'Runtime launch accepted';
+    case 'failed': return 'Launch failed';
+  }
 }
 
 function NodeConfiguration({
