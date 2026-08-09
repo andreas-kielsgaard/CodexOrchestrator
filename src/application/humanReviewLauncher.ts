@@ -48,7 +48,12 @@ export interface HumanReviewLineageMarker {
 export interface HumanReviewInstance {
   readonly instanceRef: string;
   readonly name: string;
+  readonly sourceRef: string;
   readonly sourceLabel: string;
+  readonly preparedRevision: string | null;
+  readonly currentRevision: string | null;
+  readonly sourceState: 'current' | 'outdated' | 'changed' | 'unavailable' | 'unknown';
+  readonly outdatedByCommits: number | null;
   readonly phase: string;
   readonly health: string;
   readonly stale: boolean;

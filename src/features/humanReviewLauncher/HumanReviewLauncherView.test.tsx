@@ -31,6 +31,12 @@ describe('HumanReviewLauncherView', () => {
       /@media\s*\(max-width:\s*900px\)[\s\S]*?\.commit-history__columns\s*{[^}]*grid-template-columns:\s*1fr;/,
     );
     expect(launcherCss).toMatch(
+      /\.human-review__build-browser\s*{[^}]*grid-template-columns:\s*minmax\(240px, 0\.7fr\) minmax\(0, 1\.3fr\);/s,
+    );
+    expect(launcherCss).toMatch(
+      /@media\s*\(max-width:\s*900px\)[\s\S]*?\.human-review__build-browser\s*{[^}]*grid-template-columns:\s*1fr;/,
+    );
+    expect(launcherCss).toMatch(
       /@media\s*\(max-width:\s*560px\)[\s\S]*?\.commit-history__summary > div\s*{[^}]*grid-template-columns:\s*1fr;/,
     );
   });
@@ -40,13 +46,18 @@ describe('HumanReviewLauncherView', () => {
     render(<HumanReviewLauncherView client={client} />);
 
     await screen.findByRole('button', { name: /codex\/feature/ });
-    fireEvent.change(screen.getByLabelText('Window name'), {
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare new build' }));
+    fireEvent.change(screen.getByLabelText('Build name'), {
       target: { value: 'Checkout review' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Prepare' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare build' }));
 
-    const card = await screen.findByRole('heading', { name: 'Checkout review' });
-    const review = card.closest('article');
+    const details = await screen.findByRole('region', {
+      name: 'Selected retained build details',
+    });
+    const review = within(details)
+      .getByRole('heading', { name: 'Checkout review' })
+      .closest('article');
     expect(review).not.toBeNull();
     expect(review).not.toHaveTextContent('C:\\repos');
     expect(review).not.toHaveTextContent('18200');
@@ -129,6 +140,10 @@ describe('HumanReviewLauncherView', () => {
     const historical = {
       ...instance('Historical build', 'stopped', 'superseded'),
       instanceRef: 'historical',
+      preparedRevision: '333333333333',
+      currentRevision: '444444444444',
+      sourceState: 'outdated' as const,
+      outdatedByCommits: 3,
       currentUse: 'Source changed since this build',
       actionRequired: true,
       actionSummary: 'Prepare a fresh instance for the selected worktree.',
@@ -138,14 +153,16 @@ describe('HumanReviewLauncherView', () => {
     render(<HumanReviewLauncherView client={client} />);
 
     expect(await screen.findByRole('heading', { name: 'Alpha build' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Beta build' })).toBeVisible();
-    expect(screen.getAllByText(/Stop closes the owned process tree/)).toHaveLength(3);
+    expect(screen.getByRole('button', { name: /^Beta build/ })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /^Historical build/ }));
     const historicalCard = screen
       .getByRole('heading', { name: 'Historical build' })
       .closest('article')!;
     expect(within(historicalCard).getByText('Source changed since this build')).toBeVisible();
-    expect(within(historicalCard).getByRole('button', { name: 'Build' })).toBeDisabled();
+    expect(within(historicalCard).getByText('Outdated by 3 commits')).toBeVisible();
+    expect(within(historicalCard).getByRole('button', { name: 'Rebuild' })).toBeEnabled();
     expect(within(historicalCard).getByRole('button', { name: 'Open' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /^Alpha build/ }));
     const alphaCard = screen.getByRole('heading', { name: 'Alpha build' }).closest('article')!;
     fireEvent.click(within(alphaCard).getByRole('button', { name: 'Build details' }));
     const buildDetail = await screen.findByRole('main', { name: 'Worktree build details' });
@@ -157,13 +174,80 @@ describe('HumanReviewLauncherView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build details' }));
     expect(await screen.findByRole('main', { name: 'Worktree build details' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(await screen.findByRole('heading', { name: 'Retained review builds' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Retained builds' })).toBeVisible();
+  });
+
+  it('shows only the retained builds belonging to the selected branch', async () => {
+    const client = new FakeClient();
+    const alpha = {
+      ...instance('Alpha retained', 'prepared', 'passed'),
+      sourceLabel: 'codex/alpha',
+    };
+    const beta = {
+      ...instance('Beta retained', 'prepared', 'passed'),
+      instanceRef: 'beta-instance',
+      sourceRef: 'beta-source',
+      sourceLabel: 'codex/beta',
+    };
+    client.listSources = async () => [
+      source({ branch: 'codex/alpha', label: 'codex/alpha' }),
+      source({ sourceRef: 'beta-source', branch: 'codex/beta', label: 'codex/beta' }),
+    ];
+    client.listInstances = async () => [alpha, beta];
+    render(<HumanReviewLauncherView client={client} />);
+
+    expect(await screen.findByRole('heading', { name: 'Alpha retained' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Beta retained/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /codex\/beta/ }));
+    expect(await screen.findByRole('heading', { name: 'Beta retained' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Alpha retained/ })).toBeNull();
+  });
+
+  it('rebuilds an outdated retained build as a new current replacement', async () => {
+    const client = new FakeClient();
+    const outdated = {
+      ...instance('Outdated build', 'stopped', 'superseded'),
+      instanceRef: 'outdated-instance',
+      preparedRevision: '222222222222',
+      sourceState: 'outdated' as const,
+      outdatedByCommits: 2,
+    };
+    const replacement = {
+      ...instance('Outdated build', 'prepared', 'not-built'),
+      instanceRef: 'replacement-instance',
+    };
+    client.listInstances = async () => [outdated];
+    client.prepare = vi.fn(async () => replacement);
+    client.build = vi.fn(async () => ({ ...replacement, build: 'passed' as const }));
+    render(<HumanReviewLauncherView client={client} />);
+
+    expect(await screen.findByText('Outdated by 2 commits')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Rebuild' }));
+
+    await waitFor(() => expect(client.prepare).toHaveBeenCalledTimes(1));
+    expect(client.prepare).toHaveBeenCalledWith(
+      expect.stringMatching(/^prepare-/),
+      outdated.sourceRef,
+      outdated.name,
+    );
+    await waitFor(() => expect(client.build).toHaveBeenCalledTimes(1));
+    expect(client.build).toHaveBeenCalledWith(
+      expect.stringMatching(/^build-/),
+      replacement.instanceRef,
+    );
+    const details = screen.getByRole('region', { name: 'Selected retained build details' });
+    expect(within(details).getByText('Built from the current branch head')).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: /^Outdated build Outdated by 2 commits/ }),
+    ).toBeVisible();
   });
 
   it('uses typed proof presentation for legacy selection and retained full-output drill-down', async () => {
     const client = new FakeClient();
     const legacy = {
       ...instance('Legacy build', 'prepared', 'not-built'),
+      sourceRef: 'legacy-source',
       compatibility: 'incompatible' as const,
       actionRequired: true,
       actionSummary: 'Update to a compatible worktree lineage before Build or Open.',
@@ -199,6 +283,7 @@ describe('HumanReviewLauncherView', () => {
     const card = screen.getByRole('heading', { name: 'Legacy build' }).closest('article')!;
     expect(within(card).getByRole('button', { name: 'Build' })).toBeDisabled();
     expect(within(card).getByRole('button', { name: 'Open' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Prepare new build' })).toBeDisabled();
 
     presentation = {
       route: 'details',
@@ -496,7 +581,12 @@ function instance(
   return {
     instanceRef: 'opaque-instance',
     name,
+    sourceRef: 'opaque',
     sourceLabel: 'codex/feature - review',
+    preparedRevision: '444444444444',
+    currentRevision: '444444444444',
+    sourceState: 'current',
+    outdatedByCommits: 0,
     phase,
     health: phase === 'running' ? 'healthy' : 'unknown',
     stale: false,

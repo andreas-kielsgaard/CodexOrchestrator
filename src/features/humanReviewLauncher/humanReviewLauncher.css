@@ -15,7 +15,7 @@
 }
 .human-review__header,
 .human-review__prepare,
-.human-review__card,
+.human-review__instances,
 .human-review__boundary {
   border: 1px solid #d8ddd5;
   border-radius: 12px;
@@ -93,13 +93,14 @@
   color: #7d2727;
 }
 .human-review__instances {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 16px;
   margin-top: 18px;
+  padding: 20px;
 }
 .human-review__instances > header {
-  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
 }
 .human-review__instances > header h2,
 .human-review__instances > header p {
@@ -109,8 +110,82 @@
   margin-top: 4px;
   color: #5d6a62;
 }
-.human-review__card {
-  padding: 20px;
+.human-review__prepare-new {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 16px;
+  border: 1px solid #d7ddd6;
+  border-radius: 9px;
+  padding: 14px;
+  background: #f5f7f3;
+}
+.human-review__prepare-new .human-review__progress {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+.human-review__build-browser {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.7fr) minmax(0, 1.3fr);
+  min-height: 420px;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #cfd6cf;
+  border-radius: 10px;
+  background: #fffdf8;
+}
+.human-review__build-list {
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid #d8ddd5;
+  padding: 10px;
+  background: #f4f6f2;
+}
+.human-review__build-list > p {
+  margin: 8px;
+  color: #647068;
+}
+.human-review__build-list > button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin: 2px 0;
+  border-color: transparent;
+  padding: 11px 12px;
+  text-align: left;
+}
+.human-review__build-list > button.is-selected {
+  border-color: #78897d;
+  background: #e8eee8;
+  box-shadow: inset 3px 0 #596d60;
+}
+.human-review__build-list > button span {
+  color: #435248;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+.human-review__build-list > button small {
+  color: #718078;
+  font-size: 0.68rem;
+  text-transform: capitalize;
+}
+.human-review__build-detail {
+  min-width: 0;
+  padding: 22px;
+}
+.human-review__build-detail > article {
+  min-width: 0;
+}
+.human-review__build-empty {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  color: #647068;
+  text-align: center;
+}
+.human-review__build-empty h3 {
+  margin-bottom: 5px;
 }
 .human-review__card-title {
   display: flex;
@@ -128,27 +203,51 @@
   padding-left: 9px;
   color: #71450f;
 }
-.human-review__card dl {
+.human-review__build-detail dl {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin: 18px 0;
 }
-.human-review__card dl div {
+.human-review__build-detail dl div {
   border-radius: 7px;
   padding: 10px;
   background: #f2f4ef;
 }
-.human-review__card dt {
+.human-review__build-detail dt {
   color: #68736c;
   font-size: 0.72rem;
   font-weight: 750;
   text-transform: uppercase;
 }
-.human-review__card dd {
+.human-review__build-detail dd {
   margin: 3px 0 0;
   font-weight: 750;
   text-transform: capitalize;
+}
+.human-review__freshness {
+  display: grid;
+  gap: 3px;
+  margin: 15px 0;
+  border-left: 3px solid #66806d;
+  padding: 9px 11px;
+  background: #edf3ec;
+  color: #34483b;
+}
+.human-review__freshness span {
+  font-size: 0.76rem;
+}
+.human-review__freshness--outdated,
+.human-review__freshness--changed {
+  border-left-color: #bd8128;
+  background: #f8efd9;
+  color: #6f4d18;
+}
+.human-review__freshness--unavailable,
+.human-review__freshness--unknown {
+  border-left-color: #87918b;
+  background: #f0f2ef;
+  color: #59655e;
 }
 .human-review__actions {
   display: flex;
@@ -744,10 +843,6 @@
   .human-review__prepare {
     grid-template-columns: 1fr;
   }
-  .human-review__prepare > button,
-  .human-review__window-name {
-    grid-column: 1;
-  }
   .worktree-source-picker,
   .commit-history__columns {
     grid-template-columns: 1fr;
@@ -772,16 +867,31 @@
   .human-review__progress dl {
     grid-template-columns: minmax(0, 1fr);
   }
+  .human-review__build-browser {
+    grid-template-columns: 1fr;
+  }
+  .human-review__build-list {
+    max-height: 250px;
+    border-right: 0;
+    border-bottom: 1px solid #d8ddd5;
+  }
 }
 @media (max-width: 560px) {
   .human-review {
     padding: 10px;
   }
   .human-review__header,
+  .human-review__instances > header,
   .worktree-source-picker__browser > header,
   .commit-history__header {
     align-items: stretch;
     flex-direction: column;
+  }
+  .human-review__prepare-new {
+    grid-template-columns: 1fr;
+  }
+  .human-review__prepare-new .human-review__progress {
+    grid-column: 1;
   }
   .commit-history__backdrop {
     padding: 0;

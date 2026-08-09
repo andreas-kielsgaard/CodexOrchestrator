@@ -92,6 +92,12 @@ pub(crate) struct VerifiedTestSource {
     pub(crate) clean: bool,
 }
 
+/// Immutable source identity retained by one prepared instance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RetainedTestSource {
+    pub(crate) current_object_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TestInstancePhase {
     Prepared,
@@ -224,6 +230,10 @@ pub(crate) trait WorktreeTestInstances: Send + Sync {
     fn stop(&self, handle: &TestInstanceHandle) -> Result<TestInstanceStatus, TestInstanceError>;
     fn recover(&self, handle: &TestInstanceHandle)
         -> Result<TestInstanceStatus, TestInstanceError>;
+    fn retained_source(
+        &self,
+        handle: &TestInstanceHandle,
+    ) -> Result<RetainedTestSource, TestInstanceError>;
     fn verified_source(
         &self,
         handle: &TestInstanceHandle,
@@ -596,6 +606,16 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
             current_object_id: identity.git_commit.clone(),
             source_fingerprint: identity.source_fingerprint.clone(),
             clean: observed.clean,
+        })
+    }
+
+    fn retained_source(
+        &self,
+        handle: &TestInstanceHandle,
+    ) -> Result<RetainedTestSource, TestInstanceError> {
+        let snapshot = self.snapshot(handle)?;
+        Ok(RetainedTestSource {
+            current_object_id: snapshot.projected.identity.git_commit,
         })
     }
 }

@@ -32,6 +32,8 @@ export function HumanReviewLauncherView({
   const [expandedOperationRef, setExpandedOperationRef] = useState<string | undefined>();
   const [history, setHistory] = useState<HumanReviewSourceHistory | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [selectedInstanceRef, setSelectedInstanceRef] = useState('');
+  const [showPrepare, setShowPrepare] = useState(false);
   const historyRequest = useRef(0);
   const historyTrigger = useRef<HTMLElement | null>(null);
 
@@ -100,6 +102,15 @@ export function HumanReviewLauncherView({
   }, [client]);
 
   useEffect(() => void load(), [load]);
+
+  useEffect(() => {
+    setSelectedInstanceRef((current) => {
+      const available = instances.filter((instance) => instance.sourceRef === sourceRef);
+      return available.some((instance) => instance.instanceRef === current)
+        ? current
+        : available[0]?.instanceRef || '';
+    });
+  }, [instances, sourceRef]);
 
   useEffect(() => {
     let active = true;
@@ -188,7 +199,10 @@ export function HumanReviewLauncherView({
       setProgress((current) => ({ ...current, prepare: value })),
     );
     try {
-      update(await client.prepare(operationRef, sourceRef, name.trim()));
+      const prepared = await client.prepare(operationRef, sourceRef, name.trim());
+      update(prepared);
+      setSelectedInstanceRef(prepared.instanceRef);
+      setShowPrepare(false);
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -224,7 +238,44 @@ export function HumanReviewLauncherView({
     historyRequest.current += 1;
     setHistory(null);
     setHistoryBusy(false);
+    setSelectedInstanceRef('');
+    setShowPrepare(false);
     setSourceRef(value);
+  }
+
+  async function rebuild(instance: HumanReviewInstance) {
+    setBusy(`rebuild:${instance.instanceRef}`);
+    setError(null);
+    const prepareOperationRef = operationId('prepare');
+    const preparePolling = pollProgress(client, prepareOperationRef, (value) =>
+      setProgress((current) => ({ ...current, [instance.instanceRef]: value })),
+    );
+    let buildPolling: ReturnType<typeof pollProgress> | null = null;
+    try {
+      const replacement = await client.prepare(
+        prepareOperationRef,
+        instance.sourceRef,
+        instance.name,
+      );
+      update(replacement);
+      setSelectedInstanceRef(replacement.instanceRef);
+      setBusy(`rebuild:${replacement.instanceRef}`);
+      preparePolling.stop();
+      await preparePolling.refresh();
+      const buildOperationRef = operationId('build');
+      buildPolling = pollProgress(client, buildOperationRef, (value) =>
+        setProgress((current) => ({ ...current, [replacement.instanceRef]: value })),
+      );
+      update(await client.build(buildOperationRef, replacement.instanceRef));
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      preparePolling.stop();
+      await preparePolling.refresh();
+      buildPolling?.stop();
+      await buildPolling?.refresh();
+      setBusy(null);
+    }
   }
 
   async function act(
@@ -278,6 +329,10 @@ export function HumanReviewLauncherView({
   }
 
   const selectedSource = sources.find((source) => source.sourceRef === sourceRef);
+  const selectedInstances = instances.filter((instance) => instance.sourceRef === sourceRef);
+  const selectedInstance = selectedInstances.find(
+    (instance) => instance.instanceRef === selectedInstanceRef,
+  );
   return (
     <main
       className="human-review"
@@ -305,10 +360,9 @@ export function HumanReviewLauncherView({
 
       <section className="human-review__prepare" aria-labelledby="prepare-review-title">
         <div className="human-review__prepare-intro">
-          <h2 id="prepare-review-title">New review window</h2>
+          <h2 id="prepare-review-title">Choose a branch</h2>
           <p>
-            Prepare creates a retained, isolated build workspace. Nothing is opened until Build and
-            Open succeed.
+            Select a branch to inspect its retained builds or prepare a new isolated review window.
           </p>
         </div>
         <WorktreeSourcePicker
@@ -319,23 +373,11 @@ export function HumanReviewLauncherView({
           onSelect={selectSource}
           onViewHistory={(value, trigger) => void openHistory(value, trigger)}
         />
-        <label className="human-review__window-name">
-          Window name
-          <input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <button
-          type="button"
-          onClick={() => void prepare()}
-          disabled={busy !== null || !sourceRef || !name.trim()}
-        >
-          Prepare
-        </button>
         {selectedSource?.compatibility === 'incompatible' && (
           <p className="human-review__compatibility" role="status">
             {selectedSource.compatibilityMessage}
           </p>
         )}
-        {progress.prepare && <OperationProgress progress={progress.prepare} />}
       </section>
 
       {history && <CommitHistoryDialog history={history} onClose={closeHistory} />}
@@ -347,139 +389,125 @@ export function HumanReviewLauncherView({
       )}
       <section className="human-review__instances" aria-label="Retained review builds">
         <header>
-          <h2>Retained review builds</h2>
-          <p>
-            Each item is one isolated build and application-data set. Stopping closes its process
-            tree; generated material remains until deliberate cleanup.
-          </p>
+          <div>
+            <h2>Retained builds</h2>
+            <p>
+              {selectedSource
+                ? `Builds prepared for ${selectedSource.branch ?? selectedSource.label}.`
+                : 'Select a branch to inspect its retained builds.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowPrepare((current) => !current)}
+            disabled={
+              busy !== null || !selectedSource || selectedSource.compatibility === 'incompatible'
+            }
+            aria-expanded={showPrepare}
+          >
+            Prepare new build
+          </button>
         </header>
-        {instances.length === 0 && busy === null && <p>No review builds prepared yet.</p>}
-        {instances.map((instance) => {
-          const running = instance.phase === 'running';
-          const pending = busy?.endsWith(instance.instanceRef) ?? false;
-          return (
-            <article className="human-review__card" key={instance.instanceRef}>
-              <div className="human-review__card-title">
-                <div>
-                  <p className="eyebrow">{instance.sourceLabel}</p>
-                  <h2>{instance.name}</h2>
-                </div>
+        {showPrepare && (
+          <div className="human-review__prepare-new" aria-label="Prepare a new retained build">
+            <label>
+              Build name
+              <input
+                value={name}
+                maxLength={64}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void prepare()}
+              disabled={busy !== null || !sourceRef || !name.trim()}
+            >
+              Prepare build
+            </button>
+            <button type="button" onClick={() => setShowPrepare(false)} disabled={busy !== null}>
+              Cancel
+            </button>
+            {progress.prepare && <OperationProgress progress={progress.prepare} />}
+          </div>
+        )}
+        <div className="human-review__build-browser">
+          <nav
+            className="human-review__build-list"
+            aria-label="Retained builds for selected branch"
+          >
+            {selectedInstances.length === 0 && busy === null ? (
+              <p>No retained builds for this branch yet.</p>
+            ) : (
+              selectedInstances.map((instance) => (
                 <button
+                  key={instance.instanceRef}
                   type="button"
-                  onClick={() => void openDetail(instance.instanceRef)}
-                  disabled={pending}
+                  className={
+                    instance.instanceRef === selectedInstanceRef ? 'is-selected' : undefined
+                  }
+                  aria-pressed={instance.instanceRef === selectedInstanceRef}
+                  onClick={() => setSelectedInstanceRef(instance.instanceRef)}
                 >
-                  Build details
+                  <strong>{instance.name}</strong>
+                  <span>{buildFreshness(instance)}</span>
+                  <small>
+                    {instance.phase} · {instance.build}
+                  </small>
                 </button>
+              ))
+            )}
+          </nav>
+          <section
+            className="human-review__build-detail"
+            aria-label="Selected retained build details"
+          >
+            {selectedInstance ? (
+              <RetainedBuildDetails
+                instance={selectedInstance}
+                pending={busy?.endsWith(selectedInstance.instanceRef) ?? false}
+                progress={progress[selectedInstance.instanceRef]}
+                onOpenDetail={() => void openDetail(selectedInstance.instanceRef)}
+                onBuild={() =>
+                  void act(selectedInstance, 'build', (operationRef) =>
+                    client.build(operationRef, selectedInstance.instanceRef),
+                  )
+                }
+                onRebuild={() => void rebuild(selectedInstance)}
+                onOpen={() =>
+                  void act(selectedInstance, 'start', (operationRef) =>
+                    client.start(operationRef, selectedInstance.instanceRef),
+                  )
+                }
+                onFocus={() =>
+                  void act(selectedInstance, 'focus', () =>
+                    client.focus(selectedInstance.instanceRef),
+                  )
+                }
+                onStatus={() =>
+                  void act(selectedInstance, 'status', () =>
+                    client.status(selectedInstance.instanceRef),
+                  )
+                }
+                onStop={() =>
+                  void act(selectedInstance, 'stop', () =>
+                    client.stop(selectedInstance.instanceRef),
+                  )
+                }
+                onRecover={() =>
+                  void act(selectedInstance, 'recover', () =>
+                    client.recover(selectedInstance.instanceRef),
+                  )
+                }
+              />
+            ) : (
+              <div className="human-review__build-empty">
+                <h3>No build selected</h3>
+                <p>Choose a retained build, or prepare a new build for this branch.</p>
               </div>
-              <p className="human-review__purpose">{instance.purpose}</p>
-              <dl>
-                <div>
-                  <dt>Lifecycle</dt>
-                  <dd>{instance.phase}</dd>
-                </div>
-                <div>
-                  <dt>Current use</dt>
-                  <dd>{instance.currentUse}</dd>
-                </div>
-                <div>
-                  <dt>Health</dt>
-                  <dd>{instance.stale ? 'Needs recovery' : instance.health}</dd>
-                </div>
-                <div>
-                  <dt>Build</dt>
-                  <dd>{instance.build}</dd>
-                </div>
-                <div>
-                  <dt>Retention</dt>
-                  <dd>{instance.retention}</dd>
-                </div>
-              </dl>
-              <p className={instance.actionRequired ? 'human-review__action-needed' : undefined}>
-                <strong>
-                  {instance.actionRequired ? 'Human action needed: ' : 'Next safe action: '}
-                </strong>
-                {instance.actionSummary}
-              </p>
-              <p className="human-review__cleanup">{instance.cleanup}</p>
-              {progress[instance.instanceRef] && (
-                <OperationProgress progress={progress[instance.instanceRef]} />
-              )}
-              <div className="human-review__actions">
-                <button
-                  type="button"
-                  disabled={
-                    pending ||
-                    running ||
-                    instance.compatibility === 'incompatible' ||
-                    instance.build === 'superseded'
-                  }
-                  onClick={() =>
-                    void act(instance, 'build', (operationRef) =>
-                      client.build(operationRef, instance.instanceRef),
-                    )
-                  }
-                >
-                  Build
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    pending ||
-                    running ||
-                    instance.build !== 'passed' ||
-                    instance.compatibility === 'incompatible'
-                  }
-                  onClick={() =>
-                    void act(instance, 'start', (operationRef) =>
-                      client.start(operationRef, instance.instanceRef),
-                    )
-                  }
-                >
-                  Open
-                </button>
-                <button
-                  type="button"
-                  disabled={pending || !instance.canFocus}
-                  onClick={() =>
-                    void act(instance, 'focus', () => client.focus(instance.instanceRef))
-                  }
-                >
-                  Focus window
-                </button>
-                <button
-                  type="button"
-                  disabled={pending}
-                  onClick={() =>
-                    void act(instance, 'status', () => client.status(instance.instanceRef))
-                  }
-                >
-                  Check status
-                </button>
-                <button
-                  type="button"
-                  disabled={pending || !running}
-                  onClick={() =>
-                    void act(instance, 'stop', () => client.stop(instance.instanceRef))
-                  }
-                >
-                  Stop
-                </button>
-                <button
-                  type="button"
-                  disabled={
-                    pending || (!instance.stale && running && instance.health === 'healthy')
-                  }
-                  onClick={() =>
-                    void act(instance, 'recover', () => client.recover(instance.instanceRef))
-                  }
-                >
-                  Recover
-                </button>
-              </div>
-            </article>
-          );
-        })}
+            )}
+          </section>
+        </div>
       </section>
       <aside className="human-review__boundary">
         <strong>Review boundary</strong>
@@ -491,6 +519,157 @@ export function HumanReviewLauncherView({
       </aside>
     </main>
   );
+}
+
+function RetainedBuildDetails({
+  instance,
+  pending,
+  progress,
+  onOpenDetail,
+  onBuild,
+  onRebuild,
+  onOpen,
+  onFocus,
+  onStatus,
+  onStop,
+  onRecover,
+}: {
+  readonly instance: HumanReviewInstance;
+  readonly pending: boolean;
+  readonly progress?: HumanReviewOperationProgress;
+  readonly onOpenDetail: () => void;
+  readonly onBuild: () => void;
+  readonly onRebuild: () => void;
+  readonly onOpen: () => void;
+  readonly onFocus: () => void;
+  readonly onStatus: () => void;
+  readonly onStop: () => void;
+  readonly onRecover: () => void;
+}) {
+  const running = instance.phase === 'running';
+  const replacementRequired =
+    instance.build === 'superseded' ||
+    instance.sourceState === 'outdated' ||
+    instance.sourceState === 'changed';
+  return (
+    <article>
+      <div className="human-review__card-title">
+        <div>
+          <p className="eyebrow">Selected build</p>
+          <h3>{instance.name}</h3>
+        </div>
+        <button type="button" onClick={onOpenDetail} disabled={pending}>
+          Build details
+        </button>
+      </div>
+      <p className={`human-review__freshness human-review__freshness--${instance.sourceState}`}>
+        <strong>{buildFreshness(instance)}</strong>
+        {replacementRequired && (
+          <span>
+            Rebuild creates a replacement at the current branch head and retains this history.
+          </span>
+        )}
+      </p>
+      <p className="human-review__purpose">{instance.purpose}</p>
+      <dl>
+        <div>
+          <dt>Lifecycle</dt>
+          <dd>{instance.phase}</dd>
+        </div>
+        <div>
+          <dt>Current use</dt>
+          <dd>{instance.currentUse}</dd>
+        </div>
+        <div>
+          <dt>Health</dt>
+          <dd>{instance.stale ? 'Needs recovery' : instance.health}</dd>
+        </div>
+        <div>
+          <dt>Build</dt>
+          <dd>{instance.build}</dd>
+        </div>
+        <div>
+          <dt>Built revision</dt>
+          <dd>{instance.preparedRevision ?? 'Unavailable'}</dd>
+        </div>
+        <div>
+          <dt>Branch revision</dt>
+          <dd>{instance.currentRevision ?? 'Unavailable'}</dd>
+        </div>
+      </dl>
+      <p className={instance.actionRequired ? 'human-review__action-needed' : undefined}>
+        <strong>{instance.actionRequired ? 'Human action needed: ' : 'Next safe action: '}</strong>
+        {instance.actionSummary}
+      </p>
+      <p className="human-review__cleanup">{instance.cleanup}</p>
+      {progress && <OperationProgress progress={progress} />}
+      <div className="human-review__actions">
+        {replacementRequired ? (
+          <button
+            type="button"
+            disabled={pending || running || instance.compatibility === 'incompatible'}
+            onClick={onRebuild}
+          >
+            Rebuild
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={pending || running || instance.compatibility === 'incompatible'}
+            onClick={onBuild}
+          >
+            {instance.build === 'rebuild-required' ? 'Rebuild' : 'Build'}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={
+            pending ||
+            running ||
+            replacementRequired ||
+            instance.build !== 'passed' ||
+            instance.compatibility === 'incompatible'
+          }
+          onClick={onOpen}
+        >
+          Open
+        </button>
+        <button type="button" disabled={pending || !instance.canFocus} onClick={onFocus}>
+          Focus window
+        </button>
+        <button type="button" disabled={pending} onClick={onStatus}>
+          Check status
+        </button>
+        <button type="button" disabled={pending || !running} onClick={onStop}>
+          Stop
+        </button>
+        <button
+          type="button"
+          disabled={pending || (!instance.stale && running && instance.health === 'healthy')}
+          onClick={onRecover}
+        >
+          Recover
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function buildFreshness(instance: HumanReviewInstance) {
+  switch (instance.sourceState) {
+    case 'current':
+      return 'Built from the current branch head';
+    case 'outdated': {
+      const count = instance.outdatedByCommits ?? 0;
+      return `Outdated by ${count} ${count === 1 ? 'commit' : 'commits'}`;
+    }
+    case 'changed':
+      return 'Branch history or working state changed';
+    case 'unavailable':
+      return 'Current branch state is unavailable';
+    case 'unknown':
+      return 'Prepared revision is unavailable';
+  }
 }
 
 function OperationProgress({ progress }: { readonly progress: HumanReviewOperationProgress }) {

@@ -1220,11 +1220,24 @@ fn facade_refuses_build_test_and_start_after_source_identity_changes() {
             .expect("request"),
         )
         .expect("request instance");
+    let prepared_source = facade
+        .retained_source(&instance.handle)
+        .expect("retained source identity");
+    assert_eq!(
+        prepared_source.current_object_id,
+        "0123456789abcdef0123456789abcdef01234567"
+    );
 
     inspector.0.store(true, Ordering::SeqCst);
     let invalidated = facade.status(&instance.handle).expect("invalidated status");
     assert!(!invalidated.source_current);
     assert!(!invalidated.build_reusable);
+    assert_eq!(
+        facade
+            .retained_source(&instance.handle)
+            .expect("retained source remains available"),
+        prepared_source
+    );
     for error in [
         facade
             .build(&instance.handle)

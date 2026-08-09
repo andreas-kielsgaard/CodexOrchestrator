@@ -55,6 +55,13 @@ pub(super) struct CatalogSourceHistoryIdentity {
     pub(super) related_branch_tips: Vec<(String, String)>,
 }
 
+pub(super) struct CatalogSourceFreshness {
+    pub(super) prepared_revision: String,
+    pub(super) current_revision: String,
+    pub(super) state: String,
+    pub(super) outdated_by_commits: Option<usize>,
+}
+
 impl ReviewWorktreeCatalog {
     pub(crate) fn discover(current_source: &Path, git: &Path) -> Result<Self, String> {
         let current_source = current_source
@@ -478,6 +485,73 @@ impl ReviewWorktreeCatalog {
                 .collect(),
         })
     }
+
+    pub(super) fn source_freshness(
+        &self,
+        source_ref: &str,
+        prepared_object_id: &str,
+    ) -> Result<CatalogSourceFreshness, String> {
+        let git = self
+            .git
+            .as_deref()
+            .ok_or_else(|| "The catalog Git executable is unavailable.".to_string())?;
+        let snapshot = self.live_snapshot()?;
+        let option = snapshot
+            .options
+            .iter()
+            .find(|option| option.source_ref == source_ref)
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        let path = snapshot
+            .paths
+            .get(source_ref)
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        let prepared = git_text(
+            path,
+            git,
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("{prepared_object_id}^{{commit}}"),
+            ],
+        )?;
+        if prepared == option.object_id {
+            return Ok(CatalogSourceFreshness {
+                prepared_revision: abbreviated(&prepared, 12),
+                current_revision: abbreviated(&option.object_id, 12),
+                state: "current".into(),
+                outdated_by_commits: Some(0),
+            });
+        }
+        if git_success(
+            path,
+            git,
+            &["merge-base", "--is-ancestor", &prepared, &option.object_id],
+        ) {
+            let count = git_text(
+                path,
+                git,
+                &[
+                    "rev-list",
+                    "--count",
+                    &format!("{prepared}..{}", option.object_id),
+                ],
+            )?
+            .parse::<usize>()
+            .map_err(|_| "Git returned an invalid retained-build distance.".to_string())?;
+            return Ok(CatalogSourceFreshness {
+                prepared_revision: abbreviated(&prepared, 12),
+                current_revision: abbreviated(&option.object_id, 12),
+                state: "outdated".into(),
+                outdated_by_commits: Some(count),
+            });
+        }
+        Ok(CatalogSourceFreshness {
+            prepared_revision: abbreviated(&prepared, 12),
+            current_revision: abbreviated(&option.object_id, 12),
+            state: "changed".into(),
+            outdated_by_commits: None,
+        })
+    }
 }
 
 fn abbreviated(value: &str, length: usize) -> String {
@@ -743,6 +817,71 @@ mod tests {
                 .baseline_object_id,
             baseline
         );
+    }
+
+    #[test]
+    fn retained_source_freshness_distinguishes_current_outdated_and_changed_history() {
+        let directory = tempfile::tempdir().expect("directory");
+        let main = directory.path().join("main");
+        let selected = directory.path().join("selected");
+        git(directory.path(), &["init", main.to_str().unwrap()]);
+        git(&main, &["config", "user.email", "test@example.invalid"]);
+        git(&main, &["config", "user.name", "Test"]);
+        fs::write(main.join("source.txt"), "baseline\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "baseline"]);
+        let baseline = git_output(&main, &["rev-parse", "HEAD"]);
+        git(&main, &["branch", "feature"]);
+        git(
+            &main,
+            &["worktree", "add", selected.to_str().unwrap(), "feature"],
+        );
+        fs::write(selected.join("prepared.txt"), "prepared\n").unwrap();
+        git(&selected, &["add", "."]);
+        git(&selected, &["commit", "-m", "prepared"]);
+        let prepared = git_output(&selected, &["rev-parse", "HEAD"]);
+        let catalog = ReviewWorktreeCatalog::discover(&main, Path::new("git")).unwrap();
+        let selected_ref = catalog
+            .options()
+            .iter()
+            .find(|option| option.branch.as_deref() == Some("feature"))
+            .unwrap()
+            .source_ref
+            .clone();
+
+        let current = catalog
+            .source_freshness(&selected_ref, &prepared)
+            .expect("current freshness");
+        assert_eq!(current.state, "current");
+        assert_eq!(current.outdated_by_commits, Some(0));
+
+        for index in 1..=2 {
+            fs::write(
+                selected.join(format!("later-{index}.txt")),
+                format!("later {index}\n"),
+            )
+            .unwrap();
+            git(&selected, &["add", "."]);
+            git(&selected, &["commit", "-m", &format!("later {index}")]);
+        }
+        let advanced = git_output(&selected, &["rev-parse", "HEAD"]);
+        let outdated = catalog
+            .source_freshness(&selected_ref, &prepared)
+            .expect("outdated freshness");
+        assert_eq!(outdated.state, "outdated");
+        assert_eq!(outdated.outdated_by_commits, Some(2));
+        assert_eq!(outdated.prepared_revision, abbreviated(&prepared, 12));
+        assert_eq!(outdated.current_revision, abbreviated(&advanced, 12));
+
+        git(&selected, &["reset", "--hard", &baseline]);
+        fs::write(selected.join("replacement.txt"), "replacement\n").unwrap();
+        git(&selected, &["add", "."]);
+        git(&selected, &["commit", "-m", "replacement history"]);
+        let changed = catalog
+            .source_freshness(&selected_ref, &prepared)
+            .expect("changed freshness");
+        assert_eq!(changed.state, "changed");
+        assert_eq!(changed.outdated_by_commits, None);
     }
 
     #[test]

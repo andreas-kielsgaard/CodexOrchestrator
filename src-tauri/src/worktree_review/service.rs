@@ -208,7 +208,12 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
 pub(crate) struct ReviewInstanceView {
     pub(crate) instance_ref: String,
     pub(crate) name: String,
+    pub(crate) source_ref: String,
     pub(crate) source_label: String,
+    pub(crate) prepared_revision: Option<String>,
+    pub(crate) current_revision: Option<String>,
+    pub(crate) source_state: String,
+    pub(crate) outdated_by_commits: Option<usize>,
     pub(crate) phase: String,
     pub(crate) health: String,
     pub(crate) stale: bool,
@@ -260,6 +265,13 @@ struct ReviewMetadata {
     name: String,
     source_ref: String,
     source_label: String,
+}
+
+struct ReviewBuildFreshness {
+    prepared_revision: Option<String>,
+    current_revision: Option<String>,
+    state: String,
+    outdated_by_commits: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -370,6 +382,38 @@ impl HumanReviewLauncherService {
             .map(|options| options.iter().map(ReviewSourceView::from).collect())
     }
 
+    fn build_freshness(
+        &self,
+        handle: &TestInstanceHandle,
+        source_ref: &str,
+        status: &TestInstanceStatus,
+    ) -> ReviewBuildFreshness {
+        let Ok(retained) = self.runtime.retained_source(handle) else {
+            return ReviewBuildFreshness::unknown();
+        };
+        let Ok(value) = self
+            .catalog
+            .source_freshness(source_ref, &retained.current_object_id)
+        else {
+            return ReviewBuildFreshness {
+                prepared_revision: Some(abbreviated_revision(&retained.current_object_id)),
+                current_revision: None,
+                state: "unavailable".into(),
+                outdated_by_commits: None,
+            };
+        };
+        ReviewBuildFreshness {
+            prepared_revision: Some(value.prepared_revision),
+            current_revision: Some(value.current_revision),
+            state: if !status.source_current && value.state == "current" {
+                "changed".into()
+            } else {
+                value.state
+            },
+            outdated_by_commits: value.outdated_by_commits,
+        }
+    }
+
     pub(crate) fn instances(&self) -> Vec<ReviewInstanceView> {
         let refs = self
             .instances
@@ -424,6 +468,7 @@ impl HumanReviewLauncherService {
                 )
                 .map_err(safe_error)?;
             let instance_ref = requested.handle.opaque_ref().to_owned();
+            let freshness = self.build_freshness(&requested.handle, &source_ref, &requested.status);
             self.instances
                 .lock()
                 .map_err(|_| "Review instance state is unavailable.".to_string())?
@@ -439,10 +484,12 @@ impl HumanReviewLauncherService {
             Ok(view(
                 instance_ref,
                 name,
+                source_ref.clone(),
                 source_label,
                 requested.status,
                 "not-built",
                 &self.catalog.compatibility(&source_ref).0,
+                freshness,
             ))
         })();
         if let Ok(value) = &result {
@@ -506,13 +553,16 @@ impl HumanReviewLauncherService {
                 }
                 TestActionOutcome::Failed => "failed",
             };
+            let freshness = self.build_freshness(&handle, &metadata.source_ref, &result.status);
             Ok(view(
                 instance_ref,
                 metadata.name,
+                metadata.source_ref.clone(),
                 metadata.source_label,
                 result.status,
                 build,
                 &self.catalog.compatibility(&metadata.source_ref).0,
+                freshness,
             ))
         })();
         if let Ok(value) = &result {
@@ -983,13 +1033,16 @@ impl HumanReviewLauncherService {
         } else {
             "passed"
         };
+        let freshness = self.build_freshness(&handle, &metadata.source_ref, &status);
         Ok(view(
             instance_ref,
             metadata.name,
+            metadata.source_ref.clone(),
             metadata.source_label,
             status,
             build,
             &self.catalog.compatibility(&metadata.source_ref).0,
+            freshness,
         ))
     }
 
@@ -1137,17 +1190,24 @@ fn fresh_operation_ref() -> String {
 fn view(
     instance_ref: String,
     name: String,
+    source_ref: String,
     source_label: String,
     status: TestInstanceStatus,
     build: &str,
     compatibility: &str,
+    freshness: ReviewBuildFreshness,
 ) -> ReviewInstanceView {
     let (current_use, action_required, action_summary) =
         instance_guidance(&status, build, compatibility);
     ReviewInstanceView {
         instance_ref,
         name,
+        source_ref,
         source_label,
+        prepared_revision: freshness.prepared_revision,
+        current_revision: freshness.current_revision,
+        source_state: freshness.state,
+        outdated_by_commits: freshness.outdated_by_commits,
         phase: phase(status.phase).into(),
         health: format!("{:?}", status.health).to_lowercase(),
         stale: status.stale,
@@ -1163,6 +1223,21 @@ fn view(
         action_summary,
         compatibility: compatibility.into(),
     }
+}
+
+impl ReviewBuildFreshness {
+    fn unknown() -> Self {
+        Self {
+            prepared_revision: None,
+            current_revision: None,
+            state: "unknown".into(),
+            outdated_by_commits: None,
+        }
+    }
+}
+
+fn abbreviated_revision(value: &str) -> String {
+    value.chars().take(12).collect()
 }
 
 fn instance_guidance(
