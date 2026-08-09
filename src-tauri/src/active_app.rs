@@ -24,6 +24,7 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
+    workflow: Arc<Mutex<Option<Weak<crate::workflows::application::WorkflowApplication>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -36,6 +37,12 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         } = &notification
         {
             self.registry.on_terminal(invocation);
+        }
+        let workflow = self.workflow.lock().ok().and_then(|slot| slot.clone());
+        if let Some(workflow) = workflow.and_then(|application| application.upgrade()) {
+            // Workflow execution is a best-effort callback after the sender's terminal fact is
+            // durable. Its failure must not change or obscure that Agent Session completion.
+            let _ = workflow.on_agent_notification(&notification);
         }
         // Runtime launch provenance is persisted synchronously before the process start returns.
         // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
@@ -135,6 +142,7 @@ pub(crate) fn run() {
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
+            let workflow_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -145,6 +153,7 @@ pub(crate) fn run() {
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
+                    workflow: workflow_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
@@ -174,6 +183,10 @@ pub(crate) fn run() {
                 harness_engine.clone(),
                 app_data_dir.join("workflow-instances"),
             ));
+            *workflow_notification
+                .lock()
+                .map_err(|_| "Workflow notification registry is unavailable".to_string())? =
+                Some(Arc::downgrade(&workflows));
             app.manage(crate::workflows::transport::WorkflowTauriState::new(
                 workflows,
             ));

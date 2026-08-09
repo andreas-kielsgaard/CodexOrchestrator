@@ -306,6 +306,54 @@ pub(crate) struct WorkflowSessionAssociationRecord {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct WorkflowCompletedTurnTrigger {
+    pub(crate) workflow_instance_id: String,
+    pub(crate) working_directory: String,
+    pub(crate) sender_node_id: String,
+    pub(crate) recipe: EffectiveRecipe,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WorkflowConnectionActivationPreparation {
+    pub(crate) id: String,
+    pub(crate) workflow_instance_id: String,
+    pub(crate) recipe_id: String,
+    pub(crate) connection_id: String,
+    pub(crate) sender_node_id: String,
+    pub(crate) receiver_node_id: String,
+    pub(crate) source_session_id: String,
+    pub(crate) source_invocation_id: String,
+    pub(crate) requested_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkflowConnectionActivationRecord {
+    pub(crate) id: String,
+    pub(crate) workflow_instance_id: String,
+    pub(crate) recipe_id: String,
+    pub(crate) connection_id: String,
+    pub(crate) sender_node_id: String,
+    pub(crate) receiver_node_id: String,
+    pub(crate) source_session_id: String,
+    pub(crate) source_invocation_id: String,
+    pub(crate) target_session_id: Option<String>,
+    pub(crate) target_invocation_id: Option<String>,
+    pub(crate) delivery_kind: String,
+    pub(crate) session_mode: Option<String>,
+    pub(crate) context_inheritance: String,
+    pub(crate) compression: String,
+    pub(crate) resolved_file_path: Option<String>,
+    pub(crate) requested_at: String,
+    pub(crate) resolved_at: Option<String>,
+    pub(crate) associated_at: Option<String>,
+    pub(crate) launch_requested_at: Option<String>,
+    pub(crate) launch_accepted_at: Option<String>,
+    pub(crate) failed_at: Option<String>,
+    pub(crate) failure_stage: Option<String>,
+    pub(crate) failure_reason: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct WorkflowLaunchPreparation {
     pub(crate) instance_id: String,
     pub(crate) workflow_type_id: String,

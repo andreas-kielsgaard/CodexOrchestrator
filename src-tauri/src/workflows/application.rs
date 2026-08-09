@@ -1,19 +1,34 @@
 use super::domain::{
-    WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
-    WorkflowInstance, WorkflowInstanceRecord, WorkflowInstanceSession, WorkflowInstanceSummary,
-    WorkflowLaunchPreparation, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole,
-    WorkflowSessionActivity, WorkflowTypeSummary,
+    WorkflowCompletedTurnTrigger, WorkflowConnectionActivationPreparation,
+    WorkflowConnectionActivationRecord, WorkflowConnectionConfig, WorkflowDefinition,
+    WorkflowElementRef, WorkflowHarnessConfig, WorkflowInstance, WorkflowInstanceRecord,
+    WorkflowInstanceSession, WorkflowInstanceSummary, WorkflowLaunchPreparation,
+    WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowSessionActivity,
+    WorkflowTypeSummary,
 };
 use crate::agent_sessions::{
     application::{
-        AgentSessionApplication, CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
-        SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
+        AgentSessionApplication, AgentSessionNotification, CreateAgentSessionCommand,
+        CreateApplicationAgentSessionCommand, SendAgentSessionMessageCommand,
+        SendIdempotentApplicationAgentSessionMessageCommand,
     },
-    domain::{AgentInvocationId, AgentRuntimeOptions, AgentSessionId},
+    domain::{
+        AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentRuntimeOptions,
+        AgentSessionId, NormalizedRuntimeEventKind,
+    },
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use chrono::Utc;
-use std::{fs, path::PathBuf, sync::Arc};
+use globset::Glob;
+use regex::Regex;
+use std::{
+    cmp::Reverse,
+    collections::HashMap,
+    fs,
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 use uuid::Uuid;
 
 const SUPPORTED_CODEX_MODELS: [&str; 2] = ["gpt-5.6-sol", "gpt-5.6-terra"];
@@ -110,6 +125,59 @@ pub(crate) trait WorkflowRepository: Send + Sync {
         &self,
         workflow_instance_id: &str,
     ) -> Result<WorkflowInstanceRecord, String>;
+    fn load_completed_turn_trigger(
+        &self,
+        source_session_id: &str,
+    ) -> Result<Option<WorkflowCompletedTurnTrigger>, String>;
+    fn create_connection_activation(
+        &self,
+        preparation: WorkflowConnectionActivationPreparation,
+    ) -> Result<(), String>;
+    fn mark_connection_activation_resolved(
+        &self,
+        activation_id: &str,
+        relative_file_path: &str,
+        resolved_at: &str,
+    ) -> Result<(), String>;
+    fn reserve_connection_activation_target(
+        &self,
+        activation_id: &str,
+        workflow_instance_id: &str,
+        node_id: &str,
+        session_id: &str,
+        invocation_id: &str,
+        session_mode: &str,
+    ) -> Result<(), String>;
+    fn associate_connection_activation_session(
+        &self,
+        activation_id: &str,
+        workflow_instance_id: &str,
+        node_id: &str,
+        session_id: &str,
+        associated_at: &str,
+        create_association: bool,
+    ) -> Result<(), String>;
+    fn mark_connection_activation_launch_requested(
+        &self,
+        activation_id: &str,
+        requested_at: &str,
+    ) -> Result<(), String>;
+    fn mark_connection_activation_launch_accepted(
+        &self,
+        activation_id: &str,
+        accepted_at: &str,
+    ) -> Result<(), String>;
+    fn mark_connection_activation_failed(
+        &self,
+        activation_id: &str,
+        stage: &str,
+        reason: &str,
+        failed_at: &str,
+    ) -> Result<(), String>;
+    fn list_connection_activations(
+        &self,
+        workflow_instance_id: &str,
+    ) -> Result<Vec<WorkflowConnectionActivationRecord>, String>;
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +199,7 @@ pub(crate) struct WorkflowApplication {
     sessions: Arc<AgentSessionApplication>,
     harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
     instance_root: PathBuf,
+    receiver_lanes: Mutex<HashMap<(String, String), Arc<Mutex<()>>>>,
 }
 
 impl WorkflowApplication {
@@ -145,6 +214,7 @@ impl WorkflowApplication {
             sessions,
             harnesses,
             instance_root,
+            receiver_lanes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -396,6 +466,365 @@ impl WorkflowApplication {
         self.load_workflow_instance(&instance_id)
     }
 
+    pub(crate) fn on_agent_notification(
+        &self,
+        notification: &AgentSessionNotification,
+    ) -> Result<usize, String> {
+        let AgentSessionNotification::InvocationTerminal {
+            session_id,
+            invocation,
+        } = notification
+        else {
+            return Ok(0);
+        };
+        if invocation.status != AgentInvocationStatus::Completed {
+            return Ok(0);
+        }
+        self.execute_completed_turn_connections(session_id, invocation)
+    }
+
+    fn execute_completed_turn_connections(
+        &self,
+        source_session_id: &AgentSessionId,
+        source_invocation: &AgentInvocation,
+    ) -> Result<usize, String> {
+        let Some(trigger) = self
+            .repository
+            .load_completed_turn_trigger(source_session_id.as_str())?
+        else {
+            return Ok(0);
+        };
+        let connections = trigger
+            .recipe
+            .connections
+            .iter()
+            .filter(|connection| connection.sender_node_id == trigger.sender_node_id)
+            .filter(|connection| {
+                matches!(
+                    connection.mechanism,
+                    Some(
+                        super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile { .. }
+                    )
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if connections.is_empty() {
+            return Ok(0);
+        }
+        let connection_count = connections.len();
+        let final_output = self.final_output_for(source_session_id, &source_invocation.id)?;
+        std::thread::scope(|scope| {
+            let mut executions = Vec::with_capacity(connections.len());
+            for connection in connections {
+                let trigger = trigger.clone();
+                let source_session_id = source_session_id.as_str().to_string();
+                let source_invocation_id = source_invocation.id.as_str().to_string();
+                let final_output = final_output.clone();
+                executions.push(scope.spawn(move || {
+                    self.execute_connection(
+                        trigger,
+                        connection,
+                        &source_session_id,
+                        &source_invocation_id,
+                        final_output.as_deref(),
+                    )
+                }));
+            }
+            for execution in executions {
+                let _ = execution.join();
+            }
+        });
+        Ok(connection_count)
+    }
+
+    fn final_output_for(
+        &self,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<String>, String> {
+        let history = self
+            .sessions
+            .load_session(session_id)
+            .map_err(|error| error.to_string())?;
+        Ok(history
+            .invocations
+            .iter()
+            .find(|entry| entry.invocation.id == *invocation_id)
+            .and_then(|entry| {
+                entry.events.iter().rev().find_map(|event| {
+                    let normalized = event.normalized.as_ref()?;
+                    (normalized.kind == NormalizedRuntimeEventKind::AgentMessage
+                        && normalized
+                            .details
+                            .as_ref()
+                            .and_then(|details| details.get("role"))
+                            .and_then(|role| role.as_str())
+                            == Some("final"))
+                    .then(|| normalized.text.clone())
+                    .flatten()
+                })
+            }))
+    }
+
+    fn execute_connection(
+        &self,
+        trigger: WorkflowCompletedTurnTrigger,
+        connection: WorkflowConnectionConfig,
+        source_session_id: &str,
+        source_invocation_id: &str,
+        final_output: Option<&str>,
+    ) {
+        let Some(receiver_node_id) = connection.receiver_node_id.clone() else {
+            return;
+        };
+        let activation_id = format!("workflow-connection-activation-{}", Uuid::new_v4());
+        let requested_at = Utc::now().to_rfc3339();
+        if self
+            .repository
+            .create_connection_activation(WorkflowConnectionActivationPreparation {
+                id: activation_id.clone(),
+                workflow_instance_id: trigger.workflow_instance_id.clone(),
+                recipe_id: trigger.recipe.id.clone(),
+                connection_id: connection.id.clone(),
+                sender_node_id: trigger.sender_node_id.clone(),
+                receiver_node_id: receiver_node_id.clone(),
+                source_session_id: source_session_id.to_string(),
+                source_invocation_id: source_invocation_id.to_string(),
+                requested_at,
+            })
+            .is_err()
+        {
+            return;
+        }
+        let outcome = self.execute_connection_after_request(
+            &activation_id,
+            &trigger,
+            &connection,
+            &receiver_node_id,
+            final_output,
+        );
+        if let Err((stage, reason)) = outcome {
+            let _ = self.repository.mark_connection_activation_failed(
+                &activation_id,
+                stage,
+                &reason,
+                &Utc::now().to_rfc3339(),
+            );
+        }
+    }
+
+    fn execute_connection_after_request(
+        &self,
+        activation_id: &str,
+        trigger: &WorkflowCompletedTurnTrigger,
+        connection: &WorkflowConnectionConfig,
+        receiver_node_id: &str,
+        final_output: Option<&str>,
+    ) -> Result<(), (&'static str, String)> {
+        let mechanism = connection.mechanism.as_ref().ok_or_else(|| {
+            (
+                "file_resolution",
+                "The connection has no mechanism.".to_string(),
+            )
+        })?;
+        let super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+            file_selector,
+            description_text,
+            prompt_text,
+            ..
+        } = mechanism;
+        let relative_file_path = resolve_expected_file(
+            Path::new(&trigger.working_directory),
+            file_selector,
+            final_output,
+        )
+        .map_err(|reason| ("file_resolution", reason))?;
+        self.repository
+            .mark_connection_activation_resolved(
+                activation_id,
+                &relative_file_path,
+                &Utc::now().to_rfc3339(),
+            )
+            .map_err(|reason| ("resolution_recording", reason))?;
+        let prompt = format!("{relative_file_path}\n{description_text}\n{prompt_text}");
+        let receiver = trigger
+            .recipe
+            .nodes
+            .iter()
+            .find(|node| node.id == receiver_node_id)
+            .ok_or_else(|| {
+                (
+                    "receiver_resolution",
+                    "The receiver node is absent from the activated recipe.".to_string(),
+                )
+            })?;
+        let requested_options = AgentRuntimeOptions {
+            model: nonempty(&receiver.harness.runtime.model),
+            sandbox: None,
+        };
+        let launch_extension =
+            launch_extension(&receiver.harness).map_err(|reason| ("receiver_harness", reason))?;
+        let receiver_lane = self
+            .receiver_lane(&trigger.workflow_instance_id, receiver_node_id)
+            .map_err(|reason| ("receiver_session_resolution", reason))?;
+        let receiver_guard = receiver_lane
+            .lock()
+            .map_err(|_| ("receiver_session_resolution", "The receiver Session lane is unavailable.".to_string()))?;
+        let existing = self
+            .most_recent_receiver_session(trigger, receiver_node_id)
+            .map_err(|reason| ("receiver_session_resolution", reason))?;
+        let (session, invocation, mode, create_association) = if let Some(session) = existing {
+            (
+                session,
+                self.sessions.allocate_application_invocation_id(),
+                "continued",
+                false,
+            )
+        } else {
+            let session = AgentSessionId::new(format!("workflow-session-{}", Uuid::new_v4()))
+                .map_err(|error| ("session_creation", error.to_string()))?;
+            let invocation = self.sessions.allocate_application_invocation_id();
+            (session, invocation, "fresh", true)
+        };
+        self.repository
+            .reserve_connection_activation_target(
+                activation_id,
+                &trigger.workflow_instance_id,
+                receiver_node_id,
+                session.as_str(),
+                invocation.as_str(),
+                mode,
+            )
+            .map_err(|reason| ("target_reservation", reason))?;
+        if create_association {
+            self.sessions
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: session.clone(),
+                    session: CreateAgentSessionCommand {
+                        title: Some(receiver.harness.harness_name.clone()),
+                        working_directory: Some(trigger.working_directory.clone()),
+                        requested_options: requested_options.clone(),
+                    },
+                })
+                .map_err(|error| ("session_creation", error.to_string()))?;
+            self.harnesses
+                .bind_workflow_session(BindWorkflowSessionHarness {
+                    session_id: session.clone(),
+                    runtime_instance_id: invocation.as_str().to_string(),
+                    workflow_instance_id: trigger.workflow_instance_id.clone(),
+                    recipe_id: trigger.recipe.id.clone(),
+                    node_id: receiver_node_id.to_string(),
+                    harness: receiver.harness.clone(),
+                })
+                .map_err(|reason| ("harness_binding", reason))?;
+        }
+        let associated_at = Utc::now().to_rfc3339();
+        self.repository
+            .associate_connection_activation_session(
+                activation_id,
+                &trigger.workflow_instance_id,
+                receiver_node_id,
+                session.as_str(),
+                &associated_at,
+                create_association,
+            )
+            .map_err(|reason| ("session_association", reason))?;
+        // The Session association is now unique and visible to competing edges. Do not retain the
+        // lane while entering the runtime because a synchronous terminal callback may cycle back
+        // to this receiver; the Agent Session repository rejects a second active invocation.
+        drop(receiver_guard);
+        self.repository
+            .mark_connection_activation_launch_requested(activation_id, &Utc::now().to_rfc3339())
+            .map_err(|reason| ("launch_request_recording", reason))?;
+        let launch = self
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: invocation,
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session),
+                        submitted_text: prompt,
+                        title: None,
+                        working_directory: Some(trigger.working_directory.clone()),
+                        requested_options: Some(requested_options),
+                    },
+                },
+                launch_extension,
+            )
+            .map_err(|error| ("runtime_launch", error.to_string()))?;
+        if !launch.launch_accepted {
+            return Err((
+                "runtime_launch",
+                "The Agent Session launch was not accepted.".to_string(),
+            ));
+        }
+        self.repository
+            .mark_connection_activation_launch_accepted(activation_id, &Utc::now().to_rfc3339())
+            .map_err(|reason| ("launch_acceptance_recording", reason))?;
+        Ok(())
+    }
+
+    fn receiver_lane(
+        &self,
+        workflow_instance_id: &str,
+        receiver_node_id: &str,
+    ) -> Result<Arc<Mutex<()>>, String> {
+        let mut lanes = self
+            .receiver_lanes
+            .lock()
+            .map_err(|_| "Workflow receiver Session lanes are unavailable.".to_string())?;
+        Ok(lanes
+            .entry((
+                workflow_instance_id.to_string(),
+                receiver_node_id.to_string(),
+            ))
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone())
+    }
+
+    fn most_recent_receiver_session(
+        &self,
+        trigger: &WorkflowCompletedTurnTrigger,
+        receiver_node_id: &str,
+    ) -> Result<Option<AgentSessionId>, String> {
+        let instance = self
+            .repository
+            .load_workflow_instance(&trigger.workflow_instance_id)?;
+        let mut candidates = Vec::new();
+        for association in instance
+            .session_associations
+            .iter()
+            .filter(|association| association.node_id == receiver_node_id)
+        {
+            let session_id = AgentSessionId::new(association.session_id.clone())
+                .map_err(|error| error.to_string())?;
+            let history = self
+                .sessions
+                .load_session(&session_id)
+                .map_err(|error| error.to_string())?;
+            let last_active_at = history
+                .invocations
+                .iter()
+                .map(|entry| entry.invocation.updated_at)
+                .max()
+                .unwrap_or(history.session.updated_at);
+            candidates.push((
+                last_active_at,
+                association.associated_at.clone(),
+                session_id,
+            ));
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| right.1.cmp(&left.1))
+                .then_with(|| left.2.as_str().cmp(right.2.as_str()))
+        });
+        Ok(candidates.into_iter().next().map(|(_, _, session)| session))
+    }
+
     pub(crate) fn list_workflow_instances(&self) -> Result<Vec<WorkflowInstanceSummary>, String> {
         self.repository
             .list_workflow_instances()?
@@ -562,6 +991,130 @@ fn summarize(value: &str) -> String {
     }
 }
 
+fn resolve_expected_file(
+    instance_root: &Path,
+    selector: &super::domain::WorkflowExpectedFileSelector,
+    final_output: Option<&str>,
+) -> Result<String, String> {
+    let root = instance_root
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve the Workflow instance folder: {error}"))?;
+    match selector {
+        super::domain::WorkflowExpectedFileSelector::FolderFilenamePattern {
+            folder,
+            filename_pattern,
+        } => {
+            let folder = safe_folder(&root, folder)?;
+            let matcher = Glob::new(filename_pattern)
+                .map_err(|error| format!("Expected filename pattern is invalid: {error}"))?
+                .compile_matcher();
+            let mut matches = fs::read_dir(&folder)
+                .map_err(|error| format!("Unable to read the expected file folder: {error}"))?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let file_type = entry.file_type().ok()?;
+                    if !file_type.is_file() || !matcher.is_match(entry.file_name()) {
+                        return None;
+                    }
+                    let path = entry.path().canonicalize().ok()?;
+                    if !path.starts_with(&folder) {
+                        return None;
+                    }
+                    let modified = entry
+                        .metadata()
+                        .and_then(|metadata| metadata.modified())
+                        .unwrap_or(SystemTime::UNIX_EPOCH);
+                    let relative = relative_literal(&root, &path).ok()?;
+                    Some((modified, relative))
+                })
+                .collect::<Vec<_>>();
+            matches.sort_by(|left, right| {
+                Reverse(left.0)
+                    .cmp(&Reverse(right.0))
+                    .then_with(|| left.1.cmp(&right.1))
+            });
+            matches
+                .into_iter()
+                .next()
+                .map(|(_, relative)| relative)
+                .ok_or_else(|| "No file matched the expected filename pattern.".to_string())
+        }
+        super::domain::WorkflowExpectedFileSelector::FolderOutputRegex {
+            folder,
+            output_regex,
+        } => {
+            let folder = safe_folder(&root, folder)?;
+            let output = final_output.ok_or_else(|| {
+                "The completed turn has no persisted final agent output.".to_string()
+            })?;
+            let expression = Regex::new(output_regex)
+                .map_err(|error| format!("Agent output regex is invalid: {error}"))?;
+            let capture = expression
+                .captures(output)
+                .and_then(|captures| captures.get(1))
+                .ok_or_else(|| {
+                    "The final agent output did not provide capture group 1.".to_string()
+                })?
+                .as_str();
+            let capture = Path::new(capture);
+            validate_relative_path(capture, "Captured file path")?;
+            let path = folder.join(capture).canonicalize().map_err(|error| {
+                format!("Unable to resolve the file captured from agent output: {error}")
+            })?;
+            if !path.starts_with(&folder) || !path.is_file() {
+                return Err(
+                    "The captured file path is not a file beneath the configured folder."
+                        .to_string(),
+                );
+            }
+            relative_literal(&root, &path)
+        }
+    }
+}
+
+fn safe_folder(root: &Path, configured: &str) -> Result<PathBuf, String> {
+    let configured = Path::new(configured);
+    validate_relative_path(configured, "Expected file folder")?;
+    let folder = root
+        .join(configured)
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve the expected file folder: {error}"))?;
+    if !folder.starts_with(root) || !folder.is_dir() {
+        return Err(
+            "Expected file folder must be a folder inside the Workflow instance.".to_string(),
+        );
+    }
+    Ok(folder)
+}
+
+fn validate_relative_path(path: &Path, label: &str) -> Result<(), String> {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(format!(
+            "{label} must be a relative path without parent traversal."
+        ));
+    }
+    Ok(())
+}
+
+fn relative_literal(root: &Path, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| "Resolved file is outside the Workflow instance.".to_string())?;
+    Ok(relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,17 +1123,24 @@ mod tests {
             application::{
                 AgentSessionNotification, AgentSessionNotifier, SystemAgentSessionProviders,
             },
-            domain::{AgentInvocationId, AgentRuntimeOptions, ExternalRuntimeContextId},
+            domain::{
+                AgentInvocationId, AgentInvocationStatus, AgentInvocationTerminalStatus,
+                AgentRuntimeEvent, AgentRuntimeEventId, AgentRuntimeEventSource,
+                AgentRuntimeOptions, ExternalRuntimeContextId, InvocationCompletion,
+                NormalizedRuntimeEvent,
+            },
             ports::{
-                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
-                RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError,
+                AgentRuntime, AgentRuntimeUpdateSink, AgentSessionRepository,
+                RuntimeInvocationMode, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+                RuntimePortError,
             },
             repository::SqliteAgentSessionRepository,
         },
         workflows::{
             domain::{
-                WorkflowElementKind, WorkflowElementRef, WorkflowHarnessRuntimeSettings,
-                WorkflowLaunchStatus, WorkflowNodeHarness,
+                WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
+                WorkflowHarnessRuntimeSettings, WorkflowInitialCheck, WorkflowLaunchStatus,
+                WorkflowMatchSelection, WorkflowNodeHarness,
             },
             repository::SqliteWorkflowRepository,
         },
@@ -624,11 +1184,12 @@ mod tests {
 
         fn resume_invocation(
             &self,
-            _: RuntimeInvocationRequest,
+            request: RuntimeInvocationRequest,
             _: ExternalRuntimeContextId,
             _: Arc<dyn AgentRuntimeUpdateSink>,
         ) -> Result<(), RuntimePortError> {
-            panic!("a fresh Workflow launch cannot resume")
+            self.launches.lock().unwrap().push(request);
+            Ok(())
         }
 
         fn cancel_invocation(&self, _: &AgentInvocationId) -> Result<(), RuntimePortError> {
@@ -649,6 +1210,18 @@ mod tests {
     impl WorkflowSessionHarnessBinder for FailingHarnessBinder {
         fn bind_workflow_session(&self, _: BindWorkflowSessionHarness) -> Result<(), String> {
             Err("managed upstream is unavailable".to_string())
+        }
+    }
+
+    struct ReceiverFailingHarnessBinder;
+
+    impl WorkflowSessionHarnessBinder for ReceiverFailingHarnessBinder {
+        fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String> {
+            if request.node_id == "sender" {
+                Ok(())
+            } else {
+                Err("receiver Harness binding failed".to_string())
+            }
         }
     }
 
@@ -1001,5 +1574,640 @@ mod tests {
             .contains("managed upstream"));
         assert!(instance.launch_activation.launch_requested_at.is_none());
         assert!(runtime.launches.lock().unwrap().is_empty());
+    }
+
+    struct ExecutionFixture {
+        _directory: tempfile::TempDir,
+        agent_repository: Arc<SqliteAgentSessionRepository>,
+        workflow_repository: Arc<SqliteWorkflowRepository>,
+        runtime: Arc<RecordingRuntime>,
+        application: WorkflowApplication,
+        workflow_type_id: String,
+    }
+
+    fn expected_file_connection(
+        id: &str,
+        receiver: &str,
+        selector: WorkflowExpectedFileSelector,
+        prompt: &str,
+    ) -> WorkflowConnectionConfig {
+        WorkflowConnectionConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            sender_node_id: "sender".to_string(),
+            receiver_node_id: Some(receiver.to_string()),
+            mechanism: Some(
+                super::super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+                    file_selector: selector,
+                    description_text: "Expected handoff file".to_string(),
+                    prompt_text: prompt.to_string(),
+                    match_selection: WorkflowMatchSelection::Newest,
+                    initial_check: WorkflowInitialCheck::OnceImmediately,
+                },
+            ),
+        }
+    }
+
+    fn execution_fixture(connections: Vec<WorkflowConnectionConfig>) -> ExecutionFixture {
+        execution_fixture_with_binder(connections, Arc::new(RecordingHarnessBinder))
+    }
+
+    fn execution_fixture_with_binder(
+        connections: Vec<WorkflowConnectionConfig>,
+        harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
+    ) -> ExecutionFixture {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("workflow-execution.sqlite");
+        let agent_connection = crate::storage::open_active_database(&database_path).unwrap();
+        let agent_repository = Arc::new(
+            SqliteAgentSessionRepository::new(agent_connection).expect("Agent Session repository"),
+        );
+        let runtime = Arc::new(RecordingRuntime::default());
+        let providers = Arc::new(SystemAgentSessionProviders);
+        let sessions = Arc::new(AgentSessionApplication::new(
+            agent_repository.clone(),
+            runtime.clone(),
+            Arc::new(NoopNotifier),
+            providers.clone(),
+            providers,
+            Some("codex-test".to_string()),
+        ));
+        let workflow_repository = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
+        let definition = workflow_repository
+            .create_workflow_type("Connection execution")
+            .unwrap();
+        let workflow_type_id = definition.workflow_type.id;
+        let receiver_ids = connections
+            .iter()
+            .map(|connection| connection.receiver_node_id.clone().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        let harness = |name: &str| WorkflowHarnessConfig {
+            harness_name: name.to_string(),
+            runtime: WorkflowHarnessRuntimeSettings {
+                provider: "codex".to_string(),
+                ..WorkflowHarnessRuntimeSettings::default()
+            },
+            ..WorkflowHarnessConfig::default()
+        };
+        workflow_repository
+            .save_node_draft(
+                &workflow_type_id,
+                WorkflowNodeConfig {
+                    id: "sender".to_string(),
+                    name: "Sender".to_string(),
+                    harness_name: "Sender harness".to_string(),
+                    role_name: None,
+                    position_x: 0.0,
+                    position_y: 0.0,
+                    is_starting_point: true,
+                    harness: Some(WorkflowNodeHarness::Standalone {
+                        config: harness("Sender harness"),
+                    }),
+                },
+            )
+            .unwrap();
+        for (index, receiver_id) in receiver_ids.iter().enumerate() {
+            workflow_repository
+                .save_node_draft(
+                    &workflow_type_id,
+                    WorkflowNodeConfig {
+                        id: receiver_id.clone(),
+                        name: receiver_id.clone(),
+                        harness_name: format!("{receiver_id} harness"),
+                        role_name: None,
+                        position_x: 300.0,
+                        position_y: index as f64 * 160.0,
+                        is_starting_point: false,
+                        harness: Some(WorkflowNodeHarness::Standalone {
+                            config: harness(&format!("{receiver_id} harness")),
+                        }),
+                    },
+                )
+                .unwrap();
+        }
+        for connection in &connections {
+            workflow_repository
+                .save_connection_draft(&workflow_type_id, connection.clone())
+                .unwrap();
+        }
+        let mut elements = vec![WorkflowElementRef {
+            kind: WorkflowElementKind::Node,
+            id: "sender".to_string(),
+        }];
+        elements.extend(receiver_ids.into_iter().map(|id| WorkflowElementRef {
+            kind: WorkflowElementKind::Node,
+            id,
+        }));
+        elements.extend(connections.iter().map(|connection| WorkflowElementRef {
+            kind: WorkflowElementKind::Connection,
+            id: connection.id.clone(),
+        }));
+        workflow_repository
+            .activate_changes(&workflow_type_id, &elements)
+            .unwrap();
+        let application = WorkflowApplication::new(
+            workflow_repository.clone(),
+            sessions,
+            harnesses,
+            directory.path().join("workflow-instances"),
+        );
+        ExecutionFixture {
+            _directory: directory,
+            agent_repository,
+            workflow_repository,
+            runtime,
+            application,
+            workflow_type_id,
+        }
+    }
+
+    fn launch_execution_instance(fixture: &ExecutionFixture) -> WorkflowInstance {
+        fixture
+            .application
+            .launch_workflow_instance(
+                &fixture.workflow_type_id,
+                Some("Execution instance"),
+                "Produce the handoff.",
+            )
+            .unwrap()
+    }
+
+    fn complete_source_turn(
+        fixture: &ExecutionFixture,
+        instance: &WorkflowInstance,
+        final_output: &str,
+    ) -> (AgentSessionId, AgentInvocation) {
+        let session_id = AgentSessionId::new(instance.sessions[0].session_id.clone()).unwrap();
+        let invocation_id =
+            AgentInvocationId::new(instance.launch_activation.target_invocation_id.clone())
+                .unwrap();
+        let now = Utc::now();
+        fixture
+            .agent_repository
+            .append_event(AgentRuntimeEvent {
+                id: AgentRuntimeEventId::new(format!("event-{}", Uuid::new_v4())).unwrap(),
+                invocation_id: invocation_id.clone(),
+                sequence: 0,
+                source: AgentRuntimeEventSource::Runtime,
+                raw_payload: serde_json::json!({"type":"agent_message","text":final_output}),
+                normalized: Some(NormalizedRuntimeEvent {
+                    kind: NormalizedRuntimeEventKind::AgentMessage,
+                    text: Some(final_output.to_string()),
+                    external_context_id: None,
+                    usage: None,
+                    details: Some(serde_json::json!({"role":"final"})),
+                    tool_activity: None,
+                }),
+                recorded_at: now,
+            })
+            .unwrap();
+        let invocation = fixture
+            .agent_repository
+            .finish_invocation(
+                &invocation_id,
+                InvocationCompletion {
+                    status: AgentInvocationTerminalStatus::Completed,
+                    completed_at: now,
+                    exit_code: Some(0),
+                    signal: None,
+                    runtime_error: None,
+                },
+                now,
+            )
+            .unwrap();
+        (session_id, invocation)
+    }
+
+    fn completed_notification(
+        session_id: AgentSessionId,
+        invocation: AgentInvocation,
+    ) -> AgentSessionNotification {
+        AgentSessionNotification::InvocationTerminal {
+            session_id,
+            invocation,
+        }
+    }
+
+    #[test]
+    fn completed_turn_selects_newest_file_and_constructs_interface_order_prompt() {
+        let fixture = execution_fixture(vec![expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "*.md".to_string(),
+            },
+            "Review this handoff.",
+        )]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("older.md"), "old").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(folder.join("newer.md"), "new").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        assert_eq!(
+            fixture
+                .application
+                .on_agent_notification(&completed_notification(session_id, invocation))
+                .unwrap(),
+            1
+        );
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 1);
+        assert_eq!(
+            activations[0].resolved_file_path.as_deref(),
+            Some("handoffs/newer.md")
+        );
+        assert_eq!(activations[0].delivery_kind, "direct_prompt_runtime_v1");
+        assert_eq!(activations[0].context_inheritance, "none");
+        assert_eq!(activations[0].compression, "none");
+        assert!(activations[0].launch_accepted_at.is_some());
+        let launches = fixture.runtime.launches.lock().unwrap();
+        assert_eq!(launches.len(), 2);
+        assert_eq!(
+            launches[1].submitted_text,
+            "handoffs/newer.md\nExpected handoff file\nReview this handoff."
+        );
+    }
+
+    #[test]
+    fn regex_uses_only_the_exact_completed_turn_final_output_capture() {
+        let fixture = execution_fixture(vec![expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderOutputRegex {
+                folder: "handoffs".to_string(),
+                output_regex: r"handoff: ([a-z-]+\.md)".to_string(),
+            },
+            "Continue.",
+        )]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("chosen.md"), "chosen").unwrap();
+        fs::write(folder.join("ignored.md"), "ignored").unwrap();
+        let (session_id, invocation) =
+            complete_source_turn(&fixture, &instance, "final handoff: chosen.md");
+
+        fixture
+            .application
+            .on_agent_notification(&completed_notification(session_id, invocation))
+            .unwrap();
+
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            activation.resolved_file_path.as_deref(),
+            Some("handoffs/chosen.md")
+        );
+    }
+
+    #[test]
+    fn only_completed_invocations_fire_and_missing_file_failure_preserves_sender_completion() {
+        let fixture = execution_fixture(vec![expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "*.md".to_string(),
+            },
+            "Continue.",
+        )]);
+        let instance = launch_execution_instance(&fixture);
+        fs::create_dir_all(PathBuf::from(&instance.working_directory).join("handoffs")).unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+        let mut failed = invocation.clone();
+        failed.status = AgentInvocationStatus::Failed;
+
+        assert_eq!(
+            fixture
+                .application
+                .on_agent_notification(&completed_notification(session_id.clone(), failed))
+                .unwrap(),
+            0
+        );
+        assert!(fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .is_empty());
+
+        fixture
+            .application
+            .on_agent_notification(&completed_notification(session_id.clone(), invocation))
+            .unwrap();
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(activation.failure_stage.as_deref(), Some("file_resolution"));
+        assert!(activation.launch_accepted_at.is_none());
+        let history = fixture
+            .application
+            .sessions
+            .load_session(&session_id)
+            .unwrap();
+        assert_eq!(
+            history.invocations[0].invocation.status,
+            AgentInvocationStatus::Completed
+        );
+    }
+
+    #[test]
+    fn receiver_is_fresh_once_then_continues_its_most_recent_session() {
+        let fixture = execution_fixture(vec![expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "handoff.md".to_string(),
+            },
+            "Continue.",
+        )]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+        let notification = completed_notification(session_id, invocation);
+
+        fixture
+            .application
+            .on_agent_notification(&notification)
+            .unwrap();
+        let first = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        let first_target_invocation =
+            AgentInvocationId::new(first.target_invocation_id.clone().unwrap()).unwrap();
+        let now = Utc::now();
+        fixture
+            .agent_repository
+            .finish_invocation(
+                &first_target_invocation,
+                InvocationCompletion {
+                    status: AgentInvocationTerminalStatus::Completed,
+                    completed_at: now,
+                    exit_code: Some(0),
+                    signal: None,
+                    runtime_error: None,
+                },
+                now,
+            )
+            .unwrap();
+
+        fixture
+            .application
+            .on_agent_notification(&notification)
+            .unwrap();
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 2);
+        assert_eq!(activations[0].session_mode.as_deref(), Some("fresh"));
+        assert_eq!(activations[1].session_mode.as_deref(), Some("continued"));
+        assert_eq!(
+            activations[0].target_session_id,
+            activations[1].target_session_id
+        );
+        assert_ne!(
+            activations[0].target_invocation_id,
+            activations[1].target_invocation_id
+        );
+    }
+
+    #[test]
+    fn trigger_uses_updated_activated_recipe_not_instance_launch_recipe() {
+        let mut connection = expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "handoff.md".to_string(),
+            },
+            "Old prompt.",
+        );
+        let fixture = execution_fixture(vec![connection.clone()]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let Some(super::super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile {
+            prompt_text,
+            ..
+        }) = connection.mechanism.as_mut()
+        else {
+            unreachable!()
+        };
+        *prompt_text = "New prompt.".to_string();
+        fixture
+            .workflow_repository
+            .save_connection_draft(&fixture.workflow_type_id, connection)
+            .unwrap();
+        let updated = fixture
+            .workflow_repository
+            .activate_changes(
+                &fixture.workflow_type_id,
+                &[WorkflowElementRef {
+                    kind: WorkflowElementKind::Connection,
+                    id: "edge".to_string(),
+                }],
+            )
+            .unwrap();
+        let updated_recipe_id = updated.active_recipe.unwrap().id;
+        assert_ne!(updated_recipe_id, instance.recipe.id);
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        fixture
+            .application
+            .on_agent_notification(&completed_notification(session_id, invocation))
+            .unwrap();
+
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(activation.recipe_id, updated_recipe_id);
+        assert!(fixture.runtime.launches.lock().unwrap()[1]
+            .submitted_text
+            .ends_with("New prompt."));
+    }
+
+    #[test]
+    fn multiple_outgoing_connections_use_one_recipe_and_fail_independently() {
+        let fixture = execution_fixture(vec![
+            expected_file_connection(
+                "edge-ok",
+                "receiver-a",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "present.md".to_string(),
+                },
+                "Continue A.",
+            ),
+            expected_file_connection(
+                "edge-missing",
+                "receiver-b",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "missing.md".to_string(),
+                },
+                "Continue B.",
+            ),
+        ]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("present.md"), "present").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        assert_eq!(
+            fixture
+                .application
+                .on_agent_notification(&completed_notification(session_id, invocation))
+                .unwrap(),
+            2
+        );
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 2);
+        assert!(activations
+            .iter()
+            .all(|activation| activation.recipe_id == instance.recipe.id));
+        let succeeded = activations
+            .iter()
+            .find(|activation| activation.connection_id == "edge-ok")
+            .unwrap();
+        let failed = activations
+            .iter()
+            .find(|activation| activation.connection_id == "edge-missing")
+            .unwrap();
+        assert!(succeeded.launch_accepted_at.is_some());
+        assert_eq!(failed.failure_stage.as_deref(), Some("file_resolution"));
+        assert_eq!(fixture.runtime.launches.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn same_receiver_fan_out_reuses_one_receiver_session_without_splitting_history() {
+        let fixture = execution_fixture(vec![
+            expected_file_connection(
+                "edge-a",
+                "receiver",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "handoff.md".to_string(),
+                },
+                "Continue A.",
+            ),
+            expected_file_connection(
+                "edge-b",
+                "receiver",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "handoff.md".to_string(),
+                },
+                "Continue B.",
+            ),
+        ]);
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        fixture
+            .application
+            .on_agent_notification(&completed_notification(session_id, invocation))
+            .unwrap();
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 2);
+        assert_eq!(
+            activations[0].target_session_id,
+            activations[1].target_session_id
+        );
+        assert_eq!(
+            activations
+                .iter()
+                .filter(|activation| activation.session_mode.as_deref() == Some("fresh"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            fixture
+                .application
+                .load_workflow_instance(&instance.summary.id)
+                .unwrap()
+                .sessions
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn fresh_target_identity_is_durable_before_receiver_harness_binding_failure() {
+        let fixture = execution_fixture_with_binder(
+            vec![expected_file_connection(
+                "edge",
+                "receiver",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "handoff.md".to_string(),
+                },
+                "Continue.",
+            )],
+            Arc::new(ReceiverFailingHarnessBinder),
+        );
+        let instance = launch_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        fixture
+            .application
+            .on_agent_notification(&completed_notification(session_id, invocation))
+            .unwrap();
+
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert!(activation.target_session_id.is_some());
+        assert!(activation.target_invocation_id.is_some());
+        assert_eq!(activation.session_mode.as_deref(), Some("fresh"));
+        assert_eq!(activation.failure_stage.as_deref(), Some("harness_binding"));
+        assert!(activation.associated_at.is_none());
+        assert_eq!(
+            fixture
+                .application
+                .load_workflow_instance(&instance.summary.id)
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
     }
 }

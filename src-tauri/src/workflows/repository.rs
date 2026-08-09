@@ -1,9 +1,10 @@
 use super::{
     application::WorkflowRepository,
     domain::{
-        EffectiveRecipe, EffectiveWorkflowNodeConfig, WorkflowConnectionConfig,
-        WorkflowConnectionElement, WorkflowConnectionMechanism, WorkflowDefinition,
-        WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
+        EffectiveRecipe, EffectiveWorkflowNodeConfig, WorkflowCompletedTurnTrigger,
+        WorkflowConnectionActivationPreparation, WorkflowConnectionActivationRecord,
+        WorkflowConnectionConfig, WorkflowConnectionElement, WorkflowConnectionMechanism,
+        WorkflowDefinition, WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
         WorkflowHarnessConfig, WorkflowHarnessOverrides, WorkflowInstanceRecord,
         WorkflowLaunchPreparation, WorkflowLaunchStatus, WorkflowNativeQuery, WorkflowNodeConfig,
         WorkflowNodeElement, WorkflowNodeHarness, WorkflowRole, WorkflowSessionAssociationRecord,
@@ -122,6 +123,39 @@ CREATE TABLE IF NOT EXISTS workflow_activations (
 
 CREATE INDEX IF NOT EXISTS workflow_activations_by_instance
 ON workflow_activations(workflow_instance_id, requested_at, id);
+
+CREATE TABLE IF NOT EXISTS workflow_connection_activations (
+    id TEXT PRIMARY KEY,
+    workflow_instance_id TEXT NOT NULL,
+    recipe_id TEXT NOT NULL,
+    connection_id TEXT NOT NULL,
+    sender_node_id TEXT NOT NULL,
+    receiver_node_id TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    source_invocation_id TEXT NOT NULL,
+    target_session_id TEXT,
+    target_invocation_id TEXT,
+    delivery_kind TEXT NOT NULL CHECK (delivery_kind='direct_prompt_runtime_v1'),
+    session_mode TEXT CHECK (session_mode IN ('fresh','continued')),
+    context_inheritance TEXT NOT NULL CHECK (context_inheritance='none'),
+    compression TEXT NOT NULL CHECK (compression='none'),
+    resolved_file_path TEXT,
+    requested_at TEXT NOT NULL,
+    resolved_at TEXT,
+    associated_at TEXT,
+    launch_requested_at TEXT,
+    launch_accepted_at TEXT,
+    failed_at TEXT,
+    failure_stage TEXT,
+    failure_reason TEXT,
+    FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipe_id) REFERENCES workflow_effective_recipes(id),
+    CHECK ((failed_at IS NULL AND failure_stage IS NULL AND failure_reason IS NULL)
+        OR (failed_at IS NOT NULL AND failure_stage IS NOT NULL AND failure_reason IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS workflow_connection_activations_by_instance
+ON workflow_connection_activations(workflow_instance_id, requested_at, id);
 "#;
 
 pub(crate) struct SqliteWorkflowRepository {
@@ -858,6 +892,265 @@ impl WorkflowRepository for SqliteWorkflowRepository {
     ) -> Result<WorkflowInstanceRecord, String> {
         let connection = self.lock()?;
         load_workflow_instance_record(&connection, workflow_instance_id)
+    }
+
+    fn load_completed_turn_trigger(
+        &self,
+        source_session_id: &str,
+    ) -> Result<Option<WorkflowCompletedTurnTrigger>, String> {
+        let connection = self.lock()?;
+        let trigger = connection
+            .query_row(
+                "SELECT association.workflow_instance_id,instance.working_directory,association.node_id,type.active_recipe_id
+                 FROM workflow_instance_sessions association
+                 JOIN workflow_instances instance ON instance.id=association.workflow_instance_id
+                 JOIN workflow_types type ON type.id=instance.workflow_type_id
+                 WHERE association.session_id=?1",
+                [source_session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(storage_error("load completed-turn Workflow association"))?;
+        let Some((
+            workflow_instance_id,
+            working_directory,
+            sender_node_id,
+            recipe_id,
+        )) = trigger
+        else {
+            return Ok(None);
+        };
+        let recipe_id = recipe_id.ok_or_else(|| {
+            "The Workflow type has no current activated recipe for this trigger.".to_string()
+        })?;
+        let recipe = load_recipe(&connection, &recipe_id)?;
+        Ok(Some(WorkflowCompletedTurnTrigger {
+            workflow_instance_id,
+            working_directory,
+            sender_node_id,
+            recipe,
+        }))
+    }
+
+    fn create_connection_activation(
+        &self,
+        preparation: WorkflowConnectionActivationPreparation,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "INSERT INTO workflow_connection_activations(id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,delivery_kind,context_inheritance,compression,requested_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'direct_prompt_runtime_v1','none','none',?9)",
+                params![
+                    preparation.id,
+                    preparation.workflow_instance_id,
+                    preparation.recipe_id,
+                    preparation.connection_id,
+                    preparation.sender_node_id,
+                    preparation.receiver_node_id,
+                    preparation.source_session_id,
+                    preparation.source_invocation_id,
+                    preparation.requested_at,
+                ],
+            )
+            .map_err(storage_error("record Workflow connection activation"))?;
+        Ok(())
+    }
+
+    fn mark_connection_activation_resolved(
+        &self,
+        activation_id: &str,
+        relative_file_path: &str,
+        resolved_at: &str,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE workflow_connection_activations SET resolved_file_path=?2,resolved_at=?3 WHERE id=?1 AND resolved_at IS NULL AND failed_at IS NULL",
+                params![activation_id, relative_file_path, resolved_at],
+            )
+            .map_err(storage_error("record Workflow connection file resolution"))?;
+        (changed == 1).then_some(()).ok_or_else(|| {
+            "Workflow connection activation is not ready for resolution.".to_string()
+        })
+    }
+
+    fn reserve_connection_activation_target(
+        &self,
+        activation_id: &str,
+        workflow_instance_id: &str,
+        node_id: &str,
+        session_id: &str,
+        invocation_id: &str,
+        session_mode: &str,
+    ) -> Result<(), String> {
+        if !matches!(session_mode, "fresh" | "continued") {
+            return Err("Workflow connection Session mode is invalid.".to_string());
+        }
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE workflow_connection_activations SET target_session_id=?2,target_invocation_id=?3,session_mode=?4 WHERE id=?1 AND workflow_instance_id=?5 AND receiver_node_id=?6 AND resolved_at IS NOT NULL AND target_session_id IS NULL AND failed_at IS NULL",
+                params![activation_id, session_id, invocation_id, session_mode, workflow_instance_id, node_id],
+            )
+            .map_err(storage_error("reserve Workflow connection target"))?;
+        (changed == 1).then_some(()).ok_or_else(|| {
+            "Workflow connection activation is not ready for target reservation.".to_string()
+        })
+    }
+
+    fn associate_connection_activation_session(
+        &self,
+        activation_id: &str,
+        workflow_instance_id: &str,
+        node_id: &str,
+        session_id: &str,
+        associated_at: &str,
+        create_association: bool,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        let transaction = connection.unchecked_transaction().map_err(storage_error(
+            "begin Workflow connection Session association",
+        ))?;
+        if create_association {
+            transaction
+                .execute(
+                    "INSERT INTO workflow_instance_sessions(workflow_instance_id,node_id,session_id,associated_at) VALUES(?1,?2,?3,?4)",
+                    params![workflow_instance_id, node_id, session_id, associated_at],
+                )
+                .map_err(storage_error("associate Workflow connection Session"))?;
+        } else {
+            let exists = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workflow_instance_sessions WHERE workflow_instance_id=?1 AND node_id=?2 AND session_id=?3)",
+                    params![workflow_instance_id, node_id, session_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(storage_error("verify continued Workflow Session"))?;
+            if !exists {
+                return Err(
+                    "The continued Session is not associated with the receiver node.".to_string(),
+                );
+            }
+        }
+        let changed = transaction
+            .execute(
+                "UPDATE workflow_connection_activations SET associated_at=?2 WHERE id=?1 AND workflow_instance_id=?3 AND receiver_node_id=?4 AND target_session_id=?5 AND target_invocation_id IS NOT NULL AND session_mode IS NOT NULL AND resolved_at IS NOT NULL AND associated_at IS NULL AND failed_at IS NULL",
+                params![activation_id, associated_at, workflow_instance_id, node_id, session_id],
+            )
+            .map_err(storage_error("record Workflow connection Session stage"))?;
+        if changed != 1 {
+            return Err(
+                "Workflow connection activation is not ready for Session association.".to_string(),
+            );
+        }
+        transaction.commit().map_err(storage_error(
+            "commit Workflow connection Session association",
+        ))?;
+        Ok(())
+    }
+
+    fn mark_connection_activation_launch_requested(
+        &self,
+        activation_id: &str,
+        requested_at: &str,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE workflow_connection_activations SET launch_requested_at=?2 WHERE id=?1 AND associated_at IS NOT NULL AND launch_requested_at IS NULL AND failed_at IS NULL",
+                params![activation_id, requested_at],
+            )
+            .map_err(storage_error("record Workflow connection launch request"))?;
+        (changed == 1)
+            .then_some(())
+            .ok_or_else(|| "Workflow connection activation is not ready for launch.".to_string())
+    }
+
+    fn mark_connection_activation_launch_accepted(
+        &self,
+        activation_id: &str,
+        accepted_at: &str,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE workflow_connection_activations SET launch_accepted_at=?2 WHERE id=?1 AND launch_requested_at IS NOT NULL AND launch_accepted_at IS NULL AND failed_at IS NULL",
+                params![activation_id, accepted_at],
+            )
+            .map_err(storage_error("record Workflow connection launch acceptance"))?;
+        (changed == 1).then_some(()).ok_or_else(|| {
+            "Workflow connection activation is not ready for acceptance.".to_string()
+        })
+    }
+
+    fn mark_connection_activation_failed(
+        &self,
+        activation_id: &str,
+        stage: &str,
+        reason: &str,
+        failed_at: &str,
+    ) -> Result<(), String> {
+        let stage = required(stage, "Workflow connection failure stage")?;
+        let reason = required(reason, "Workflow connection failure reason")?;
+        let connection = self.lock()?;
+        connection
+            .execute(
+                "UPDATE workflow_connection_activations SET failed_at=COALESCE(failed_at,?2),failure_stage=COALESCE(failure_stage,?3),failure_reason=COALESCE(failure_reason,?4) WHERE id=?1 AND launch_accepted_at IS NULL",
+                params![activation_id, failed_at, stage, reason],
+            )
+            .map_err(storage_error("record Workflow connection failure"))?;
+        Ok(())
+    }
+
+    fn list_connection_activations(
+        &self,
+        workflow_instance_id: &str,
+    ) -> Result<Vec<WorkflowConnectionActivationRecord>, String> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,resolved_file_path,requested_at,resolved_at,associated_at,launch_requested_at,launch_accepted_at,failed_at,failure_stage,failure_reason FROM workflow_connection_activations WHERE workflow_instance_id=?1 ORDER BY requested_at,id",
+            )
+            .map_err(storage_error("prepare Workflow connection activation list"))?;
+        let activations = statement
+            .query_map([workflow_instance_id], |row| {
+                Ok(WorkflowConnectionActivationRecord {
+                    id: row.get(0)?,
+                    workflow_instance_id: row.get(1)?,
+                    recipe_id: row.get(2)?,
+                    connection_id: row.get(3)?,
+                    sender_node_id: row.get(4)?,
+                    receiver_node_id: row.get(5)?,
+                    source_session_id: row.get(6)?,
+                    source_invocation_id: row.get(7)?,
+                    target_session_id: row.get(8)?,
+                    target_invocation_id: row.get(9)?,
+                    delivery_kind: row.get(10)?,
+                    session_mode: row.get(11)?,
+                    context_inheritance: row.get(12)?,
+                    compression: row.get(13)?,
+                    resolved_file_path: row.get(14)?,
+                    requested_at: row.get(15)?,
+                    resolved_at: row.get(16)?,
+                    associated_at: row.get(17)?,
+                    launch_requested_at: row.get(18)?,
+                    launch_accepted_at: row.get(19)?,
+                    failed_at: row.get(20)?,
+                    failure_stage: row.get(21)?,
+                    failure_reason: row.get(22)?,
+                })
+            })
+            .map_err(storage_error("query Workflow connection activations"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error("read Workflow connection activations"))?;
+        Ok(activations)
     }
 }
 
