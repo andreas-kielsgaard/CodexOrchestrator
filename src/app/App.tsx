@@ -59,6 +59,7 @@ import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileS
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 import { ProductCommandBar } from './ProductCommandBar';
+import { OrchestrationRecovery } from './OrchestrationRecovery';
 import {
   canNavigateBack,
   contextualOriginDestination,
@@ -1169,55 +1170,20 @@ function OrchestrationSurface({
         onPublishProductDecision={onPublishProductDecision}
       />
     );
-  const copy =
-    load.kind === 'loading'
-      ? 'Loading orchestration data…'
-      : load.kind === 'failed'
-        ? load.message
-        : load.reason;
+  const returnToCurrentWorkUnit =
+    requestedLocation?.kind === 'work_unit'
+      ? () => {
+          onProductLocationChange(requestedLocation, 'back');
+          void load.refresh();
+        }
+      : undefined;
   return (
-    <main
-      className="orchestration-section"
-      aria-label="Orchestration"
-      aria-busy={load.kind === 'loading'}
-    >
-      <header className="orchestration-page-header">
-        <p className="eyebrow">Orchestration</p>
-        <h1>
-          {load.kind === 'unavailable'
-            ? 'Orchestration data unavailable'
-            : 'Orchestration overview'}
-        </h1>
-        <p role={load.kind === 'loading' ? 'status' : 'alert'}>{copy}</p>
-        <button className="orchestration-page-header__plan" type="button" onClick={onPlanEpic}>
-          Plan an Epic
-        </button>
-      </header>
-      {planningDrafts.length > 0 && (
-        <section className="orchestration-list" aria-label="Active Epic planning drafts">
-          <table>
-            <tbody>
-              {planningDrafts.map((draft) => (
-                <tr key={draft.epicPlanningDraftId}>
-                  <td>
-                    <button
-                      className="orchestration-list__open"
-                      type="button"
-                      onClick={() => onOpenDraft(draft)}
-                    >
-                      <strong>{draft.title ?? 'Untitled Epic draft'}</strong>
-                      <small>Pre-initiation planning draft</small>
-                    </button>
-                  </td>
-                  <td>Planning</td>
-                  <td>Draft</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-    </main>
+    <OrchestrationRecovery
+      load={load}
+      currentLocation={requestedLocation}
+      onPlanEpic={onPlanEpic}
+      onReturnToCurrentWorkUnit={returnToCurrentWorkUnit}
+    />
   );
 }
 

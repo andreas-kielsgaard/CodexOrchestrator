@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 import type {
   AgentInvocationDto,
@@ -137,6 +138,54 @@ describe('EpicPlanBuilder', () => {
         'Select an active Epic Planning Draft with a current proposal before initiation.',
       ),
     ).toBeNull();
+  });
+
+  it('describes disabled plan and initiation actions from their existing typed facts', async () => {
+    render(
+      <EpicPlanBuilder
+        agentSessionClient={createPlanBuilderClient()}
+        proposalSource={createDurableProposalSource({ kind: 'unavailable' })}
+        initiationCapability={{
+          status: 'blocked',
+          reason: 'A current active Epic Plan Proposal is required before initiation.',
+        }}
+        onBack={vi.fn()}
+      />,
+    );
+    await act(async () => undefined);
+
+    expect(screen.getByRole('button', { name: 'Plan Epic' })).toHaveAttribute(
+      'aria-describedby',
+      'epic-plan-builder-plan-unavailable',
+    );
+    expect(
+      screen.getByText('Add a planning message before asking Plan Builder to form a proposal.'),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Initiate Epic' })).toHaveAttribute(
+      'aria-describedby',
+      'epic-initiation-unavailable',
+    );
+    expect(
+      screen.getByText('A current active Epic Plan Proposal is required before initiation.'),
+    ).toBeVisible();
+  });
+
+  it('keeps proposed Sprint expansion reachable by keyboard', async () => {
+    const user = userEvent.setup();
+    render(
+      <EpicPlanBuilder
+        agentSessionClient={createPlanBuilderClient()}
+        proposalSource={createDurableProposalSource(availableProposal('2026-07-10T12:00:00.000Z'))}
+        onBack={vi.fn()}
+      />,
+    );
+
+    const toggle = await screen.findByRole('button', { name: 'Sprint 1 Durably saved Sprint' });
+    toggle.focus();
+    await user.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.keyboard(' ');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('keeps the builder open while initiation is pending and requires durable confirmation before success', async () => {

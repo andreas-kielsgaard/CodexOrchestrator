@@ -161,6 +161,7 @@
 }
 
 .epic-plan-builder__controls-actions p {
+  margin: 0;
   color: #718077;
   font-size: 0.7rem;
   line-height: 1.35;
@@ -383,5 +384,24 @@
 
   .epic-plan-builder__controls {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .epic-plan-builder__body {
+    padding: 8px;
+  }
+
+  .epic-plan-builder__controls {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .epic-plan-builder__controls-actions {
+    padding-top: 12px;
+  }
+
+  .epic-plan-builder__workspace {
+    grid-template-rows: minmax(460px, 1fr) minmax(280px, 0.7fr);
   }
 }

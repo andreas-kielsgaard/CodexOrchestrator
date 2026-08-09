@@ -144,6 +144,13 @@ describe('shared Epic initiation confirmation modal', () => {
     const confirm = await screen.findByRole('button', { name: 'Confirm initiation' });
     fireEvent.click(confirm);
     expect(screen.getByRole('button', { name: 'Resolving…' })).toBeDisabled();
+    expect(
+      screen.getByText('Confirmation is being resolved. Its outcome is not yet known.'),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Resolving…' })).toHaveAttribute(
+      'aria-describedby',
+      'epic-initiation-resolution-pending',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Resolving…' }));
     expect(f.resolve).toHaveBeenCalledOnce();
     await act(async () => release());
