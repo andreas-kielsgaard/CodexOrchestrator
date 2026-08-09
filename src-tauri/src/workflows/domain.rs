@@ -258,6 +258,43 @@ pub(crate) struct WorkflowActivation {
     pub(crate) failure_reason: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowConnectionActivationStatus {
+    Requested,
+    Resolved,
+    Associated,
+    LaunchRequested,
+    LaunchAccepted,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowConnectionActivation {
+    pub(crate) id: String,
+    pub(crate) recipe_id: String,
+    pub(crate) connection_id: String,
+    pub(crate) sender_node_id: String,
+    pub(crate) receiver_node_id: String,
+    pub(crate) source_session_id: String,
+    pub(crate) source_invocation_id: String,
+    pub(crate) target_session_id: Option<String>,
+    pub(crate) target_invocation_id: Option<String>,
+    pub(crate) delivery_kind: String,
+    pub(crate) session_mode: Option<String>,
+    pub(crate) context_inheritance: String,
+    pub(crate) compression: String,
+    pub(crate) resolved_file_path: Option<String>,
+    pub(crate) status: WorkflowConnectionActivationStatus,
+    pub(crate) requested_at: String,
+    pub(crate) resolved_at: Option<String>,
+    pub(crate) associated_at: Option<String>,
+    pub(crate) launch_requested_at: Option<String>,
+    pub(crate) launch_accepted_at: Option<String>,
+    pub(crate) failed_at: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkflowInstanceSummary {
@@ -282,6 +319,7 @@ pub(crate) struct WorkflowInstance {
     pub(crate) recipe: EffectiveRecipe,
     pub(crate) sessions: Vec<WorkflowInstanceSession>,
     pub(crate) launch_activation: WorkflowActivation,
+    pub(crate) connection_activations: Vec<WorkflowConnectionActivation>,
 }
 
 #[derive(Clone, Debug)]

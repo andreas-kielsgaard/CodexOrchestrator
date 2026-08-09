@@ -1,6 +1,7 @@
 use super::domain::{
-    WorkflowCompletedTurnTrigger, WorkflowConnectionActivationPreparation,
-    WorkflowConnectionActivationRecord, WorkflowConnectionConfig, WorkflowDefinition,
+    WorkflowCompletedTurnTrigger, WorkflowConnectionActivation,
+    WorkflowConnectionActivationPreparation, WorkflowConnectionActivationRecord,
+    WorkflowConnectionActivationStatus, WorkflowConnectionConfig, WorkflowDefinition,
     WorkflowElementRef, WorkflowHarnessConfig, WorkflowInstance, WorkflowInstanceRecord,
     WorkflowInstanceSession, WorkflowInstanceSummary, WorkflowLaunchPreparation,
     WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowSessionActivity,
@@ -830,7 +831,7 @@ impl WorkflowApplication {
             .list_workflow_instances()?
             .into_iter()
             .map(|record| {
-                self.project_instance(record)
+                self.project_instance(record, Vec::new())
                     .map(|instance| instance.summary)
             })
             .collect()
@@ -840,13 +841,26 @@ impl WorkflowApplication {
         &self,
         workflow_instance_id: &str,
     ) -> Result<WorkflowInstance, String> {
-        self.project_instance(
-            self.repository
-                .load_workflow_instance(workflow_instance_id)?,
-        )
+        let record = self
+            .repository
+            .load_workflow_instance(workflow_instance_id)?;
+        let mut activations = self
+            .repository
+            .list_connection_activations(workflow_instance_id)?;
+        activations.sort_by(|left, right| {
+            right
+                .requested_at
+                .cmp(&left.requested_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.project_instance(record, activations)
     }
 
-    fn project_instance(&self, record: WorkflowInstanceRecord) -> Result<WorkflowInstance, String> {
+    fn project_instance(
+        &self,
+        record: WorkflowInstanceRecord,
+        connection_activations: Vec<WorkflowConnectionActivationRecord>,
+    ) -> Result<WorkflowInstance, String> {
         let mut sessions = Vec::with_capacity(record.session_associations.len());
         for association in &record.session_associations {
             let session_id = AgentSessionId::new(association.session_id.clone())
@@ -898,6 +912,10 @@ impl WorkflowApplication {
             recipe: record.recipe,
             sessions,
             launch_activation: record.launch_activation,
+            connection_activations: connection_activations
+                .into_iter()
+                .map(project_connection_activation)
+                .collect(),
         })
     }
 
@@ -908,6 +926,47 @@ impl WorkflowApplication {
             reason,
             &Utc::now().to_rfc3339(),
         );
+    }
+}
+
+fn project_connection_activation(
+    record: WorkflowConnectionActivationRecord,
+) -> WorkflowConnectionActivation {
+    let status = if record.failed_at.is_some() {
+        WorkflowConnectionActivationStatus::Failed
+    } else if record.launch_accepted_at.is_some() {
+        WorkflowConnectionActivationStatus::LaunchAccepted
+    } else if record.launch_requested_at.is_some() {
+        WorkflowConnectionActivationStatus::LaunchRequested
+    } else if record.associated_at.is_some() {
+        WorkflowConnectionActivationStatus::Associated
+    } else if record.resolved_at.is_some() {
+        WorkflowConnectionActivationStatus::Resolved
+    } else {
+        WorkflowConnectionActivationStatus::Requested
+    };
+    WorkflowConnectionActivation {
+        id: record.id,
+        recipe_id: record.recipe_id,
+        connection_id: record.connection_id,
+        sender_node_id: record.sender_node_id,
+        receiver_node_id: record.receiver_node_id,
+        source_session_id: record.source_session_id,
+        source_invocation_id: record.source_invocation_id,
+        target_session_id: record.target_session_id,
+        target_invocation_id: record.target_invocation_id,
+        delivery_kind: record.delivery_kind,
+        session_mode: record.session_mode,
+        context_inheritance: record.context_inheritance,
+        compression: record.compression,
+        resolved_file_path: record.resolved_file_path,
+        status,
+        requested_at: record.requested_at,
+        resolved_at: record.resolved_at,
+        associated_at: record.associated_at,
+        launch_requested_at: record.launch_requested_at,
+        launch_accepted_at: record.launch_accepted_at,
+        failed_at: record.failed_at,
     }
 }
 
@@ -2209,5 +2268,111 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn instance_projects_connection_activations_newest_first_with_exact_endpoints() {
+        let fixture = execution_fixture(vec![expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "handoff.md".to_string(),
+            },
+            "Continue.",
+        )]);
+        let instance = launch_execution_instance(&fixture);
+        let preparation = |id: &str, source: &str, invocation: &str, requested_at: &str| {
+            WorkflowConnectionActivationPreparation {
+                id: id.to_string(),
+                workflow_instance_id: instance.summary.id.clone(),
+                recipe_id: instance.recipe.id.clone(),
+                connection_id: "edge".to_string(),
+                sender_node_id: "sender".to_string(),
+                receiver_node_id: "receiver".to_string(),
+                source_session_id: source.to_string(),
+                source_invocation_id: invocation.to_string(),
+                requested_at: requested_at.to_string(),
+            }
+        };
+        fixture
+            .workflow_repository
+            .create_connection_activation(preparation(
+                "activation-older",
+                "source-session-older",
+                "source-invocation-older",
+                "2026-08-09T01:00:00Z",
+            ))
+            .unwrap();
+        fixture
+            .workflow_repository
+            .mark_connection_activation_failed(
+                "activation-older",
+                "file_resolution",
+                "missing",
+                "2026-08-09T01:00:01Z",
+            )
+            .unwrap();
+        fixture
+            .workflow_repository
+            .create_connection_activation(preparation(
+                "activation-newer",
+                "source-session-newer",
+                "source-invocation-newer",
+                "2026-08-09T02:00:00Z",
+            ))
+            .unwrap();
+        fixture
+            .workflow_repository
+            .mark_connection_activation_resolved(
+                "activation-newer",
+                "handoffs/handoff.md",
+                "2026-08-09T02:00:01Z",
+            )
+            .unwrap();
+        fixture
+            .workflow_repository
+            .reserve_connection_activation_target(
+                "activation-newer",
+                &instance.summary.id,
+                "receiver",
+                "target-session-exact",
+                "target-invocation-exact",
+                "fresh",
+            )
+            .unwrap();
+
+        let projected = fixture
+            .application
+            .load_workflow_instance(&instance.summary.id)
+            .unwrap();
+
+        assert_eq!(
+            projected
+                .connection_activations
+                .iter()
+                .map(|activation| activation.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["activation-newer", "activation-older"]
+        );
+        let newer = &projected.connection_activations[0];
+        assert_eq!(
+            newer.status,
+            WorkflowConnectionActivationStatus::Resolved
+        );
+        assert_eq!(newer.source_session_id, "source-session-newer");
+        assert_eq!(newer.source_invocation_id, "source-invocation-newer");
+        assert_eq!(
+            newer.target_session_id.as_deref(),
+            Some("target-session-exact")
+        );
+        assert_eq!(
+            newer.target_invocation_id.as_deref(),
+            Some("target-invocation-exact")
+        );
+        let older = &projected.connection_activations[1];
+        assert_eq!(older.status, WorkflowConnectionActivationStatus::Failed);
+        assert!(older.target_session_id.is_none());
+        assert!(older.target_invocation_id.is_none());
     }
 }

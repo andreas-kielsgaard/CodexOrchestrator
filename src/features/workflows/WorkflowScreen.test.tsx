@@ -203,6 +203,150 @@ describe('WorkflowScreen', () => {
     expect(nodeTrigger).toHaveFocus();
   });
 
+  it('bundles instance connections and inspects exact durable activation endpoints', async () => {
+    const sourceDetails = recordedAgentSessionDetails[0]!;
+    const targetDetails = recordedAgentSessionDetails[1]!;
+    const sourceInvocation = sourceDetails.invocations[0]!.invocation.id;
+    const targetInvocation = targetDetails.invocations[0]!.invocation.id;
+    const firstConnection = connection('edge-a');
+    const secondConnection = connection('edge-b');
+    const base = workflowInstance();
+    const instance: WorkflowInstance = {
+      ...base,
+      recipe: { ...base.recipe, connections: [firstConnection, secondConnection] },
+      connectionActivations: [
+        {
+          id: 'activation-newest',
+          recipeId: base.recipe.id,
+          connectionId: firstConnection.id,
+          senderNodeId: 'sender',
+          receiverNodeId: 'receiver',
+          sourceSessionId: sourceDetails.session.id,
+          sourceInvocationId: sourceInvocation,
+          targetSessionId: targetDetails.session.id,
+          targetInvocationId: targetInvocation,
+          deliveryKind: 'direct_prompt_runtime_v1',
+          sessionMode: 'fresh',
+          contextInheritance: 'none',
+          compression: 'none',
+          resolvedFilePath: 'handoffs/newest.md',
+          status: 'launch_accepted',
+          requestedAt: '2026-08-09T03:00:00.000Z',
+          resolvedAt: '2026-08-09T03:00:01.000Z',
+          associatedAt: '2026-08-09T03:00:02.000Z',
+          launchRequestedAt: '2026-08-09T03:00:03.000Z',
+          launchAcceptedAt: '2026-08-09T03:00:04.000Z',
+          failedAt: null,
+        },
+        {
+          id: 'activation-older',
+          recipeId: base.recipe.id,
+          connectionId: firstConnection.id,
+          senderNodeId: 'sender',
+          receiverNodeId: 'receiver',
+          sourceSessionId: targetDetails.session.id,
+          sourceInvocationId: targetInvocation,
+          targetSessionId: null,
+          targetInvocationId: null,
+          deliveryKind: 'direct_prompt_runtime_v1',
+          sessionMode: null,
+          contextInheritance: 'none',
+          compression: 'none',
+          resolvedFilePath: null,
+          status: 'failed',
+          requestedAt: '2026-08-09T02:00:00.000Z',
+          resolvedAt: null,
+          associatedAt: null,
+          launchRequestedAt: null,
+          launchAcceptedAt: null,
+          failedAt: '2026-08-09T02:00:01.000Z',
+        },
+      ],
+    };
+    const client: WorkflowApplicationClient = {
+      ...workflowClient(definitionWithNodes()),
+      loadWorkflowInstance: vi.fn(async () => instance),
+    };
+    const agentSessionClient = createRecordedAgentSessionClient({
+      store: createRecordedAgentSessionStore([sourceDetails, targetDetails]),
+    });
+    render(
+      <WorkflowScreen
+        client={client}
+        agentSessionClient={agentSessionClient}
+        workflowTypeId={null}
+        workflowInstanceId="instance-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    const edge = await screen.findByRole('button', {
+      name: '2 connections from Sender to Receiver',
+    });
+    edge.focus();
+    fireEvent.keyDown(edge, { key: 'Enter' });
+    const list = screen.getByRole('dialog', { name: '2 connections from Sender to Receiver' });
+    const firstEntry = within(list).getByRole('button', { name: /Connection edge-a/ });
+    expect(within(list).getByRole('button', { name: /Connection edge-b/ })).toBeVisible();
+    expect(firstEntry).toHaveFocus();
+    expect(edge).toHaveClass('is-highlighted');
+    fireEvent.blur(firstEntry);
+    expect(edge).not.toHaveClass('is-highlighted');
+    fireEvent.mouseEnter(firstEntry);
+    expect(edge).toHaveClass('is-highlighted');
+    fireEvent.click(firstEntry);
+
+    let detail = screen.getByRole('dialog', { name: 'Connection edge-a activity' });
+    expect(within(detail).getByText('Activation 1 of 2')).toBeVisible();
+    expect(within(detail).getByText('handoffs/newest.md')).toBeVisible();
+    expect(within(detail).getByText('Launch accepted')).toBeVisible();
+
+    fireEvent.click(within(detail).getByRole('button', { name: 'Show older activation' }));
+    expect(within(detail).getByText('Activation 2 of 2')).toBeVisible();
+    expect(within(detail).getByText('Not resolved')).toBeVisible();
+    expect(within(detail).getByRole('button', { name: 'Receiving Agent Session' })).toBeDisabled();
+    fireEvent.click(within(detail).getByRole('button', { name: 'All activations' }));
+    const all = within(detail).getAllByRole('button', { name: /Launch accepted/ });
+    all[0]!.focus();
+    fireEvent.click(all[0]!);
+    expect(within(detail).getByText('Activation 1 of 2')).toBeVisible();
+    expect(all[0]).toHaveFocus();
+
+    fireEvent.click(within(detail).getByRole('button', { name: 'Sending Agent Session' }));
+    expect(screen.getByRole('button', { name: 'Return to activation' })).toHaveFocus();
+    const sourceInspector = await screen.findByLabelText('Supporting Agent Session passage');
+    expect(sourceInspector).toHaveAttribute('data-session-id', sourceDetails.session.id);
+    expect(sourceInspector).toHaveAttribute('data-invocation-id', sourceInvocation);
+    fireEvent.click(screen.getByRole('button', { name: 'Return to activation' }));
+    detail = screen.getByRole('dialog', { name: 'Connection edge-a activity' });
+    await waitFor(() =>
+      expect(within(detail).getByRole('button', { name: 'Sending Agent Session' })).toHaveFocus(),
+    );
+
+    fireEvent.click(within(detail).getByRole('button', { name: 'Receiving Agent Session' }));
+    expect(screen.getByRole('button', { name: 'Return to activation' })).toHaveFocus();
+    const targetInspector = await screen.findByLabelText('Supporting Agent Session passage');
+    expect(targetInspector).toHaveAttribute('data-session-id', targetDetails.session.id);
+    expect(targetInspector).toHaveAttribute('data-invocation-id', targetInvocation);
+    fireEvent.click(screen.getByRole('button', { name: 'Return to activation' }));
+    detail = screen.getByRole('dialog', { name: 'Connection edge-a activity' });
+    await waitFor(() =>
+      expect(within(detail).getByRole('button', { name: 'Receiving Agent Session' })).toHaveFocus(),
+    );
+    fireEvent.keyDown(detail, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(edge).toHaveFocus();
+
+    fireEvent.click(edge);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /edge-b/ }));
+    expect(
+      screen.getByText('This connection has not fired in this workflow instance.'),
+    ).toBeVisible();
+    fireEvent.click(screen.getByLabelText('Workflow instance graph'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(edge).toHaveFocus();
+  });
+
   it('keeps the node brush active, persists a closed draft, and activates it', async () => {
     const client = workflowClient(emptyDefinition());
     render(
@@ -1111,6 +1255,7 @@ function workflowInstance(): WorkflowInstance {
       failureStage: null,
       failureReason: null,
     },
+    connectionActivations: [],
   };
 }
 

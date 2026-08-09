@@ -2,6 +2,8 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Cable,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   GitBranch,
   Paintbrush,
@@ -77,6 +79,14 @@ interface ConnectionListState {
   readonly left: number;
   readonly top: number;
   readonly nodeId?: string;
+}
+
+interface InstanceConnectionListState {
+  readonly groupKey: string;
+  readonly connectionIds: readonly string[];
+  readonly title: string;
+  readonly left: number;
+  readonly top: number;
 }
 
 export function WorkflowScreen({
@@ -1302,7 +1312,11 @@ function WorkflowInstanceView({
 }) {
   const [load, setLoad] = useState<LoadState<WorkflowInstance>>({ kind: 'loading' });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [connectionList, setConnectionList] = useState<InstanceConnectionListState | null>(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
   const nodeTriggers = useRef(new Map<string, HTMLButtonElement>());
+  const connectionTriggers = useRef(new Map<string, SVGGElement>());
   useEffect(() => {
     let current = true;
     void client.loadWorkflowInstance(workflowInstanceId).then(
@@ -1331,10 +1345,34 @@ function WorkflowInstanceView({
   const selectedNode = selectedNodeId
     ? (instance.recipe.nodes.find((node) => node.id === selectedNodeId) ?? null)
     : null;
+  const connectionGroups = groupRecipeConnections(instance.recipe.connections);
+  const selectedConnection = selectedConnectionId
+    ? (instance.recipe.connections.find((connection) => connection.id === selectedConnectionId) ??
+      null)
+    : null;
   const closeSelectedNode = () => {
     const trigger = selectedNodeId ? nodeTriggers.current.get(selectedNodeId) : undefined;
     setSelectedNodeId(null);
     trigger?.focus();
+  };
+  const closeConnectionDetails = () => {
+    const group = selectedConnectionId
+      ? connectionGroups.find((candidate) =>
+          candidate.connections.some((connection) => connection.id === selectedConnectionId),
+        )
+      : null;
+    setSelectedConnectionId(null);
+    if (group) connectionTriggers.current.get(group.key)?.focus();
+  };
+  const closeCanvasOverlays = () => {
+    if (selectedNodeId) closeSelectedNode();
+    else if (selectedConnectionId) closeConnectionDetails();
+    else if (connectionList) {
+      const trigger = connectionTriggers.current.get(connectionList.groupKey);
+      setConnectionList(null);
+      setHoveredConnectionId(null);
+      trigger?.focus();
+    }
   };
   return (
     <main
@@ -1382,7 +1420,7 @@ function WorkflowInstanceView({
       <div
         className="workflow-canvas workflow-instance__canvas"
         aria-label="Workflow instance graph"
-        onClick={closeSelectedNode}
+        onClick={closeCanvasOverlays}
       >
         <svg className="workflow-canvas__connections" aria-label="Workflow instance connections">
           <defs>
@@ -1397,24 +1435,70 @@ function WorkflowInstanceView({
               <path d="M0,0 L8,4 L0,8 z" />
             </marker>
           </defs>
-          {instance.recipe.connections.map((connection) => {
-            const sender = instance.recipe.nodes.find(
-              (node) => node.id === connection.senderNodeId,
-            );
-            const receiver = instance.recipe.nodes.find(
-              (node) => node.id === connection.receiverNodeId,
-            );
+          {connectionGroups.map((group) => {
+            const sender = instance.recipe.nodes.find((node) => node.id === group.senderNodeId);
+            const receiver = instance.recipe.nodes.find((node) => node.id === group.receiverNodeId);
             if (!sender || !receiver) return null;
+            const label = `${group.connections.length} connection${group.connections.length === 1 ? '' : 's'} from ${sender.name} to ${receiver.name}`;
+            const highlighted = group.connections.some(
+              (connection) => connection.id === hoveredConnectionId,
+            );
+            const openList = () => {
+              setSelectedNodeId(null);
+              setSelectedConnectionId(null);
+              setConnectionList({
+                groupKey: group.key,
+                connectionIds: group.connections.map((connection) => connection.id),
+                title: label,
+                left: (sender.positionX + receiver.positionX) / 2 + 84,
+                top: (sender.positionY + receiver.positionY) / 2 + 56,
+              });
+            };
             return (
-              <line
-                key={connection.id}
-                className="workflow-connection__visible"
-                x1={sender.positionX + 210}
-                y1={sender.positionY + 56}
-                x2={receiver.positionX}
-                y2={receiver.positionY + 56}
-                markerEnd="url(#workflow-instance-arrow)"
-              />
+              <g
+                key={group.key}
+                ref={(element) => {
+                  if (element) connectionTriggers.current.set(group.key, element);
+                  else connectionTriggers.current.delete(group.key);
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={label}
+                className={highlighted ? 'is-highlighted' : undefined}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openList();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  openList();
+                }}
+              >
+                <line
+                  className="workflow-connection__visible"
+                  x1={sender.positionX + 210}
+                  y1={sender.positionY + 56}
+                  x2={receiver.positionX}
+                  y2={receiver.positionY + 56}
+                  markerEnd="url(#workflow-instance-arrow)"
+                />
+                <line
+                  className="workflow-connection__hitbox"
+                  x1={sender.positionX + 210}
+                  y1={sender.positionY + 56}
+                  x2={receiver.positionX}
+                  y2={receiver.positionY + 56}
+                />
+                {group.connections.length > 1 ? (
+                  <text
+                    x={(sender.positionX + 210 + receiver.positionX) / 2}
+                    y={(sender.positionY + receiver.positionY) / 2 + 48}
+                  >
+                    {group.connections.length}
+                  </text>
+                ) : null}
+              </g>
             );
           })}
         </svg>
@@ -1434,6 +1518,8 @@ function WorkflowInstanceView({
               aria-label={`Open ${node.harness.harnessName || 'Harness'} node ${node.name}`}
               onClick={(event) => {
                 event.stopPropagation();
+                setConnectionList(null);
+                setSelectedConnectionId(null);
                 setSelectedNodeId(node.id);
               }}
             >
@@ -1456,6 +1542,40 @@ function WorkflowInstanceView({
             sessions={instance.sessions.filter((session) => session.nodeId === selectedNode.id)}
             agentSessionClient={agentSessionClient}
             onClose={closeSelectedNode}
+          />
+        ) : null}
+        {connectionList ? (
+          <WorkflowInstanceConnectionList
+            state={connectionList}
+            connections={instance.recipe.connections}
+            nodes={instance.recipe.nodes}
+            onHover={setHoveredConnectionId}
+            onClose={() => {
+              const trigger = connectionTriggers.current.get(connectionList.groupKey);
+              setConnectionList(null);
+              setHoveredConnectionId(null);
+              trigger?.focus();
+            }}
+            onOpen={(connectionId) => {
+              setConnectionList(null);
+              setHoveredConnectionId(null);
+              setSelectedConnectionId(connectionId);
+            }}
+          />
+        ) : null}
+        {selectedConnection ? (
+          <WorkflowInstanceConnectionPopup
+            key={selectedConnection.id}
+            connection={selectedConnection}
+            activations={instance.connectionActivations
+              .filter((activation) => activation.connectionId === selectedConnection.id)
+              .sort(
+                (left, right) =>
+                  right.requestedAt.localeCompare(left.requestedAt) ||
+                  right.id.localeCompare(left.id),
+              )}
+            agentSessionClient={agentSessionClient}
+            onClose={closeConnectionDetails}
           />
         ) : null}
       </div>
@@ -1561,6 +1681,326 @@ function WorkflowInstanceNodePopup({
         />
       ) : null}
     </aside>
+  );
+}
+
+function WorkflowInstanceConnectionList({
+  state,
+  connections,
+  nodes,
+  onHover,
+  onClose,
+  onOpen,
+}: {
+  readonly state: InstanceConnectionListState;
+  readonly connections: WorkflowInstance['recipe']['connections'];
+  readonly nodes: WorkflowInstance['recipe']['nodes'];
+  onHover(id: string | null): void;
+  onClose(): void;
+  onOpen(id: string): void;
+}) {
+  const popupRef = useRef<HTMLElement>(null);
+  const listed = state.connectionIds.flatMap((id) => {
+    const connection = connections.find((candidate) => candidate.id === id);
+    return connection ? [connection] : [];
+  });
+  useEffect(() => {
+    popupRef.current?.querySelector<HTMLElement>('li > button')?.focus();
+  }, []);
+  return (
+    <section
+      ref={popupRef}
+      className="workflow-connection-list workflow-instance-connection-list"
+      role="dialog"
+      aria-label={state.title}
+      style={{ left: state.left, top: state.top }}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => containWorkflowPopupFocus(event, popupRef.current, onClose)}
+    >
+      <header>
+        <strong>{state.title}</strong>
+        <button type="button" aria-label="Close connection list" onClick={onClose}>
+          <X size={15} aria-hidden="true" />
+        </button>
+      </header>
+      <ul>
+        {listed.map((connection) => {
+          const receiver = nodes.find((node) => node.id === connection.receiverNodeId);
+          return (
+            <li key={connection.id}>
+              <button
+                type="button"
+                onMouseEnter={() => onHover(connection.id)}
+                onMouseLeave={(event) => {
+                  if (document.activeElement !== event.currentTarget) onHover(null);
+                }}
+                onFocus={() => onHover(connection.id)}
+                onBlur={() => onHover(null)}
+                onClick={() => onOpen(connection.id)}
+              >
+                <span>{connection.name || 'Unnamed connection'}</span>
+                <small>To {receiver?.name || 'receiver'}</small>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function WorkflowInstanceConnectionPopup({
+  connection,
+  activations,
+  agentSessionClient,
+  onClose,
+}: {
+  readonly connection: WorkflowInstance['recipe']['connections'][number];
+  readonly activations: WorkflowInstance['connectionActivations'];
+  readonly agentSessionClient?: AgentSessionClient;
+  readonly onClose: () => void;
+}) {
+  const [activationIndex, setActivationIndex] = useState(0);
+  const [showAll, setShowAll] = useState(false);
+  const [returnFocusTarget, setReturnFocusTarget] = useState<'source' | 'target' | null>(null);
+  const [inspection, setInspection] = useState<{
+    readonly sessionId: string;
+    readonly invocationId: string;
+    readonly label: string;
+    readonly returnTo: 'source' | 'target';
+  } | null>(null);
+  const popupRef = useRef<HTMLElement>(null);
+  const selected = activations[activationIndex] ?? null;
+  useEffect(() => {
+    popupRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (inspection || !returnFocusTarget) return;
+    const timeout = window.setTimeout(() => {
+      popupRef.current
+        ?.querySelector<HTMLElement>(`[data-activation-endpoint="${returnFocusTarget}"]`)
+        ?.focus();
+      setReturnFocusTarget(null);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [inspection, returnFocusTarget]);
+
+  return (
+    <aside
+      ref={popupRef}
+      className={`workflow-instance-node-popup workflow-instance-connection-popup${inspection ? ' is-sessions' : ''}`}
+      role="dialog"
+      aria-label={`${connection.name || 'Connection'} activity`}
+      tabIndex={-1}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => containWorkflowPopupFocus(event, popupRef.current, onClose)}
+    >
+      {inspection && agentSessionClient ? (
+        <WorkflowConnectionTurnInspection
+          endpoint={inspection}
+          client={agentSessionClient}
+          onReturn={() => {
+            setReturnFocusTarget(inspection.returnTo);
+            setInspection(null);
+          }}
+          onClose={onClose}
+        />
+      ) : (
+        <>
+          <header>
+            <div>
+              <p className="eyebrow">Connection</p>
+              <h2>{connection.name || 'Unnamed connection'}</h2>
+              <p>Runtime activation history</p>
+            </div>
+            <button type="button" aria-label="Close connection activity" onClick={onClose}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          {selected ? (
+            <>
+              <div className="workflow-instance-connection-popup__activation-nav">
+                <button
+                  type="button"
+                  disabled={activationIndex === 0}
+                  aria-label="Show newer activation"
+                  onClick={() => setActivationIndex((current) => Math.max(0, current - 1))}
+                >
+                  <ChevronLeft size={15} aria-hidden="true" />
+                  Newer
+                </button>
+                <strong>
+                  Activation {activationIndex + 1} of {activations.length}
+                </strong>
+                <button
+                  type="button"
+                  disabled={activationIndex >= activations.length - 1}
+                  aria-label="Show older activation"
+                  onClick={() =>
+                    setActivationIndex((current) => Math.min(activations.length - 1, current + 1))
+                  }
+                >
+                  Older
+                  <ChevronRight size={15} aria-hidden="true" />
+                </button>
+              </div>
+              <dl className="workflow-instance-node-popup__configuration">
+                <div>
+                  <dt>Status</dt>
+                  <dd>{connectionActivationStatusLabel(selected.status)}</dd>
+                </div>
+                <div>
+                  <dt>Requested</dt>
+                  <dd>
+                    <time dateTime={selected.requestedAt}>
+                      {new Date(selected.requestedAt).toLocaleString()}
+                    </time>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Resolved file</dt>
+                  <dd>{selected.resolvedFilePath || 'Not resolved'}</dd>
+                </div>
+                <div>
+                  <dt>Delivery</dt>
+                  <dd>{selected.deliveryKind}</dd>
+                </div>
+                <div>
+                  <dt>Context</dt>
+                  <dd>
+                    {[selected.sessionMode, selected.contextInheritance, selected.compression]
+                      .filter(Boolean)
+                      .join(' Â· ') || 'Not recorded'}
+                  </dd>
+                </div>
+              </dl>
+              <section
+                className="workflow-instance-connection-popup__endpoints"
+                aria-label="Activation Agent Sessions"
+              >
+                <button
+                  type="button"
+                  data-activation-endpoint="source"
+                  aria-label="Sending Agent Session"
+                  disabled={!agentSessionClient}
+                  onClick={() => {
+                    setReturnFocusTarget(null);
+                    setInspection({
+                      sessionId: selected.sourceSessionId,
+                      invocationId: selected.sourceInvocationId,
+                      label: 'Sending Agent Session',
+                      returnTo: 'source',
+                    });
+                  }}
+                >
+                  <span>Sending Agent Session</span>
+                  <small>
+                    {selected.sourceSessionId} Â· {selected.sourceInvocationId}
+                  </small>
+                </button>
+                <button
+                  type="button"
+                  data-activation-endpoint="target"
+                  aria-label="Receiving Agent Session"
+                  disabled={
+                    !agentSessionClient || !selected.targetSessionId || !selected.targetInvocationId
+                  }
+                  onClick={() => {
+                    if (!selected.targetSessionId || !selected.targetInvocationId) return;
+                    setReturnFocusTarget(null);
+                    setInspection({
+                      sessionId: selected.targetSessionId,
+                      invocationId: selected.targetInvocationId,
+                      label: 'Receiving Agent Session',
+                      returnTo: 'target',
+                    });
+                  }}
+                >
+                  <span>Receiving Agent Session</span>
+                  <small>
+                    {selected.targetSessionId && selected.targetInvocationId
+                      ? `${selected.targetSessionId} Â· ${selected.targetInvocationId}`
+                      : 'No target recorded'}
+                  </small>
+                </button>
+              </section>
+              <button
+                className="workflow-list-secondary workflow-instance-connection-popup__all-toggle"
+                type="button"
+                aria-expanded={showAll}
+                onClick={() => setShowAll((current) => !current)}
+              >
+                All activations
+              </button>
+              {showAll ? (
+                <ol className="workflow-instance-connection-popup__all">
+                  {activations.map((activation, index) => (
+                    <li key={activation.id}>
+                      <button
+                        type="button"
+                        className={index === activationIndex ? 'is-selected' : undefined}
+                        aria-pressed={index === activationIndex}
+                        onClick={() => setActivationIndex(index)}
+                      >
+                        <span>
+                          {connectionActivationStatusLabel(activation.status)} Â·{' '}
+                          {new Date(activation.requestedAt).toLocaleString()}
+                        </span>
+                        <small>{activation.resolvedFilePath || 'No resolved file'}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </>
+          ) : (
+            <p className="workflow-instance-node-popup__empty">
+              This connection has not fired in this workflow instance.
+            </p>
+          )}
+        </>
+      )}
+    </aside>
+  );
+}
+
+function WorkflowConnectionTurnInspection({
+  endpoint,
+  client,
+  onReturn,
+  onClose,
+}: {
+  readonly endpoint: {
+    readonly sessionId: string;
+    readonly invocationId: string;
+    readonly label: string;
+    readonly returnTo: 'source' | 'target';
+  };
+  readonly client: AgentSessionClient;
+  readonly onReturn: () => void;
+  readonly onClose: () => void;
+}) {
+  const controller = useAgentSession(client, { selectedSessionId: endpoint.sessionId });
+  return (
+    <div className="workflow-instance-node-popup__full-session">
+      <header className="workflow-instance-node-popup__session-toolbar">
+        <button type="button" autoFocus onClick={onReturn}>
+          <ArrowLeft size={15} aria-hidden="true" />
+          Return to activation
+        </button>
+        <div>
+          <strong>{endpoint.label}</strong>
+          <span>Exact recorded turn</span>
+        </div>
+        <button type="button" aria-label="Close connection activity" onClick={onClose}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <AgentSessionWorkspace
+        controller={controller}
+        inspection={{ sessionId: endpoint.sessionId, invocationId: endpoint.invocationId }}
+      />
+    </div>
   );
 }
 
@@ -3103,6 +3543,50 @@ function groupDisplayConnections(connections: readonly DisplayConnection[]) {
       });
   }
   return Array.from(groups.values());
+}
+
+function groupRecipeConnections(connections: WorkflowInstance['recipe']['connections']) {
+  const groups = new Map<
+    string,
+    {
+      readonly key: string;
+      readonly senderNodeId: string;
+      readonly receiverNodeId: string | null;
+      connections: WorkflowInstance['recipe']['connections'][number][];
+    }
+  >();
+  for (const connection of connections) {
+    const key = `${connection.senderNodeId}->${connection.receiverNodeId}`;
+    const existing = groups.get(key);
+    if (existing) existing.connections.push(connection);
+    else
+      groups.set(key, {
+        key,
+        senderNodeId: connection.senderNodeId,
+        receiverNodeId: connection.receiverNodeId,
+        connections: [connection],
+      });
+  }
+  return Array.from(groups.values());
+}
+
+function connectionActivationStatusLabel(
+  status: WorkflowInstance['connectionActivations'][number]['status'],
+): string {
+  switch (status) {
+    case 'requested':
+      return 'Requested';
+    case 'resolved':
+      return 'File resolved';
+    case 'associated':
+      return 'Session associated';
+    case 'launch_requested':
+      return 'Launch requested';
+    case 'launch_accepted':
+      return 'Launch accepted';
+    case 'failed':
+      return 'Failed';
+  }
 }
 
 function newTurnFinishedMechanism(): WorkflowConnectionMechanism {

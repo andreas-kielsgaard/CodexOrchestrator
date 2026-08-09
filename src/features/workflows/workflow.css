@@ -563,6 +563,108 @@
   overflow: hidden;
 }
 
+.workflow-instance-connection-popup {
+  width: min(470px, calc(100% - 36px));
+}
+
+.workflow-instance-connection-popup__activation-nav,
+.workflow-instance-connection-popup__endpoints {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-instance-connection-popup__activation-nav {
+  justify-content: space-between;
+}
+
+.workflow-instance-connection-popup__activation-nav button,
+.workflow-instance-connection-popup__endpoints button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #c9d1ca;
+  border-radius: 7px;
+  background: #f8f8f4;
+  color: #253229;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.workflow-instance-connection-popup__endpoints button {
+  display: grid;
+}
+
+.workflow-instance-connection-popup__endpoints small {
+  max-width: 190px;
+  overflow: hidden;
+  color: #66736c;
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-instance-connection-popup__activation-nav button:disabled,
+.workflow-instance-connection-popup__endpoints button:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+.workflow-instance-connection-popup__activation-nav strong {
+  font-size: 0.76rem;
+}
+
+.workflow-instance-connection-popup__endpoints {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.workflow-instance-connection-popup__all-toggle {
+  margin-top: 2px;
+}
+
+.workflow-instance-connection-popup__all {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.workflow-instance-connection-popup__all button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #d8ddd5;
+  border-radius: 7px;
+  background: #f8f8f4;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-instance-connection-popup__all button:hover,
+.workflow-instance-connection-popup__all button:focus-visible,
+.workflow-instance-connection-popup__all button.is-selected {
+  border-color: #9a7920;
+  background: #fff4cc;
+}
+
+.workflow-instance-connection-popup__all small {
+  color: #66736c;
+}
+
 .workflow-instance-node-popup > header,
 .workflow-instance-node-popup__session-toolbar {
   display: flex;

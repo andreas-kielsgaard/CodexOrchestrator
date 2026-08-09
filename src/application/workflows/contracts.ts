@@ -138,11 +138,7 @@ export interface WorkflowDefinition {
 }
 
 export type WorkflowLaunchStatus =
-  | 'requested'
-  | 'associated'
-  | 'launch_requested'
-  | 'launch_accepted'
-  | 'failed';
+  'requested' | 'associated' | 'launch_requested' | 'launch_accepted' | 'failed';
 
 export interface WorkflowInstanceSummary {
   readonly id: string;
@@ -193,6 +189,34 @@ export interface WorkflowInstance {
   readonly recipe: EffectiveWorkflowRecipe;
   readonly sessions: readonly WorkflowInstanceSession[];
   readonly launchActivation: WorkflowActivation;
+  readonly connectionActivations: readonly WorkflowConnectionActivation[];
+}
+
+export type WorkflowConnectionActivationStatus =
+  'requested' | 'resolved' | 'associated' | 'launch_requested' | 'launch_accepted' | 'failed';
+
+export interface WorkflowConnectionActivation {
+  readonly id: string;
+  readonly recipeId: string;
+  readonly connectionId: string;
+  readonly senderNodeId: string;
+  readonly receiverNodeId: string;
+  readonly sourceSessionId: string;
+  readonly sourceInvocationId: string;
+  readonly targetSessionId: string | null;
+  readonly targetInvocationId: string | null;
+  readonly deliveryKind: string;
+  readonly sessionMode: string | null;
+  readonly contextInheritance: string;
+  readonly compression: string;
+  readonly resolvedFilePath: string | null;
+  readonly status: WorkflowConnectionActivationStatus;
+  readonly requestedAt: string;
+  readonly resolvedAt: string | null;
+  readonly associatedAt: string | null;
+  readonly launchRequestedAt: string | null;
+  readonly launchAcceptedAt: string | null;
+  readonly failedAt: string | null;
 }
 
 export type WorkflowElementRef = {

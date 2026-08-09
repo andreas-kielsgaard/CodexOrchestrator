@@ -84,7 +84,7 @@ export function AgentSessionTurnInspector({
       <header className="agent-session-turn-inspector__heading">
         <div>
           <span>Agent turn</span>
-          <strong>Complete recorded turn</strong>
+          <strong>{invocation.isActive ? 'Current agent turn' : 'Complete recorded turn'}</strong>
         </div>
         {(startLabel || durationLabel) && (
           <dl className="agent-session-turn-inspector__timing">
