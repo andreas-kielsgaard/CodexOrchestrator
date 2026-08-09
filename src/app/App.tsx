@@ -1057,6 +1057,7 @@ export function App({
         currentProductDestination.kind === 'workflow' ? (
         <WorkflowScreen
           client={workflowClient}
+          agentSessionClient={agentSessionClient}
           workflowTypeId={currentProductDestination.workflowTypeId}
           workflowInstanceId={currentProductDestination.workflowInstanceId}
           onOpenWorkflowType={(workflowTypeId) => {

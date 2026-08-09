@@ -1,4 +1,6 @@
 import {
+  ArrowLeft,
+  ArrowUpRight,
   Cable,
   Copy,
   GitBranch,
@@ -18,6 +20,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from 'react';
+import type { AgentSessionClient } from '../../application/agentSessions';
 import type {
   WorkflowApplicationClient,
   WorkflowConnectionConfig,
@@ -37,10 +40,13 @@ import type {
   WorkflowTypeSummary,
 } from '../../application/workflows';
 import { workflowPersistenceCoordinator } from '../../application/workflows';
+import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
+import { AgentSessionHeaderActionsProvider } from '../agentSessions/AgentSessionWorkspace';
 import './workflow.css';
 
 export interface WorkflowScreenProps {
   readonly client: WorkflowApplicationClient;
+  readonly agentSessionClient?: AgentSessionClient;
   readonly workflowTypeId: string | null;
   readonly workflowInstanceId?: string | null;
   onOpenWorkflowType(workflowTypeId: string): void;
@@ -75,6 +81,7 @@ interface ConnectionListState {
 
 export function WorkflowScreen({
   client,
+  agentSessionClient,
   workflowTypeId,
   workflowInstanceId,
   onOpenWorkflowType,
@@ -82,7 +89,11 @@ export function WorkflowScreen({
 }: WorkflowScreenProps) {
   const persistentClient = workflowPersistenceCoordinator(client);
   return workflowInstanceId ? (
-    <WorkflowInstanceView client={persistentClient} workflowInstanceId={workflowInstanceId} />
+    <WorkflowInstanceView
+      client={persistentClient}
+      agentSessionClient={agentSessionClient}
+      workflowInstanceId={workflowInstanceId}
+    />
   ) : workflowTypeId ? (
     <WorkflowTypeEditor
       client={persistentClient}
@@ -125,8 +136,7 @@ function WorkflowLanding({
     );
     void client.listWorkflowInstances().then(
       (value) => current && setInstances({ kind: 'ready', value }),
-      (error: unknown) =>
-        current && setInstances({ kind: 'failed', message: errorMessage(error) }),
+      (error: unknown) => current && setInstances({ kind: 'failed', message: errorMessage(error) }),
     );
     return () => {
       current = false;
@@ -1228,7 +1238,12 @@ function LaunchWorkflowDialog({
             <p className="eyebrow">New Workflow instance</p>
             <h2>Start {workflowType.name}</h2>
           </div>
-          <button type="button" aria-label="Close Workflow launch" onClick={onClose} disabled={launching}>
+          <button
+            type="button"
+            aria-label="Close Workflow launch"
+            onClick={onClose}
+            disabled={launching}
+          >
             <X size={18} aria-hidden="true" />
           </button>
         </header>
@@ -1254,10 +1269,20 @@ function LaunchWorkflowDialog({
         <p className="workflow-draft-note">
           Starts one fresh Agent Session without inherited or compressed context.
         </p>
-        {error ? <p className="workflow-error" role="alert">{error}</p> : null}
+        {error ? (
+          <p className="workflow-error" role="alert">
+            {error}
+          </p>
+        ) : null}
         <footer>
-          <button type="button" onClick={onClose} disabled={launching}>Cancel</button>
-          <button className="workflow-primary-button" type="submit" disabled={launching || !startingPrompt.trim()}>
+          <button type="button" onClick={onClose} disabled={launching}>
+            Cancel
+          </button>
+          <button
+            className="workflow-primary-button"
+            type="submit"
+            disabled={launching || !startingPrompt.trim()}
+          >
             {launching ? 'Starting…' : 'Start workflow'}
           </button>
         </footer>
@@ -1268,12 +1293,16 @@ function LaunchWorkflowDialog({
 
 function WorkflowInstanceView({
   client,
+  agentSessionClient,
   workflowInstanceId,
 }: {
   readonly client: WorkflowApplicationClient;
+  readonly agentSessionClient?: AgentSessionClient;
   readonly workflowInstanceId: string;
 }) {
   const [load, setLoad] = useState<LoadState<WorkflowInstance>>({ kind: 'loading' });
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const nodeTriggers = useRef(new Map<string, HTMLButtonElement>());
   useEffect(() => {
     let current = true;
     void client.loadWorkflowInstance(workflowInstanceId).then(
@@ -1286,16 +1315,37 @@ function WorkflowInstanceView({
   }, [client, workflowInstanceId]);
 
   if (load.kind === 'loading')
-    return <main className="workflow-screen workflow-status" aria-label="Workflow instance">Loading Workflow instance…</main>;
+    return (
+      <main className="workflow-screen workflow-status" aria-label="Workflow instance">
+        Loading Workflow instance…
+      </main>
+    );
   if (load.kind === 'failed')
-    return <main className="workflow-screen workflow-error" aria-label="Workflow instance">{load.message}</main>;
+    return (
+      <main className="workflow-screen workflow-error" aria-label="Workflow instance">
+        {load.message}
+      </main>
+    );
 
   const instance = load.value;
+  const selectedNode = selectedNodeId
+    ? (instance.recipe.nodes.find((node) => node.id === selectedNodeId) ?? null)
+    : null;
+  const closeSelectedNode = () => {
+    const trigger = selectedNodeId ? nodeTriggers.current.get(selectedNodeId) : undefined;
+    setSelectedNodeId(null);
+    trigger?.focus();
+  };
   return (
-    <main className="workflow-screen workflow-editor workflow-instance" aria-label={`Workflow instance ${instance.summary.name}`}>
+    <main
+      className="workflow-screen workflow-editor workflow-instance"
+      aria-label={`Workflow instance ${instance.summary.name}`}
+    >
       <header className="workflow-editor__header">
         <div>
-          <p className="eyebrow">{instance.summary.workflowTypeName} · Recipe {instance.recipe.ordinal}</p>
+          <p className="eyebrow">
+            {instance.summary.workflowTypeName} · Recipe {instance.recipe.ordinal}
+          </p>
           <h1>{instance.summary.name}</h1>
         </div>
         <div className="workflow-editor__summary" aria-label="Workflow instance summary">
@@ -1310,24 +1360,50 @@ function WorkflowInstanceView({
           <span>{instance.startingPrompt}</span>
         </div>
         <dl>
-          <div><dt>Delivery</dt><dd>Direct prompt</dd></div>
-          <div><dt>Context</dt><dd>Fresh · no inheritance · no compression</dd></div>
-          <div><dt>Runtime</dt><dd>{launchStatusLabel(instance.launchActivation.status)}</dd></div>
+          <div>
+            <dt>Delivery</dt>
+            <dd>Direct prompt</dd>
+          </div>
+          <div>
+            <dt>Context</dt>
+            <dd>Fresh · no inheritance · no compression</dd>
+          </div>
+          <div>
+            <dt>Runtime</dt>
+            <dd>{launchStatusLabel(instance.launchActivation.status)}</dd>
+          </div>
         </dl>
         {instance.launchActivation.failureReason ? (
-          <p className="workflow-error" role="alert">{instance.launchActivation.failureReason}</p>
+          <p className="workflow-error" role="alert">
+            {instance.launchActivation.failureReason}
+          </p>
         ) : null}
       </section>
-      <div className="workflow-canvas workflow-instance__canvas" aria-label="Workflow instance graph">
+      <div
+        className="workflow-canvas workflow-instance__canvas"
+        aria-label="Workflow instance graph"
+        onClick={closeSelectedNode}
+      >
         <svg className="workflow-canvas__connections" aria-label="Workflow instance connections">
           <defs>
-            <marker id="workflow-instance-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <marker
+              id="workflow-instance-arrow"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+            >
               <path d="M0,0 L8,4 L0,8 z" />
             </marker>
           </defs>
           {instance.recipe.connections.map((connection) => {
-            const sender = instance.recipe.nodes.find((node) => node.id === connection.senderNodeId);
-            const receiver = instance.recipe.nodes.find((node) => node.id === connection.receiverNodeId);
+            const sender = instance.recipe.nodes.find(
+              (node) => node.id === connection.senderNodeId,
+            );
+            const receiver = instance.recipe.nodes.find(
+              (node) => node.id === connection.receiverNodeId,
+            );
             if (!sender || !receiver) return null;
             return (
               <line
@@ -1345,34 +1421,308 @@ function WorkflowInstanceView({
         {instance.recipe.nodes.map((node) => {
           const sessions = instance.sessions.filter((session) => session.nodeId === node.id);
           const active = sessions.filter((session) => session.activity === 'active').length;
-          const latest = sessions.at(-1);
           return (
-            <article
+            <button
+              type="button"
               key={node.id}
+              ref={(element) => {
+                if (element) nodeTriggers.current.set(node.id, element);
+                else nodeTriggers.current.delete(node.id);
+              }}
               className={`workflow-node workflow-instance-node${node.isStartingPoint ? ' is-start' : ''}`}
               style={{ left: node.positionX, top: node.positionY }}
-              title={latest?.latestTurnSummary ?? 'No Agent Session turns for this node'}
+              aria-label={`Open ${node.harness.harnessName || 'Harness'} node ${node.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setSelectedNodeId(node.id);
+              }}
             >
-              <span className="workflow-node__badges">{node.isStartingPoint ? <small>Start</small> : null}</span>
+              <span className="workflow-node__badges">
+                {node.isStartingPoint ? <small>Start</small> : null}
+              </span>
               <strong>{node.harness.harnessName || 'Harness'}</strong>
               <span>{node.name}</span>
-              <small>{sessions.length} {sessions.length === 1 ? 'Session' : 'Sessions'} · {active} active · {sessions.length - active} idle</small>
-              {latest?.latestTurnSummary ? <p>{latest.latestTurnSummary}</p> : null}
-            </article>
+              <small>
+                {sessions.length} {sessions.length === 1 ? 'Session' : 'Sessions'} · {active} active
+                · {sessions.length - active} idle
+              </small>
+            </button>
           );
         })}
+        {selectedNode ? (
+          <WorkflowInstanceNodePopup
+            key={selectedNode.id}
+            node={selectedNode}
+            sessions={instance.sessions.filter((session) => session.nodeId === selectedNode.id)}
+            agentSessionClient={agentSessionClient}
+            onClose={closeSelectedNode}
+          />
+        ) : null}
       </div>
     </main>
   );
 }
 
+function WorkflowInstanceNodePopup({
+  node,
+  sessions,
+  agentSessionClient,
+  onClose,
+}: {
+  readonly node: WorkflowInstance['recipe']['nodes'][number];
+  readonly sessions: WorkflowInstance['sessions'];
+  readonly agentSessionClient?: AgentSessionClient;
+  readonly onClose: () => void;
+}) {
+  const [view, setView] = useState<'configuration' | 'sessions'>('configuration');
+  const popupRef = useRef<HTMLElement>(null);
+  const orderedSessions = [...sessions].sort((left, right) =>
+    right.associatedAt.localeCompare(left.associatedAt),
+  );
+  const activeCount = sessions.filter((session) => session.activity === 'active').length;
+  useEffect(() => {
+    const popup = popupRef.current;
+    if (!popup) return;
+    if (view === 'configuration') popup.focus();
+    else popup.querySelector<HTMLElement>(workflowPopupFocusableSelector)?.focus();
+  }, [view]);
+  return (
+    <aside
+      ref={popupRef}
+      className={`workflow-instance-node-popup${view === 'sessions' ? ' is-sessions' : ''}`}
+      role="dialog"
+      aria-label={`${node.harness.harnessName || 'Harness'} node details`}
+      tabIndex={-1}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => containWorkflowPopupFocus(event, popupRef.current, onClose)}
+    >
+      {view === 'configuration' ? (
+        <>
+          <header>
+            <div>
+              <p className="eyebrow">Harness</p>
+              <h2>{node.harness.harnessName || 'Harness'}</h2>
+              <p>{node.name}</p>
+            </div>
+            <button type="button" aria-label="Close node details" onClick={onClose}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          <section
+            className="workflow-instance-node-popup__activity"
+            aria-label="Node Session activity"
+          >
+            <strong>
+              {sessions.length} {sessions.length === 1 ? 'Session' : 'Sessions'}
+            </strong>
+            <span>{activeCount} active</span>
+            <span>{sessions.length - activeCount} idle</span>
+          </section>
+          <dl className="workflow-instance-node-popup__configuration">
+            <div>
+              <dt>Role identity</dt>
+              <dd>{node.harness.roleIdentity || 'Not defined'}</dd>
+            </div>
+            <div>
+              <dt>Capabilities</dt>
+              <dd>
+                {node.harness.skills.length} Skills · {node.harness.mcpServers.length} MCP Servers ·{' '}
+                {node.harness.hooks.length} Hooks
+              </dd>
+            </div>
+            <div>
+              <dt>Runtime</dt>
+              <dd>
+                {[node.harness.runtime.provider, node.harness.runtime.model]
+                  .filter(Boolean)
+                  .join(' · ') || 'Harness default'}
+              </dd>
+            </div>
+          </dl>
+          <footer>
+            <button
+              className="workflow-primary-button"
+              type="button"
+              disabled={!agentSessionClient}
+              onClick={() => setView('sessions')}
+            >
+              Agent Sessions
+            </button>
+          </footer>
+        </>
+      ) : agentSessionClient ? (
+        <WorkflowInstanceNodeSessions
+          nodeName={node.name}
+          harnessName={node.harness.harnessName || 'Harness'}
+          sessions={orderedSessions}
+          client={agentSessionClient}
+          onReturn={() => setView('configuration')}
+          onClose={onClose}
+        />
+      ) : null}
+    </aside>
+  );
+}
+
+function WorkflowInstanceNodeSessions({
+  nodeName,
+  harnessName,
+  sessions,
+  client,
+  onReturn,
+  onClose,
+}: {
+  readonly nodeName: string;
+  readonly harnessName: string;
+  readonly sessions: WorkflowInstance['sessions'];
+  readonly client: AgentSessionClient;
+  readonly onReturn: () => void;
+  readonly onClose: () => void;
+}) {
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    sessions[0]?.sessionId ?? null,
+  );
+  const [fullSession, setFullSession] = useState(false);
+  const controller = useAgentSession(client, { selectedSessionId });
+  const selectedSession = sessions.find((session) => session.sessionId === selectedSessionId);
+
+  if (fullSession) {
+    return (
+      <div className="workflow-instance-node-popup__full-session">
+        <header className="workflow-instance-node-popup__session-toolbar">
+          <button type="button" autoFocus onClick={() => setFullSession(false)}>
+            <ArrowLeft size={15} aria-hidden="true" />
+            Return to Session list
+          </button>
+          <button type="button" aria-label="Close node details" onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <AgentSessionWorkspace controller={controller} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="workflow-instance-node-popup__sessions">
+      <header className="workflow-instance-node-popup__session-toolbar">
+        <button type="button" autoFocus onClick={onReturn}>
+          <ArrowLeft size={15} aria-hidden="true" />
+          Return to node
+        </button>
+        <div>
+          <strong>{harnessName}</strong>
+          <span>{nodeName}</span>
+        </div>
+        <button type="button" aria-label="Close node details" onClick={onClose}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <div className="workflow-instance-node-popup__session-split">
+        <nav aria-label={`${nodeName} Agent Sessions`}>
+          <p className="eyebrow">Agent Sessions</p>
+          {sessions.length === 0 ? (
+            <p className="workflow-instance-node-popup__empty">
+              No Agent Sessions belong to this node.
+            </p>
+          ) : null}
+          {sessions.map((session) => (
+            <button
+              type="button"
+              key={session.sessionId}
+              className={session.sessionId === selectedSessionId ? 'is-selected' : ''}
+              aria-pressed={session.sessionId === selectedSessionId}
+              onClick={() => setSelectedSessionId(session.sessionId)}
+            >
+              <span>
+                <strong>{session.title}</strong>
+                <small>{session.activity}</small>
+              </span>
+              <time dateTime={session.associatedAt}>
+                {new Date(session.associatedAt).toLocaleString()}
+              </time>
+            </button>
+          ))}
+        </nav>
+        <section
+          className="workflow-instance-node-popup__session-preview"
+          aria-label="Selected Agent Session"
+        >
+          {selectedSession ? (
+            <AgentSessionHeaderActionsProvider
+              actions={
+                <button
+                  className="workflow-instance-node-popup__view-action"
+                  type="button"
+                  onClick={() => setFullSession(true)}
+                >
+                  View Agent Session
+                  <ArrowUpRight size={15} aria-hidden="true" />
+                </button>
+              }
+            >
+              <AgentSessionWorkspace controller={controller} />
+            </AgentSessionHeaderActionsProvider>
+          ) : (
+            <p className="workflow-instance-node-popup__empty">Select an Agent Session.</p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function containWorkflowPopupFocus(
+  event: KeyboardEvent<HTMLElement>,
+  popup: HTMLElement | null,
+  onClose: () => void,
+) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+    return;
+  }
+  if (event.key !== 'Tab' || !popup) return;
+  const focusable = [...popup.querySelectorAll<HTMLElement>(workflowPopupFocusableSelector)];
+  if (focusable.length === 0) {
+    event.preventDefault();
+    popup.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1)!;
+  const active = document.activeElement;
+  if (event.shiftKey && (active === first || active === popup)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === last || !popup.contains(active))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+const workflowPopupFocusableSelector = [
+  'button:not([disabled])',
+  'a[href]',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 function launchStatusLabel(status: WorkflowInstanceSummary['launchStatus']): string {
   switch (status) {
-    case 'requested': return 'Launch requested';
-    case 'associated': return 'Session associated';
-    case 'launch_requested': return 'Runtime launch requested';
-    case 'launch_accepted': return 'Runtime launch accepted';
-    case 'failed': return 'Launch failed';
+    case 'requested':
+      return 'Launch requested';
+    case 'associated':
+      return 'Session associated';
+    case 'launch_requested':
+      return 'Runtime launch requested';
+    case 'launch_accepted':
+      return 'Runtime launch accepted';
+    case 'failed':
+      return 'Launch failed';
   }
 }
 

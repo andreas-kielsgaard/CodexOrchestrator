@@ -8,6 +8,11 @@ import type {
   WorkflowInstance,
   WorkflowNodeConfig,
 } from '../../application/workflows';
+import {
+  createRecordedAgentSessionClient,
+  createRecordedAgentSessionStore,
+} from '../../dev/agentSessions';
+import { recordedAgentSessionDetails } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
 import { WorkflowScreen } from './WorkflowScreen';
 
 describe('WorkflowScreen', () => {
@@ -82,12 +87,120 @@ describe('WorkflowScreen', () => {
       />,
     );
 
-    expect(await screen.findByRole('main', { name: 'Workflow instance Architecture review' })).toBeVisible();
+    expect(
+      await screen.findByRole('main', { name: 'Workflow instance Architecture review' }),
+    ).toBeVisible();
     expect(screen.getByLabelText('Workflow instance graph')).toBeVisible();
     expect(screen.getByText('Sender Harness')).toBeVisible();
     expect(screen.getByText('1 Session · 1 active · 0 idle')).toBeVisible();
     expect(screen.getAllByText('Runtime launch accepted').length).toBeGreaterThan(0);
     expect(screen.getByText('Fresh · no inheritance · no compression')).toBeVisible();
+  });
+
+  it('keeps node configuration and newest-first Agent Sessions inside a dismissible popup', async () => {
+    const oldestDetails = recordedAgentSessionDetails[0]!;
+    const newestDetails = recordedAgentSessionDetails[1]!;
+    const misleadingSummary = 'Submitted prompt is not the latest agent turn.';
+    const instance: WorkflowInstance = {
+      ...workflowInstance(),
+      summary: {
+        ...workflowInstance().summary,
+        sessionCount: 2,
+        activeSessionCount: 1,
+        idleSessionCount: 1,
+      },
+      sessions: [
+        {
+          nodeId: 'sender',
+          sessionId: oldestDetails.session.id,
+          title: 'Older node Session',
+          activity: 'idle',
+          latestTurnSummary: null,
+          associatedAt: '2026-08-09T01:00:01.000Z',
+        },
+        {
+          nodeId: 'sender',
+          sessionId: newestDetails.session.id,
+          title: 'Newest node Session',
+          activity: 'active',
+          latestTurnSummary: misleadingSummary,
+          associatedAt: '2026-08-09T02:00:01.000Z',
+        },
+      ],
+    };
+    const client: WorkflowApplicationClient = {
+      ...workflowClient(definitionWithNodes()),
+      loadWorkflowInstance: vi.fn(async () => instance),
+    };
+    const agentSessionClient = createRecordedAgentSessionClient({
+      store: createRecordedAgentSessionStore([oldestDetails, newestDetails]),
+    });
+    render(
+      <WorkflowScreen
+        client={client}
+        agentSessionClient={agentSessionClient}
+        workflowTypeId={null}
+        workflowInstanceId="instance-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    const nodeTrigger = await screen.findByRole('button', {
+      name: 'Open Sender Harness node Sender',
+    });
+    expect(screen.queryByText(misleadingSummary)).toBeNull();
+    fireEvent.click(nodeTrigger);
+    const dialog = screen.getByRole('dialog', { name: 'Sender Harness node details' });
+    expect(dialog).toHaveFocus();
+    expect(within(dialog).getByRole('heading', { name: 'Sender Harness' })).toBeVisible();
+    expect(within(dialog).getByText('Sender')).toBeVisible();
+    expect(within(dialog).queryByText(misleadingSummary)).toBeNull();
+    const activity = within(dialog).getByLabelText('Node Session activity');
+    expect(within(activity).getByText('2 Sessions')).toBeVisible();
+    expect(within(activity).getByText('1 active')).toBeVisible();
+    expect(within(activity).getByText('1 idle')).toBeVisible();
+
+    const agentSessionsAction = within(dialog).getByRole('button', { name: 'Agent Sessions' });
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(agentSessionsAction).toHaveFocus();
+    fireEvent.keyDown(agentSessionsAction, { key: 'Tab' });
+    expect(within(dialog).getByRole('button', { name: 'Close node details' })).toHaveFocus();
+
+    fireEvent.click(agentSessionsAction);
+    expect(screen.getByRole('button', { name: 'Return to node' })).toHaveFocus();
+    expect(screen.queryByText(misleadingSummary)).toBeNull();
+    const sessionList = screen.getByRole('navigation', { name: 'Sender Agent Sessions' });
+    const sessionButtons = within(sessionList).getAllByRole('button');
+    expect(sessionButtons.map((button) => button.textContent)).toEqual([
+      expect.stringContaining('Newest node Session'),
+      expect.stringContaining('Older node Session'),
+    ]);
+    expect(sessionButtons[0]).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      await within(screen.getByLabelText('Selected Agent Session')).findByRole('heading', {
+        name: newestDetails.session.title,
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'View Agent Session' }).parentElement).toHaveClass(
+      'agent-session-header__actions',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'View Agent Session' }));
+    expect(screen.getByRole('button', { name: 'Return to Session list' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Session list' }));
+    expect(screen.getByRole('button', { name: 'Return to node' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to node' }));
+    expect(screen.getByRole('button', { name: 'Agent Sessions' })).toBeVisible();
+
+    fireEvent.click(screen.getByLabelText('Workflow instance graph'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(nodeTrigger).toHaveFocus();
+
+    fireEvent.click(nodeTrigger);
+    const reopenedDialog = screen.getByRole('dialog', { name: 'Sender Harness node details' });
+    fireEvent.keyDown(reopenedDialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(nodeTrigger).toHaveFocus();
   });
 
   it('keeps the node brush active, persists a closed draft, and activates it', async () => {
