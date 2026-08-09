@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 40;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 41;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v40 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v41 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -54,11 +54,14 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
             .map_err(|error| format!("Unable to evolve Workflow instance schema: {error}"))?;
         transaction
+            .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
+        transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v40 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v41 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=39).contains(&current_version) {
+    if (1..=40).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -301,6 +304,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
                 .map_err(|error| format!("Unable to migrate Workflow instance schema: {error}"))?;
         }
+        if current_version <= 40 {
+            transaction
+                .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
+                .map_err(|error| format!("Unable to migrate Harness binding schema: {error}"))?;
+        }
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -398,6 +406,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
         .map_err(|error| format!("Unable to initialize Workflow instance schema: {error}"))?;
     transaction
+        .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
@@ -457,12 +468,22 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 3)
         .map_err(|error| format!("Unable to inspect active Workflow instance schema: {error}"))?;
+    let harness_binding_schema_is_present = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM pragma_table_info('session_harness_bindings') WHERE name IN ('id','contract_version','session_id','runtime_instance_id','session_instance_token','stage','harness_snapshot','mediation_plan','configuration_digest','harness_token','source_workflow_instance_id','source_recipe_id','source_node_id','prepared_at','bound_at','retired_at'))=16
+                AND EXISTS(SELECT 1 FROM pragma_index_list('session_harness_bindings') WHERE name='one_current_harness_binding_per_session')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Unable to inspect active Harness binding schema: {error}"))?;
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && workflow_schema_is_present
         && workflow_role_schema_is_present
-        && workflow_instance_schema_is_present)
+        && workflow_instance_schema_is_present
+        && harness_binding_schema_is_present)
 }
 use std::time::Duration;
 
@@ -622,6 +643,7 @@ mod tests {
                 "proposal_commands",
                 "proposal_events",
                 "proposal_revisions",
+                "session_harness_bindings",
                 "sprint_target_current_attentions",
                 "sprint_target_currents",
                 "stored_file_review_artifacts",
@@ -953,6 +975,40 @@ mod tests {
         let reopened = open_active_database(&path).expect("reopen migrated database");
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
         assert!(table_exists(&reopened, "workflow_activations"));
+    }
+
+    #[test]
+    fn migrates_v40_to_harness_binding_storage_and_reopens_idempotently() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("active-v40.sqlite");
+        {
+            let connection = open_active_database(&path).expect("current database");
+            connection
+                .execute_batch(
+                    "DROP TABLE session_harness_bindings;
+                     PRAGMA user_version=40;",
+                )
+                .expect("restore v40 predecessor");
+        }
+
+        let migrated = open_active_database(&path).expect("migrate v40");
+        assert!(table_exists(&migrated, "session_harness_bindings"));
+        assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_index_list('session_harness_bindings') WHERE name='one_current_harness_binding_per_session'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        drop(migrated);
+
+        let reopened = open_active_database(&path).expect("reopen migrated database");
+        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert!(table_exists(&reopened, "session_harness_bindings"));
     }
 
     #[test]

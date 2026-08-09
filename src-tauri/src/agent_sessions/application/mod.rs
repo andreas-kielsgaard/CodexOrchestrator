@@ -8,6 +8,7 @@ pub(crate) use lifecycle::{
     title_from_message, AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
     ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand, CreateAgentSessionCommand,
     CreateApplicationAgentSessionCommand, NativeProfileLaunchAuthority,
+    SessionHarnessLaunchAuthority,
     SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
     SendIdempotentApplicationAgentSessionMessageCommand, SystemAgentSessionProviders,
 };

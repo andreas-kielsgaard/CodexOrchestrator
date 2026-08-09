@@ -112,9 +112,24 @@ pub(crate) trait WorkflowRepository: Send + Sync {
     ) -> Result<WorkflowInstanceRecord, String>;
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct BindWorkflowSessionHarness {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) runtime_instance_id: String,
+    pub(crate) workflow_instance_id: String,
+    pub(crate) recipe_id: String,
+    pub(crate) node_id: String,
+    pub(crate) harness: WorkflowHarnessConfig,
+}
+
+pub(crate) trait WorkflowSessionHarnessBinder: Send + Sync {
+    fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String>;
+}
+
 pub(crate) struct WorkflowApplication {
     repository: Arc<dyn WorkflowRepository>,
     sessions: Arc<AgentSessionApplication>,
+    harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
     instance_root: PathBuf,
 }
 
@@ -122,11 +137,13 @@ impl WorkflowApplication {
     pub(crate) fn new(
         repository: Arc<dyn WorkflowRepository>,
         sessions: Arc<AgentSessionApplication>,
+        harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
         instance_root: PathBuf,
     ) -> Self {
         Self {
             repository,
             sessions,
+            harnesses,
             instance_root,
         }
     }
@@ -288,7 +305,7 @@ impl WorkflowApplication {
         let preparation = WorkflowLaunchPreparation {
             instance_id: instance_id.clone(),
             workflow_type_id: workflow_type_id.to_string(),
-            recipe_id: recipe.id,
+            recipe_id: recipe.id.clone(),
             name: instance_name.clone(),
             starting_prompt: starting_prompt.to_string(),
             working_directory: working_directory.clone(),
@@ -324,6 +341,17 @@ impl WorkflowApplication {
             &associated_at,
         ) {
             self.record_failure(&activation_id, "session_association", &error);
+            return self.load_workflow_instance(&instance_id);
+        }
+        if let Err(error) = self.harnesses.bind_workflow_session(BindWorkflowSessionHarness {
+            session_id: session.clone(),
+            runtime_instance_id: invocation_id.clone(),
+            workflow_instance_id: instance_id.clone(),
+            recipe_id: recipe.id.clone(),
+            node_id: start.id.clone(),
+            harness: start.harness.clone(),
+        }) {
+            self.record_failure(&activation_id, "harness_binding", &error);
             return self.load_workflow_instance(&instance_id);
         }
         if let Err(error) = self
@@ -462,9 +490,6 @@ fn launch_extension(
     }
     if !harness.hooks.is_empty() {
         return Err("Workflow launch does not support Harness hooks yet.".to_string());
-    }
-    if !harness.mcp_servers.is_empty() {
-        return Err("Workflow launch does not support Harness MCP exposure until the Harness sidecar exists.".to_string());
     }
     let provider = harness.runtime.provider.trim();
     if !provider.is_empty() && !provider.eq_ignore_ascii_case("codex") {
@@ -611,6 +636,22 @@ mod tests {
         }
     }
 
+    struct RecordingHarnessBinder;
+
+    impl WorkflowSessionHarnessBinder for RecordingHarnessBinder {
+        fn bind_workflow_session(&self, _: BindWorkflowSessionHarness) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct FailingHarnessBinder;
+
+    impl WorkflowSessionHarnessBinder for FailingHarnessBinder {
+        fn bind_workflow_session(&self, _: BindWorkflowSessionHarness) -> Result<(), String> {
+            Err("managed upstream is unavailable".to_string())
+        }
+    }
+
     struct NoopNotifier;
 
     impl AgentSessionNotifier for NoopNotifier {
@@ -620,6 +661,17 @@ mod tests {
     }
 
     fn fixture() -> (
+        tempfile::TempDir,
+        Arc<SqliteWorkflowRepository>,
+        Arc<RecordingRuntime>,
+        WorkflowApplication,
+    ) {
+        fixture_with_binder(Arc::new(RecordingHarnessBinder))
+    }
+
+    fn fixture_with_binder(
+        harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
+    ) -> (
         tempfile::TempDir,
         Arc<SqliteWorkflowRepository>,
         Arc<RecordingRuntime>,
@@ -644,6 +696,7 @@ mod tests {
         let application = WorkflowApplication::new(
             workflows.clone(),
             sessions,
+            harnesses,
             directory.path().join("workflow-instances"),
         );
         (directory, workflows, runtime, application)
@@ -815,6 +868,7 @@ mod tests {
         let reopened = WorkflowApplication::new(
             workflows,
             sessions,
+            Arc::new(RecordingHarnessBinder),
             directory.path().join("workflow-instances"),
         );
 
@@ -911,6 +965,41 @@ mod tests {
             .failure_reason
             .as_deref()
             .is_some_and(|reason| reason.contains("launch was not accepted")));
+        assert!(runtime.launches.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn harness_binding_failure_is_durable_and_prevents_runtime_launch() {
+        let (_directory, repository, runtime, application) =
+            fixture_with_binder(Arc::new(FailingHarnessBinder));
+        let workflow_type_id = activate_start(
+            &repository,
+            WorkflowHarnessConfig {
+                harness_name: "Reviewer".to_string(),
+                mcp_servers: vec![crate::workflows::domain::WorkflowMcpServerExposure {
+                    server_name: "plan_builder".to_string(),
+                    access: crate::workflows::domain::WorkflowMcpServerAccess::EntireServer,
+                }],
+                ..WorkflowHarnessConfig::default()
+            },
+        );
+
+        let instance = application
+            .launch_workflow_instance(&workflow_type_id, None, "Review this.")
+            .unwrap();
+
+        assert_eq!(instance.summary.launch_status, WorkflowLaunchStatus::Failed);
+        assert_eq!(
+            instance.launch_activation.failure_stage.as_deref(),
+            Some("harness_binding")
+        );
+        assert!(instance
+            .launch_activation
+            .failure_reason
+            .as_deref()
+            .unwrap()
+            .contains("managed upstream"));
+        assert!(instance.launch_activation.launch_requested_at.is_none());
         assert!(runtime.launches.lock().unwrap().is_empty());
     }
 }

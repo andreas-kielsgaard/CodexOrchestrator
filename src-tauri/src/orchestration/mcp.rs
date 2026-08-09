@@ -544,11 +544,17 @@ pub(crate) fn start_managed_invocation(
         bearer.clone(),
         origins,
     )?;
-    let injection = CodexMcpInjection::new(&server.url(), bearer, enabled_tools, required);
+    let upstream = crate::harness_engine::ManagedMcpUpstreamDescriptor {
+        name: "plan_builder".to_string(),
+        url: server.url(),
+        bearer_token: bearer.clone(),
+    };
+    let injection = CodexMcpInjection::new(&upstream.url, bearer, enabled_tools, required);
     Ok(ManagedPlanBuilderInvocation {
         server,
         injection,
         invocation,
+        upstream,
     })
 }
 
@@ -607,8 +613,14 @@ pub(crate) struct ManagedPlanBuilderInvocation {
     server: ManagedMcpServer,
     pub(crate) injection: CodexMcpInjection,
     invocation: PlanBuilderInvocation,
+    upstream: crate::harness_engine::ManagedMcpUpstreamDescriptor,
 }
 impl ManagedPlanBuilderInvocation {
+    pub(crate) fn upstream_descriptor(
+        &self,
+    ) -> crate::harness_engine::ManagedMcpUpstreamDescriptor {
+        self.upstream.clone()
+    }
     pub(crate) fn bind_agent_invocation(
         &self,
         agent_invocation_id: crate::agent_sessions::domain::AgentInvocationId,
@@ -1168,6 +1180,123 @@ mod tests {
             1
         );
         server.stop();
+    }
+
+    #[tokio::test]
+    async fn managed_plan_builder_exposes_an_explicit_harness_upstream_descriptor() {
+        let (application, confirmations, invocation, _repository) = test_application();
+        let managed = start_managed_invocation(
+            application,
+            confirmations,
+            invocation,
+            &[SUBMIT_TOOL.to_string()],
+            true,
+            vec!["tauri://localhost".into()],
+        )
+        .expect("managed server");
+        let descriptor = managed.upstream_descriptor();
+        assert_eq!(descriptor.name, "plan_builder");
+        assert!(descriptor.url.starts_with("http://127.0.0.1:"));
+        assert!(!descriptor.bearer_token.is_empty());
+        let registry = crate::harness_engine::ManagedMcpUpstreamRegistry::default();
+        registry.register(descriptor.clone()).expect("register descriptor");
+        let harness_snapshot = "{\"harnessName\":\"Plan review\"}".to_string();
+        let mediation_plan = serde_json::to_string(
+            &crate::harness_engine::domain::HarnessMediationPlan {
+                contract_version:
+                    crate::harness_engine::domain::MEDIATION_PLAN_VERSION.to_string(),
+                exposures: vec![crate::harness_engine::domain::HarnessMcpExposurePlan {
+                    configured_server_name: "plan_builder".into(),
+                    proxy_server_name: "workflow_harness_1".into(),
+                    upstream: descriptor,
+                    access: crate::harness_engine::domain::HarnessToolAccess::SelectedTools {
+                        tool_names: vec![SUBMIT_TOOL.into()],
+                    },
+                }],
+            },
+        )
+        .unwrap();
+        let mut bindings = crate::harness_engine::proxy::ProxyBindings::default();
+        let token = bindings
+            .register(crate::harness_engine::domain::SidecarBindingRegistration {
+                binding_id: "plan-builder-proof".into(),
+                session_id: "session-1".into(),
+                runtime_instance_id: "runtime-1".into(),
+                session_instance_token: "session-token".into(),
+                configuration_digest: crate::harness_engine::domain::binding_digest(
+                    &harness_snapshot,
+                    &mediation_plan,
+                ),
+                harness_snapshot,
+                mediation_plan,
+                harness_token: None,
+            })
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let proxy_address = listener.local_addr().unwrap();
+        let proxy_cancel = CancellationToken::new();
+        tokio::spawn(crate::harness_engine::proxy::run_proxy_listener(
+            listener,
+            Arc::new(std::sync::RwLock::new(bindings)),
+            proxy_cancel.clone(),
+        ));
+        let proxy_url = crate::harness_engine::proxy::proxy_url(proxy_address, &token, 0);
+        let client = reqwest::Client::new();
+        let initialized = post(
+            &client,
+            &proxy_url,
+            None,
+            None,
+            None,
+            initialize(),
+        )
+        .await;
+        assert!(initialized.status().is_success());
+        let session = initialized
+            .headers()
+            .get("mcp-session-id")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            post(
+                &client,
+                &proxy_url,
+                None,
+                None,
+                some_session(&session),
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+                    .to_string(),
+            )
+            .await
+            .status(),
+            StatusCode::ACCEPTED
+        );
+        let listed = response_json(
+            post(
+                &client,
+                &proxy_url,
+                None,
+                None,
+                some_session(&session),
+                jsonrpc(2, "tools/list", serde_json::json!({})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            listed["result"]["tools"]
+                .as_array()
+                .unwrap_or_else(|| panic!("unexpected proxied tools/list: {listed}"))
+                .len(),
+            1
+        );
+        assert_eq!(listed["result"]["tools"][0]["name"], SUBMIT_TOOL);
+        proxy_cancel.cancel();
+        managed.stop();
     }
 
     fn test_application() -> (

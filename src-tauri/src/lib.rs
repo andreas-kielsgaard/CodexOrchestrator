@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 mod active_app;
 mod agent_sessions;
+mod harness_engine;
 mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
@@ -807,6 +808,11 @@ fn start_codex_task_run(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     active_app::run();
+}
+
+/// Runs the private Harness Engine child mode before Tauri initializes.
+pub fn run_harness_engine_sidecar_if_requested() -> bool {
+    harness_engine::sidecar::run_if_requested()
 }
 
 fn ensure_legacy_tasks_available() -> Result<(), String> {
