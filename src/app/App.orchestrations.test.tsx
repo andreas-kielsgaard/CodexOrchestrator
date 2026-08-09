@@ -967,7 +967,7 @@ describe('App orchestration loading', () => {
     render(
       <App agentSessionClient={agentClient()} orchestrationClient={{ load: async () => result }} />,
     );
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    expect(await screen.findByRole(result.kind === 'empty' ? 'status' : 'alert')).toHaveTextContent(
       result.kind === 'empty'
         ? 'No orchestration records are available.'
         : 'status is unknown until Retry succeeds',

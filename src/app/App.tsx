@@ -1181,7 +1181,9 @@ function OrchestrationSurface({
     <OrchestrationRecovery
       load={load}
       currentLocation={requestedLocation}
+      planningDrafts={planningDrafts}
       onPlanEpic={onPlanEpic}
+      onOpenDraft={onOpenDraft}
       onReturnToCurrentWorkUnit={returnToCurrentWorkUnit}
     />
   );
