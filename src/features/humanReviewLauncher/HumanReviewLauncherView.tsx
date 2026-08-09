@@ -1,5 +1,5 @@
 import { ArrowLeft } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
@@ -32,6 +32,8 @@ export function HumanReviewLauncherView({
   const [expandedOperationRef, setExpandedOperationRef] = useState<string | undefined>();
   const [history, setHistory] = useState<HumanReviewSourceHistory | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const historyRequest = useRef(0);
+  const historyTrigger = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -43,7 +45,11 @@ export function HumanReviewLauncherView({
       ]);
       setSources(nextSources);
       setInstances(nextInstances);
-      setSourceRef((current) => current || nextSources[0]?.sourceRef || '');
+      setSourceRef((current) =>
+        nextSources.some((source) => source.sourceRef === current)
+          ? current
+          : nextSources[0]?.sourceRef || '',
+      );
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -192,16 +198,33 @@ export function HumanReviewLauncherView({
     }
   }
 
-  async function openHistory(selectedSourceRef: string) {
+  async function openHistory(selectedSourceRef: string, trigger: HTMLButtonElement) {
+    const request = ++historyRequest.current;
+    historyTrigger.current = trigger;
     setHistoryBusy(true);
     setError(null);
     try {
-      setHistory(await client.sourceHistory(selectedSourceRef));
+      const value = await client.sourceHistory(selectedSourceRef);
+      if (request === historyRequest.current) setHistory(value);
     } catch (cause) {
-      setError(message(cause));
+      if (request === historyRequest.current) setError(message(cause));
     } finally {
-      setHistoryBusy(false);
+      if (request === historyRequest.current) setHistoryBusy(false);
     }
+  }
+
+  const closeHistory = useCallback(() => {
+    historyRequest.current += 1;
+    setHistory(null);
+    setHistoryBusy(false);
+    window.requestAnimationFrame(() => historyTrigger.current?.focus());
+  }, []);
+
+  function selectSource(value: string) {
+    historyRequest.current += 1;
+    setHistory(null);
+    setHistoryBusy(false);
+    setSourceRef(value);
   }
 
   async function act(
@@ -292,8 +315,9 @@ export function HumanReviewLauncherView({
           sources={sources}
           selectedSourceRef={sourceRef}
           disabled={busy !== null || historyBusy}
-          onSelect={setSourceRef}
-          onViewHistory={(value) => void openHistory(value)}
+          historyLoading={historyBusy}
+          onSelect={selectSource}
+          onViewHistory={(value, trigger) => void openHistory(value, trigger)}
         />
         <label className="human-review__window-name">
           Window name
@@ -314,7 +338,7 @@ export function HumanReviewLauncherView({
         {progress.prepare && <OperationProgress progress={progress.prepare} />}
       </section>
 
-      {history && <CommitHistoryDialog history={history} onClose={() => setHistory(null)} />}
+      {history && <CommitHistoryDialog history={history} onClose={closeHistory} />}
 
       {error && (
         <p className="human-review__error" role="alert">

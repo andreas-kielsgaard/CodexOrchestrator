@@ -56,8 +56,8 @@ pub(crate) struct ReviewInstanceOperationInput {
 #[tauri::command]
 pub(crate) fn list_human_review_worktrees(
     state: State<'_, HumanReviewLauncherTauriState>,
-) -> Vec<ReviewSourceView> {
-    state.0.sources()
+) -> Result<Vec<ReviewSourceView>, String> {
+    state.0.live_sources()
 }
 
 #[tauri::command]

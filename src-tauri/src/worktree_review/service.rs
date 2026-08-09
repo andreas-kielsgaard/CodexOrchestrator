@@ -37,6 +37,8 @@ pub(crate) struct ReviewSourceView {
     pub(crate) is_main: bool,
     pub(crate) is_current: bool,
     pub(crate) parent_source_ref: Option<String>,
+    pub(crate) lineage_ambiguous: bool,
+    pub(crate) relationship: String,
     pub(crate) ahead: usize,
     pub(crate) behind: usize,
     pub(crate) fork_revision: String,
@@ -189,6 +191,8 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
             is_main: value.is_main,
             is_current: value.is_current,
             parent_source_ref: value.parent_source_ref.clone(),
+            lineage_ambiguous: value.lineage_ambiguous,
+            relationship: value.relationship.clone(),
             ahead: value.ahead,
             behind: value.behind,
             fork_revision: value.fork_revision.clone(),
@@ -358,6 +362,12 @@ impl HumanReviewLauncherService {
         source_ref: String,
     ) -> Result<ReviewSourceHistoryView, String> {
         source_history::read(&self.catalog, &source_ref)
+    }
+
+    pub(crate) fn live_sources(&self) -> Result<Vec<ReviewSourceView>, String> {
+        self.catalog
+            .live_options()
+            .map(|options| options.iter().map(ReviewSourceView::from).collect())
     }
 
     pub(crate) fn instances(&self) -> Vec<ReviewInstanceView> {

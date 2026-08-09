@@ -6,19 +6,26 @@ export function WorktreeSourcePicker({
   sources,
   selectedSourceRef,
   disabled,
+  historyLoading,
   onSelect,
   onViewHistory,
 }: {
   readonly sources: readonly HumanReviewSource[];
   readonly selectedSourceRef: string;
   readonly disabled: boolean;
+  readonly historyLoading: boolean;
   readonly onSelect: (sourceRef: string) => void;
-  readonly onViewHistory: (sourceRef: string) => void;
+  readonly onViewHistory: (sourceRef: string, trigger: HTMLButtonElement) => void;
 }) {
   const [showDetached, setShowDetached] = useState(false);
   const selected = sources.find((source) => source.sourceRef === selectedSourceRef);
-  const named = sources.filter((source) => !source.detached);
-  const detached = sources.filter((source) => source.detached);
+  const named = sources.filter(
+    (source) => (!source.detached || source.isMain) && source.relationship === 'related',
+  );
+  const unrelated = sources.filter(
+    (source) => !source.detached && source.relationship === 'unrelated',
+  );
+  const detached = sources.filter((source) => source.detached && !source.isMain);
   const main = named.find((source) => source.isMain);
   const children = new Map<string, HumanReviewSource[]>();
   named.forEach((source) => {
@@ -97,6 +104,27 @@ export function WorktreeSourcePicker({
               ))}
             </div>
           )}
+          {unrelated.length > 0 && (
+            <div className="worktree-source-picker__detached">
+              <p>Other Git histories</p>
+              {unrelated.map((source) => (
+                <button
+                  key={source.sourceRef}
+                  type="button"
+                  className={source.sourceRef === selectedSourceRef ? 'is-selected' : undefined}
+                  aria-pressed={source.sourceRef === selectedSourceRef}
+                  disabled={disabled}
+                  onClick={() => onSelect(source.sourceRef)}
+                >
+                  <GitBranch size={16} />
+                  <span>
+                    <strong>{branchName(source)}</strong>
+                    <small>No common ancestor with main</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -126,8 +154,14 @@ export function WorktreeSourcePicker({
               <div>
                 <dt>Since main</dt>
                 <dd>
-                  {selected.ahead} {selected.ahead === 1 ? 'commit' : 'commits'} ahead
-                  {selected.behind > 0 ? `, ${selected.behind} behind` : ''}
+                  {selected.relationship === 'unrelated' ? (
+                    'No common ancestor'
+                  ) : (
+                    <>
+                      {selected.ahead} {selected.ahead === 1 ? 'commit' : 'commits'} ahead
+                      {selected.behind > 0 ? `, ${selected.behind} behind` : ''}
+                    </>
+                  )}
                 </dd>
               </div>
               <div>
@@ -139,13 +173,24 @@ export function WorktreeSourcePicker({
                 <dd>{selected.revision}</dd>
               </div>
             </dl>
+            {selected.lineageAmbiguous && (
+              <p className="worktree-source-picker__notice">
+                Several registered branch tips are equally close, so this branch is shown directly
+                under main.
+              </p>
+            )}
             <button
               type="button"
               className="worktree-source-picker__history-button"
-              disabled={disabled || selected.detached || selected.isMain}
-              onClick={() => onViewHistory(selected.sourceRef)}
+              disabled={
+                disabled ||
+                selected.detached ||
+                selected.isMain ||
+                selected.relationship === 'unrelated'
+              }
+              onClick={(event) => onViewHistory(selected.sourceRef, event.currentTarget)}
             >
-              View commit history
+              {historyLoading ? 'Loading history…' : 'View commit history'}
             </button>
           </>
         ) : (
@@ -211,5 +256,6 @@ function BranchNode({
 }
 
 function branchName(source: HumanReviewSource) {
+  if (source.isMain && !source.branch) return 'Main checkout';
   return source.branch ?? `Detached ${source.revision.slice(0, 8)}`;
 }

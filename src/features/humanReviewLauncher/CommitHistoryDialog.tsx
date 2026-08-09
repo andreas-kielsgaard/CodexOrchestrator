@@ -1,5 +1,6 @@
 import { Files, GitBranch, Minus, Plus, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   HumanReviewCommit,
   HumanReviewSourceHistory,
@@ -14,6 +15,7 @@ export function CommitHistoryDialog({
 }) {
   const [selectedCommitId, setSelectedCommitId] = useState(history.commits[0]?.id ?? '');
   const closeButton = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLElement>(null);
   const selected = history.commits.find((commit) => commit.id === selectedCommitId);
   const markers = useMemo(
     () => new Map(history.lineageMarkers.map((marker) => [marker.commitId, marker])),
@@ -21,20 +23,58 @@ export function CommitHistoryDialog({
   );
 
   useEffect(() => {
+    const background = document.querySelector<HTMLElement>('.human-review');
+    const previousAriaHidden = background ? background.getAttribute('aria-hidden') : null;
+    const previousInert = background?.inert ?? false;
+    const previousOverflow = document.body.style.overflow;
+    if (background) {
+      background.inert = true;
+      background.setAttribute('aria-hidden', 'true');
+    }
+    document.body.style.overflow = 'hidden';
     closeButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialog.current) return;
+      const focusable = Array.from(
+        dialog.current.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !dialog.current.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (background) {
+        background.inert = previousInert;
+        if (previousAriaHidden === null) background.removeAttribute('aria-hidden');
+        else background.setAttribute('aria-hidden', previousAriaHidden);
+      }
+    };
   }, [onClose]);
 
-  return (
-    <div
-      className="commit-history__backdrop"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-    >
+  return createPortal(
+    <div className="commit-history__backdrop">
       <section
+        ref={dialog}
         className="commit-history"
         role="dialog"
         aria-modal="true"
@@ -48,6 +88,7 @@ export function CommitHistoryDialog({
               {history.commitCount} {history.commitCount === 1 ? 'commit' : 'commits'} since main ·
               fork {history.forkRevision}
             </span>
+            {history.truncated && <span>Showing the newest {history.commits.length} commits.</span>}
           </div>
           <button ref={closeButton} type="button" onClick={onClose}>
             <X size={16} />
@@ -58,8 +99,7 @@ export function CommitHistoryDialog({
         <div className="commit-history__columns">
           <section className="commit-history__list" aria-label="Commits, newest first">
             <header>
-              <h3>Commits</h3>
-              <span>Newest first</span>
+              <h3>Commits — newest first</h3>
             </header>
             {history.commits.length === 0 ? (
               <p className="commit-history__empty">This branch has no commits beyond main.</p>
@@ -76,18 +116,19 @@ export function CommitHistoryDialog({
                         onClick={() => setSelectedCommitId(commit.id)}
                       >
                         <span className="commit-history__dot" aria-hidden="true" />
-                        <span>
-                          <strong>{commit.subject}</strong>
-                          <small>
-                            {commit.abbreviatedId} · {commit.author} ·{' '}
-                            {formatDate(commit.committedAt)}
-                          </small>
-                        </span>
+                        <code>{commit.abbreviatedId}</code>
+                        <strong>{commit.subject}</strong>
+                        <time dateTime={commit.committedAt}>{formatDate(commit.committedAt)}</time>
                       </button>
                       {marker && (
                         <div className="commit-history__lineage">
                           <GitBranch size={14} />
-                          Branched from <strong>{marker.branch}</strong> at {marker.abbreviatedId}
+                          <span>
+                            <strong>Branch lineage</strong>
+                            <small>
+                              Continued from {marker.branch} at {marker.abbreviatedId}
+                            </small>
+                          </span>
                         </div>
                       )}
                     </Fragment>
@@ -100,7 +141,8 @@ export function CommitHistoryDialog({
           <CommitDetails commit={selected} />
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

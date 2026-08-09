@@ -27,6 +27,12 @@ describe('HumanReviewLauncherView', () => {
       /@media\s*\(max-width:\s*1400px\)[\s\S]*?\.human-review__progress dl\s*{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/,
     );
     expect(launcherCss).toMatch(/\.human-review__progress dd\s*{[^}]*overflow-wrap:\s*anywhere;/s);
+    expect(launcherCss).toMatch(
+      /@media\s*\(max-width:\s*900px\)[\s\S]*?\.commit-history__columns\s*{[^}]*grid-template-columns:\s*1fr;/,
+    );
+    expect(launcherCss).toMatch(
+      /@media\s*\(max-width:\s*560px\)[\s\S]*?\.commit-history__summary > div\s*{[^}]*grid-template-columns:\s*1fr;/,
+    );
   });
 
   it('prepares and opens a named instance through semantic controls without infrastructure details', async () => {
@@ -253,25 +259,139 @@ describe('HumanReviewLauncherView', () => {
     expect(detachedToggle).not.toBeChecked();
     expect(screen.queryByRole('button', { name: /Detached 55555555/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /codex\/child/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'View commit history' }));
+    const historyTrigger = screen.getByRole('button', { name: 'View commit history' });
+    fireEvent.click(historyTrigger);
 
     const dialog = await screen.findByRole('dialog', { name: 'codex/child' });
+    const close = within(dialog).getByRole('button', { name: 'Close history' });
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(document.querySelector('.human-review')).toHaveAttribute('aria-hidden', 'true');
+    expect((document.querySelector('.human-review') as HTMLElement).inert).toBe(true);
     expect(dialog).toHaveTextContent('2 commits since main · fork 111111111111');
-    expect(within(dialog).getByText(/Branched from/)).toHaveTextContent('codex/parent');
+    expect(within(dialog).getByText('Branch lineage').closest('div')).toHaveTextContent(
+      'codex/parent',
+    );
     const details = within(dialog).getByRole('region', { name: 'Commit details' });
     expect(details).toHaveTextContent('Newest description');
-    fireEvent.click(within(dialog).getByRole('button', { name: /Parent foundation/ }));
+    const parentCommit = within(dialog).getByRole('button', { name: /Parent foundation/ });
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(parentCommit).toHaveFocus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(close).toHaveFocus();
+    fireEvent.click(parentCommit);
     expect(details).toHaveTextContent('Parent branch description');
     expect(details).toHaveTextContent('3 files changed');
 
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(historyTrigger).toHaveFocus());
+    expect(document.querySelector('.human-review')).not.toHaveAttribute('aria-hidden');
+    expect((document.querySelector('.human-review') as HTMLElement).inert).toBe(false);
     expect(screen.getByRole('button', { name: /codex\/child/ })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
     fireEvent.click(detachedToggle);
     expect(screen.getByRole('button', { name: /Detached 55555555/ })).toBeVisible();
+  });
+
+  it('reports history failures and renders an empty named-branch history truthfully', async () => {
+    const client = new FakeClient();
+    client.sourceHistory = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Git could not inspect the selected branch.'))
+      .mockResolvedValueOnce({
+        ...history(),
+        commitCount: 0,
+        commits: [],
+        lineageMarkers: [],
+      });
+    render(<HumanReviewLauncherView client={client} />);
+
+    const trigger = await screen.findByRole('button', { name: 'View commit history' });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Git could not inspect the selected branch.',
+    );
+    expect(trigger).toBeEnabled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'codex/child' });
+    expect(dialog).toHaveTextContent('0 commits since main');
+    expect(dialog).toHaveTextContent('This branch has no commits beyond main.');
+    expect(dialog).toHaveTextContent('Select a commit to inspect its details.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close history' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('keeps ambiguous and unrelated histories visibly outside inferred sub-branch lineage', async () => {
+    const client = new FakeClient();
+    client.listSources = async () => [
+      source({
+        sourceRef: 'main-source',
+        branch: 'main',
+        label: 'main',
+        isMain: true,
+        parentSourceRef: undefined,
+      }),
+      source({
+        sourceRef: 'ambiguous-source',
+        branch: 'codex/ambiguous',
+        label: 'codex/ambiguous',
+        parentSourceRef: 'main-source',
+        lineageAmbiguous: true,
+      }),
+      source({
+        sourceRef: 'unrelated-source',
+        branch: 'codex/orphan',
+        label: 'codex/orphan',
+        parentSourceRef: undefined,
+        relationship: 'unrelated',
+        forkRevision: 'No common ancestor',
+      }),
+    ];
+    render(<HumanReviewLauncherView client={client} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /codex\/ambiguous/ }));
+    expect(screen.getByText(/Several registered branch tips are equally close/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'View commit history' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /codex\/orphan/ }));
+    expect(screen.getByText('Other Git histories')).toBeVisible();
+    expect(screen.getAllByText('No common ancestor').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'View commit history' })).toBeDisabled();
+  });
+
+  it('returns to an available source when refresh removes the selected worktree', async () => {
+    const client = new FakeClient();
+    const main = source({
+      sourceRef: 'main-source',
+      branch: 'main',
+      label: 'main',
+      isMain: true,
+    });
+    let sources = [
+      main,
+      source({
+        sourceRef: 'temporary-source',
+        branch: 'codex/temporary',
+        label: 'codex/temporary',
+        parentSourceRef: 'main-source',
+      }),
+    ];
+    client.listSources = async () => sources;
+    render(<HumanReviewLauncherView client={client} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /codex\/temporary/ }));
+    sources = [main];
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^main / })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
+    );
+    expect(screen.queryByRole('button', { name: /codex\/temporary/ })).toBeNull();
   });
 });
 
@@ -280,7 +400,7 @@ class LongBuildClient implements HumanReviewLauncherClient {
   private resolveBuild!: (value: HumanReviewInstance) => void;
   private instance = instance('Long build', 'prepared', 'not-built');
   listSources = async () => [source({ branch: 'codex/long', label: 'codex/long' })];
-  sourceHistory = async () => history();
+  sourceHistory: HumanReviewLauncherClient['sourceHistory'] = async () => history();
   listInstances = async () => [this.instance];
   prepare = async () => this.instance;
   build = async () =>
@@ -324,7 +444,7 @@ class FakeClient implements HumanReviewLauncherClient {
   private instance: HumanReviewInstance | undefined;
   proofPresentation?: HumanReviewLauncherClient['proofPresentation'];
   listSources: HumanReviewLauncherClient['listSources'] = async () => [source()];
-  sourceHistory = async () => history();
+  sourceHistory: HumanReviewLauncherClient['sourceHistory'] = async () => history();
   listInstances = async () => (this.instance ? [this.instance] : []);
   prepare = async (_operationRef: string, _sourceRef: string, name: string) =>
     this.set(name, 'prepared', 'not-built');
@@ -401,6 +521,8 @@ function source(overrides: Partial<HumanReviewSource> = {}): HumanReviewSource {
     isMain: false,
     isCurrent: false,
     parentSourceRef: undefined,
+    lineageAmbiguous: false,
+    relationship: 'related',
     ahead: 2,
     behind: 0,
     forkRevision: '111111111111',
@@ -418,6 +540,7 @@ function history() {
     revision: '444444444444',
     forkRevision: '111111111111',
     commitCount: 2,
+    truncated: false,
     commits: [
       {
         id: '4444444444444444444444444444444444444444',

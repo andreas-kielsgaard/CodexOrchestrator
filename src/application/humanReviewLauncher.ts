@@ -6,6 +6,8 @@ export interface HumanReviewSource {
   readonly isMain: boolean;
   readonly isCurrent: boolean;
   readonly parentSourceRef?: string;
+  readonly lineageAmbiguous: boolean;
+  readonly relationship: 'related' | 'unrelated';
   readonly ahead: number;
   readonly behind: number;
   readonly forkRevision: string;
@@ -20,6 +22,7 @@ export interface HumanReviewSourceHistory {
   readonly revision: string;
   readonly forkRevision: string;
   readonly commitCount: number;
+  readonly truncated: boolean;
   readonly commits: readonly HumanReviewCommit[];
   readonly lineageMarkers: readonly HumanReviewLineageMarker[];
 }

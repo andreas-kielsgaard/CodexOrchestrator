@@ -43,3 +43,27 @@ Blocked for the same reason. The source proposal rail was inspected at original 
 5. Resolve any P0/P1/P2 differences before G3 acceptance.
 
 final result: blocked
+
+---
+
+# Design QA — Worktree review branch history
+
+Result: passed
+
+## Visual target
+
+- Selected reference: [commit history mockup](C:/Users/user/.codex/generated_images/019fe763-1991-7b22-b6f3-e57143b5b557/exec-093ef7ec-dd34-40cc-a23a-573067a74eef.png)
+- Desktop capture: [1772 × 887](C:/Users/user/.codex/visualizations/2026/08/09/019fe763-1991-7b22-b6f3-e57143b5b557/worktree-history-final.png)
+- Responsive captures: [900 × 900](C:/Users/user/.codex/visualizations/2026/08/09/019fe763-1991-7b22-b6f3-e57143b5b557/worktree-history-900.png), [400 × 800 history](C:/Users/user/.codex/visualizations/2026/08/09/019fe763-1991-7b22-b6f3-e57143b5b557/worktree-history-400.png), and [400 × 800 branch map](C:/Users/user/.codex/visualizations/2026/08/09/019fe763-1991-7b22-b6f3-e57143b5b557/worktree-map-400.png)
+
+The captures render the production React components with deterministic Git fixtures. Native Git behavior is covered separately by Rust tests.
+
+## Result
+
+- The desktop history dialog preserves the selected two-column composition, newest-first commit rail, prominent sub-branch lineage marker, commit description, and aggregate change summary.
+- The branch map communicates main-rooted nesting, keeps detached worktrees behind an off-by-default switch, and places source facts and the history action beside the map.
+- At 900 px the history sections stack. At 400 px the history dialog becomes full-screen and the branch map remains horizontally contained.
+- Focusable controls remained within the horizontal viewport at 900 px and 400 px. The dialog focus trap, Escape handling, inert background, and focus restoration have automated coverage.
+- Changed-file details remain intentionally absent from this delivery.
+
+Open visual issues after correction: P0 0, P1 0, P2 0.

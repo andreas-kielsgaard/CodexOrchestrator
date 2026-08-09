@@ -1,5 +1,9 @@
+use super::worktree_build::git_bytes;
 use super::{catalog::ReviewWorktreeCatalog, worktree_build::git_text};
 use serde::Serialize;
+use std::collections::HashSet;
+
+const MAX_VISIBLE_COMMITS: usize = 250;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -9,6 +13,7 @@ pub(crate) struct ReviewSourceHistoryView {
     pub(crate) revision: String,
     pub(crate) fork_revision: String,
     pub(crate) commit_count: usize,
+    pub(crate) truncated: bool,
     pub(crate) commits: Vec<ReviewCommitView>,
     pub(crate) lineage_markers: Vec<ReviewLineageMarkerView>,
 }
@@ -46,8 +51,16 @@ pub(crate) fn read(
     );
     let commit_ids = git_text(
         &identity.selected_root,
-        ["rev-list", "--topo-order", &range],
+        [
+            "rev-list",
+            "--topo-order",
+            &format!("--max-count={MAX_VISIBLE_COMMITS}"),
+            &range,
+        ],
     )?;
+    let commit_count = git_text(&identity.selected_root, ["rev-list", "--count", &range])?
+        .parse::<usize>()
+        .map_err(|_| "Git returned an invalid branch commit count.".to_string())?;
     let commits = commit_ids
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -61,9 +74,17 @@ pub(crate) fn read(
             &identity.selected_object_id,
         ],
     )?;
+    let first_parent_commits = git_text(
+        &identity.selected_root,
+        ["rev-list", "--first-parent", &range],
+    )?
+    .lines()
+    .map(str::to_owned)
+    .collect::<HashSet<_>>();
     let lineage_markers = identity
         .related_branch_tips
         .into_iter()
+        .filter(|(_, commit_id)| first_parent_commits.contains(commit_id))
         .filter_map(|(branch, commit_id)| {
             commits
                 .iter()
@@ -81,7 +102,8 @@ pub(crate) fn read(
         source_label: identity.source_label,
         revision: abbreviated(&identity.selected_object_id),
         fork_revision: abbreviated(&fork_revision),
-        commit_count: commits.len(),
+        commit_count,
+        truncated: commit_count > commits.len(),
         commits,
         lineage_markers,
     })
@@ -115,11 +137,33 @@ fn commit(path: &std::path::Path, commit_id: &str) -> Result<ReviewCommitView, S
         .next()
         .ok_or_else(|| "Git returned an invalid commit subject.".to_string())?;
     let description = fields.next().unwrap_or_default().trim().to_owned();
-    let stats = git_text(
-        path,
-        ["show", "--format=", "--numstat", "--no-renames", commit_id],
-    )?;
-    let (files_changed, insertions, deletions) = parse_stats(&stats);
+    let first_parent = git_text(path, ["rev-parse", "--verify", &format!("{commit_id}^1")]).ok();
+    let stats = if let Some(parent) = first_parent {
+        git_bytes(
+            path,
+            [
+                "diff",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                &parent,
+                commit_id,
+            ],
+        )?
+    } else {
+        git_bytes(
+            path,
+            [
+                "show",
+                "--format=",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                commit_id,
+            ],
+        )?
+    };
+    let (files_changed, insertions, deletions) = parse_stats(&stats)?;
     Ok(ReviewCommitView {
         id: id.into(),
         abbreviated_id: abbreviated_id.into(),
@@ -133,24 +177,40 @@ fn commit(path: &std::path::Path, commit_id: &str) -> Result<ReviewCommitView, S
     })
 }
 
-fn parse_stats(stats: &str) -> (usize, usize, usize) {
-    stats
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.splitn(3, '\t');
-            Some((
-                fields.next()?,
-                fields.next()?,
-                fields.next().filter(|value| !value.is_empty())?,
-            ))
-        })
-        .fold((0, 0, 0), |(files, insertions, deletions), row| {
-            (
-                files + 1,
-                insertions + row.0.parse::<usize>().unwrap_or(0),
-                deletions + row.1.parse::<usize>().unwrap_or(0),
-            )
-        })
+fn parse_stats(stats: &[u8]) -> Result<(usize, usize, usize), String> {
+    let mut files = 0;
+    let mut insertions = 0;
+    let mut deletions = 0;
+    for record in stats
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let mut fields = record.splitn(3, |byte| *byte == b'\t');
+        let inserted = fields
+            .next()
+            .ok_or_else(|| "Git returned invalid commit statistics.".to_string())?;
+        let deleted = fields
+            .next()
+            .ok_or_else(|| "Git returned invalid commit statistics.".to_string())?;
+        fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Git returned invalid commit statistics.".to_string())?;
+        files += 1;
+        insertions += parse_line_count(inserted)?;
+        deletions += parse_line_count(deleted)?;
+    }
+    Ok((files, insertions, deletions))
+}
+
+fn parse_line_count(value: &[u8]) -> Result<usize, String> {
+    if value == b"-" {
+        return Ok(0);
+    }
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| "Git returned invalid commit statistics.".to_string())
 }
 
 fn abbreviated(value: &str) -> String {
@@ -165,9 +225,10 @@ mod tests {
     #[test]
     fn numstat_parser_counts_files_and_ignores_binary_line_counts() {
         assert_eq!(
-            parse_stats("12\t3\tsrc/app.rs\n-\t-\tassets/image.png\n"),
-            (2, 12, 3)
+            parse_stats(b"12\t3\tsrc/app.rs\0-\t-\tassets/image.png\0").expect("stats"),
+            (2, 12, 3),
         );
+        assert!(parse_stats(b"invalid\0").is_err());
     }
 
     #[test]
@@ -245,6 +306,38 @@ mod tests {
         assert_eq!(history.lineage_markers.len(), 1);
         assert_eq!(history.lineage_markers[0].branch, "codex/parent");
         assert_eq!(history.lineage_markers[0].commit_id, history.commits[1].id);
+
+        fs::write(parent.join("ændring.txt"), "ændring\n").expect("unicode path");
+        run(&parent, &["add", "."]);
+        run(&parent, &["commit", "-m", "Forælder update"]);
+        run(
+            &child,
+            &[
+                "merge",
+                "--no-ff",
+                "codex/parent",
+                "-m",
+                "Merge parent update",
+            ],
+        );
+
+        let refreshed = catalog.live_options().expect("live source facts");
+        let refreshed_child = refreshed
+            .iter()
+            .find(|option| option.branch.as_deref() == Some("codex/child"))
+            .expect("refreshed child");
+        assert_ne!(refreshed_child.revision, history.revision);
+        let merged = read(&catalog, &child_ref).expect("merged history");
+        assert_eq!(merged.commit_count, 4);
+        assert_eq!(merged.commits[0].subject, "Merge parent update");
+        assert_eq!(merged.commits[0].files_changed, 1);
+        let unicode = merged
+            .commits
+            .iter()
+            .find(|commit| commit.subject == "Forælder update")
+            .expect("unicode commit");
+        assert!(unicode.description.is_empty());
+        assert!(merged.lineage_markers.is_empty());
     }
 
     fn run(path: &Path, args: &[&str]) {
