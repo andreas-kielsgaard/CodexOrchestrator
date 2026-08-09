@@ -1,9 +1,45 @@
 export interface HumanReviewSource {
   readonly sourceRef: string;
   readonly label: string;
+  readonly branch?: string;
+  readonly detached: boolean;
+  readonly isMain: boolean;
+  readonly isCurrent: boolean;
+  readonly parentSourceRef?: string;
+  readonly ahead: number;
+  readonly behind: number;
+  readonly forkRevision: string;
   readonly revision: string;
   readonly compatibility: 'compatible' | 'incompatible';
   readonly compatibilityMessage: string;
+}
+
+export interface HumanReviewSourceHistory {
+  readonly branch: string;
+  readonly sourceLabel: string;
+  readonly revision: string;
+  readonly forkRevision: string;
+  readonly commitCount: number;
+  readonly commits: readonly HumanReviewCommit[];
+  readonly lineageMarkers: readonly HumanReviewLineageMarker[];
+}
+
+export interface HumanReviewCommit {
+  readonly id: string;
+  readonly abbreviatedId: string;
+  readonly subject: string;
+  readonly description: string;
+  readonly author: string;
+  readonly committedAt: string;
+  readonly filesChanged: number;
+  readonly insertions: number;
+  readonly deletions: number;
+}
+
+export interface HumanReviewLineageMarker {
+  readonly branch: string;
+  readonly commitId: string;
+  readonly abbreviatedId: string;
 }
 
 export interface HumanReviewInstance {
@@ -74,6 +110,7 @@ export interface HumanReviewRetention {
 
 export interface HumanReviewLauncherClient {
   listSources(): Promise<readonly HumanReviewSource[]>;
+  sourceHistory(sourceRef: string): Promise<HumanReviewSourceHistory>;
   listInstances(): Promise<readonly HumanReviewInstance[]>;
   prepare(operationRef: string, sourceRef: string, name: string): Promise<HumanReviewInstance>;
   build(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;

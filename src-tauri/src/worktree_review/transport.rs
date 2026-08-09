@@ -6,6 +6,7 @@ use super::{
         HumanReviewLauncherService, LauncherDetailNavigationView, LauncherProofPresentationView,
         ReviewInstanceView, ReviewSourceView,
     },
+    source_history::ReviewSourceHistoryView,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -35,6 +36,12 @@ pub(crate) struct ReviewInstanceInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewSourceInput {
+    source_ref: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewOperationInput {
     operation_ref: String,
 }
@@ -58,6 +65,17 @@ pub(crate) fn list_human_review_instances(
     state: State<'_, HumanReviewLauncherTauriState>,
 ) -> Vec<ReviewInstanceView> {
     state.0.instances()
+}
+
+#[tauri::command]
+pub(crate) async fn human_review_source_history(
+    state: State<'_, HumanReviewLauncherTauriState>,
+    input: ReviewSourceInput,
+) -> Result<ReviewSourceHistoryView, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || service.source_history(input.source_ref))
+        .await
+        .map_err(|error| format!("Review history task failed: {error}"))?
 }
 
 #[tauri::command]

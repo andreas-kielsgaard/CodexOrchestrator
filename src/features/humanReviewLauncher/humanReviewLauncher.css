@@ -34,7 +34,7 @@
 }
 .human-review__prepare {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.7fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: end;
   margin-top: 18px;
@@ -42,6 +42,10 @@
 }
 .human-review__prepare > * {
   min-width: 0;
+}
+.human-review__prepare-intro,
+.worktree-source-picker {
+  grid-column: 1 / -1;
 }
 .human-review label {
   display: grid;
@@ -72,6 +76,11 @@
 }
 .human-review button:hover:not(:disabled) {
   background: #edf1eb;
+}
+.human-review button:focus-visible,
+.human-review input:focus-visible {
+  outline: 3px solid #d5a91d;
+  outline-offset: 2px;
 }
 .human-review button:disabled {
   cursor: not-allowed;
@@ -227,6 +236,413 @@
   padding: 7px 10px;
   color: #71450f;
 }
+.worktree-source-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  min-height: 310px;
+  overflow: hidden;
+  border: 1px solid #cfd6cf;
+  border-radius: 10px;
+  background: #f7f8f5;
+}
+.worktree-source-picker__browser {
+  min-width: 0;
+  border-right: 1px solid #d8ddd5;
+  background: #fffdf8;
+}
+.worktree-source-picker__browser > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #e1e5df;
+  padding: 15px 17px;
+}
+.worktree-source-picker h3,
+.worktree-source-picker p {
+  margin: 0;
+}
+.worktree-source-picker__browser > header p {
+  margin-top: 3px;
+  color: #647068;
+  font-size: 0.76rem;
+}
+.worktree-source-picker__toggle {
+  display: flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  flex: none;
+  color: #35443b !important;
+  white-space: nowrap;
+}
+.worktree-source-picker__toggle input {
+  width: 34px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: #63766a;
+}
+.worktree-source-picker__tree {
+  max-height: 340px;
+  overflow: auto;
+  padding: 12px 14px 17px;
+}
+.worktree-source-picker__branch {
+  position: relative;
+}
+.worktree-source-picker__children {
+  position: relative;
+  margin-left: 20px;
+  border-left: 2px solid #ccd4cc;
+  padding-left: 17px;
+}
+.worktree-source-picker__children > .worktree-source-picker__branch::before {
+  position: absolute;
+  top: 22px;
+  left: -17px;
+  width: 15px;
+  border-top: 2px solid #ccd4cc;
+  content: '';
+}
+.worktree-source-picker__branch > button,
+.worktree-source-picker__detached > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 46px;
+  margin: 2px 0;
+  border-color: transparent;
+  padding: 7px 10px;
+  text-align: left;
+}
+.worktree-source-picker__branch > button.is-selected,
+.worktree-source-picker__detached > button.is-selected {
+  border-color: #78897d;
+  background: #e8eee8;
+  box-shadow: inset 3px 0 #596d60;
+}
+.worktree-source-picker__branch > button span,
+.worktree-source-picker__detached > button span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.worktree-source-picker__branch strong,
+.worktree-source-picker__detached strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-source-picker__branch small,
+.worktree-source-picker__detached small {
+  overflow: hidden;
+  color: #69756d;
+  font-size: 0.69rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-source-picker__branch em {
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #dfe7df;
+  color: #48584e;
+  font-size: 0.62rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+.worktree-source-picker__detached {
+  margin-top: 13px;
+  border-top: 1px solid #e0e4df;
+  padding-top: 11px;
+}
+.worktree-source-picker__detached > p {
+  margin: 0 8px 6px;
+  color: #6b766f;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.worktree-source-picker__details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 19px;
+  background: #f3f5f1;
+}
+.worktree-source-picker__details-title {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.worktree-source-picker__details-title p {
+  color: #6c786f;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.worktree-source-picker__details-title h3 {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.worktree-source-picker__details dl {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0;
+}
+.worktree-source-picker__details dl div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  border-bottom: 1px solid #dce1db;
+  padding-bottom: 8px;
+}
+.worktree-source-picker__details dt {
+  color: #6c786f;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.worktree-source-picker__details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #26352c;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.worktree-source-picker__history-button {
+  width: 100%;
+  margin-top: auto;
+}
+.commit-history__backdrop {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgb(21 29 24 / 46%);
+}
+.commit-history {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1180px, 100%);
+  height: min(760px, 100%);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #bcc5bc;
+  border-radius: 14px;
+  background: #fffdf8;
+  box-shadow: 0 24px 70px rgb(18 27 21 / 28%);
+}
+.commit-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid #d9ded7;
+  padding: 20px 24px;
+}
+.commit-history__header p,
+.commit-history__header h2,
+.commit-history__header span {
+  margin: 0;
+}
+.commit-history__header p,
+.commit-history__details header p {
+  color: #6c786f;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.commit-history__header h2 {
+  margin-top: 3px;
+  font-size: 1.45rem;
+  overflow-wrap: anywhere;
+}
+.commit-history__header span,
+.commit-history__details header span {
+  display: block;
+  margin-top: 4px;
+  color: #647068;
+  font-size: 0.76rem;
+}
+.commit-history__header button {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+}
+.commit-history__columns {
+  display: grid;
+  grid-template-columns: minmax(330px, 0.9fr) minmax(0, 1.1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.commit-history__list,
+.commit-history__details {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.commit-history__list {
+  border-right: 1px solid #d9ded7;
+  background: #f7f8f5;
+}
+.commit-history__list > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e0e4de;
+  padding: 14px 20px;
+}
+.commit-history__list h3,
+.commit-history__list span,
+.commit-history__details h3,
+.commit-history__details h4,
+.commit-history__details p {
+  margin: 0;
+}
+.commit-history__list > header span {
+  color: #69756d;
+  font-size: 0.7rem;
+}
+.commit-history__rail {
+  position: relative;
+  padding: 10px 12px 18px 29px;
+}
+.commit-history__rail::before {
+  position: absolute;
+  top: 11px;
+  bottom: 18px;
+  left: 18px;
+  width: 2px;
+  background: #b8c4ba;
+  content: '';
+}
+.commit-history__rail > button {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 62px;
+  margin: 2px 0;
+  border-color: transparent;
+  padding: 10px 12px;
+  text-align: left;
+}
+.commit-history__rail > button.is-selected {
+  border-color: #829087;
+  background: #e7ede7;
+}
+.commit-history__rail > button > span:last-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.commit-history__rail > button strong {
+  overflow-wrap: anywhere;
+}
+.commit-history__rail > button small {
+  color: #69756d;
+  font-size: 0.7rem;
+}
+.commit-history__dot {
+  position: absolute;
+  z-index: 1;
+  top: 24px;
+  left: -18px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #f7f8f5;
+  border-radius: 50%;
+  background: #607366;
+}
+.commit-history__lineage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0 7px 12px;
+  border-left: 3px solid #c79c32;
+  padding: 7px 9px;
+  background: #f7efd8;
+  color: #69501d;
+  font-size: 0.72rem;
+}
+.commit-history__details {
+  padding: 26px 28px;
+}
+.commit-history__details header {
+  border-bottom: 1px solid #dde2dc;
+  padding-bottom: 20px;
+}
+.commit-history__details header h3 {
+  margin-top: 5px;
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+.commit-history__description,
+.commit-history__summary {
+  padding: 22px 0;
+}
+.commit-history__description h4,
+.commit-history__summary h4 {
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+.commit-history__description p {
+  color: #3f4c44;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.commit-history__summary {
+  border-top: 1px solid #dde2dc;
+}
+.commit-history__summary > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.commit-history__summary > div span {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  gap: 3px 6px;
+  border: 1px solid #d8ddd6;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f5f7f3;
+  color: #526057;
+  font-size: 0.72rem;
+}
+.commit-history__summary > div span svg {
+  grid-row: 1 / 3;
+}
+.commit-history__summary > div strong {
+  color: #1f2d24;
+  font-size: 1.05rem;
+}
+.commit-history__summary > div .is-added {
+  color: #39734f;
+}
+.commit-history__summary > div .is-removed {
+  color: #9b4b45;
+}
+.commit-history__summary > p,
+.commit-history__empty {
+  margin-top: 12px !important;
+  color: #6c776f;
+  font-size: 0.76rem;
+}
+.commit-history__empty {
+  padding: 18px;
+}
 .human-review__file-route {
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr);
@@ -276,9 +692,6 @@
   font-size: 0.86rem;
 }
 @media (max-width: 1400px) {
-  .human-review__prepare {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
   .human-review__progress dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -287,10 +700,58 @@
   .human-review__prepare {
     grid-template-columns: 1fr;
   }
+  .human-review__prepare > button,
+  .human-review__window-name {
+    grid-column: 1;
+  }
+  .worktree-source-picker,
+  .commit-history__columns {
+    grid-template-columns: 1fr;
+  }
+  .worktree-source-picker__browser,
+  .commit-history__list {
+    border-right: 0;
+    border-bottom: 1px solid #d8ddd5;
+  }
+  .commit-history__backdrop {
+    padding: 12px;
+  }
+  .commit-history {
+    height: calc(100% - 4px);
+  }
+  .commit-history__columns {
+    grid-template-rows: minmax(220px, 0.9fr) minmax(260px, 1.1fr);
+  }
   .human-review {
     padding: 18px;
   }
   .human-review__progress dl {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .human-review {
+    padding: 10px;
+  }
+  .human-review__header,
+  .worktree-source-picker__browser > header,
+  .commit-history__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .commit-history__backdrop {
+    padding: 0;
+  }
+  .commit-history {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+  .commit-history__header,
+  .commit-history__details {
+    padding: 16px;
+  }
+  .commit-history__summary > div {
+    grid-template-columns: 1fr;
   }
 }

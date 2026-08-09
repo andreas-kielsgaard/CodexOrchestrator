@@ -3,12 +3,15 @@ import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
   HumanReviewSource,
+  HumanReviewSourceHistory,
 } from '../application/humanReviewLauncher';
 import { assertCompleteFileReviewFile, type FileReviewSnapshot } from '../application/fileReview';
 import type { WorktreeBuildDetail } from '../application/worktreeBuild';
 
 export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
   listSources: () => invoke<HumanReviewSource[]>('list_human_review_worktrees'),
+  sourceHistory: (sourceRef) =>
+    invoke<HumanReviewSourceHistory>('human_review_source_history', { input: { sourceRef } }),
   listInstances: () => invoke<HumanReviewInstance[]>('list_human_review_instances'),
   prepare: (operationRef, sourceRef, name) =>
     invoke('prepare_human_review_instance', { input: { operationRef, sourceRef, name } }),

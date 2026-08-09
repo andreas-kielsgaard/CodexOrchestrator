@@ -369,6 +369,8 @@ pub(crate) fn run() {
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_instances,
             #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_source_history,
+            #[cfg(debug_assertions)]
             crate::worktree_review::transport::prepare_human_review_instance,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::human_review_operation_progress,

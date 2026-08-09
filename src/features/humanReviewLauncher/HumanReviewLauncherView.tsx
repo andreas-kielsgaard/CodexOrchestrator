@@ -5,10 +5,13 @@ import type {
   HumanReviewLauncherClient,
   HumanReviewOperationProgress,
   HumanReviewSource,
+  HumanReviewSourceHistory,
 } from '../../application/humanReviewLauncher';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import { FileReviewScreen } from '../fileReview';
 import { WorktreeBuildDetailScreen } from '../worktreeBuild';
+import { CommitHistoryDialog } from './CommitHistoryDialog';
+import { WorktreeSourcePicker } from './WorktreeSourcePicker';
 import './humanReviewLauncher.css';
 
 export function HumanReviewLauncherView({
@@ -27,6 +30,8 @@ export function HumanReviewLauncherView({
   const [detail, setDetail] = useState<WorktreeBuildDetail | null>(null);
   const [surface, setSurface] = useState<'overview' | 'details' | 'files'>('overview');
   const [expandedOperationRef, setExpandedOperationRef] = useState<string | undefined>();
+  const [history, setHistory] = useState<HumanReviewSourceHistory | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy('load');
@@ -187,6 +192,18 @@ export function HumanReviewLauncherView({
     }
   }
 
+  async function openHistory(selectedSourceRef: string) {
+    setHistoryBusy(true);
+    setError(null);
+    try {
+      setHistory(await client.sourceHistory(selectedSourceRef));
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
   async function act(
     instance: HumanReviewInstance,
     label: string,
@@ -239,7 +256,11 @@ export function HumanReviewLauncherView({
 
   const selectedSource = sources.find((source) => source.sourceRef === sourceRef);
   return (
-    <main className="human-review" aria-label="Worktree review launcher" aria-busy={busy !== null}>
+    <main
+      className="human-review"
+      aria-label="Worktree review launcher"
+      aria-busy={busy !== null || historyBusy}
+    >
       <header className="human-review__header">
         <div>
           <p className="eyebrow">Development tool</p>
@@ -260,29 +281,21 @@ export function HumanReviewLauncherView({
       )}
 
       <section className="human-review__prepare" aria-labelledby="prepare-review-title">
-        <div>
+        <div className="human-review__prepare-intro">
           <h2 id="prepare-review-title">New review window</h2>
           <p>
             Prepare creates a retained, isolated build workspace. Nothing is opened until Build and
             Open succeed.
           </p>
         </div>
-        <label>
-          Worktree
-          <select
-            value={sourceRef}
-            onChange={(event) => setSourceRef(event.target.value)}
-            disabled={busy !== null}
-          >
-            {sources.map((source) => (
-              <option key={source.sourceRef} value={source.sourceRef}>
-                {source.label} ({source.revision})
-                {source.compatibility === 'incompatible' ? ' · incompatible' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
+        <WorktreeSourcePicker
+          sources={sources}
+          selectedSourceRef={sourceRef}
+          disabled={busy !== null || historyBusy}
+          onSelect={setSourceRef}
+          onViewHistory={(value) => void openHistory(value)}
+        />
+        <label className="human-review__window-name">
           Window name
           <input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
         </label>
@@ -300,6 +313,8 @@ export function HumanReviewLauncherView({
         )}
         {progress.prepare && <OperationProgress progress={progress.prepare} />}
       </section>
+
+      {history && <CommitHistoryDialog history={history} onClose={() => setHistory(null)} />}
 
       {error && (
         <p className="human-review__error" role="alert">

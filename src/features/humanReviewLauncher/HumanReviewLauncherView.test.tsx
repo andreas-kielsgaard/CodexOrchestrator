@@ -5,6 +5,7 @@ import type {
   HumanReviewLauncherClient,
   HumanReviewOperationProgress,
   HumanReviewProofPresentation,
+  HumanReviewSource,
 } from '../../application/humanReviewLauncher';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import { HumanReviewLauncherView } from './HumanReviewLauncherView';
@@ -32,7 +33,7 @@ describe('HumanReviewLauncherView', () => {
     const client = new FakeClient();
     render(<HumanReviewLauncherView client={client} />);
 
-    await screen.findByRole('option', { name: /codex\/feature/ });
+    await screen.findByRole('button', { name: /codex\/feature/ });
     fireEvent.change(screen.getByLabelText('Window name'), {
       target: { value: 'Checkout review' },
     });
@@ -162,21 +163,20 @@ describe('HumanReviewLauncherView', () => {
       actionSummary: 'Update to a compatible worktree lineage before Build or Open.',
     };
     client.listSources = async () => [
-      {
+      source({
         sourceRef: 'compatible-source',
+        branch: 'codex/compatible',
         label: 'codex/compatible',
-        revision: 'abcdef012345',
-        compatibility: 'compatible' as const,
-        compatibilityMessage: 'Compatible.',
-      },
-      {
+      }),
+      source({
         sourceRef: 'legacy-source',
+        branch: 'legacy branch',
         label: 'legacy branch',
         revision: '123456789abc',
         compatibility: 'incompatible' as const,
         compatibilityMessage:
           'This branch predates the Worktree Review child contract. Update it before Build or Open.',
-      },
+      }),
     ];
     client.listInstances = async () => [legacy];
     client.detail = async () => detail(legacy);
@@ -210,21 +210,77 @@ describe('HumanReviewLauncherView', () => {
         .closest('details'),
     ).toHaveAttribute('open');
   });
+
+  it('shows a main-rooted branch map and a selectable newest-first commit history', async () => {
+    const client = new FakeClient();
+    client.listSources = async () => [
+      source({
+        sourceRef: 'main-source',
+        branch: 'main',
+        label: 'main - launcher source',
+        isMain: true,
+        isCurrent: true,
+        ahead: 0,
+        forkRevision: '111111111111',
+        revision: '111111111111',
+      }),
+      source({
+        sourceRef: 'parent-source',
+        branch: 'codex/parent',
+        label: 'codex/parent - parent',
+        parentSourceRef: 'main-source',
+        revision: '222222222222',
+      }),
+      source({
+        sourceRef: 'child-source',
+        branch: 'codex/child',
+        label: 'codex/child - child',
+        parentSourceRef: 'parent-source',
+        ahead: 2,
+        revision: '444444444444',
+      }),
+      source({
+        sourceRef: 'detached-source',
+        branch: undefined,
+        label: 'Detached 55555555',
+        detached: true,
+        revision: '555555555555',
+      }),
+    ];
+    render(<HumanReviewLauncherView client={client} />);
+
+    const detachedToggle = await screen.findByRole('switch', { name: 'Show detached' });
+    expect(detachedToggle).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: /Detached 55555555/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /codex\/child/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'View commit history' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'codex/child' });
+    expect(dialog).toHaveTextContent('2 commits since main · fork 111111111111');
+    expect(within(dialog).getByText(/Branched from/)).toHaveTextContent('codex/parent');
+    const details = within(dialog).getByRole('region', { name: 'Commit details' });
+    expect(details).toHaveTextContent('Newest description');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Parent foundation/ }));
+    expect(details).toHaveTextContent('Parent branch description');
+    expect(details).toHaveTextContent('3 files changed');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('button', { name: /codex\/child/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    fireEvent.click(detachedToggle);
+    expect(screen.getByRole('button', { name: /Detached 55555555/ })).toBeVisible();
+  });
 });
 
 class LongBuildClient implements HumanReviewLauncherClient {
   private progressCalls = 0;
   private resolveBuild!: (value: HumanReviewInstance) => void;
   private instance = instance('Long build', 'prepared', 'not-built');
-  listSources = async () => [
-    {
-      sourceRef: 'opaque',
-      label: 'codex/long',
-      revision: 'abcdef012345',
-      compatibility: 'compatible' as const,
-      compatibilityMessage: 'Compatible.',
-    },
-  ];
+  listSources = async () => [source({ branch: 'codex/long', label: 'codex/long' })];
+  sourceHistory = async () => history();
   listInstances = async () => [this.instance];
   prepare = async () => this.instance;
   build = async () =>
@@ -267,15 +323,8 @@ class LongBuildClient implements HumanReviewLauncherClient {
 class FakeClient implements HumanReviewLauncherClient {
   private instance: HumanReviewInstance | undefined;
   proofPresentation?: HumanReviewLauncherClient['proofPresentation'];
-  listSources: HumanReviewLauncherClient['listSources'] = async () => [
-    {
-      sourceRef: 'opaque',
-      label: 'codex/feature - review',
-      revision: 'abcdef012345',
-      compatibility: 'compatible' as const,
-      compatibilityMessage: 'Compatible.',
-    },
-  ];
+  listSources: HumanReviewLauncherClient['listSources'] = async () => [source()];
+  sourceHistory = async () => history();
   listInstances = async () => (this.instance ? [this.instance] : []);
   prepare = async (_operationRef: string, _sourceRef: string, name: string) =>
     this.set(name, 'prepared', 'not-built');
@@ -340,6 +389,66 @@ function instance(
     actionRequired: false,
     actionSummary: build === 'passed' ? 'Open the verified build.' : 'Build before Open.',
     compatibility: 'compatible',
+  };
+}
+
+function source(overrides: Partial<HumanReviewSource> = {}): HumanReviewSource {
+  return {
+    sourceRef: 'opaque',
+    label: 'codex/feature - review',
+    branch: 'codex/feature',
+    detached: false,
+    isMain: false,
+    isCurrent: false,
+    parentSourceRef: undefined,
+    ahead: 2,
+    behind: 0,
+    forkRevision: '111111111111',
+    revision: '444444444444',
+    compatibility: 'compatible',
+    compatibilityMessage: 'Compatible.',
+    ...overrides,
+  };
+}
+
+function history() {
+  return {
+    branch: 'codex/child',
+    sourceLabel: 'codex/child - child',
+    revision: '444444444444',
+    forkRevision: '111111111111',
+    commitCount: 2,
+    commits: [
+      {
+        id: '4444444444444444444444444444444444444444',
+        abbreviatedId: '4444444',
+        subject: 'Newest feature commit',
+        description: 'Newest description',
+        author: 'Codex',
+        committedAt: '2026-08-09T12:00:00Z',
+        filesChanged: 5,
+        insertions: 30,
+        deletions: 4,
+      },
+      {
+        id: '2222222222222222222222222222222222222222',
+        abbreviatedId: '2222222',
+        subject: 'Parent foundation',
+        description: 'Parent branch description',
+        author: 'Codex',
+        committedAt: '2026-08-08T12:00:00Z',
+        filesChanged: 3,
+        insertions: 12,
+        deletions: 2,
+      },
+    ],
+    lineageMarkers: [
+      {
+        branch: 'codex/parent',
+        commitId: '2222222222222222222222222222222222222222',
+        abbreviatedId: '2222222',
+      },
+    ],
   };
 }
 

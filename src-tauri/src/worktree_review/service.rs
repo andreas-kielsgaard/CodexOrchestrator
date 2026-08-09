@@ -4,6 +4,7 @@ use super::{
     detail::{assemble, now_ms, DetailInput, ReviewInstanceDetailView, ReviewLifecycleEventView},
     progress::{ProgressHandle, ProgressRegistry, ReviewOperationProgressView},
     proof_evidence::{self, ReviewBuildOperationEvidenceView},
+    source_history::{self, ReviewSourceHistoryView},
     worktree_build::{git_text, WorktreeBuildContextView},
 };
 use crate::orchestration::initiated_sprint_git_authority::{
@@ -31,6 +32,14 @@ use uuid::Uuid;
 pub(crate) struct ReviewSourceView {
     pub(crate) source_ref: String,
     pub(crate) label: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) detached: bool,
+    pub(crate) is_main: bool,
+    pub(crate) is_current: bool,
+    pub(crate) parent_source_ref: Option<String>,
+    pub(crate) ahead: usize,
+    pub(crate) behind: usize,
+    pub(crate) fork_revision: String,
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
@@ -175,6 +184,14 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
         Self {
             source_ref: value.source_ref.clone(),
             label: value.label.clone(),
+            branch: value.branch.clone(),
+            detached: value.detached,
+            is_main: value.is_main,
+            is_current: value.is_current,
+            parent_source_ref: value.parent_source_ref.clone(),
+            ahead: value.ahead,
+            behind: value.behind,
+            fork_revision: value.fork_revision.clone(),
             revision: value.revision.clone(),
             compatibility: value.compatibility.clone(),
             compatibility_message: value.compatibility_message.clone(),
@@ -334,6 +351,13 @@ impl HumanReviewLauncherService {
             .iter()
             .map(ReviewSourceView::from)
             .collect()
+    }
+
+    pub(crate) fn source_history(
+        &self,
+        source_ref: String,
+    ) -> Result<ReviewSourceHistoryView, String> {
+        source_history::read(&self.catalog, &source_ref)
     }
 
     pub(crate) fn instances(&self) -> Vec<ReviewInstanceView> {

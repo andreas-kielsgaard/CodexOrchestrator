@@ -13,9 +13,18 @@ use std::{
 pub(crate) struct ReviewWorktreeOption {
     pub(crate) source_ref: String,
     pub(crate) label: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) detached: bool,
+    pub(crate) is_main: bool,
+    pub(crate) is_current: bool,
+    pub(crate) parent_source_ref: Option<String>,
+    pub(crate) ahead: usize,
+    pub(crate) behind: usize,
+    pub(crate) fork_revision: String,
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+    object_id: String,
 }
 
 pub(crate) struct ReviewWorktreeCatalog {
@@ -34,6 +43,15 @@ pub(super) struct CatalogComparisonIdentity {
     pub(super) common_dir: PathBuf,
 }
 
+pub(super) struct CatalogSourceHistoryIdentity {
+    pub(super) selected_root: PathBuf,
+    pub(super) baseline_object_id: String,
+    pub(super) selected_object_id: String,
+    pub(super) branch: String,
+    pub(super) source_label: String,
+    pub(super) related_branch_tips: Vec<(String, String)>,
+}
+
 impl ReviewWorktreeCatalog {
     pub(crate) fn discover(current_source: &Path, git: &Path) -> Result<Self, String> {
         let current_source = current_source
@@ -50,11 +68,13 @@ impl ReviewWorktreeCatalog {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|_| "Git worktree discovery was not UTF-8".to_string())?;
-        validate_catalog_identity(
+        let mut catalog = validate_catalog_identity(
             Self::from_porcelain(&text, &current_source)?,
             &current_source,
             |path| git_common_dir(path, git),
-        )
+        )?;
+        catalog.populate_relationships(git)?;
+        Ok(catalog)
     }
 
     fn from_porcelain(text: &str, current_source: &Path) -> Result<Self, String> {
@@ -79,14 +99,18 @@ impl ReviewWorktreeCatalog {
                 .ok_or_else(|| "Git returned a worktree without a path".to_string())?
                 .canonicalize()
                 .map_err(|error| format!("resolve discovered worktree: {error}"))?;
-            if main_path.is_none() {
+            let is_main = main_path.is_none();
+            if is_main {
                 main_path = Some(path.clone());
                 main_head = head.clone();
             }
             let head = head.ok_or_else(|| "Git returned a worktree without HEAD".to_string())?;
             let digest = format!("{:x}", Sha256::digest(path.to_string_lossy().as_bytes()));
             let source_ref = format!("review-source-{}", &digest[..20]);
-            let base = branch.unwrap_or_else(|| format!("Detached {}", &head[..head.len().min(8)]));
+            let detached = branch.is_none();
+            let base = branch
+                .clone()
+                .unwrap_or_else(|| format!("Detached {}", &head[..head.len().min(8)]));
             let folder = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -100,9 +124,18 @@ impl ReviewWorktreeCatalog {
             options.push(ReviewWorktreeOption {
                 source_ref: source_ref.clone(),
                 label,
+                branch,
+                detached,
+                is_main,
+                is_current: path == current_source,
+                parent_source_ref: None,
+                ahead: 0,
+                behind: 0,
+                fork_revision: head[..head.len().min(12)].to_owned(),
                 revision: head[..head.len().min(12)].to_owned(),
                 compatibility,
                 compatibility_message,
+                object_id: head,
             });
             paths.insert(source_ref, path);
         }
@@ -129,6 +162,84 @@ impl ReviewWorktreeCatalog {
 
     pub(crate) fn options(&self) -> &[ReviewWorktreeOption] {
         &self.options
+    }
+
+    fn populate_relationships(&mut self, git: &Path) -> Result<(), String> {
+        let main_ref = self
+            .options
+            .iter()
+            .find(|option| option.is_main)
+            .map(|option| option.source_ref.clone())
+            .ok_or_else(|| "No machine-main worktree was discovered".to_string())?;
+        let branch_tips = self
+            .options
+            .iter()
+            .filter(|option| !option.detached)
+            .map(|option| {
+                (
+                    option.source_ref.clone(),
+                    option.label.clone(),
+                    option.object_id.clone(),
+                    option.is_main,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for option in &mut self.options {
+            let path = self
+                .paths
+                .get(&option.source_ref)
+                .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+            let range = format!("{}...{}", self.main_head, option.object_id);
+            let counts = git_text(path, git, &["rev-list", "--left-right", "--count", &range])?;
+            let mut counts = counts.split_whitespace();
+            option.behind = counts
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            option.ahead = counts
+                .next()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+            option.fork_revision = git_text(
+                path,
+                git,
+                &["merge-base", &self.main_head, &option.object_id],
+            )?
+            .chars()
+            .take(12)
+            .collect();
+
+            if option.is_main || option.detached {
+                continue;
+            }
+            let mut candidates = branch_tips
+                .iter()
+                .filter(|(source_ref, _, object_id, is_main)| {
+                    source_ref != &option.source_ref
+                        && !is_main
+                        && object_id != &option.object_id
+                        && git_success(
+                            path,
+                            git,
+                            &["merge-base", "--is-ancestor", object_id, &option.object_id],
+                        )
+                })
+                .filter_map(|(source_ref, label, object_id, _)| {
+                    let range = format!("{object_id}..{}", option.object_id);
+                    git_text(path, git, &["rev-list", "--count", &range])
+                        .ok()
+                        .and_then(|distance| distance.parse::<usize>().ok())
+                        .map(|distance| (distance, label, source_ref))
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by(|left, right| left.cmp(right));
+            option.parent_source_ref = candidates
+                .first()
+                .map(|(_, _, source_ref)| (*source_ref).clone())
+                .or_else(|| Some(main_ref.clone()));
+        }
+        Ok(())
     }
 
     pub(crate) fn label(&self, source_ref: &str) -> Option<String> {
@@ -205,6 +316,74 @@ impl ReviewWorktreeCatalog {
                 .ok_or_else(|| "The catalog Git repository identity is unavailable.".to_string())?,
         })
     }
+
+    pub(super) fn source_history_identity(
+        &self,
+        source_ref: &str,
+    ) -> Result<CatalogSourceHistoryIdentity, String> {
+        let option = self
+            .options
+            .iter()
+            .find(|option| option.source_ref == source_ref)
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        let branch = option
+            .branch
+            .clone()
+            .ok_or_else(|| "Commit history is available for named branches only.".to_string())?;
+        let selected_root = self
+            .paths
+            .get(source_ref)
+            .cloned()
+            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        Ok(CatalogSourceHistoryIdentity {
+            selected_root,
+            baseline_object_id: self.main_head.clone(),
+            selected_object_id: option.object_id.clone(),
+            branch,
+            source_label: option.label.clone(),
+            related_branch_tips: self
+                .options
+                .iter()
+                .filter(|candidate| {
+                    !candidate.is_main
+                        && !candidate.detached
+                        && candidate.source_ref != option.source_ref
+                })
+                .filter_map(|candidate| {
+                    candidate
+                        .branch
+                        .clone()
+                        .map(|branch| (branch, candidate.object_id.clone()))
+                })
+                .collect(),
+        })
+    }
+}
+
+fn git_text(path: &Path, git: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .map_err(|error| format!("inspect Git worktree relationships: {error}"))?;
+    if !output.status.success() {
+        return Err("Git could not inspect worktree relationships".into());
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_owned())
+        .map_err(|_| "Git returned non-UTF-8 worktree relationships".to_string())
+}
+
+fn git_success(path: &Path, git: &Path, args: &[&str]) -> bool {
+    Command::new(git)
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn validate_catalog_identity(
