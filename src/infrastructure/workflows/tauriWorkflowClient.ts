@@ -5,6 +5,7 @@ import type {
   WorkflowDefinition,
   WorkflowElementRef,
   WorkflowNodeConfig,
+  WorkflowRole,
   WorkflowTypeSummary,
 } from '../../application/workflows';
 
@@ -15,6 +16,9 @@ export function createTauriWorkflowClient(
 ): WorkflowApplicationClient {
   return {
     listWorkflowTypes: () => invokeCommand<WorkflowTypeSummary[]>('list_workflow_types'),
+    listRoles: () => invokeCommand<WorkflowRole[]>('list_workflow_roles'),
+    createRole: (input) => invokeCommand<WorkflowRole>('create_workflow_role', { input }),
+    updateRole: (input) => invokeCommand<WorkflowRole>('update_workflow_role', { input }),
     createWorkflowType: (input) =>
       invokeCommand<WorkflowDefinition>('create_workflow_type', { input }),
     loadWorkflowType: (workflowTypeId) =>
@@ -28,6 +32,14 @@ export function createTauriWorkflowClient(
     deleteNodeDraft: (workflowTypeId, nodeId) =>
       invokeCommand<WorkflowDefinition>('delete_workflow_node_draft', {
         input: { workflowTypeId, nodeId },
+      }),
+    detachNodeRole: (workflowTypeId, nodeId) =>
+      invokeCommand<WorkflowDefinition>('detach_workflow_node_role', {
+        input: { workflowTypeId, nodeId },
+      }),
+    saveNodeAsRole: (workflowTypeId, nodeId, roleName) =>
+      invokeCommand<WorkflowDefinition>('save_workflow_node_as_role', {
+        input: { workflowTypeId, nodeId, roleName },
       }),
     saveConnectionDraft: (workflowTypeId, connection: WorkflowConnectionConfig) =>
       invokeCommand<WorkflowDefinition>('save_workflow_connection_draft', {

@@ -1,8 +1,8 @@
 use super::{
     application::WorkflowApplication,
     domain::{
-        WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowNativeQuery,
-        WorkflowNodeConfig, WorkflowTypeSummary,
+        WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
+        WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowTypeSummary,
     },
 };
 use serde::Deserialize;
@@ -23,6 +23,21 @@ impl WorkflowTauriState {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateWorkflowTypeInput {
     name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreateWorkflowRoleInput {
+    name: String,
+    harness: WorkflowHarnessConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateWorkflowRoleInput {
+    role_id: String,
+    name: String,
+    harness: WorkflowHarnessConfig,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +69,21 @@ pub(crate) struct DeleteWorkflowNodeDraftInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowNodeRoleInput {
+    workflow_type_id: String,
+    node_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveWorkflowNodeAsRoleInput {
+    workflow_type_id: String,
+    node_id: String,
+    role_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SaveWorkflowConnectionDraftInput {
     workflow_type_id: String,
     connection: WorkflowConnectionConfig,
@@ -78,6 +108,31 @@ pub(crate) fn list_workflow_types(
     state: State<'_, WorkflowTauriState>,
 ) -> Result<Vec<WorkflowTypeSummary>, String> {
     state.application.list_workflow_types()
+}
+
+#[tauri::command]
+pub(crate) fn list_workflow_roles(
+    state: State<'_, WorkflowTauriState>,
+) -> Result<Vec<WorkflowRole>, String> {
+    state.application.list_roles()
+}
+
+#[tauri::command]
+pub(crate) fn create_workflow_role(
+    state: State<'_, WorkflowTauriState>,
+    input: CreateWorkflowRoleInput,
+) -> Result<WorkflowRole, String> {
+    state.application.create_role(&input.name, input.harness)
+}
+
+#[tauri::command]
+pub(crate) fn update_workflow_role(
+    state: State<'_, WorkflowTauriState>,
+    input: UpdateWorkflowRoleInput,
+) -> Result<WorkflowRole, String> {
+    state
+        .application
+        .update_role(&input.role_id, &input.name, input.harness)
 }
 
 #[tauri::command]
@@ -126,6 +181,26 @@ pub(crate) fn delete_workflow_node_draft(
     state
         .application
         .delete_node_draft(&input.workflow_type_id, &input.node_id)
+}
+
+#[tauri::command]
+pub(crate) fn detach_workflow_node_role(
+    state: State<'_, WorkflowTauriState>,
+    input: WorkflowNodeRoleInput,
+) -> Result<WorkflowDefinition, String> {
+    state
+        .application
+        .detach_node_role(&input.workflow_type_id, &input.node_id)
+}
+
+#[tauri::command]
+pub(crate) fn save_workflow_node_as_role(
+    state: State<'_, WorkflowTauriState>,
+    input: SaveWorkflowNodeAsRoleInput,
+) -> Result<WorkflowDefinition, String> {
+    state
+        .application
+        .save_node_as_role(&input.workflow_type_id, &input.node_id, &input.role_name)
 }
 
 #[tauri::command]

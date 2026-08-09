@@ -82,10 +82,27 @@ function client(overrides: Partial<WorkflowApplicationClient> = {}): WorkflowApp
   const definition = workflowDefinition();
   return {
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
+    listRoles: vi.fn(async () => []),
+    createRole: vi.fn(async ({ name, harness }) => ({
+      id: 'role-1',
+      name,
+      harness,
+      createdAt: '',
+      updatedAt: '',
+    })),
+    updateRole: vi.fn(async ({ roleId, name, harness }) => ({
+      id: roleId,
+      name,
+      harness,
+      createdAt: '',
+      updatedAt: '',
+    })),
     createWorkflowType: vi.fn(async () => definition),
     loadWorkflowType: vi.fn(async () => definition),
     saveNodeDraft: vi.fn(async () => definition),
     deleteNodeDraft: vi.fn(async () => definition),
+    detachNodeRole: vi.fn(async () => definition),
+    saveNodeAsRole: vi.fn(async () => definition),
     saveConnectionDraft: vi.fn(async () => definition),
     deleteConnectionDraft: vi.fn(async () => definition),
     activateChanges: vi.fn(async () => definition),

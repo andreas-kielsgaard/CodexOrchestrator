@@ -1,4 +1,14 @@
-import { Cable, GitBranch, Paintbrush, Plus, Trash2, X } from 'lucide-react';
+import {
+  Cable,
+  Copy,
+  GitBranch,
+  Paintbrush,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -6,6 +16,7 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from 'react';
 import type {
   WorkflowApplicationClient,
@@ -14,8 +25,13 @@ import type {
   WorkflowConnectionMechanism,
   WorkflowDefinition,
   WorkflowElementRef,
+  WorkflowHarnessConfig,
+  WorkflowHarnessOverrides,
+  WorkflowMcpServerExposure,
   WorkflowNodeConfig,
   WorkflowNodeElement,
+  WorkflowNodeHarness,
+  WorkflowRole,
   WorkflowTypeSummary,
 } from '../../application/workflows';
 import { workflowPersistenceCoordinator } from '../../application/workflows';
@@ -34,6 +50,7 @@ type LoadState<T> =
 
 interface DisplayNode {
   readonly config: WorkflowNodeConfig;
+  readonly effectiveHarness: WorkflowHarnessConfig;
   readonly element?: WorkflowNodeElement;
   readonly localDraft: boolean;
 }
@@ -213,6 +230,8 @@ function WorkflowTypeEditor({
 }: Pick<WorkflowScreenProps, 'client'> & { readonly workflowTypeId: string }) {
   const [load, setLoad] = useState<LoadState<WorkflowDefinition>>({ kind: 'loading' });
   const [nodeBrush, setNodeBrush] = useState(false);
+  const [copyBrush, setCopyBrush] = useState(false);
+  const [copySourceId, setCopySourceId] = useState<string | null>(null);
   const [connectionBrush, setConnectionBrush] = useState(false);
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -224,6 +243,9 @@ function WorkflowTypeEditor({
   const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkSelection, setBulkSelection] = useState<ReadonlySet<string>>(() => new Set());
+  const [roles, setRoles] = useState<readonly WorkflowRole[]>([]);
+  const [roleCatalogOpen, setRoleCatalogOpen] = useState(false);
+  const [roleCatalogRoleId, setRoleCatalogRoleId] = useState<string | null>(null);
   const [workingNodes, setWorkingNodes] = useState<ReadonlyMap<string, WorkflowNodeConfig>>(
     () => new Map(),
   );
@@ -295,9 +317,10 @@ function WorkflowTypeEditor({
     setSelectedNodeId(null);
     setSelectedConnection(null);
     setConnectionList(null);
-    void client.loadWorkflowType(workflowTypeId).then(
-      (value) => {
+    void Promise.all([client.loadWorkflowType(workflowTypeId), client.listRoles()]).then(
+      ([value, loadedRoles]) => {
         if (!current) return;
+        setRoles(loadedRoles);
         definitionRef.current = value;
         setLoad({ kind: 'ready', value });
       },
@@ -346,7 +369,7 @@ function WorkflowTypeEditor({
     );
 
   const definition = load.value;
-  const displayNodes = mergeDisplayNodes(definition, workingNodes);
+  const displayNodes = mergeDisplayNodes(definition, workingNodes, roles);
   const displayConnections = mergeDisplayConnections(definition, workingConnections);
   const connectionGroups = groupDisplayConnections(displayConnections);
   const editedElements = listEditedElements(definition);
@@ -382,15 +405,11 @@ function WorkflowTypeEditor({
   };
 
   const updateWorkingNode = (node: WorkflowNodeConfig) => {
-    const scratchNode = { ...node, roleName: null };
     const next = new Map(workingNodesRef.current);
-    next.set(scratchNode.id, scratchNode);
-    workingRevisionsRef.current.set(
-      scratchNode.id,
-      (workingRevisionsRef.current.get(scratchNode.id) ?? 0) + 1,
-    );
+    next.set(node.id, node);
+    workingRevisionsRef.current.set(node.id, (workingRevisionsRef.current.get(node.id) ?? 0) + 1);
     replaceWorkingNodes(next);
-    void persistNode(scratchNode);
+    void persistNode(node);
   };
 
   const persistConnection = async (
@@ -430,16 +449,23 @@ function WorkflowTypeEditor({
   };
 
   const placeNodeAt = (positionX: number, positionY: number) => {
-    if (!nodeBrush || saving || selectedNodeId) return;
+    if ((!nodeBrush && !copyBrush) || saving || selectedNodeId) return;
+    const source = copySourceId
+      ? displayNodes.find((node) => node.config.id === copySourceId)
+      : undefined;
+    if (copyBrush && !source) return;
     const id = globalThis.crypto?.randomUUID?.() ?? `node-${Date.now()}`;
     const node: WorkflowNodeConfig = {
       id,
-      name: '',
-      harnessName: '',
-      roleName: null,
+      name: source ? `${source.config.name || 'Node'} copy` : '',
+      harnessName: source?.effectiveHarness.harnessName ?? '',
+      roleName: source?.config.roleName ?? null,
       positionX,
       positionY,
-      isStartingPoint: displayNodes.length === 0,
+      isStartingPoint: source ? false : displayNodes.length === 0,
+      harness: source
+        ? cloneNodeHarness(source.config.harness, source.effectiveHarness)
+        : { kind: 'standalone', config: emptyHarness() },
     };
     const next = new Map(workingNodesRef.current);
     next.set(id, node);
@@ -472,7 +498,7 @@ function WorkflowTypeEditor({
       setBulkOpen(false);
       return;
     }
-    if (!nodeBrush || saving || event.target !== event.currentTarget) return;
+    if ((!nodeBrush && !copyBrush) || saving || event.target !== event.currentTarget) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     placeNodeAt(
       Math.max(24, Math.min(event.clientX - bounds.left, bounds.width - 244)),
@@ -481,7 +507,13 @@ function WorkflowTypeEditor({
   };
 
   const placeNodeWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!nodeBrush || selectedNodeId || saving || (event.key !== 'Enter' && event.key !== ' '))
+    if (event.target !== event.currentTarget) return;
+    if (
+      (!nodeBrush && !copyBrush) ||
+      selectedNodeId ||
+      saving ||
+      (event.key !== 'Enter' && event.key !== ' ')
+    )
       return;
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -653,6 +685,8 @@ function WorkflowTypeEditor({
           disabled={saving}
           onClick={() => {
             setNodeBrush((current) => !current);
+            setCopyBrush(false);
+            setCopySourceId(null);
             setConnectionBrush(false);
             setConnectionSourceId(null);
           }}
@@ -668,11 +702,41 @@ function WorkflowTypeEditor({
           onClick={() => {
             setConnectionBrush((current) => !current);
             setNodeBrush(false);
+            setCopyBrush(false);
+            setCopySourceId(null);
             setConnectionSourceId(null);
           }}
         >
           <Cable size={17} aria-hidden="true" />
           Connection
+        </button>
+        <button
+          type="button"
+          aria-pressed={copyBrush}
+          className={copyBrush ? 'active' : undefined}
+          disabled={saving || displayNodes.length === 0}
+          onClick={() => {
+            setCopyBrush((current) => !current);
+            setNodeBrush(false);
+            setConnectionBrush(false);
+            setConnectionSourceId(null);
+            if (copyBrush) setCopySourceId(null);
+          }}
+        >
+          <Copy size={17} aria-hidden="true" />
+          Copy
+        </button>
+        <button
+          type="button"
+          aria-expanded={roleCatalogOpen}
+          disabled={saving}
+          onClick={() => {
+            setRoleCatalogRoleId(null);
+            setRoleCatalogOpen((current) => !current);
+          }}
+        >
+          <Users size={17} aria-hidden="true" />
+          Roles
         </button>
         <button
           type="button"
@@ -686,18 +750,22 @@ function WorkflowTypeEditor({
           Activate edits ({editedElements.length})
         </button>
         <p id="workflow-canvas-instructions">
-          {connectionBrush
-            ? connectionSourceId
-              ? 'Connection brush active · select a target node'
-              : 'Connection brush active · select a source, then a target, or drag between nodes'
-            : nodeBrush
-              ? 'Node brush active · click the canvas to place nodes'
-              : 'Select a brush to edit the workflow'}
+          {copyBrush
+            ? copySourceId
+              ? 'Copy brush active · click a different source or place its copy on the canvas'
+              : 'Copy brush active · select a source node'
+            : connectionBrush
+              ? connectionSourceId
+                ? 'Connection brush active · select a target node'
+                : 'Connection brush active · select a source, then a target, or drag between nodes'
+              : nodeBrush
+                ? 'Node brush active · click the canvas to place nodes'
+                : 'Select a brush to edit the workflow'}
         </p>
       </div>
 
       <div
-        className={`workflow-canvas${nodeBrush || connectionBrush ? ' has-node-brush' : ''}`}
+        className={`workflow-canvas${nodeBrush || connectionBrush || copyBrush ? ' has-node-brush' : ''}`}
         aria-label="Workflow canvas"
         aria-describedby="workflow-canvas-instructions"
         tabIndex={0}
@@ -792,7 +860,7 @@ function WorkflowTypeEditor({
           })}
         </svg>
 
-        {displayNodes.map(({ config, element, localDraft }) => (
+        {displayNodes.map(({ config, effectiveHarness, element, localDraft }) => (
           <button
             key={config.id}
             type="button"
@@ -805,6 +873,10 @@ function WorkflowTypeEditor({
               event.stopPropagation();
               if (connectionBrush) {
                 handleConnectionNodeClick(config.id);
+                return;
+              }
+              if (copyBrush) {
+                setCopySourceId(config.id);
                 return;
               }
               const outgoing = displayConnections.filter(
@@ -834,7 +906,7 @@ function WorkflowTypeEditor({
               ) : null}
               {element?.draft === null && element.live ? <small>Delete</small> : null}
             </span>
-            <strong>{config.harnessName || 'Choose a role'}</strong>
+            <strong>{effectiveHarness.harnessName || 'Choose a role'}</strong>
             <span>{config.name || 'Name this node'}</span>
           </button>
         ))}
@@ -850,6 +922,8 @@ function WorkflowTypeEditor({
         {selectedNode ? (
           <NodeConfiguration
             node={selectedNode.config}
+            effectiveHarness={selectedNode.effectiveHarness}
+            roles={roles}
             persistedElement={selectedNode.element}
             locallyChanged={selectedNode.localDraft}
             busy={saving}
@@ -863,6 +937,59 @@ function WorkflowTypeEditor({
             onSave={() => void persistNode(selectedNode.config, { blocking: true })}
             onActivate={() => void activateElements([{ kind: 'node', id: selectedNode.config.id }])}
             onDelete={() => void deleteNode(selectedNode.config.id)}
+            onDetach={async () => {
+              setSaving(true);
+              setActionError(null);
+              try {
+                const next = await client.detachNodeRole(workflowTypeId, selectedNode.config.id);
+                definitionRef.current = next;
+                setLoad({ kind: 'ready', value: next });
+              } catch (error) {
+                setActionError(errorMessage(error));
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onSaveAsRole={async (roleName) => {
+              setSaving(true);
+              setActionError(null);
+              try {
+                const next = await client.saveNodeAsRole(
+                  workflowTypeId,
+                  selectedNode.config.id,
+                  roleName,
+                );
+                const nextRoles = await client.listRoles();
+                setRoles(nextRoles);
+                definitionRef.current = next;
+                setLoad({ kind: 'ready', value: next });
+              } catch (error) {
+                setActionError(errorMessage(error));
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onEditRole={(roleId) => {
+              setRoleCatalogRoleId(roleId);
+              setRoleCatalogOpen(true);
+            }}
+          />
+        ) : null}
+
+        {roleCatalogOpen ? (
+          <RoleCatalog
+            client={client}
+            roles={roles}
+            busy={saving}
+            onBusy={setSaving}
+            onRoles={setRoles}
+            onDefinition={(next) => {
+              definitionRef.current = next;
+              setLoad({ kind: 'ready', value: next });
+            }}
+            workflowTypeId={workflowTypeId}
+            initialRoleId={roleCatalogRoleId}
+            onClose={() => setRoleCatalogOpen(false)}
           />
         ) : null}
 
@@ -962,6 +1089,8 @@ function WorkflowTypeEditor({
 
 function NodeConfiguration({
   node,
+  effectiveHarness,
+  roles,
   persistedElement,
   locallyChanged,
   busy,
@@ -971,8 +1100,13 @@ function NodeConfiguration({
   onSave,
   onActivate,
   onDelete,
+  onDetach,
+  onSaveAsRole,
+  onEditRole,
 }: {
   readonly node: WorkflowNodeConfig;
+  readonly effectiveHarness: WorkflowHarnessConfig;
+  readonly roles: readonly WorkflowRole[];
   readonly persistedElement?: WorkflowNodeElement;
   readonly locallyChanged: boolean;
   readonly busy: boolean;
@@ -982,9 +1116,14 @@ function NodeConfiguration({
   onSave(): void;
   onActivate(): void;
   onDelete(): void;
+  onDetach(): void;
+  onSaveAsRole(roleName: string): void;
+  onEditRole(roleId: string): void;
 }) {
+  const [newRoleName, setNewRoleName] = useState('');
   const pendingDeletion = Boolean(persistedElement?.live && !persistedElement.draft);
-  const valid = Boolean(node.name.trim() && node.harnessName.trim());
+  const boundRoleId = node.harness?.kind === 'role' ? node.harness.roleId : null;
+  const valid = Boolean(node.name.trim() && effectiveHarness.harnessName.trim());
   const canActivate = Boolean(
     (valid || pendingDeletion) && persistedElement?.hasUnpublishedChanges && !locallyChanged,
   );
@@ -1018,29 +1157,56 @@ function NodeConfiguration({
       <fieldset className="workflow-role-choice" disabled={busy || pendingDeletion}>
         <legend>Start with a role</legend>
         <label>
-          <input type="radio" name={`role-mode-${node.id}`} checked={false} disabled readOnly />
+          <input
+            type="radio"
+            name={`role-mode-${node.id}`}
+            checked={node.harness?.kind === 'role'}
+            disabled={roles.length === 0}
+            onChange={() => {
+              const role = roles[0];
+              if (role) onChange(bindNodeToRole(node, role));
+            }}
+          />
           <span>
             Existing role
-            <small>Unavailable until the role catalog is connected</small>
+            <small>
+              {roles.length ? 'Inherit with field overrides' : 'Create a saved Role first'}
+            </small>
           </span>
         </label>
         <label>
-          <input type="radio" name={`role-mode-${node.id}`} checked readOnly />
+          <input
+            type="radio"
+            name={`role-mode-${node.id}`}
+            checked={node.harness?.kind !== 'role'}
+            disabled={busy || (node.harness?.kind === 'role' && locallyChanged)}
+            onChange={() => {
+              if (node.harness?.kind === 'role') onDetach();
+            }}
+          />
           From scratch
         </label>
       </fieldset>
 
-      <label>
-        Harness name
-        <input
-          value={node.harnessName}
-          placeholder="For example, Architecture reviewer"
-          disabled={busy || pendingDeletion}
-          onChange={(event) =>
-            onChange({ ...node, roleName: null, harnessName: event.currentTarget.value })
-          }
-        />
-      </label>
+      {node.harness?.kind === 'role' ? (
+        <label>
+          Saved Role
+          <select
+            value={node.harness.roleId}
+            disabled={busy || pendingDeletion}
+            onChange={(event) => {
+              const role = roles.find((candidate) => candidate.id === event.currentTarget.value);
+              if (role) onChange(bindNodeToRole(node, role));
+            }}
+          >
+            {roles.map((role) => (
+              <option key={role.id} value={role.id}>
+                {role.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <label>
         Node name
@@ -1048,9 +1214,7 @@ function NodeConfiguration({
           value={node.name}
           placeholder="For example, Review proposed architecture"
           disabled={busy || pendingDeletion}
-          onChange={(event) =>
-            onChange({ ...node, roleName: null, name: event.currentTarget.value })
-          }
+          onChange={(event) => onChange({ ...node, name: event.currentTarget.value })}
         />
       </label>
 
@@ -1062,7 +1226,6 @@ function NodeConfiguration({
           onChange={(event) =>
             onChange({
               ...node,
-              roleName: null,
               isStartingPoint: event.currentTarget.checked,
             })
           }
@@ -1070,6 +1233,223 @@ function NodeConfiguration({
         Starting node
         <small>The activated workflow has exactly one starting node.</small>
       </label>
+
+      {!pendingDeletion ? (
+        <div className="workflow-harness-fields" aria-label="Harness configuration">
+          <HarnessField
+            label="Harness name"
+            source={fieldSource(node, 'harnessName')}
+            onReset={resetHandler(node, 'harnessName', onChange)}
+          >
+            <input
+              aria-label="Harness name"
+              value={effectiveHarness.harnessName}
+              placeholder="For example, Architecture reviewer"
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(node, effectiveHarness, 'harnessName', event.currentTarget.value),
+                )
+              }
+            />
+          </HarnessField>
+          <HarnessField
+            label="Role identity"
+            source={fieldSource(node, 'roleIdentity')}
+            onReset={resetHandler(node, 'roleIdentity', onChange)}
+          >
+            <textarea
+              aria-label="Role identity"
+              value={effectiveHarness.roleIdentity}
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(
+                    node,
+                    effectiveHarness,
+                    'roleIdentity',
+                    event.currentTarget.value,
+                  ),
+                )
+              }
+            />
+          </HarnessField>
+          <HarnessField
+            label="Instructions"
+            source={fieldSource(node, 'instructions')}
+            onReset={resetHandler(node, 'instructions', onChange)}
+          >
+            <textarea
+              aria-label="Instructions"
+              value={effectiveHarness.instructions}
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(
+                    node,
+                    effectiveHarness,
+                    'instructions',
+                    event.currentTarget.value,
+                  ),
+                )
+              }
+            />
+          </HarnessField>
+          <HarnessField
+            label="Skills"
+            source={fieldSource(node, 'skills')}
+            onReset={resetHandler(node, 'skills', onChange)}
+          >
+            <textarea
+              aria-label="Skills"
+              value={effectiveHarness.skills.join('\n')}
+              placeholder="One skill per line"
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(
+                    node,
+                    effectiveHarness,
+                    'skills',
+                    lines(event.currentTarget.value),
+                  ),
+                )
+              }
+            />
+          </HarnessField>
+          <HarnessField
+            label="MCP exposure"
+            source={fieldSource(node, 'mcpServers')}
+            onReset={resetHandler(node, 'mcpServers', onChange)}
+          >
+            <textarea
+              aria-label="MCP exposure"
+              value={formatMcpServers(effectiveHarness.mcpServers)}
+              placeholder={'server-name\nother-server: tool-a, tool-b'}
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(
+                    node,
+                    effectiveHarness,
+                    'mcpServers',
+                    parseMcpServers(event.currentTarget.value),
+                  ),
+                )
+              }
+            />
+            <small>
+              A server name exposes the whole server; add a colon and tool names to select tools.
+            </small>
+          </HarnessField>
+          <HarnessField
+            label="Hooks"
+            source={fieldSource(node, 'hooks')}
+            onReset={resetHandler(node, 'hooks', onChange)}
+          >
+            <textarea
+              aria-label="Hooks"
+              value={effectiveHarness.hooks.join('\n')}
+              placeholder="One hook per line"
+              disabled={busy}
+              onChange={(event) =>
+                onChange(
+                  setHarnessField(
+                    node,
+                    effectiveHarness,
+                    'hooks',
+                    lines(event.currentTarget.value),
+                  ),
+                )
+              }
+            />
+          </HarnessField>
+          <HarnessField
+            label="Runtime settings"
+            source={fieldSource(node, 'runtime')}
+            onReset={resetHandler(node, 'runtime', onChange)}
+          >
+            <div className="workflow-runtime-fields">
+              <input
+                aria-label="Runtime provider"
+                value={effectiveHarness.runtime.provider}
+                placeholder="Provider"
+                disabled={busy}
+                onChange={(event) =>
+                  onChange(
+                    setHarnessField(node, effectiveHarness, 'runtime', {
+                      ...effectiveHarness.runtime,
+                      provider: event.currentTarget.value,
+                    }),
+                  )
+                }
+              />
+              <input
+                aria-label="Runtime model"
+                value={effectiveHarness.runtime.model}
+                placeholder="Model"
+                disabled={busy}
+                onChange={(event) =>
+                  onChange(
+                    setHarnessField(node, effectiveHarness, 'runtime', {
+                      ...effectiveHarness.runtime,
+                      model: event.currentTarget.value,
+                    }),
+                  )
+                }
+              />
+              <input
+                aria-label="Runtime reasoning effort"
+                value={effectiveHarness.runtime.reasoningEffort}
+                placeholder="Reasoning effort"
+                disabled={busy}
+                onChange={(event) =>
+                  onChange(
+                    setHarnessField(node, effectiveHarness, 'runtime', {
+                      ...effectiveHarness.runtime,
+                      reasoningEffort: event.currentTarget.value,
+                    }),
+                  )
+                }
+              />
+            </div>
+          </HarnessField>
+        </div>
+      ) : null}
+
+      {!pendingDeletion ? (
+        <section className="workflow-role-actions" aria-label="Role actions">
+          {boundRoleId ? (
+            <div>
+              <button type="button" disabled={busy} onClick={() => onEditRole(boundRoleId)}>
+                Edit saved Role
+              </button>
+              <button type="button" disabled={busy} onClick={onDetach}>
+                Detach from Role
+              </button>
+            </div>
+          ) : null}
+          <label>
+            Save configuration as a new Role
+            <span>
+              <input
+                value={newRoleName}
+                placeholder="New Role name"
+                disabled={busy}
+                onChange={(event) => setNewRoleName(event.currentTarget.value)}
+              />
+              <button
+                type="button"
+                disabled={busy || !newRoleName.trim() || locallyChanged}
+                onClick={() => onSaveAsRole(newRoleName.trim())}
+              >
+                Save as Role
+              </button>
+            </span>
+            {locallyChanged ? <small>Save the node draft before creating a Role.</small> : null}
+          </label>
+        </section>
+      ) : null}
 
       {error ? (
         <p className="workflow-error" role="alert">
@@ -1111,6 +1491,399 @@ function NodeConfiguration({
       </footer>
     </section>
   );
+}
+
+type HarnessFieldKey = keyof WorkflowHarnessOverrides;
+
+function HarnessField({
+  label,
+  source,
+  onReset,
+  children,
+}: {
+  readonly label: string;
+  readonly source: 'inherited' | 'overridden' | 'instance';
+  onReset?: () => void;
+  readonly children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(label === 'Harness name');
+  return (
+    <details
+      className={`workflow-harness-field is-${source}`}
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <span>{label}</span>
+        <span className="workflow-field-source">{source === 'instance' ? 'Instance' : source}</span>
+      </summary>
+      <div>
+        {children}
+        {onReset ? (
+          <button type="button" className="workflow-unoverride" onClick={onReset}>
+            <RotateCcw size={13} aria-hidden="true" />
+            Use inherited value
+          </button>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function RoleCatalog({
+  client,
+  roles,
+  busy,
+  workflowTypeId,
+  initialRoleId,
+  onBusy,
+  onRoles,
+  onDefinition,
+  onClose,
+}: {
+  readonly client: WorkflowApplicationClient;
+  readonly roles: readonly WorkflowRole[];
+  readonly busy: boolean;
+  readonly workflowTypeId: string;
+  readonly initialRoleId: string | null;
+  onBusy(value: boolean): void;
+  onRoles(roles: readonly WorkflowRole[]): void;
+  onDefinition(definition: WorkflowDefinition): void;
+  onClose(): void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialRoleId ?? roles[0]?.id ?? null,
+  );
+  const selected = roles.find((role) => role.id === selectedId);
+  const [draftName, setDraftName] = useState(selected?.name ?? '');
+  const [draftHarness, setDraftHarness] = useState<WorkflowHarnessConfig>(
+    selected?.harness ?? emptyHarness(),
+  );
+  const [creating, setCreating] = useState(roles.length === 0);
+  const [error, setError] = useState<string | null>(null);
+
+  const choose = (role: WorkflowRole) => {
+    setSelectedId(role.id);
+    setDraftName(role.name);
+    setDraftHarness(role.harness);
+    setCreating(false);
+    setError(null);
+  };
+  const startNew = () => {
+    setSelectedId(null);
+    setDraftName('');
+    setDraftHarness(emptyHarness());
+    setCreating(true);
+    setError(null);
+  };
+  const save = async () => {
+    if (!draftName.trim() || !draftHarness.harnessName.trim() || busy) return;
+    onBusy(true);
+    setError(null);
+    try {
+      const saved = creating
+        ? await client.createRole({ name: draftName.trim(), harness: draftHarness })
+        : await client.updateRole({
+            roleId: selectedId!,
+            name: draftName.trim(),
+            harness: draftHarness,
+          });
+      const nextRoles = await client.listRoles();
+      onRoles(nextRoles);
+      choose(saved);
+      onDefinition(await client.loadWorkflowType(workflowTypeId));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  return (
+    <section
+      className="workflow-role-catalog"
+      role="dialog"
+      aria-label="Saved Roles"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <header>
+        <div>
+          <p className="eyebrow">Harness catalog</p>
+          <h2>Saved Roles</h2>
+        </div>
+        <button type="button" aria-label="Close saved Roles" onClick={onClose}>
+          <X size={18} aria-hidden="true" />
+        </button>
+      </header>
+      <div className="workflow-role-catalog__body">
+        <nav aria-label="Saved Role list">
+          <button type="button" className={creating ? 'active' : undefined} onClick={startNew}>
+            <Plus size={14} aria-hidden="true" /> New Role
+          </button>
+          {roles.map((role) => (
+            <button
+              key={role.id}
+              type="button"
+              className={!creating && role.id === selectedId ? 'active' : undefined}
+              onClick={() => choose(role)}
+            >
+              {role.name}
+            </button>
+          ))}
+        </nav>
+        <div className="workflow-role-editor">
+          <label>
+            Role name
+            <input
+              aria-label="Role name"
+              value={draftName}
+              disabled={busy}
+              onChange={(event) => setDraftName(event.currentTarget.value)}
+            />
+          </label>
+          <HarnessEditor config={draftHarness} busy={busy} onChange={setDraftHarness} />
+          {error ? (
+            <p className="workflow-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className="workflow-primary-button"
+            disabled={busy || !draftName.trim() || !draftHarness.harnessName.trim()}
+            onClick={() => void save()}
+          >
+            {busy ? 'Saving…' : creating ? 'Create Role' : 'Save Role'}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HarnessEditor({
+  config,
+  busy,
+  onChange,
+}: {
+  readonly config: WorkflowHarnessConfig;
+  readonly busy: boolean;
+  onChange(config: WorkflowHarnessConfig): void;
+}) {
+  return (
+    <div className="workflow-role-harness-fields">
+      <label>
+        Harness name
+        <input
+          value={config.harnessName}
+          disabled={busy}
+          onChange={(event) => onChange({ ...config, harnessName: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Role identity
+        <textarea
+          value={config.roleIdentity}
+          disabled={busy}
+          onChange={(event) => onChange({ ...config, roleIdentity: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Instructions
+        <textarea
+          value={config.instructions}
+          disabled={busy}
+          onChange={(event) => onChange({ ...config, instructions: event.currentTarget.value })}
+        />
+      </label>
+      <label>
+        Skills
+        <textarea
+          value={config.skills.join('\n')}
+          placeholder="One skill per line"
+          disabled={busy}
+          onChange={(event) => onChange({ ...config, skills: lines(event.currentTarget.value) })}
+        />
+      </label>
+      <label>
+        MCP exposure
+        <textarea
+          value={formatMcpServers(config.mcpServers)}
+          placeholder={'server-name\nother-server: tool-a, tool-b'}
+          disabled={busy}
+          onChange={(event) =>
+            onChange({ ...config, mcpServers: parseMcpServers(event.currentTarget.value) })
+          }
+        />
+      </label>
+      <label>
+        Hooks
+        <textarea
+          value={config.hooks.join('\n')}
+          placeholder="One hook per line"
+          disabled={busy}
+          onChange={(event) => onChange({ ...config, hooks: lines(event.currentTarget.value) })}
+        />
+      </label>
+      <fieldset>
+        <legend>Runtime settings</legend>
+        <input
+          aria-label="Role runtime provider"
+          value={config.runtime.provider}
+          placeholder="Provider"
+          disabled={busy}
+          onChange={(event) =>
+            onChange({
+              ...config,
+              runtime: { ...config.runtime, provider: event.currentTarget.value },
+            })
+          }
+        />
+        <input
+          aria-label="Role runtime model"
+          value={config.runtime.model}
+          placeholder="Model"
+          disabled={busy}
+          onChange={(event) =>
+            onChange({
+              ...config,
+              runtime: { ...config.runtime, model: event.currentTarget.value },
+            })
+          }
+        />
+        <input
+          aria-label="Role runtime reasoning effort"
+          value={config.runtime.reasoningEffort}
+          placeholder="Reasoning effort"
+          disabled={busy}
+          onChange={(event) =>
+            onChange({
+              ...config,
+              runtime: { ...config.runtime, reasoningEffort: event.currentTarget.value },
+            })
+          }
+        />
+      </fieldset>
+    </div>
+  );
+}
+
+function bindNodeToRole(node: WorkflowNodeConfig, role: WorkflowRole): WorkflowNodeConfig {
+  return {
+    ...node,
+    harnessName: role.harness.harnessName,
+    roleName: role.name,
+    harness: { kind: 'role', roleId: role.id, overrides: {} },
+  };
+}
+
+function fieldSource(
+  node: WorkflowNodeConfig,
+  field: HarnessFieldKey,
+): 'inherited' | 'overridden' | 'instance' {
+  if (node.harness?.kind !== 'role') return 'instance';
+  return node.harness.overrides[field] !== undefined && node.harness.overrides[field] !== null
+    ? 'overridden'
+    : 'inherited';
+}
+
+function resetHandler(
+  node: WorkflowNodeConfig,
+  field: HarnessFieldKey,
+  onChange: (node: WorkflowNodeConfig) => void,
+): (() => void) | undefined {
+  return fieldSource(node, field) === 'overridden'
+    ? () => onChange(removeHarnessOverride(node, field))
+    : undefined;
+}
+
+function removeHarnessOverride(
+  node: WorkflowNodeConfig,
+  field: HarnessFieldKey,
+): WorkflowNodeConfig {
+  if (node.harness?.kind !== 'role') return node;
+  const overrides = { ...node.harness.overrides };
+  delete (overrides as Record<string, unknown>)[field];
+  return { ...node, harness: { ...node.harness, overrides } };
+}
+
+function setHarnessField<K extends HarnessFieldKey>(
+  node: WorkflowNodeConfig,
+  effective: WorkflowHarnessConfig,
+  field: K,
+  value: NonNullable<WorkflowHarnessOverrides[K]>,
+): WorkflowNodeConfig {
+  if (node.harness?.kind === 'role') {
+    const overrides = { ...node.harness.overrides, [field]: value };
+    return {
+      ...node,
+      harnessName: field === 'harnessName' ? String(value) : node.harnessName,
+      harness: { ...node.harness, overrides },
+    };
+  }
+  const config = { ...effective, [field]: value } as WorkflowHarnessConfig;
+  return {
+    ...node,
+    harnessName: config.harnessName,
+    roleName: null,
+    harness: { kind: 'standalone', config },
+  };
+}
+
+function emptyHarness(): WorkflowHarnessConfig {
+  return {
+    harnessName: '',
+    roleIdentity: '',
+    instructions: '',
+    skills: [],
+    mcpServers: [],
+    hooks: [],
+    runtime: { provider: '', model: '', reasoningEffort: '' },
+  };
+}
+
+function cloneNodeHarness(
+  harness: WorkflowNodeHarness | null | undefined,
+  effective: WorkflowHarnessConfig,
+): WorkflowNodeHarness {
+  if (!harness) return { kind: 'standalone', config: structuredClone(effective) };
+  return structuredClone(harness);
+}
+
+function lines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function formatMcpServers(servers: readonly WorkflowMcpServerExposure[]): string {
+  return servers
+    .map((server) =>
+      server.access.kind === 'entire_server'
+        ? server.serverName
+        : `${server.serverName}: ${server.access.toolNames.join(', ')}`,
+    )
+    .join('\n');
+}
+
+function parseMcpServers(value: string): WorkflowMcpServerExposure[] {
+  const servers: WorkflowMcpServerExposure[] = [];
+  for (const line of lines(value)) {
+    const separator = line.indexOf(':');
+    if (separator < 0) {
+      servers.push({ serverName: line, access: { kind: 'entire_server' } });
+      continue;
+    }
+    const serverName = line.slice(0, separator).trim();
+    const toolNames = line
+      .slice(separator + 1)
+      .split(',')
+      .map((tool) => tool.trim())
+      .filter(Boolean);
+    if (serverName) servers.push({ serverName, access: { kind: 'selected_tools', toolNames } });
+  }
+  return servers;
 }
 
 function ConnectionList({
@@ -1596,17 +2369,53 @@ function BulkActivation({
 function mergeDisplayNodes(
   definition: WorkflowDefinition,
   workingNodes: ReadonlyMap<string, WorkflowNodeConfig>,
+  roles: readonly WorkflowRole[],
 ): DisplayNode[] {
   const nodes: DisplayNode[] = definition.nodes.flatMap((element) => {
     const persisted = element.draft ?? element.live;
     const config = workingNodes.get(element.id) ?? persisted;
-    return config ? [{ config, element, localDraft: workingNodes.has(element.id) }] : [];
+    const locallyChanged = workingNodes.has(element.id);
+    const effectiveHarness = locallyChanged
+      ? resolveNodeHarness(config!, roles)
+      : element.draft
+        ? (element.draftEffectiveHarness ?? resolveNodeHarness(config!, roles))
+        : (element.liveEffectiveHarness ?? resolveNodeHarness(config!, roles));
+    return config ? [{ config, effectiveHarness, element, localDraft: locallyChanged }] : [];
   });
   for (const [id, config] of workingNodes) {
     if (!definition.nodes.some((element) => element.id === id))
-      nodes.push({ config, element: undefined, localDraft: true });
+      nodes.push({
+        config,
+        effectiveHarness: resolveNodeHarness(config, roles),
+        element: undefined,
+        localDraft: true,
+      });
   }
   return nodes;
+}
+
+function resolveNodeHarness(
+  node: WorkflowNodeConfig,
+  roles: readonly WorkflowRole[],
+): WorkflowHarnessConfig {
+  if (node.harness?.kind === 'standalone') return node.harness.config;
+  if (node.harness?.kind === 'role') {
+    const roleId = node.harness.roleId;
+    const role = roles.find((candidate) => candidate.id === roleId);
+    if (role) {
+      const overrides = node.harness.overrides;
+      return {
+        harnessName: overrides.harnessName ?? role.harness.harnessName,
+        roleIdentity: overrides.roleIdentity ?? role.harness.roleIdentity,
+        instructions: overrides.instructions ?? role.harness.instructions,
+        skills: overrides.skills ?? role.harness.skills,
+        mcpServers: overrides.mcpServers ?? role.harness.mcpServers,
+        hooks: overrides.hooks ?? role.harness.hooks,
+        runtime: overrides.runtime ?? role.harness.runtime,
+      };
+    }
+  }
+  return { ...emptyHarness(), harnessName: node.harnessName, roleIdentity: node.roleName ?? '' };
 }
 
 function mergeDisplayConnections(

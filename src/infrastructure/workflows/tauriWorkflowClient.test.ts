@@ -21,22 +21,44 @@ describe('Tauri Workflow client', () => {
       receiverNodeId: 'node-2',
       mechanism: null,
     };
+    const harness = {
+      harnessName: 'Architecture reviewer',
+      roleIdentity: 'Architecture reviewer',
+      instructions: 'Review the proposal.',
+      skills: ['review'],
+      mcpServers: [],
+      hooks: [],
+      runtime: { provider: 'codex', model: 'gpt-5', reasoningEffort: 'medium' },
+    };
 
     await client.listWorkflowTypes();
+    await client.listRoles();
+    await client.createRole({ name: 'Reviewer', harness });
+    await client.updateRole({ roleId: 'role-1', name: 'Senior reviewer', harness });
     await client.createWorkflowType({ name: 'Review loop' });
     await client.loadWorkflowType('workflow-1');
     await client.saveNodeDraft('workflow-1', node);
     await client.deleteNodeDraft('workflow-1', node.id);
+    await client.detachNodeRole('workflow-1', node.id);
+    await client.saveNodeAsRole('workflow-1', node.id, 'Saved reviewer');
     await client.saveConnectionDraft('workflow-1', connection);
     await client.deleteConnectionDraft('workflow-1', connection.id);
     await client.activateChanges('workflow-1', [{ kind: 'node', id: node.id }]);
 
     expect(invoke.mock.calls).toEqual([
       ['list_workflow_types'],
+      ['list_workflow_roles'],
+      ['create_workflow_role', { input: { name: 'Reviewer', harness } }],
+      ['update_workflow_role', { input: { roleId: 'role-1', name: 'Senior reviewer', harness } }],
       ['create_workflow_type', { input: { name: 'Review loop' } }],
       ['load_workflow_type', { query: { workflowTypeId: 'workflow-1' } }],
       ['save_workflow_node_draft', { input: { workflowTypeId: 'workflow-1', node } }],
       ['delete_workflow_node_draft', { input: { workflowTypeId: 'workflow-1', nodeId: 'node-1' } }],
+      ['detach_workflow_node_role', { input: { workflowTypeId: 'workflow-1', nodeId: 'node-1' } }],
+      [
+        'save_workflow_node_as_role',
+        { input: { workflowTypeId: 'workflow-1', nodeId: 'node-1', roleName: 'Saved reviewer' } },
+      ],
       ['save_workflow_connection_draft', { input: { workflowTypeId: 'workflow-1', connection } }],
       [
         'delete_workflow_connection_draft',

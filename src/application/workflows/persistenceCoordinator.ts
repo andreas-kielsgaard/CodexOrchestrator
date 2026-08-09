@@ -58,6 +58,18 @@ export function workflowPersistenceCoordinator(
       await waitForAll();
       return client.listWorkflowTypes();
     },
+    listRoles: async () => {
+      await waitForAll();
+      return client.listRoles();
+    },
+    createRole: async (input) => {
+      await waitForAll();
+      return client.createRole(input);
+    },
+    updateRole: async (input) => {
+      await waitForAll();
+      return client.updateRole(input);
+    },
     createWorkflowType: (input) => client.createWorkflowType(input),
     loadWorkflowType: async (workflowTypeId) => {
       await waitForWorkflow(workflowTypeId);
@@ -68,6 +80,14 @@ export function workflowPersistenceCoordinator(
     deleteNodeDraft: (workflowTypeId, nodeId) =>
       enqueue<WorkflowDefinition>(workflowTypeId, () =>
         client.deleteNodeDraft(workflowTypeId, nodeId),
+      ),
+    detachNodeRole: (workflowTypeId, nodeId) =>
+      enqueue<WorkflowDefinition>(workflowTypeId, () =>
+        client.detachNodeRole(workflowTypeId, nodeId),
+      ),
+    saveNodeAsRole: (workflowTypeId, nodeId, roleName) =>
+      enqueue<WorkflowDefinition>(workflowTypeId, () =>
+        client.saveNodeAsRole(workflowTypeId, nodeId, roleName),
       ),
     saveConnectionDraft: (workflowTypeId, connection) =>
       enqueue<WorkflowDefinition>(workflowTypeId, () =>

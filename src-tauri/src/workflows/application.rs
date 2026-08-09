@@ -1,11 +1,23 @@
 use super::domain::{
-    WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowNativeQuery,
-    WorkflowNodeConfig, WorkflowTypeSummary,
+    WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
+    WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowTypeSummary,
 };
 use std::sync::Arc;
 
 pub(crate) trait WorkflowRepository: Send + Sync {
     fn list_workflow_types(&self) -> Result<Vec<WorkflowTypeSummary>, String>;
+    fn list_roles(&self) -> Result<Vec<WorkflowRole>, String>;
+    fn create_role(
+        &self,
+        name: &str,
+        harness: WorkflowHarnessConfig,
+    ) -> Result<WorkflowRole, String>;
+    fn update_role(
+        &self,
+        role_id: &str,
+        name: &str,
+        harness: WorkflowHarnessConfig,
+    ) -> Result<WorkflowRole, String>;
     fn create_workflow_type(&self, name: &str) -> Result<WorkflowDefinition, String>;
     fn load_workflow_type(&self, workflow_type_id: &str) -> Result<WorkflowDefinition, String>;
     fn update_workflow_type(
@@ -22,6 +34,17 @@ pub(crate) trait WorkflowRepository: Send + Sync {
         &self,
         workflow_type_id: &str,
         node_id: &str,
+    ) -> Result<WorkflowDefinition, String>;
+    fn detach_node_role(
+        &self,
+        workflow_type_id: &str,
+        node_id: &str,
+    ) -> Result<WorkflowDefinition, String>;
+    fn save_node_as_role(
+        &self,
+        workflow_type_id: &str,
+        node_id: &str,
+        role_name: &str,
     ) -> Result<WorkflowDefinition, String>;
     fn save_connection_draft(
         &self,
@@ -52,6 +75,27 @@ impl WorkflowApplication {
 
     pub(crate) fn list_workflow_types(&self) -> Result<Vec<WorkflowTypeSummary>, String> {
         self.repository.list_workflow_types()
+    }
+
+    pub(crate) fn list_roles(&self) -> Result<Vec<WorkflowRole>, String> {
+        self.repository.list_roles()
+    }
+
+    pub(crate) fn create_role(
+        &self,
+        name: &str,
+        harness: WorkflowHarnessConfig,
+    ) -> Result<WorkflowRole, String> {
+        self.repository.create_role(name, harness)
+    }
+
+    pub(crate) fn update_role(
+        &self,
+        role_id: &str,
+        name: &str,
+        harness: WorkflowHarnessConfig,
+    ) -> Result<WorkflowRole, String> {
+        self.repository.update_role(role_id, name, harness)
     }
 
     pub(crate) fn create_workflow_type(&self, name: &str) -> Result<WorkflowDefinition, String> {
@@ -87,6 +131,24 @@ impl WorkflowApplication {
         node_id: &str,
     ) -> Result<WorkflowDefinition, String> {
         self.repository.delete_node_draft(workflow_type_id, node_id)
+    }
+
+    pub(crate) fn detach_node_role(
+        &self,
+        workflow_type_id: &str,
+        node_id: &str,
+    ) -> Result<WorkflowDefinition, String> {
+        self.repository.detach_node_role(workflow_type_id, node_id)
+    }
+
+    pub(crate) fn save_node_as_role(
+        &self,
+        workflow_type_id: &str,
+        node_id: &str,
+        role_name: &str,
+    ) -> Result<WorkflowDefinition, String> {
+        self.repository
+            .save_node_as_role(workflow_type_id, node_id, role_name)
     }
 
     pub(crate) fn save_connection_draft(

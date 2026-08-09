@@ -475,12 +475,196 @@ describe('WorkflowScreen', () => {
     fireEvent.pointerUp(screen.getByRole('button', { name: 'Configure Receiver' }));
     expect(client.saveConnectionDraft).not.toHaveBeenCalled();
   });
+
+  it('edits and removes one inherited field override without detaching the Role', async () => {
+    const role = workflowRole('role-reviewer', 'Reviewer', {
+      ...emptyHarness('Review Harness'),
+      instructions: 'Inherited instructions',
+    });
+    const node: WorkflowNodeConfig = {
+      id: 'review',
+      name: 'Review',
+      harnessName: 'Review Harness',
+      roleName: 'Reviewer',
+      positionX: 100,
+      positionY: 100,
+      isStartingPoint: true,
+      harness: { kind: 'role', roleId: role.id, overrides: {} },
+    };
+    const client = workflowClient({
+      ...emptyDefinition(),
+      nodes: [
+        {
+          id: node.id,
+          draft: node,
+          live: null,
+          hasUnpublishedChanges: true,
+          draftEffectiveHarness: role.harness,
+          liveEffectiveHarness: null,
+        },
+      ],
+    });
+    vi.mocked(client.listRoles).mockResolvedValue([role]);
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure Review' }));
+    const dialog = screen.getByRole('dialog', { name: 'Configure Review' });
+    const instructions = within(dialog).getByLabelText('Instructions');
+    expect(instructions).toHaveValue('Inherited instructions');
+    fireEvent.change(instructions, { target: { value: 'Security-only instructions' } });
+    await waitFor(() =>
+      expect(vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness).toMatchObject({
+        kind: 'role',
+        roleId: role.id,
+        overrides: { instructions: 'Security-only instructions' },
+      }),
+    );
+    const instructionsField = within(dialog).getByText('Instructions').closest('details')!;
+    expect(instructionsField).toHaveClass('is-overridden');
+    fireEvent.click(within(instructionsField).getByRole('button', { name: 'Use inherited value' }));
+    await waitFor(() =>
+      expect(
+        (
+          vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness as {
+            overrides: { instructions?: string };
+          }
+        ).overrides.instructions,
+      ).toBeUndefined(),
+    );
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'From scratch' }));
+    await waitFor(() => expect(client.detachNodeRole).toHaveBeenCalledWith('workflow-1', 'review'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit saved Role' }));
+    expect(
+      within(screen.getByRole('dialog', { name: 'Saved Roles' })).getByLabelText('Role name'),
+    ).toHaveValue('Reviewer');
+  });
+
+  it('keeps the copy brush active and copies only the selected node Harness as non-starting', async () => {
+    const client = workflowClient(definitionWithNodes());
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+    const canvas = await screen.findByLabelText('Workflow canvas');
+    const brush = screen.getByRole('button', { name: 'Copy' });
+    fireEvent.click(brush);
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Sender' }));
+    fireEvent.click(canvas, { clientX: 300, clientY: 300 });
+    expect(await screen.findByRole('dialog', { name: 'Configure Sender copy' })).toBeVisible();
+    const copied = vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1];
+    expect(copied).toMatchObject({
+      name: 'Sender copy',
+      harnessName: 'Sender Harness',
+      isStartingPoint: false,
+      harness: { kind: 'standalone', config: { harnessName: 'Sender Harness' } },
+    });
+    expect(brush).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('copies a Role binding with its sparse overrides rather than materializing it', async () => {
+    const role = workflowRole('role-reviewer', 'Reviewer', emptyHarness('Review Harness'));
+    const node: WorkflowNodeConfig = {
+      id: 'review',
+      name: 'Review',
+      harnessName: 'Review Harness',
+      roleName: 'Reviewer',
+      positionX: 100,
+      positionY: 100,
+      isStartingPoint: true,
+      harness: {
+        kind: 'role',
+        roleId: role.id,
+        overrides: { instructions: 'Local review scope' },
+      },
+    };
+    const client = workflowClient({
+      ...emptyDefinition(),
+      nodes: [
+        {
+          id: node.id,
+          draft: node,
+          live: null,
+          hasUnpublishedChanges: true,
+          draftEffectiveHarness: { ...role.harness, instructions: 'Local review scope' },
+        },
+      ],
+    });
+    vi.mocked(client.listRoles).mockResolvedValue([role]);
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+    const canvas = await screen.findByLabelText('Workflow canvas');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Review' }));
+    fireEvent.click(canvas, { clientX: 350, clientY: 280 });
+    await waitFor(() =>
+      expect(vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1]).toMatchObject({
+        isStartingPoint: false,
+        harness: {
+          kind: 'role',
+          roleId: role.id,
+          overrides: { instructions: 'Local review scope' },
+        },
+      }),
+    );
+  });
+
+  it('creates a saved Role from the editor catalog with a keyboard-addressable form', async () => {
+    const client = workflowClient(emptyDefinition());
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Node' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Roles' }));
+    const catalog = screen.getByRole('dialog', { name: 'Saved Roles' });
+    fireEvent.keyDown(within(catalog).getByLabelText('Role name'), { key: ' ' });
+    expect(client.saveNodeDraft).not.toHaveBeenCalled();
+    fireEvent.change(within(catalog).getByLabelText('Role name'), {
+      target: { value: 'Security reviewer' },
+    });
+    fireEvent.change(within(catalog).getByLabelText('Harness name'), {
+      target: { value: 'Security Harness' },
+    });
+    fireEvent.change(within(catalog).getByLabelText('Role identity'), {
+      target: { value: 'Review security boundaries.' },
+    });
+    fireEvent.click(within(catalog).getByRole('button', { name: 'Create Role' }));
+    await waitFor(() =>
+      expect(client.createRole).toHaveBeenCalledWith({
+        name: 'Security reviewer',
+        harness: expect.objectContaining({
+          harnessName: 'Security Harness',
+          roleIdentity: 'Review security boundaries.',
+        }),
+      }),
+    );
+  });
 });
 
 function workflowClient(initial: WorkflowDefinition): WorkflowApplicationClient {
   let definition = initial;
   return {
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
+    listRoles: vi.fn(async () => []),
+    createRole: vi.fn(async ({ name, harness }) => workflowRole('role-created', name, harness)),
+    updateRole: vi.fn(async ({ roleId, name, harness }) => workflowRole(roleId, name, harness)),
     createWorkflowType: vi.fn(async ({ name }) => {
       definition = {
         ...definition,
@@ -521,6 +705,8 @@ function workflowClient(initial: WorkflowDefinition): WorkflowApplicationClient 
       };
       return definition;
     }),
+    detachNodeRole: vi.fn(async () => definition),
+    saveNodeAsRole: vi.fn(async () => definition),
     saveConnectionDraft: vi.fn(
       async (_workflowTypeId: string, connection: WorkflowConnectionConfig) => {
         definition = {
@@ -588,7 +774,9 @@ function workflowClient(initial: WorkflowDefinition): WorkflowApplicationClient 
             workflowTypeId: definition.workflowType.id,
             ordinal: 1,
             createdAt: '2026-08-08T21:00:00.000Z',
-            nodes: nodes.flatMap((element) => (element.live ? [element.live] : [])),
+            nodes: nodes.flatMap((element) =>
+              element.live ? [materializeNode(element.live)] : [],
+            ),
             connections: connections.flatMap((element) => (element.live ? [element.live] : [])),
           },
         };
@@ -656,9 +844,42 @@ function definitionWithNodes(): WorkflowDefinition {
       workflowTypeId: 'workflow-1',
       ordinal: 1,
       createdAt: '2026-08-08T21:00:00.000Z',
-      nodes: [sender, receiver],
+      nodes: [materializeNode(sender), materializeNode(receiver)],
       connections: [],
     },
+  };
+}
+
+function materializeNode(node: WorkflowNodeConfig) {
+  return {
+    id: node.id,
+    name: node.name,
+    positionX: node.positionX,
+    positionY: node.positionY,
+    isStartingPoint: node.isStartingPoint,
+    harness: emptyHarness(node.harnessName),
+  };
+}
+
+function emptyHarness(harnessName = '') {
+  return {
+    harnessName,
+    roleIdentity: '',
+    instructions: '',
+    skills: [],
+    mcpServers: [],
+    hooks: [],
+    runtime: { provider: '', model: '', reasoningEffort: '' },
+  };
+}
+
+function workflowRole(id: string, name: string, harness = emptyHarness(name)) {
+  return {
+    id,
+    name,
+    harness,
+    createdAt: '2026-08-08T20:00:00.000Z',
+    updatedAt: '2026-08-08T20:00:00.000Z',
   };
 }
 

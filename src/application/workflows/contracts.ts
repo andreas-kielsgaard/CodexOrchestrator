@@ -7,6 +7,55 @@ export interface WorkflowTypeSummary {
   readonly updatedAt: string;
 }
 
+export interface WorkflowHarnessConfig {
+  readonly harnessName: string;
+  readonly roleIdentity: string;
+  readonly instructions: string;
+  readonly skills: readonly string[];
+  readonly mcpServers: readonly WorkflowMcpServerExposure[];
+  readonly hooks: readonly string[];
+  readonly runtime: WorkflowHarnessRuntimeSettings;
+}
+
+export interface WorkflowMcpServerExposure {
+  readonly serverName: string;
+  readonly access:
+    | { readonly kind: 'entire_server' }
+    | { readonly kind: 'selected_tools'; readonly toolNames: readonly string[] };
+}
+
+export interface WorkflowHarnessRuntimeSettings {
+  readonly provider: string;
+  readonly model: string;
+  readonly reasoningEffort: string;
+}
+
+export interface WorkflowHarnessOverrides {
+  readonly harnessName?: string | null;
+  readonly roleIdentity?: string | null;
+  readonly instructions?: string | null;
+  readonly skills?: readonly string[] | null;
+  readonly mcpServers?: readonly WorkflowMcpServerExposure[] | null;
+  readonly hooks?: readonly string[] | null;
+  readonly runtime?: WorkflowHarnessRuntimeSettings | null;
+}
+
+export type WorkflowNodeHarness =
+  | {
+      readonly kind: 'role';
+      readonly roleId: string;
+      readonly overrides: WorkflowHarnessOverrides;
+    }
+  | { readonly kind: 'standalone'; readonly config: WorkflowHarnessConfig };
+
+export interface WorkflowRole {
+  readonly id: string;
+  readonly name: string;
+  readonly harness: WorkflowHarnessConfig;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface WorkflowNodeConfig {
   readonly id: string;
   readonly name: string;
@@ -15,6 +64,7 @@ export interface WorkflowNodeConfig {
   readonly positionX: number;
   readonly positionY: number;
   readonly isStartingPoint: boolean;
+  readonly harness?: WorkflowNodeHarness | null;
 }
 
 export interface WorkflowConnectionConfig {
@@ -51,6 +101,17 @@ export interface WorkflowNodeElement {
   readonly draft: WorkflowNodeConfig | null;
   readonly live: WorkflowNodeConfig | null;
   readonly hasUnpublishedChanges: boolean;
+  readonly draftEffectiveHarness?: WorkflowHarnessConfig | null;
+  readonly liveEffectiveHarness?: WorkflowHarnessConfig | null;
+}
+
+export interface EffectiveWorkflowNodeConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly positionX: number;
+  readonly positionY: number;
+  readonly isStartingPoint: boolean;
+  readonly harness: WorkflowHarnessConfig;
 }
 
 export interface WorkflowConnectionElement {
@@ -65,7 +126,7 @@ export interface EffectiveWorkflowRecipe {
   readonly workflowTypeId: string;
   readonly ordinal: number;
   readonly createdAt: string;
-  readonly nodes: readonly WorkflowNodeConfig[];
+  readonly nodes: readonly EffectiveWorkflowNodeConfig[];
   readonly connections: readonly WorkflowConnectionConfig[];
 }
 
@@ -83,10 +144,26 @@ export type WorkflowElementRef = {
 
 export interface WorkflowApplicationClient {
   listWorkflowTypes(): Promise<readonly WorkflowTypeSummary[]>;
+  listRoles(): Promise<readonly WorkflowRole[]>;
+  createRole(input: {
+    readonly name: string;
+    readonly harness: WorkflowHarnessConfig;
+  }): Promise<WorkflowRole>;
+  updateRole(input: {
+    readonly roleId: string;
+    readonly name: string;
+    readonly harness: WorkflowHarnessConfig;
+  }): Promise<WorkflowRole>;
   createWorkflowType(input: { readonly name: string }): Promise<WorkflowDefinition>;
   loadWorkflowType(workflowTypeId: string): Promise<WorkflowDefinition>;
   saveNodeDraft(workflowTypeId: string, node: WorkflowNodeConfig): Promise<WorkflowDefinition>;
   deleteNodeDraft(workflowTypeId: string, nodeId: string): Promise<WorkflowDefinition>;
+  detachNodeRole(workflowTypeId: string, nodeId: string): Promise<WorkflowDefinition>;
+  saveNodeAsRole(
+    workflowTypeId: string,
+    nodeId: string,
+    roleName: string,
+  ): Promise<WorkflowDefinition>;
   saveConnectionDraft(
     workflowTypeId: string,
     connection: WorkflowConnectionConfig,
