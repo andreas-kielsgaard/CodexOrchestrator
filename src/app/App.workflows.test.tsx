@@ -84,6 +84,7 @@ function mutableWorkflowClient(initial: WorkflowDefinition): ControlledWorkflowC
   return {
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
     listWorkflowInstances: vi.fn(async () => []),
+    listWorkflowMcpComponents: vi.fn(async () => []),
     launchWorkflowInstance: vi.fn(async () => {
       throw new Error('not configured');
     }),

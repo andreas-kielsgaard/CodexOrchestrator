@@ -11,6 +11,10 @@ pub(crate) struct ManagedMcpUpstreamDescriptor {
     pub(crate) name: String,
     pub(crate) url: String,
     pub(crate) bearer_token: String,
+    #[serde(default)]
+    pub(crate) workflow_tool_name: Option<String>,
+    #[serde(default)]
+    pub(crate) workflow_prepare_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -135,6 +139,8 @@ pub(crate) struct SidecarBindingRegistration {
     pub(crate) harness_snapshot: String,
     pub(crate) mediation_plan: String,
     pub(crate) configuration_digest: String,
+    pub(crate) source_workflow_instance_id: String,
+    pub(crate) source_node_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) harness_token: Option<String>,
 }
@@ -150,6 +156,8 @@ impl SidecarBindingRegistration {
             harness_snapshot: record.harness_snapshot.clone(),
             mediation_plan: record.mediation_plan.clone(),
             configuration_digest: record.configuration_digest.clone(),
+            source_workflow_instance_id: record.source_workflow_instance_id.clone(),
+            source_node_id: record.source_node_id.clone(),
             harness_token: record.harness_token.clone(),
         })
     }

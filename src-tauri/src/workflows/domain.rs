@@ -37,6 +37,20 @@ pub(crate) enum WorkflowMcpServerAccess {
     },
 }
 
+impl WorkflowHarnessConfig {
+    pub(crate) fn exposes_mcp_tool(&self, server_name: &str, tool_name: &str) -> bool {
+        self.mcp_servers.iter().any(|server| {
+            server.server_name == server_name
+                && match &server.access {
+                    WorkflowMcpServerAccess::EntireServer => true,
+                    WorkflowMcpServerAccess::SelectedTools { tool_names } => {
+                        tool_names.iter().any(|name| name == tool_name)
+                    }
+                }
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkflowHarnessRuntimeSettings {
@@ -121,26 +135,90 @@ pub(crate) struct WorkflowConnectionConfig {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum WorkflowConnectionMechanism {
     TurnFinishedExpectedFile {
+        #[serde(alias = "file_selector")]
         file_selector: WorkflowExpectedFileSelector,
+        #[serde(alias = "description_text")]
         description_text: String,
+        #[serde(alias = "prompt_text")]
         prompt_text: String,
+        #[serde(alias = "match_selection")]
         match_selection: WorkflowMatchSelection,
+        #[serde(alias = "initial_check")]
         initial_check: WorkflowInitialCheck,
+    },
+    McpNativePromptAgent {
+        #[serde(alias = "server_name")]
+        server_name: String,
+        #[serde(alias = "tool_name")]
+        tool_name: String,
+        #[serde(alias = "warning_text")]
+        warning_text: Option<String>,
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowMcpComponent {
+    pub(crate) server_name: String,
+    pub(crate) tool_name: String,
+    pub(crate) title: String,
+    pub(crate) participation_mode: String,
+    pub(crate) interface_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowInvocation {
+    pub(crate) contract_version: String,
+    pub(crate) connection_activation_reference: String,
+    pub(crate) recipe_reference: String,
+    pub(crate) connection_reference: String,
+    pub(crate) sender_node_reference: String,
+    pub(crate) sender_activation_reference: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedWorkflowMcpHandoff {
+    pub(crate) invocation: WorkflowInvocation,
+    pub(crate) warning_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowMcpOutput {
+    pub(crate) file_paths: Vec<String>,
+    pub(crate) prompt_text: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct WorkflowMcpActivationContext {
+    pub(crate) activation_id: String,
+    pub(crate) trigger: WorkflowCompletedTurnTrigger,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum WorkflowExpectedFileSelector {
     FolderFilenamePattern {
         folder: String,
+        #[serde(alias = "filename_pattern")]
         filename_pattern: String,
     },
     FolderOutputRegex {
         folder: String,
+        #[serde(alias = "output_regex")]
         output_regex: String,
     },
 }
@@ -381,6 +459,7 @@ pub(crate) struct WorkflowConnectionActivationRecord {
     pub(crate) context_inheritance: String,
     pub(crate) compression: String,
     pub(crate) resolved_file_path: Option<String>,
+    pub(crate) resolved_output_json: Option<String>,
     pub(crate) requested_at: String,
     pub(crate) resolved_at: Option<String>,
     pub(crate) associated_at: Option<String>,

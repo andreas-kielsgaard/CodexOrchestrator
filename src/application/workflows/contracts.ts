@@ -75,14 +75,29 @@ export interface WorkflowConnectionConfig {
   readonly mechanism: WorkflowConnectionMechanism | null;
 }
 
-export type WorkflowConnectionMechanism = {
-  readonly kind: 'turn_finished_expected_file';
-  readonly fileSelector: WorkflowExpectedFileSelector;
-  readonly descriptionText: string;
-  readonly promptText: string;
-  readonly matchSelection: 'newest';
-  readonly initialCheck: 'once_immediately';
-};
+export type WorkflowConnectionMechanism =
+  | {
+      readonly kind: 'turn_finished_expected_file';
+      readonly fileSelector: WorkflowExpectedFileSelector;
+      readonly descriptionText: string;
+      readonly promptText: string;
+      readonly matchSelection: 'newest';
+      readonly initialCheck: 'once_immediately';
+    }
+  | {
+      readonly kind: 'mcp_native_prompt_agent';
+      readonly serverName: string;
+      readonly toolName: string;
+      readonly warningText: string | null;
+    };
+
+export interface WorkflowMcpComponent {
+  readonly serverName: string;
+  readonly toolName: string;
+  readonly title: string;
+  readonly participationMode: string;
+  readonly interfaceId: string;
+}
 
 export type WorkflowExpectedFileSelector =
   | {
@@ -227,6 +242,7 @@ export type WorkflowElementRef = {
 export interface WorkflowApplicationClient {
   listWorkflowTypes(): Promise<readonly WorkflowTypeSummary[]>;
   listWorkflowInstances(): Promise<readonly WorkflowInstanceSummary[]>;
+  listWorkflowMcpComponents(): Promise<readonly WorkflowMcpComponent[]>;
   launchWorkflowInstance(input: {
     readonly workflowTypeId: string;
     readonly name?: string | null;

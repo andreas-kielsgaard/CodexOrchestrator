@@ -58,12 +58,12 @@ export function workflowPersistenceCoordinator(
       await waitForAll();
       return client.listWorkflowInstances();
     },
+    listWorkflowMcpComponents: () => client.listWorkflowMcpComponents(),
     launchWorkflowInstance: async (input) => {
       await waitForWorkflow(input.workflowTypeId);
       return client.launchWorkflowInstance(input);
     },
-    loadWorkflowInstance: (workflowInstanceId) =>
-      client.loadWorkflowInstance(workflowInstanceId),
+    loadWorkflowInstance: (workflowInstanceId) => client.loadWorkflowInstance(workflowInstanceId),
     listWorkflowTypes: async () => {
       await waitForAll();
       return client.listWorkflowTypes();

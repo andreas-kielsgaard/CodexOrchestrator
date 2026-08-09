@@ -548,6 +548,8 @@ pub(crate) fn start_managed_invocation(
         name: "plan_builder".to_string(),
         url: server.url(),
         bearer_token: bearer.clone(),
+        workflow_tool_name: None,
+        workflow_prepare_url: None,
     };
     let injection = CodexMcpInjection::new(&upstream.url, bearer, enabled_tools, required);
     Ok(ManagedPlanBuilderInvocation {
@@ -1230,6 +1232,8 @@ mod tests {
                 harness_snapshot,
                 mediation_plan,
                 harness_token: None,
+                source_workflow_instance_id: "workflow-instance-1".into(),
+                source_node_id: "node-1".into(),
             })
             .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

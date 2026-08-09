@@ -2,8 +2,8 @@ use super::{
     application::WorkflowApplication,
     domain::{
         WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
-        WorkflowInstance, WorkflowInstanceSummary, WorkflowNativeQuery, WorkflowNodeConfig,
-        WorkflowRole, WorkflowTypeSummary,
+        WorkflowInstance, WorkflowInstanceSummary, WorkflowMcpComponent, WorkflowNativeQuery,
+        WorkflowNodeConfig, WorkflowRole, WorkflowTypeSummary,
     },
 };
 use serde::Deserialize;
@@ -130,6 +130,13 @@ pub(crate) fn list_workflow_roles(
     state: State<'_, WorkflowTauriState>,
 ) -> Result<Vec<WorkflowRole>, String> {
     state.application.list_roles()
+}
+
+#[tauri::command]
+pub(crate) fn list_workflow_mcp_components(
+    state: State<'_, WorkflowTauriState>,
+) -> Result<Vec<WorkflowMcpComponent>, String> {
+    Ok(state.application.list_mcp_components())
 }
 
 #[tauri::command]

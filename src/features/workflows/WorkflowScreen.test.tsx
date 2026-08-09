@@ -600,6 +600,95 @@ describe('WorkflowScreen', () => {
     );
   });
 
+  it('discovers only sender-exposed native MCP handoffs and persists the selected warning', async () => {
+    const base = definitionWithNodes();
+    const senderHarness = {
+      ...emptyHarness('Sender Harness'),
+      mcpServers: [
+        {
+          serverName: 'workflow_handoff',
+          access: { kind: 'selected_tools' as const, toolNames: ['handoff_to_agent'] },
+        },
+        { serverName: 'other_workflow', access: { kind: 'entire_server' as const } },
+      ],
+    };
+    const definition: WorkflowDefinition = {
+      ...base,
+      nodes: base.nodes.map((element) =>
+        element.id === 'sender' ? { ...element, draftEffectiveHarness: senderHarness } : element,
+      ),
+    };
+    const client = workflowClient(definition);
+    vi.mocked(client.listWorkflowMcpComponents).mockResolvedValue([
+      {
+        serverName: 'workflow_handoff',
+        toolName: 'handoff_to_agent',
+        title: 'Handoff to agent',
+        participationMode: 'native',
+        interfaceId: 'prompt_agent_files_and_text/v1',
+      },
+      {
+        serverName: 'workflow_handoff',
+        toolName: 'hidden_tool',
+        title: 'Hidden tool',
+        participationMode: 'native',
+        interfaceId: 'prompt_agent_files_and_text/v1',
+      },
+      {
+        serverName: 'other_workflow',
+        toolName: 'wrong_interface',
+        title: 'Wrong interface',
+        participationMode: 'native',
+        interfaceId: 'other/v1',
+      },
+    ]);
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Connection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Sender' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Receiver' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Configure Sender to Receiver' });
+    fireEvent.change(within(dialog).getByLabelText('Connecting mechanism'), {
+      target: { value: 'mcp_native_prompt_agent' },
+    });
+
+    const component = within(dialog).getByLabelText('MCP component');
+    expect(within(component).getByRole('option', { name: /Handoff to agent/ })).toBeVisible();
+    expect(within(component).queryByRole('option', { name: /Hidden tool/ })).toBeNull();
+    expect(within(component).queryByRole('option', { name: /Wrong interface/ })).toBeNull();
+    fireEvent.change(component, {
+      target: { value: JSON.stringify(['workflow_handoff', 'handoff_to_agent']) },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(client.saveConnectionDraft).mock.calls.at(-1)?.[1]).toMatchObject({
+        mechanism: {
+          kind: 'mcp_native_prompt_agent',
+          serverName: 'workflow_handoff',
+          toolName: 'handoff_to_agent',
+          warningText: null,
+        },
+      }),
+    );
+
+    fireEvent.change(within(dialog).getByLabelText('Connection warning'), {
+      target: { value: 'The handoff ran after this tool call.' },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(client.saveConnectionDraft).mock.calls.at(-1)?.[1]).toMatchObject({
+        mechanism: {
+          kind: 'mcp_native_prompt_agent',
+          warningText: 'The handoff ran after this tool call.',
+        },
+      }),
+    );
+  });
+
   it('creates parallel connections by drag and click, then opens their shared path list and preview', async () => {
     const client = workflowClient(definitionWithNodes());
     render(
@@ -978,6 +1067,7 @@ function workflowClient(initial: WorkflowDefinition): WorkflowApplicationClient 
   return {
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
     listWorkflowInstances: vi.fn(async () => []),
+    listWorkflowMcpComponents: vi.fn(async () => []),
     launchWorkflowInstance: vi.fn(async () => {
       throw new Error('not configured');
     }),

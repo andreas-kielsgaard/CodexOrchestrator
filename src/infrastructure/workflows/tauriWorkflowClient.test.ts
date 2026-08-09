@@ -33,6 +33,7 @@ describe('Tauri Workflow client', () => {
 
     await client.listWorkflowTypes();
     await client.listWorkflowInstances();
+    await client.listWorkflowMcpComponents();
     await client.launchWorkflowInstance({
       workflowTypeId: 'workflow-1',
       name: null,
@@ -55,6 +56,7 @@ describe('Tauri Workflow client', () => {
     expect(invoke.mock.calls).toEqual([
       ['list_workflow_types'],
       ['list_workflow_instances'],
+      ['list_workflow_mcp_components'],
       [
         'launch_workflow_instance',
         {

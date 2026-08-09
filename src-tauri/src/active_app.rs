@@ -183,6 +183,16 @@ pub(crate) fn run() {
                 harness_engine.clone(),
                 app_data_dir.join("workflow-instances"),
             ));
+            let (workflow_mcp, workflow_mcp_owner) =
+                crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;
+            let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
+            if let Err(workflow_mcp_owner) = managed_mcp_upstreams
+                .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
+            {
+                workflow_mcp_owner.stop();
+                managed_mcp_upstreams.unregister(&workflow_mcp_registration);
+                return Err("Unable to retain the Workflow MCP server.".into());
+            }
             *workflow_notification
                 .lock()
                 .map_err(|_| "Workflow notification registry is unavailable".to_string())? =
@@ -365,6 +375,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::workflows::transport::list_workflow_types,
             crate::workflows::transport::list_workflow_roles,
+            crate::workflows::transport::list_workflow_mcp_components,
             crate::workflows::transport::create_workflow_role,
             crate::workflows::transport::update_workflow_role,
             crate::workflows::transport::create_workflow_type,

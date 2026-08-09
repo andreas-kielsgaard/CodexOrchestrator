@@ -1,11 +1,12 @@
 use super::domain::{
-    WorkflowCompletedTurnTrigger, WorkflowConnectionActivation,
+    PreparedWorkflowMcpHandoff, WorkflowCompletedTurnTrigger, WorkflowConnectionActivation,
     WorkflowConnectionActivationPreparation, WorkflowConnectionActivationRecord,
     WorkflowConnectionActivationStatus, WorkflowConnectionConfig, WorkflowDefinition,
     WorkflowElementRef, WorkflowHarnessConfig, WorkflowInstance, WorkflowInstanceRecord,
-    WorkflowInstanceSession, WorkflowInstanceSummary, WorkflowLaunchPreparation,
-    WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole, WorkflowSessionActivity,
-    WorkflowTypeSummary,
+    WorkflowInstanceSession, WorkflowInstanceSummary, WorkflowInvocation,
+    WorkflowLaunchPreparation, WorkflowMcpActivationContext, WorkflowMcpComponent,
+    WorkflowMcpOutput, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole,
+    WorkflowSessionActivity, WorkflowTypeSummary,
 };
 use crate::agent_sessions::{
     application::{
@@ -130,6 +131,13 @@ pub(crate) trait WorkflowRepository: Send + Sync {
         &self,
         source_session_id: &str,
     ) -> Result<Option<WorkflowCompletedTurnTrigger>, String>;
+    fn load_mcp_prepared_trigger(
+        &self,
+        workflow_instance_id: &str,
+        recipe_id: &str,
+        sender_node_id: &str,
+        source_session_id: &str,
+    ) -> Result<WorkflowCompletedTurnTrigger, String>;
     fn create_connection_activation(
         &self,
         preparation: WorkflowConnectionActivationPreparation,
@@ -138,6 +146,12 @@ pub(crate) trait WorkflowRepository: Send + Sync {
         &self,
         activation_id: &str,
         relative_file_path: &str,
+        resolved_at: &str,
+    ) -> Result<(), String>;
+    fn mark_mcp_connection_activation_resolved(
+        &self,
+        activation_id: &str,
+        resolved_output_json: &str,
         resolved_at: &str,
     ) -> Result<(), String>;
     fn reserve_connection_activation_target(
@@ -225,6 +239,10 @@ impl WorkflowApplication {
 
     pub(crate) fn list_roles(&self) -> Result<Vec<WorkflowRole>, String> {
         self.repository.list_roles()
+    }
+
+    pub(crate) fn list_mcp_components(&self) -> Vec<WorkflowMcpComponent> {
+        vec![super::mcp::component()]
     }
 
     pub(crate) fn create_role(
@@ -414,14 +432,17 @@ impl WorkflowApplication {
             self.record_failure(&activation_id, "session_association", &error);
             return self.load_workflow_instance(&instance_id);
         }
-        if let Err(error) = self.harnesses.bind_workflow_session(BindWorkflowSessionHarness {
-            session_id: session.clone(),
-            runtime_instance_id: invocation_id.clone(),
-            workflow_instance_id: instance_id.clone(),
-            recipe_id: recipe.id.clone(),
-            node_id: start.id.clone(),
-            harness: start.harness.clone(),
-        }) {
+        if let Err(error) = self
+            .harnesses
+            .bind_workflow_session(BindWorkflowSessionHarness {
+                session_id: session.clone(),
+                runtime_instance_id: invocation_id.clone(),
+                workflow_instance_id: instance_id.clone(),
+                recipe_id: recipe.id.clone(),
+                node_id: start.id.clone(),
+                harness: start.harness.clone(),
+            })
+        {
             self.record_failure(&activation_id, "harness_binding", &error);
             return self.load_workflow_instance(&instance_id);
         }
@@ -634,7 +655,13 @@ impl WorkflowApplication {
             description_text,
             prompt_text,
             ..
-        } = mechanism;
+        } = mechanism
+        else {
+            return Err((
+                "mechanism",
+                "The connection is not a turn-finished file connection.".to_string(),
+            ));
+        };
         let relative_file_path = resolve_expected_file(
             Path::new(&trigger.working_directory),
             file_selector,
@@ -649,6 +676,16 @@ impl WorkflowApplication {
             )
             .map_err(|reason| ("resolution_recording", reason))?;
         let prompt = format!("{relative_file_path}\n{description_text}\n{prompt_text}");
+        self.deliver_connection_prompt(activation_id, trigger, receiver_node_id, prompt)
+    }
+
+    fn deliver_connection_prompt(
+        &self,
+        activation_id: &str,
+        trigger: &WorkflowCompletedTurnTrigger,
+        receiver_node_id: &str,
+        prompt: String,
+    ) -> Result<(), (&'static str, String)> {
         let receiver = trigger
             .recipe
             .nodes
@@ -669,9 +706,12 @@ impl WorkflowApplication {
         let receiver_lane = self
             .receiver_lane(&trigger.workflow_instance_id, receiver_node_id)
             .map_err(|reason| ("receiver_session_resolution", reason))?;
-        let receiver_guard = receiver_lane
-            .lock()
-            .map_err(|_| ("receiver_session_resolution", "The receiver Session lane is unavailable.".to_string()))?;
+        let receiver_guard = receiver_lane.lock().map_err(|_| {
+            (
+                "receiver_session_resolution",
+                "The receiver Session lane is unavailable.".to_string(),
+            )
+        })?;
         let existing = self
             .most_recent_receiver_session(trigger, receiver_node_id)
             .map_err(|reason| ("receiver_session_resolution", reason))?;
@@ -764,6 +804,170 @@ impl WorkflowApplication {
             .mark_connection_activation_launch_accepted(activation_id, &Utc::now().to_rfc3339())
             .map_err(|reason| ("launch_acceptance_recording", reason))?;
         Ok(())
+    }
+
+    pub(crate) fn prepare_mcp_native_handoff(
+        &self,
+        workflow_instance_id: &str,
+        sender_node_id: &str,
+        source_session_id: &str,
+        source_invocation_id: &str,
+        server_name: &str,
+        tool_name: &str,
+    ) -> Result<Option<PreparedWorkflowMcpHandoff>, String> {
+        let Some(trigger) = self
+            .repository
+            .load_completed_turn_trigger(source_session_id)?
+        else {
+            return Err("The calling Session is not associated with a Workflow node.".to_string());
+        };
+        if trigger.workflow_instance_id != workflow_instance_id
+            || trigger.sender_node_id != sender_node_id
+        {
+            return Err(
+                "The Harness binding does not match the calling Workflow Session.".to_string(),
+            );
+        }
+        let matches = trigger
+            .recipe
+            .connections
+            .iter()
+            .filter(|connection| connection.sender_node_id == sender_node_id)
+            .filter(|connection| {
+                matches!(
+                    &connection.mechanism,
+                    Some(super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
+                        server_name: configured_server,
+                        tool_name: configured_tool,
+                        ..
+                    }) if configured_server == server_name && configured_tool == tool_name
+                )
+            })
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            return Ok(None);
+        }
+        if matches.len() != 1 {
+            return Err("More than one Workflow connection matches this MCP call.".to_string());
+        }
+        let connection = matches[0];
+        let activation_id = format!("workflow-connection-activation-{}", Uuid::new_v4());
+        let warning_text = match &connection.mechanism {
+            Some(super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
+                warning_text,
+                ..
+            }) => warning_text.clone(),
+            _ => None,
+        };
+        Ok(Some(PreparedWorkflowMcpHandoff {
+            invocation: WorkflowInvocation {
+                contract_version: "workflow-invocation/v1".to_string(),
+                connection_activation_reference: activation_id,
+                recipe_reference: trigger.recipe.id,
+                connection_reference: connection.id.clone(),
+                sender_node_reference: sender_node_id.to_string(),
+                sender_activation_reference: source_invocation_id.to_string(),
+            },
+            warning_text,
+        }))
+    }
+
+    pub(crate) fn settle_mcp_native_handoff(
+        &self,
+        workflow_instance_id: &str,
+        source_session_id: &str,
+        invocation: &WorkflowInvocation,
+        output: Result<WorkflowMcpOutput, String>,
+    ) -> Result<(), String> {
+        if invocation.contract_version != "workflow-invocation/v1" {
+            return Err("Unsupported Workflow invocation contract.".to_string());
+        }
+        let trigger = self.repository.load_mcp_prepared_trigger(
+            workflow_instance_id,
+            &invocation.recipe_reference,
+            &invocation.sender_node_reference,
+            source_session_id,
+        )?;
+        let connection = trigger
+            .recipe
+            .connections
+            .iter()
+            .find(|connection| connection.id == invocation.connection_reference)
+            .cloned()
+            .ok_or_else(|| {
+                "The Workflow MCP connection is absent from its activated recipe.".to_string()
+            })?;
+        if connection.sender_node_id != invocation.sender_node_reference {
+            return Err("Workflow invocation sender does not match its connection.".to_string());
+        }
+        if !matches!(
+            &connection.mechanism,
+            Some(super::domain::WorkflowConnectionMechanism::McpNativePromptAgent { .. })
+        ) {
+            return Err(
+                "Workflow invocation does not reference a native MCP connection.".to_string(),
+            );
+        }
+        let receiver_node_id = connection
+            .receiver_node_id
+            .clone()
+            .ok_or_else(|| "The Workflow MCP connection is dangling.".to_string())?;
+        self.repository
+            .create_connection_activation(WorkflowConnectionActivationPreparation {
+                id: invocation.connection_activation_reference.clone(),
+                workflow_instance_id: workflow_instance_id.to_string(),
+                recipe_id: invocation.recipe_reference.clone(),
+                connection_id: invocation.connection_reference.clone(),
+                sender_node_id: invocation.sender_node_reference.clone(),
+                receiver_node_id: receiver_node_id.clone(),
+                source_session_id: source_session_id.to_string(),
+                source_invocation_id: invocation.sender_activation_reference.clone(),
+                requested_at: Utc::now().to_rfc3339(),
+            })?;
+        let context = WorkflowMcpActivationContext {
+            activation_id: invocation.connection_activation_reference.clone(),
+            trigger,
+        };
+        let settlement = (|| -> Result<(), (String, String)> {
+            let output = output.map_err(|reason| ("mcp_output".to_string(), reason))?;
+            let mut prompt_parts = Vec::with_capacity(output.file_paths.len() + 1);
+            for file_path in &output.file_paths {
+                prompt_parts.push(
+                    canonical_relative_literal(Path::new(file_path), "Workflow MCP file path")
+                        .map_err(|reason| ("mcp_output".to_string(), reason))?,
+                );
+            }
+            prompt_parts.push(output.prompt_text.clone());
+            let resolved_output_json = serde_json::to_string(&output).map_err(|error| {
+                (
+                    "mcp_output".to_string(),
+                    format!("Unable to record Workflow MCP output: {error}"),
+                )
+            })?;
+            self.repository
+                .mark_mcp_connection_activation_resolved(
+                    &context.activation_id,
+                    &resolved_output_json,
+                    &Utc::now().to_rfc3339(),
+                )
+                .map_err(|reason| ("mcp_output_recording".to_string(), reason))?;
+            self.deliver_connection_prompt(
+                &context.activation_id,
+                &context.trigger,
+                &receiver_node_id,
+                prompt_parts.join("\n"),
+            )
+            .map_err(|(stage, reason)| (stage.to_string(), reason))
+        })();
+        settlement.map_err(|(stage, reason)| {
+            let _ = self.repository.mark_connection_activation_failed(
+                &context.activation_id,
+                &stage,
+                &reason,
+                &Utc::now().to_rfc3339(),
+            );
+            reason
+        })
     }
 
     fn receiver_lane(
@@ -1174,6 +1378,23 @@ fn relative_literal(root: &Path, path: &Path) -> Result<String, String> {
         .join("/"))
 }
 
+fn canonical_relative_literal(path: &Path, label: &str) -> Result<String, String> {
+    validate_relative_path(path, label)?;
+    let literal = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if literal.is_empty() {
+        Err(format!("{label} must name a file."))
+    } else {
+        Ok(literal)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1506,12 +1727,18 @@ mod tests {
 
         let loaded = reopened.load_workflow_instance(&instance_id).unwrap();
         assert_eq!(loaded.summary.name, "Durable review");
-        assert_eq!(loaded.summary.launch_status, WorkflowLaunchStatus::LaunchAccepted);
+        assert_eq!(
+            loaded.summary.launch_status,
+            WorkflowLaunchStatus::LaunchAccepted
+        );
         assert_eq!(loaded.recipe.id, recipe_id);
         assert_eq!(loaded.starting_prompt, prompt);
         assert_eq!(loaded.sessions.len(), 1);
         assert_eq!(loaded.sessions[0].session_id, session_id);
-        assert_eq!(loaded.sessions[0].latest_turn_summary.as_deref(), Some(prompt));
+        assert_eq!(
+            loaded.sessions[0].latest_turn_summary.as_deref(),
+            Some(prompt)
+        );
         assert_eq!(reopened.list_workflow_instances().unwrap().len(), 1);
         assert!(reopened_runtime.launches.lock().unwrap().is_empty());
     }
@@ -1667,6 +1894,22 @@ mod tests {
         }
     }
 
+    fn mcp_native_connection(id: &str, receiver: &str) -> WorkflowConnectionConfig {
+        WorkflowConnectionConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            sender_node_id: "sender".to_string(),
+            receiver_node_id: Some(receiver.to_string()),
+            mechanism: Some(
+                super::super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
+                    server_name: super::super::mcp::SERVER_NAME.to_string(),
+                    tool_name: super::super::mcp::TOOL_NAME.to_string(),
+                    warning_text: None,
+                },
+            ),
+        }
+    }
+
     fn execution_fixture(connections: Vec<WorkflowConnectionConfig>) -> ExecutionFixture {
         execution_fixture_with_binder(connections, Arc::new(RecordingHarnessBinder))
     }
@@ -1708,6 +1951,13 @@ mod tests {
             },
             ..WorkflowHarnessConfig::default()
         };
+        let mut sender_harness = harness("Sender harness");
+        sender_harness.mcp_servers = vec![super::super::domain::WorkflowMcpServerExposure {
+            server_name: super::super::mcp::SERVER_NAME.to_string(),
+            access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
+                tool_names: vec![super::super::mcp::TOOL_NAME.to_string()],
+            },
+        }];
         workflow_repository
             .save_node_draft(
                 &workflow_type_id,
@@ -1720,7 +1970,7 @@ mod tests {
                     position_y: 0.0,
                     is_starting_point: true,
                     harness: Some(WorkflowNodeHarness::Standalone {
-                        config: harness("Sender harness"),
+                        config: sender_harness,
                     }),
                 },
             )
@@ -1893,6 +2143,191 @@ mod tests {
             launches[1].submitted_text,
             "handoffs/newer.md\nExpected handoff file\nReview this handoff."
         );
+    }
+
+    #[test]
+    fn mcp_native_handoff_resolves_current_recipe_and_preserves_interface_prompt_order() {
+        let fixture = execution_fixture(vec![mcp_native_connection("edge", "receiver")]);
+        let instance = launch_execution_instance(&fixture);
+        let source_session_id = instance.sessions[0].session_id.clone();
+        let source_invocation_id = instance.launch_activation.target_invocation_id.clone();
+
+        let prepared = fixture
+            .application
+            .prepare_mcp_native_handoff(
+                &instance.summary.id,
+                "sender",
+                &source_session_id,
+                &source_invocation_id,
+                super::super::mcp::SERVER_NAME,
+                super::super::mcp::TOOL_NAME,
+            )
+            .unwrap()
+            .expect("matching handoff");
+        assert_eq!(prepared.invocation.recipe_reference, instance.recipe.id);
+        assert_eq!(
+            prepared.invocation.sender_activation_reference,
+            source_invocation_id
+        );
+
+        fixture
+            .application
+            .settle_mcp_native_handoff(
+                &instance.summary.id,
+                &source_session_id,
+                &prepared.invocation,
+                Ok(WorkflowMcpOutput {
+                    file_paths: vec!["first/a.md".into(), "second/b.json".into()],
+                    prompt_text: "Review both outputs.".into(),
+                }),
+            )
+            .unwrap();
+
+        let launches = fixture.runtime.launches.lock().unwrap();
+        assert_eq!(launches.len(), 2);
+        assert_eq!(
+            launches[1].submitted_text,
+            "first/a.md\nsecond/b.json\nReview both outputs."
+        );
+        drop(launches);
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert!(activation.launch_accepted_at.is_some());
+        let resolved: serde_json::Value =
+            serde_json::from_str(activation.resolved_output_json.as_deref().unwrap()).unwrap();
+        assert_eq!(resolved["filePaths"][0], "first/a.md");
+        assert_eq!(resolved["promptText"], "Review both outputs.");
+    }
+
+    #[test]
+    fn mcp_native_handoff_zero_match_is_ordinary_and_invalid_output_fails_once() {
+        let ordinary = execution_fixture(vec![expected_file_connection(
+            "file-edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".into(),
+                filename_pattern: "*.md".into(),
+            },
+            "Review.",
+        )]);
+        let ordinary_instance = launch_execution_instance(&ordinary);
+        assert!(ordinary
+            .application
+            .prepare_mcp_native_handoff(
+                &ordinary_instance.summary.id,
+                "sender",
+                &ordinary_instance.sessions[0].session_id,
+                &ordinary_instance.launch_activation.target_invocation_id,
+                super::super::mcp::SERVER_NAME,
+                super::super::mcp::TOOL_NAME,
+            )
+            .unwrap()
+            .is_none());
+        assert!(ordinary
+            .workflow_repository
+            .list_connection_activations(&ordinary_instance.summary.id)
+            .unwrap()
+            .is_empty());
+
+        let fixture = execution_fixture(vec![mcp_native_connection("edge", "receiver")]);
+        let instance = launch_execution_instance(&fixture);
+        let prepared = fixture
+            .application
+            .prepare_mcp_native_handoff(
+                &instance.summary.id,
+                "sender",
+                &instance.sessions[0].session_id,
+                &instance.launch_activation.target_invocation_id,
+                super::super::mcp::SERVER_NAME,
+                super::super::mcp::TOOL_NAME,
+            )
+            .unwrap()
+            .unwrap();
+        let error = fixture
+            .application
+            .settle_mcp_native_handoff(
+                &instance.summary.id,
+                &instance.sessions[0].session_id,
+                &prepared.invocation,
+                Ok(WorkflowMcpOutput {
+                    file_paths: vec!["../escape.md".into()],
+                    prompt_text: "Review.".into(),
+                }),
+            )
+            .unwrap_err();
+        assert!(error.contains("relative"));
+        let activation = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(activation.failure_stage.as_deref(), Some("mcp_output"));
+        assert!(activation.launch_requested_at.is_none());
+        assert_eq!(fixture.runtime.launches.lock().unwrap().len(), 1);
+        assert!(fixture
+            .application
+            .settle_mcp_native_handoff(
+                &instance.summary.id,
+                &instance.sessions[0].session_id,
+                &prepared.invocation,
+                Ok(WorkflowMcpOutput {
+                    file_paths: vec!["valid.md".into()],
+                    prompt_text: "No retry.".into(),
+                }),
+            )
+            .is_err());
+        assert_eq!(fixture.runtime.launches.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mcp_native_prepare_uses_recipe_activated_after_session_creation() {
+        let connection = mcp_native_connection("edge", "receiver");
+        let fixture = execution_fixture(vec![connection.clone()]);
+        let instance = launch_execution_instance(&fixture);
+        let mut updated_connection = connection;
+        let Some(super::super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
+            warning_text,
+            ..
+        }) = updated_connection.mechanism.as_mut()
+        else {
+            unreachable!()
+        };
+        *warning_text = Some("Updated warning".to_string());
+        fixture
+            .workflow_repository
+            .save_connection_draft(&fixture.workflow_type_id, updated_connection)
+            .unwrap();
+        let updated_recipe = fixture
+            .workflow_repository
+            .activate_changes(
+                &fixture.workflow_type_id,
+                &[WorkflowElementRef {
+                    kind: WorkflowElementKind::Connection,
+                    id: "edge".to_string(),
+                }],
+            )
+            .unwrap()
+            .active_recipe
+            .unwrap();
+        assert_ne!(updated_recipe.id, instance.recipe.id);
+
+        let prepared = fixture
+            .application
+            .prepare_mcp_native_handoff(
+                &instance.summary.id,
+                "sender",
+                &instance.sessions[0].session_id,
+                &instance.launch_activation.target_invocation_id,
+                super::super::mcp::SERVER_NAME,
+                super::super::mcp::TOOL_NAME,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared.invocation.recipe_reference, updated_recipe.id);
+        assert_eq!(prepared.warning_text.as_deref(), Some("Updated warning"));
     }
 
     #[test]
@@ -2356,10 +2791,7 @@ mod tests {
             vec!["activation-newer", "activation-older"]
         );
         let newer = &projected.connection_activations[0];
-        assert_eq!(
-            newer.status,
-            WorkflowConnectionActivationStatus::Resolved
-        );
+        assert_eq!(newer.status, WorkflowConnectionActivationStatus::Resolved);
         assert_eq!(newer.source_session_id, "source-session-newer");
         assert_eq!(newer.source_invocation_id, "source-invocation-newer");
         assert_eq!(

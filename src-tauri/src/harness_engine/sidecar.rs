@@ -25,6 +25,7 @@ pub(crate) trait HarnessSidecarClient: Send + Sync {
     fn register_binding(&self, registration: SidecarBindingRegistration) -> Result<String, String>;
     fn ensure_binding(&self, registration: SidecarBindingRegistration) -> Result<(), String>;
     fn retire_binding(&self, binding_id: &str) -> Result<(), String>;
+    fn prepare_invocation(&self, binding_id: &str, invocation_id: &str) -> Result<(), String>;
     fn proxy_address(&self) -> Result<SocketAddr, String>;
     fn shutdown(&self) -> Result<(), String>;
 }
@@ -189,6 +190,19 @@ impl HarnessSidecarClient for ProcessHarnessSidecar {
             )
         });
         self.finish_retirement(binding_id, retirement)
+    }
+
+    fn prepare_invocation(&self, binding_id: &str, invocation_id: &str) -> Result<(), String> {
+        self.with_running(|process| {
+            send_command(
+                process,
+                ControlCommandKind::PrepareInvocation {
+                    binding_id: binding_id.to_string(),
+                    invocation_id: invocation_id.to_string(),
+                },
+            )
+        })
+        .map(|_| ())
     }
 
     fn proxy_address(&self) -> Result<SocketAddr, String> {
@@ -434,6 +448,10 @@ struct ControlCommand {
 )]
 enum ControlCommandKind {
     RegisterBinding { binding: SidecarBindingRegistration },
+    PrepareInvocation {
+        binding_id: String,
+        invocation_id: String,
+    },
     RetireBinding { binding_id: String },
     Shutdown,
 }
@@ -591,6 +609,30 @@ fn run_process() -> Result<(), String> {
                             Some("Harness retirement is missing a binding ID.".to_string());
                     }
                 }
+                "prepare_invocation" => {
+                    let binding_id = value.get("bindingId").and_then(serde_json::Value::as_str);
+                    let invocation_id = value
+                        .get("invocationId")
+                        .and_then(serde_json::Value::as_str);
+                    match (binding_id, invocation_id) {
+                        (Some(binding_id), Some(invocation_id)) => match bindings.write() {
+                            Ok(mut bindings) => {
+                                match bindings.prepare_invocation(binding_id, invocation_id) {
+                                    Ok(()) => response.ok = true,
+                                    Err(error) => response.error = Some(error),
+                                }
+                            }
+                            Err(_) => {
+                                response.error =
+                                    Some("Harness proxy binding state is unavailable.".to_string())
+                            }
+                        },
+                        _ => {
+                            response.error =
+                                Some("Harness invocation preparation is incomplete.".to_string())
+                        }
+                    }
+                }
                 "shutdown" => {
                     response.ok = true;
                 }
@@ -635,6 +677,8 @@ mod tests {
             harness_snapshot: snapshot,
             mediation_plan: plan,
             harness_token: token.map(str::to_string),
+            source_workflow_instance_id: "workflow-instance-1".into(),
+            source_node_id: "node-1".into(),
         }
     }
 

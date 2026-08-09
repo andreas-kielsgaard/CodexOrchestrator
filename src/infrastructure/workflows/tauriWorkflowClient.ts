@@ -6,6 +6,7 @@ import type {
   WorkflowElementRef,
   WorkflowInstance,
   WorkflowInstanceSummary,
+  WorkflowMcpComponent,
   WorkflowNodeConfig,
   WorkflowRole,
   WorkflowTypeSummary,
@@ -20,6 +21,8 @@ export function createTauriWorkflowClient(
     listWorkflowTypes: () => invokeCommand<WorkflowTypeSummary[]>('list_workflow_types'),
     listWorkflowInstances: () =>
       invokeCommand<WorkflowInstanceSummary[]>('list_workflow_instances'),
+    listWorkflowMcpComponents: () =>
+      invokeCommand<WorkflowMcpComponent[]>('list_workflow_mcp_components'),
     launchWorkflowInstance: (input) =>
       invokeCommand<WorkflowInstance>('launch_workflow_instance', { input }),
     loadWorkflowInstance: (workflowInstanceId) =>

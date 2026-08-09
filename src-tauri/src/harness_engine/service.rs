@@ -302,7 +302,7 @@ impl SessionHarnessLaunchAuthority for HarnessEngineService {
     fn prepare_launch(
         &self,
         session_id: &AgentSessionId,
-        _invocation_id: &AgentInvocationId,
+        invocation_id: &AgentInvocationId,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<Option<RuntimeLaunchExtension>, String> {
         let Some(mut binding) = self.repository.current_for_session(session_id.as_str())? else {
@@ -317,6 +317,8 @@ impl SessionHarnessLaunchAuthority for HarnessEngineService {
         binding.verify_digest()?;
         let registration = SidecarBindingRegistration::from_record(&binding)?;
         self.sidecar.ensure_binding(registration)?;
+        self.sidecar
+            .prepare_invocation(&binding.id, invocation_id.as_str())?;
         self.proxy_extension(&binding, extension.unwrap_or_default())
             .map(Some)
     }
@@ -359,6 +361,7 @@ mod tests {
         registrations: Mutex<Vec<SidecarBindingRegistration>>,
         failed_registrations: Mutex<usize>,
         retired: Mutex<Vec<String>>,
+        prepared_invocations: Mutex<Vec<(String, String)>>,
     }
 
     impl HarnessSidecarClient for FakeSidecar {
@@ -388,6 +391,14 @@ mod tests {
 
         fn retire_binding(&self, binding_id: &str) -> Result<(), String> {
             self.retired.lock().unwrap().push(binding_id.to_string());
+            Ok(())
+        }
+
+        fn prepare_invocation(&self, binding_id: &str, invocation_id: &str) -> Result<(), String> {
+            self.prepared_invocations
+                .lock()
+                .unwrap()
+                .push((binding_id.to_string(), invocation_id.to_string()));
             Ok(())
         }
 
@@ -465,9 +476,12 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:48000/mcp".into(),
                 bearer_token: "upstream-secret".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
             })
             .unwrap();
-        let service = HarnessEngineService::new(repository.clone(), sidecar, registry).unwrap();
+        let service =
+            HarnessEngineService::new(repository.clone(), sidecar.clone(), registry).unwrap();
         service
             .bind_workflow_session(BindWorkflowSessionHarness {
                 session_id: AgentSessionId::new("session-1").unwrap(),
@@ -510,6 +524,10 @@ mod tests {
         assert!(!joined.contains("48000"));
         assert!(!joined.contains("upstream-secret"));
         assert!(extension.environment.is_empty());
+        assert_eq!(
+            sidecar.prepared_invocations.lock().unwrap()[0].1,
+            "invocation-1"
+        );
     }
 
     #[test]
@@ -554,6 +572,8 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41001/mcp".into(),
                 bearer_token: "first".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
             })
             .unwrap();
         let second = registry
@@ -561,6 +581,8 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41002/mcp".into(),
                 bearer_token: "second".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
             })
             .unwrap();
 
@@ -593,6 +615,8 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41001/mcp".into(),
                 bearer_token: "secret".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
             })
             .unwrap();
         let stopped = Arc::new(AtomicBool::new(false));

@@ -10,6 +10,7 @@ use super::{
         WorkflowNodeElement, WorkflowNodeHarness, WorkflowRole, WorkflowSessionAssociationRecord,
         WorkflowTypeSummary,
     },
+    mcp::{SERVER_NAME as WORKFLOW_MCP_SERVER, TOOL_NAME as WORKFLOW_MCP_TOOL},
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -140,6 +141,7 @@ CREATE TABLE IF NOT EXISTS workflow_connection_activations (
     context_inheritance TEXT NOT NULL CHECK (context_inheritance='none'),
     compression TEXT NOT NULL CHECK (compression='none'),
     resolved_file_path TEXT,
+    resolved_output_json TEXT,
     requested_at TEXT NOT NULL,
     resolved_at TEXT,
     associated_at TEXT,
@@ -918,12 +920,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             )
             .optional()
             .map_err(storage_error("load completed-turn Workflow association"))?;
-        let Some((
-            workflow_instance_id,
-            working_directory,
-            sender_node_id,
-            recipe_id,
-        )) = trigger
+        let Some((workflow_instance_id, working_directory, sender_node_id, recipe_id)) = trigger
         else {
             return Ok(None);
         };
@@ -937,6 +934,40 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             sender_node_id,
             recipe,
         }))
+    }
+
+    fn load_mcp_prepared_trigger(
+        &self,
+        workflow_instance_id: &str,
+        recipe_id: &str,
+        sender_node_id: &str,
+        source_session_id: &str,
+    ) -> Result<WorkflowCompletedTurnTrigger, String> {
+        let connection = self.lock()?;
+        let (working_directory, workflow_type_id) = connection
+            .query_row(
+                "SELECT instance.working_directory,instance.workflow_type_id
+                 FROM workflow_instances instance
+                 JOIN workflow_instance_sessions association ON association.workflow_instance_id=instance.id
+                 WHERE instance.id=?1 AND association.session_id=?2 AND association.node_id=?3",
+                params![workflow_instance_id, source_session_id, sender_node_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(storage_error("load prepared Workflow MCP association"))?
+            .ok_or_else(|| {
+                "The prepared Workflow MCP Session association is unavailable.".to_string()
+            })?;
+        let recipe = load_recipe(&connection, recipe_id)?;
+        if recipe.workflow_type_id != workflow_type_id {
+            return Err("The prepared Workflow MCP recipe belongs to another type.".to_string());
+        }
+        Ok(WorkflowCompletedTurnTrigger {
+            workflow_instance_id: workflow_instance_id.to_string(),
+            working_directory,
+            sender_node_id: sender_node_id.to_string(),
+            recipe,
+        })
     }
 
     fn create_connection_activation(
@@ -978,6 +1009,24 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             .map_err(storage_error("record Workflow connection file resolution"))?;
         (changed == 1).then_some(()).ok_or_else(|| {
             "Workflow connection activation is not ready for resolution.".to_string()
+        })
+    }
+
+    fn mark_mcp_connection_activation_resolved(
+        &self,
+        activation_id: &str,
+        resolved_output_json: &str,
+        resolved_at: &str,
+    ) -> Result<(), String> {
+        let connection = self.lock()?;
+        let changed = connection
+            .execute(
+                "UPDATE workflow_connection_activations SET resolved_output_json=?2,resolved_at=?3 WHERE id=?1 AND resolved_at IS NULL AND failed_at IS NULL",
+                params![activation_id, resolved_output_json, resolved_at],
+            )
+            .map_err(storage_error("record Workflow MCP output resolution"))?;
+        (changed == 1).then_some(()).ok_or_else(|| {
+            "Workflow MCP connection activation is not ready for resolution.".to_string()
         })
     }
 
@@ -1116,7 +1165,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         let connection = self.lock()?;
         let mut statement = connection
             .prepare(
-                "SELECT id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,resolved_file_path,requested_at,resolved_at,associated_at,launch_requested_at,launch_accepted_at,failed_at,failure_stage,failure_reason FROM workflow_connection_activations WHERE workflow_instance_id=?1 ORDER BY requested_at,id",
+                "SELECT id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,resolved_file_path,resolved_output_json,requested_at,resolved_at,associated_at,launch_requested_at,launch_accepted_at,failed_at,failure_stage,failure_reason FROM workflow_connection_activations WHERE workflow_instance_id=?1 ORDER BY requested_at,id",
             )
             .map_err(storage_error("prepare Workflow connection activation list"))?;
         let activations = statement
@@ -1137,14 +1186,15 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                     context_inheritance: row.get(12)?,
                     compression: row.get(13)?,
                     resolved_file_path: row.get(14)?,
-                    requested_at: row.get(15)?,
-                    resolved_at: row.get(16)?,
-                    associated_at: row.get(17)?,
-                    launch_requested_at: row.get(18)?,
-                    launch_accepted_at: row.get(19)?,
-                    failed_at: row.get(20)?,
-                    failure_stage: row.get(21)?,
-                    failure_reason: row.get(22)?,
+                    resolved_output_json: row.get(15)?,
+                    requested_at: row.get(16)?,
+                    resolved_at: row.get(17)?,
+                    associated_at: row.get(18)?,
+                    launch_requested_at: row.get(19)?,
+                    launch_accepted_at: row.get(20)?,
+                    failed_at: row.get(21)?,
+                    failure_stage: row.get(22)?,
+                    failure_reason: row.get(23)?,
                 })
             })
             .map_err(storage_error("query Workflow connection activations"))?
@@ -1262,6 +1312,36 @@ fn validate_candidate(
         }
         validate_connection_mechanism(connection)?;
     }
+    let mut native_routes = HashSet::new();
+    for connection in connections {
+        if let Some(WorkflowConnectionMechanism::McpNativePromptAgent {
+            server_name,
+            tool_name,
+            ..
+        }) = &connection.mechanism
+        {
+            let sender = nodes
+                .iter()
+                .find(|node| node.id == connection.sender_node_id)
+                .expect("validated Workflow sender");
+            if !sender.harness.exposes_mcp_tool(server_name, tool_name) {
+                return Err(format!(
+                    "Workflow sender {} does not expose MCP tool {server_name}/{tool_name}.",
+                    connection.sender_node_id
+                ));
+            }
+            if !native_routes.insert((
+                connection.sender_node_id.as_str(),
+                server_name.as_str(),
+                tool_name.as_str(),
+            )) {
+                return Err(format!(
+                    "Workflow sender {} has more than one connection for MCP tool {server_name}/{tool_name}.",
+                    connection.sender_node_id
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1296,6 +1376,26 @@ fn validate_connection_mechanism(connection: &WorkflowConnectionConfig) -> Resul
                     required(folder, "Expected file folder")?;
                     required(output_regex, "Agent output regex")?;
                 }
+            }
+        }
+        WorkflowConnectionMechanism::McpNativePromptAgent {
+            server_name,
+            tool_name,
+            warning_text,
+        } => {
+            required(server_name, "MCP connection server")?;
+            required(tool_name, "MCP connection tool")?;
+            if server_name != WORKFLOW_MCP_SERVER || tool_name != WORKFLOW_MCP_TOOL {
+                return Err(format!(
+                    "Workflow connection {} must use {WORKFLOW_MCP_SERVER}/{WORKFLOW_MCP_TOOL}.",
+                    connection.id
+                ));
+            }
+            if warning_text
+                .as_ref()
+                .is_some_and(|warning| warning.trim().is_empty())
+            {
+                return Err("MCP connection warning must be omitted or non-empty.".to_string());
             }
         }
     }
@@ -1790,6 +1890,25 @@ pub(crate) fn initialize_workflow_role_schema(connection: &Connection) -> Result
     Ok(())
 }
 
+pub(crate) fn initialize_workflow_mcp_output_schema(connection: &Connection) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workflow_connection_activations') WHERE name='resolved_output_json')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(storage_error("inspect Workflow MCP output schema"))?;
+    if !exists {
+        connection
+            .execute(
+                "ALTER TABLE workflow_connection_activations ADD COLUMN resolved_output_json TEXT",
+                [],
+            )
+            .map_err(storage_error("add Workflow MCP output storage"))?;
+    }
+    Ok(())
+}
+
 fn ensure_workflow_type(connection: &Connection, workflow_type_id: &str) -> Result<(), String> {
     let exists = connection
         .query_row(
@@ -1974,6 +2093,58 @@ mod tests {
             1
         );
         assert_eq!(activated.workflow_type.edited_element_count, 0);
+    }
+
+    #[test]
+    fn activation_rejects_duplicate_native_mcp_routes_for_one_sender() {
+        let repository = SqliteWorkflowRepository::new(Connection::open_in_memory().unwrap())
+            .expect("repository");
+        let id = repository
+            .create_workflow_type("Native MCP")
+            .unwrap()
+            .workflow_type
+            .id;
+        let mut sender = node("sender", true);
+        let mut sender_harness = harness("Sender", "sender", "Send handoffs.");
+        sender_harness.mcp_servers = vec![super::super::domain::WorkflowMcpServerExposure {
+            server_name: WORKFLOW_MCP_SERVER.to_string(),
+            access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
+                tool_names: vec![WORKFLOW_MCP_TOOL.to_string()],
+            },
+        }];
+        sender.harness = Some(WorkflowNodeHarness::Standalone {
+            config: sender_harness,
+        });
+        repository.save_node_draft(&id, sender).unwrap();
+        repository
+            .save_node_draft(&id, node("receiver-a", false))
+            .unwrap();
+        repository
+            .save_node_draft(&id, node("receiver-b", false))
+            .unwrap();
+        for (edge, receiver) in [("edge-a", "receiver-a"), ("edge-b", "receiver-b")] {
+            repository
+                .save_connection_draft(
+                    &id,
+                    WorkflowConnectionConfig {
+                        id: edge.to_string(),
+                        name: edge.to_string(),
+                        sender_node_id: "sender".to_string(),
+                        receiver_node_id: Some(receiver.to_string()),
+                        mechanism: Some(WorkflowConnectionMechanism::McpNativePromptAgent {
+                            server_name: "workflow_handoff".to_string(),
+                            tool_name: "handoff_to_agent".to_string(),
+                            warning_text: None,
+                        }),
+                    },
+                )
+                .unwrap();
+        }
+        let definition = repository.load_workflow_type(&id).unwrap();
+        let error = repository
+            .activate_changes(&id, &all(&definition))
+            .expect_err("duplicate native MCP route must not activate");
+        assert!(error.contains("more than one connection"));
     }
 
     #[test]
@@ -2506,6 +2677,28 @@ mod tests {
             access,
             super::super::domain::WorkflowMcpServerAccess::SelectedTools { tool_names }
                 if tool_names == ["handoff"]
+        ));
+        let mechanism = WorkflowConnectionMechanism::McpNativePromptAgent {
+            server_name: "workflow_handoff".into(),
+            tool_name: "handoff_to_agent".into(),
+            warning_text: None,
+        };
+        let value = serde_json::to_value(&mechanism).unwrap();
+        assert_eq!(value["serverName"], "workflow_handoff");
+        assert_eq!(value["toolName"], "handoff_to_agent");
+        assert!(value.get("server_name").is_none());
+        let legacy: WorkflowConnectionMechanism = serde_json::from_value(serde_json::json!({
+            "kind":"turn_finished_expected_file",
+            "file_selector":{"kind":"folder_filename_pattern","folder":"handoffs","filename_pattern":"*.md"},
+            "description_text":"File",
+            "prompt_text":"Review",
+            "match_selection":"newest",
+            "initial_check":"once_immediately"
+        }))
+        .unwrap();
+        assert!(matches!(
+            legacy,
+            WorkflowConnectionMechanism::TurnFinishedExpectedFile { .. }
         ));
     }
 }

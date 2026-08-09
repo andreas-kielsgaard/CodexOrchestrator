@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct ProxyBinding {
     pub(crate) registration: SidecarBindingRegistration,
     pub(crate) plan: HarnessMediationPlan,
+    pub(crate) current_invocation_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -68,8 +69,14 @@ impl ProxyBindings {
         registration.harness_token = Some(token.clone());
         self.token_by_binding
             .insert(registration.binding_id.clone(), token.clone());
-        self.by_token
-            .insert(token.clone(), ProxyBinding { registration, plan });
+        self.by_token.insert(
+            token.clone(),
+            ProxyBinding {
+                registration,
+                plan,
+                current_invocation_id: None,
+            },
+        );
         Ok(token)
     }
 
@@ -77,6 +84,29 @@ impl ProxyBindings {
         if let Some(token) = self.token_by_binding.remove(binding_id) {
             self.by_token.remove(&token);
         }
+    }
+
+    pub(crate) fn prepare_invocation(
+        &mut self,
+        binding_id: &str,
+        invocation_id: &str,
+    ) -> Result<(), String> {
+        if invocation_id.trim().is_empty() {
+            return Err("Harness invocation ID is required.".to_string());
+        }
+        let token = self
+            .token_by_binding
+            .get(binding_id)
+            .cloned()
+            .ok_or_else(|| {
+                "Harness binding is unavailable for invocation preparation.".to_string()
+            })?;
+        let binding = self
+            .by_token
+            .get_mut(&token)
+            .ok_or_else(|| "Harness proxy binding index is inconsistent.".to_string())?;
+        binding.current_invocation_id = Some(invocation_id.to_string());
+        Ok(())
     }
 
     fn exposure(
@@ -101,6 +131,8 @@ fn registrations_match_without_token(
         && left.harness_snapshot == right.harness_snapshot
         && left.mediation_plan == right.mediation_plan
         && left.configuration_digest == right.configuration_digest
+        && left.source_workflow_instance_id == right.source_workflow_instance_id
+        && left.source_node_id == right.source_node_id
 }
 
 pub(crate) async fn run_proxy_listener(
@@ -147,7 +179,7 @@ async fn handle_proxy_request(
         .read()
         .ok()
         .and_then(|bindings| bindings.exposure(token, exposure_index));
-    let Some((_binding, exposure)) = exposure else {
+    let Some((binding, exposure)) = exposure else {
         return text_response(
             StatusCode::UNAUTHORIZED,
             "Harness binding is unavailable or retired.",
@@ -186,9 +218,116 @@ async fn handle_proxy_request(
             )
         }
     };
+    let mut forwarded_body = body.clone();
+    let mut workflow_warning = None;
+    if let Some((id, tool_name)) = tool_call(&request_json) {
+        if exposure.upstream.workflow_tool_name.as_deref() == Some(tool_name) {
+            if has_reserved_workflow_argument(&request_json) {
+                return denied_tool_result(
+                    id,
+                    "Harness rejected caller-supplied Workflow routing context.".to_string(),
+                );
+            }
+            let invocation_id = match binding.current_invocation_id.as_deref() {
+                Some(invocation_id) => invocation_id,
+                None => {
+                    return json_rpc_failure(
+                        id,
+                        "Harness has no current invocation for Workflow routing.".to_string(),
+                    )
+                }
+            };
+            let Some(prepare_url) = exposure.upstream.workflow_prepare_url.as_deref() else {
+                return json_rpc_failure(
+                    id,
+                    "Managed Workflow MCP preparation is unavailable.".to_string(),
+                );
+            };
+            let mut preparation = client.post(prepare_url).json(&json!({
+                "workflowInstanceId": binding.registration.source_workflow_instance_id,
+                "senderNodeId": binding.registration.source_node_id,
+                "sourceSessionId": binding.registration.session_id,
+                "sourceInvocationId": invocation_id,
+                "serverName": exposure.configured_server_name,
+                "toolName": tool_name,
+            }));
+            if !exposure.upstream.bearer_token.is_empty() {
+                preparation = preparation.bearer_auth(&exposure.upstream.bearer_token);
+            }
+            let preparation = match preparation.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    eprintln!("Harness Workflow MCP preparation failed: {error}");
+                    return json_rpc_failure(
+                        id,
+                        "Workflow routing preparation failed.".to_string(),
+                    );
+                }
+            };
+            if !preparation.status().is_success() {
+                let message = preparation
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Workflow routing preparation failed.".to_string());
+                return json_rpc_failure(id, message);
+            }
+            let preparation = match preparation.json::<Value>().await {
+                Ok(preparation) => preparation,
+                Err(error) => {
+                    eprintln!("Harness Workflow MCP preparation response was invalid: {error}");
+                    return json_rpc_failure(
+                        id,
+                        "Workflow routing preparation was invalid.".to_string(),
+                    );
+                }
+            };
+            if let Some(handoff) = preparation.get("handoff").filter(|value| !value.is_null()) {
+                let Some(invocation) = handoff.get("invocation").cloned() else {
+                    return json_rpc_failure(
+                        id,
+                        "Workflow routing context was incomplete.".to_string(),
+                    );
+                };
+                let mut forwarded = request_json.clone().unwrap_or(Value::Null);
+                let Some(params) = forwarded.get_mut("params").and_then(Value::as_object_mut)
+                else {
+                    return json_rpc_failure(
+                        id,
+                        "MCP tool parameters must be an object.".to_string(),
+                    );
+                };
+                let arguments = params
+                    .entry("arguments")
+                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                let Some(arguments) = arguments.as_object_mut() else {
+                    return json_rpc_failure(
+                        id,
+                        "MCP tool arguments must be an object.".to_string(),
+                    );
+                };
+                arguments.insert("_workflowInvocation".to_string(), invocation);
+                forwarded_body = match serde_json::to_vec(&forwarded) {
+                    Ok(body) => Bytes::from(body),
+                    Err(error) => {
+                        return json_rpc_failure(
+                            id,
+                            format!("Unable to mediate Workflow MCP call: {error}"),
+                        );
+                    }
+                };
+                workflow_warning = Some(
+                    handoff
+                        .get("warningText")
+                        .and_then(Value::as_str)
+                        .unwrap_or("This tool call also activated a Workflow connection.")
+                        .to_string(),
+                );
+            }
+        }
+    }
     let mut upstream = client
         .request(method, &exposure.upstream.url)
-        .body(body.clone());
+        .body(forwarded_body);
     for name in [
         header::ACCEPT,
         header::CONTENT_TYPE,
@@ -202,6 +341,14 @@ async fn handle_proxy_request(
     }
     if !exposure.upstream.bearer_token.is_empty() {
         upstream = upstream.bearer_auth(&exposure.upstream.bearer_token);
+    }
+    if workflow_warning.is_some() {
+        upstream = upstream
+            .header(
+                "x-workflow-instance-id",
+                &binding.registration.source_workflow_instance_id,
+            )
+            .header("x-workflow-session-id", &binding.registration.session_id);
     }
     let upstream = match upstream.send().await {
         Ok(response) => response,
@@ -273,11 +420,48 @@ async fn handle_proxy_request(
                 });
         }
     }
+    if let Some(warning) = workflow_warning {
+        let response_body = match upstream.bytes().await {
+            Ok(body) => body,
+            Err(error) => {
+                eprintln!("Harness Workflow MCP response failed: {error}");
+                return json_rpc_failure(
+                    request_id(&request_json),
+                    "Harness could not read the Workflow MCP response.".to_string(),
+                );
+            }
+        };
+        let response_body = match append_workflow_warning(&response_body, &warning) {
+            Ok(body) => body,
+            Err(error) => return json_rpc_failure(request_id(&request_json), error),
+        };
+        return response
+            .body(Body::from(response_body))
+            .unwrap_or_else(|_| {
+                text_response(StatusCode::INTERNAL_SERVER_ERROR, "Harness proxy failed.")
+            });
+    }
     response
         .body(Body::from_stream(upstream.bytes_stream()))
         .unwrap_or_else(|_| {
             text_response(StatusCode::INTERNAL_SERVER_ERROR, "Harness proxy failed.")
         })
+}
+
+fn append_workflow_warning(body: &Bytes, warning: &str) -> Result<Bytes, String> {
+    let mut value = serde_json::from_slice::<Value>(body)
+        .map_err(|_| "Harness received an invalid Workflow MCP response.".to_string())?;
+    if value.pointer("/result/isError").and_then(Value::as_bool) == Some(true) {
+        return Ok(body.clone());
+    }
+    let content = value
+        .pointer_mut("/result/content")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Workflow MCP response did not contain result content.".to_string())?;
+    content.push(json!({"type":"text","text":warning}));
+    serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .map_err(|error| format!("Harness could not encode Workflow MCP response: {error}"))
 }
 
 fn parse_proxy_path(path: &str) -> Option<(&str, usize)> {
@@ -301,6 +485,13 @@ fn tool_call(request: &Option<Value>) -> Option<(Value, &str)> {
         request.get("id").cloned().unwrap_or(Value::Null),
         request.get("params")?.get("name")?.as_str()?,
     ))
+}
+
+fn has_reserved_workflow_argument(request: &Option<Value>) -> bool {
+    request
+        .as_ref()
+        .and_then(|request| request.pointer("/params/arguments/_workflowInvocation"))
+        .is_some()
 }
 
 fn is_tools_list(request: &Option<Value>) -> bool {
@@ -530,6 +721,67 @@ mod tests {
         authorizations: Mutex<Vec<String>>,
     }
 
+    struct WorkflowUpstreamState {
+        preparations: Mutex<Vec<Value>>,
+        calls: Mutex<Vec<Value>>,
+    }
+
+    async fn start_workflow_upstream(
+        state: Arc<WorkflowUpstreamState>,
+    ) -> (SocketAddr, CancellationToken) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancellation = CancellationToken::new();
+        let cancel = cancellation.clone();
+        tokio::spawn(async move {
+            loop {
+                let accepted = tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    accepted = listener.accept() => accepted,
+                };
+                let Ok((stream, _)) = accepted else { continue };
+                let state = state.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+                        let state = state.clone();
+                        async move {
+                            let path = request.uri().path().to_string();
+                            let body = request.into_body().collect().await.unwrap().to_bytes();
+                            let request = serde_json::from_slice::<Value>(&body).unwrap();
+                            let response = if path == "/prepare" {
+                                state.preparations.lock().unwrap().push(request);
+                                json!({"handoff":{
+                                    "invocation":{
+                                        "contractVersion":"workflow-invocation/v1",
+                                        "connectionActivationReference":"activation-1",
+                                        "recipeReference":"recipe-live",
+                                        "connectionReference":"edge",
+                                        "senderNodeReference":"sender",
+                                        "senderActivationReference":"invocation-current"
+                                    },
+                                    "warningText":null
+                                }})
+                            } else {
+                                let id = request.get("id").cloned().unwrap_or(Value::Null);
+                                state.calls.lock().unwrap().push(request);
+                                json!({"jsonrpc":"2.0","id":id,"result":{
+                                    "content":[{"type":"text","text":"original response"}],
+                                    "structuredContent":{"filePaths":["a.md"],"promptText":"Review"},
+                                    "isError":false
+                                }})
+                            };
+                            Ok::<_, Infallible>(json_response(response))
+                        }
+                    });
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        (address, cancellation)
+    }
+
     async fn start_upstream(state: Arc<UpstreamState>) -> (SocketAddr, CancellationToken) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -617,6 +869,178 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn participating_call_injects_current_context_and_appends_warning_after_upstream() {
+        let state = Arc::new(WorkflowUpstreamState {
+            preparations: Mutex::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
+        });
+        let (upstream, upstream_cancel) = start_workflow_upstream(state.clone()).await;
+        let snapshot = "{}".to_string();
+        let plan = serde_json::to_string(&HarnessMediationPlan {
+            contract_version: MEDIATION_PLAN_VERSION.to_string(),
+            exposures: vec![HarnessMcpExposurePlan {
+                configured_server_name: "workflow_handoff".into(),
+                proxy_server_name: "workflow_harness_1".into(),
+                upstream: ManagedMcpUpstreamDescriptor {
+                    name: "workflow_handoff".into(),
+                    url: format!("http://{upstream}/mcp"),
+                    bearer_token: "secret".into(),
+                    workflow_tool_name: Some("handoff_to_agent".into()),
+                    workflow_prepare_url: Some(format!("http://{upstream}/prepare")),
+                },
+                access: HarnessToolAccess::EntireServer,
+            }],
+        })
+        .unwrap();
+        let mut bindings = ProxyBindings::default();
+        let token = bindings
+            .register(SidecarBindingRegistration {
+                binding_id: "binding".into(),
+                session_id: "session".into(),
+                runtime_instance_id: "invocation-initial".into(),
+                session_instance_token: "session-token".into(),
+                configuration_digest: binding_digest(&snapshot, &plan),
+                harness_snapshot: snapshot,
+                mediation_plan: plan,
+                harness_token: None,
+                source_workflow_instance_id: "instance".into(),
+                source_node_id: "sender".into(),
+            })
+            .unwrap();
+        bindings
+            .prepare_invocation("binding", "invocation-current")
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = listener.local_addr().unwrap();
+        let proxy_cancel = CancellationToken::new();
+        tokio::spawn(run_proxy_listener(
+            listener,
+            Arc::new(RwLock::new(bindings)),
+            proxy_cancel.clone(),
+        ));
+        let url = proxy_url(proxy, &token, 0);
+
+        let result = rpc(
+            &url,
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"handoff_to_agent",
+                "arguments":{"filePaths":["a.md"],"promptText":"Review"}
+            }}),
+        )
+        .await;
+        assert_eq!(result["result"]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(result["result"]["content"][0]["text"], "original response");
+        assert_eq!(
+            result["result"]["content"][1]["text"],
+            "This tool call also activated a Workflow connection."
+        );
+        let preparation = state.preparations.lock().unwrap().remove(0);
+        assert_eq!(preparation["sourceInvocationId"], "invocation-current");
+        let call = state.calls.lock().unwrap().remove(0);
+        assert_eq!(
+            call["params"]["arguments"]["_workflowInvocation"]["senderActivationReference"],
+            "invocation-current"
+        );
+
+        let denied = rpc(
+            &url,
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "name":"handoff_to_agent",
+                "arguments":{
+                    "filePaths":[],"promptText":"Attack",
+                    "_workflowInvocation":{"connectionReference":"attacker"}
+                }
+            }}),
+        )
+        .await;
+        assert_eq!(denied["result"]["isError"], true);
+        assert!(state.calls.lock().unwrap().is_empty());
+        proxy_cancel.cancel();
+        upstream_cancel.cancel();
+    }
+
+    #[test]
+    fn workflow_warning_preserves_original_content_and_is_appended_once() {
+        let body = Bytes::from(
+            json!({
+                "jsonrpc":"2.0","id":1,"result":{
+                    "content":[{"type":"text","text":"original"}],
+                    "structuredContent":{"filePaths":["handoff.md"],"promptText":"Review."},
+                    "isError":false
+                }
+            })
+            .to_string(),
+        );
+        let mediated = append_workflow_warning(&body, "Workflow activated.").unwrap();
+        let value: Value = serde_json::from_slice(&mediated).unwrap();
+        assert_eq!(value["result"]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(value["result"]["content"][0]["text"], "original");
+        assert_eq!(value["result"]["content"][1]["text"], "Workflow activated.");
+        assert_eq!(
+            value["result"]["structuredContent"]["filePaths"][0],
+            "handoff.md"
+        );
+        let error = Bytes::from(
+            json!({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"failed"}],"isError":true}}).to_string(),
+        );
+        assert_eq!(
+            append_workflow_warning(&error, "Workflow activated.").unwrap(),
+            error
+        );
+    }
+
+    #[test]
+    fn caller_supplied_workflow_invocation_is_detected_before_forwarding() {
+        let request = Some(json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"handoff_to_agent",
+                "arguments":{"_workflowInvocation":{"connectionReference":"attacker"}}
+            }
+        }));
+        assert!(has_reserved_workflow_argument(&request));
+        assert!(!has_reserved_workflow_argument(&Some(json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "name":"handoff_to_agent","arguments":{"promptText":"safe"}
+            }
+        }))));
+    }
+
+    #[test]
+    fn prepared_invocation_replaces_only_runtime_context_on_immutable_binding() {
+        let snapshot = "{}".to_string();
+        let plan = serde_json::to_string(&HarnessMediationPlan {
+            contract_version: MEDIATION_PLAN_VERSION.to_string(),
+            exposures: Vec::new(),
+        })
+        .unwrap();
+        let mut bindings = ProxyBindings::default();
+        let token = bindings
+            .register(SidecarBindingRegistration {
+                binding_id: "binding".into(),
+                session_id: "session".into(),
+                runtime_instance_id: "runtime-initial".into(),
+                session_instance_token: "session-token".into(),
+                configuration_digest: binding_digest(&snapshot, &plan),
+                harness_snapshot: snapshot,
+                mediation_plan: plan,
+                harness_token: None,
+                source_workflow_instance_id: "instance".into(),
+                source_node_id: "node".into(),
+            })
+            .unwrap();
+        bindings
+            .prepare_invocation("binding", "runtime-current")
+            .unwrap();
+        let binding = &bindings.by_token[&token];
+        assert_eq!(binding.registration.runtime_instance_id, "runtime-initial");
+        assert_eq!(
+            binding.current_invocation_id.as_deref(),
+            Some("runtime-current")
+        );
+        assert_eq!(binding.registration.source_workflow_instance_id, "instance");
+    }
+
+    #[tokio::test]
     async fn upstream_connection_failure_does_not_expose_private_endpoint_details() {
         let unavailable = "127.0.0.1:1".parse().unwrap();
         let (proxy, token, cancel) =
@@ -648,6 +1072,8 @@ mod tests {
                     name: "plan_builder".into(),
                     url: format!("http://{upstream}/mcp"),
                     bearer_token: "managed-secret".into(),
+                    workflow_tool_name: None,
+                    workflow_prepare_url: None,
                 },
                 access,
             }],
@@ -664,6 +1090,8 @@ mod tests {
                 harness_snapshot: snapshot,
                 mediation_plan: plan,
                 harness_token: None,
+                source_workflow_instance_id: "workflow-instance-1".into(),
+                source_node_id: "node-1".into(),
             })
             .unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

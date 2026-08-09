@@ -34,6 +34,7 @@ import type {
   WorkflowHarnessOverrides,
   WorkflowInstance,
   WorkflowInstanceSummary,
+  WorkflowMcpComponent,
   WorkflowMcpServerExposure,
   WorkflowNodeConfig,
   WorkflowNodeElement,
@@ -340,6 +341,7 @@ function WorkflowTypeEditor({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkSelection, setBulkSelection] = useState<ReadonlySet<string>>(() => new Set());
   const [roles, setRoles] = useState<readonly WorkflowRole[]>([]);
+  const [mcpComponents, setMcpComponents] = useState<readonly WorkflowMcpComponent[]>([]);
   const [roleCatalogOpen, setRoleCatalogOpen] = useState(false);
   const [roleCatalogRoleId, setRoleCatalogRoleId] = useState<string | null>(null);
   const [workingNodes, setWorkingNodes] = useState<ReadonlyMap<string, WorkflowNodeConfig>>(
@@ -414,10 +416,15 @@ function WorkflowTypeEditor({
     setSelectedNodeId(null);
     setSelectedConnection(null);
     setConnectionList(null);
-    void Promise.all([client.loadWorkflowType(workflowTypeId), client.listRoles()]).then(
-      ([value, loadedRoles]) => {
+    void Promise.all([
+      client.loadWorkflowType(workflowTypeId),
+      client.listRoles(),
+      client.listWorkflowMcpComponents(),
+    ]).then(
+      ([value, loadedRoles, loadedMcpComponents]) => {
         if (!current) return;
         setRoles(loadedRoles);
+        setMcpComponents(loadedMcpComponents);
         definitionRef.current = value;
         setLoad({ kind: 'ready', value });
       },
@@ -1131,6 +1138,7 @@ function WorkflowTypeEditor({
               persistedElement={selectedConnectionDisplay.element}
               locallyChanged={selectedConnectionDisplay.localDraft}
               nodes={displayNodes}
+              mcpComponents={mcpComponents}
               busy={saving}
               error={actionError}
               onChange={updateWorkingConnection}
@@ -3075,7 +3083,7 @@ function ConnectionPreview({
       </p>
       <p>
         {connection.config.mechanism
-          ? 'Turn finished · expected file'
+          ? connectionMechanismLabel(connection.config.mechanism)
           : 'Connecting mechanism not configured'}
       </p>
       <button type="button" className="workflow-primary-button" disabled={busy} onClick={onOpen}>
@@ -3090,6 +3098,7 @@ function ConnectionConfiguration({
   persistedElement,
   locallyChanged,
   nodes,
+  mcpComponents,
   busy,
   error,
   onChange,
@@ -3102,6 +3111,7 @@ function ConnectionConfiguration({
   readonly persistedElement?: WorkflowConnectionElement;
   readonly locallyChanged: boolean;
   readonly nodes: readonly DisplayNode[];
+  readonly mcpComponents: readonly WorkflowMcpComponent[];
   readonly busy: boolean;
   readonly error: string | null;
   onChange(connection: WorkflowConnectionConfig): void;
@@ -3112,11 +3122,18 @@ function ConnectionConfiguration({
 }) {
   const pendingDeletion = Boolean(persistedElement?.live && !persistedElement.draft);
   const mechanism = connection.mechanism;
-  const complete = connectionIsComplete(connection);
+  const sender = nodes.find((node) => node.config.id === connection.senderNodeId);
+  const availableMcpComponents = mcpComponents.filter(
+    (component) =>
+      component.participationMode === 'native' &&
+      component.interfaceId === 'prompt_agent_files_and_text/v1' &&
+      sender !== undefined &&
+      harnessExposesMcpTool(sender.effectiveHarness, component.serverName, component.toolName),
+  );
+  const complete = connectionIsComplete(connection, availableMcpComponents);
   const canActivate = Boolean(
     persistedElement?.hasUnpublishedChanges && !locallyChanged && (complete || pendingDeletion),
   );
-  const sender = nodes.find((node) => node.config.id === connection.senderNodeId)?.config;
   const setMechanism = (next: WorkflowConnectionMechanism | null) =>
     onChange({ ...connection, mechanism: next });
 
@@ -3157,7 +3174,7 @@ function ConnectionConfiguration({
           <label>
             Sender
             <input
-              value={sender?.name || sender?.harnessName || connection.senderNodeId}
+              value={sender?.config.name || sender?.config.harnessName || connection.senderNodeId}
               disabled
             />
           </label>
@@ -3189,17 +3206,27 @@ function ConnectionConfiguration({
                 setMechanism(
                   event.currentTarget.value === 'turn_finished_expected_file'
                     ? newTurnFinishedMechanism()
-                    : null,
+                    : event.currentTarget.value === 'mcp_native_prompt_agent'
+                      ? newMcpNativePromptAgentMechanism()
+                      : null,
                 )
               }
             >
               <option value="">Not configured</option>
               <option value="turn_finished_expected_file">Turn finished · expected file</option>
+              <option value="mcp_native_prompt_agent">MCP · native agent handoff</option>
             </select>
           </label>
-          {mechanism ? (
+          {mechanism?.kind === 'turn_finished_expected_file' ? (
             <TurnFinishedMechanismFields
               mechanism={mechanism}
+              busy={busy}
+              onChange={setMechanism}
+            />
+          ) : mechanism?.kind === 'mcp_native_prompt_agent' ? (
+            <McpNativePromptAgentMechanismFields
+              mechanism={mechanism}
+              components={availableMcpComponents}
               busy={busy}
               onChange={setMechanism}
             />
@@ -3256,7 +3283,10 @@ function TurnFinishedMechanismFields({
   busy,
   onChange,
 }: {
-  readonly mechanism: WorkflowConnectionMechanism;
+  readonly mechanism: Extract<
+    WorkflowConnectionMechanism,
+    { readonly kind: 'turn_finished_expected_file' }
+  >;
   readonly busy: boolean;
   onChange(mechanism: WorkflowConnectionMechanism): void;
 }) {
@@ -3345,6 +3375,83 @@ function TurnFinishedMechanismFields({
         />
       </label>
       <p>Uses the newest match and checks once immediately after the sender turn finishes.</p>
+    </fieldset>
+  );
+}
+
+function McpNativePromptAgentMechanismFields({
+  mechanism,
+  components,
+  busy,
+  onChange,
+}: {
+  readonly mechanism: Extract<
+    WorkflowConnectionMechanism,
+    { readonly kind: 'mcp_native_prompt_agent' }
+  >;
+  readonly components: readonly WorkflowMcpComponent[];
+  readonly busy: boolean;
+  onChange(mechanism: WorkflowConnectionMechanism): void;
+}) {
+  const selectedKey = mcpComponentKey(mechanism.serverName, mechanism.toolName);
+  const selectedAvailable = components.some(
+    (component) =>
+      component.serverName === mechanism.serverName && component.toolName === mechanism.toolName,
+  );
+  return (
+    <fieldset className="workflow-mechanism-fields" disabled={busy}>
+      <legend>Native MCP handoff</legend>
+      <label>
+        MCP component
+        <select
+          value={selectedAvailable ? selectedKey : ''}
+          onChange={(event) => {
+            const component = components.find(
+              (candidate) =>
+                mcpComponentKey(candidate.serverName, candidate.toolName) ===
+                event.currentTarget.value,
+            );
+            onChange({
+              ...mechanism,
+              serverName: component?.serverName ?? '',
+              toolName: component?.toolName ?? '',
+            });
+          }}
+        >
+          <option value="">
+            {components.length === 0
+              ? 'No compatible component exposed by sender Harness'
+              : 'Choose a component'}
+          </option>
+          {components.map((component) => (
+            <option
+              key={mcpComponentKey(component.serverName, component.toolName)}
+              value={mcpComponentKey(component.serverName, component.toolName)}
+            >
+              {component.title} · {component.serverName}/{component.toolName}
+            </option>
+          ))}
+        </select>
+      </label>
+      {mechanism.serverName && mechanism.toolName && !selectedAvailable ? (
+        <p className="workflow-draft-note">
+          The configured component is not exposed by the sender Harness.
+        </p>
+      ) : null}
+      <label>
+        Connection warning
+        <textarea
+          value={mechanism.warningText ?? ''}
+          placeholder="Use the default workflow warning"
+          onChange={(event) =>
+            onChange({
+              ...mechanism,
+              warningText: event.currentTarget.value || null,
+            })
+          }
+        />
+      </label>
+      <p>Leave the warning blank to use the application default.</p>
     </fieldset>
   );
 }
@@ -3600,9 +3707,48 @@ function newTurnFinishedMechanism(): WorkflowConnectionMechanism {
   };
 }
 
-function connectionIsComplete(connection: WorkflowConnectionConfig): boolean {
+function newMcpNativePromptAgentMechanism(): WorkflowConnectionMechanism {
+  return {
+    kind: 'mcp_native_prompt_agent',
+    serverName: '',
+    toolName: '',
+    warningText: null,
+  };
+}
+
+function connectionMechanismLabel(mechanism: WorkflowConnectionMechanism): string {
+  return mechanism.kind === 'turn_finished_expected_file'
+    ? 'Turn finished · expected file'
+    : 'MCP · native agent handoff';
+}
+
+function mcpComponentKey(serverName: string, toolName: string): string {
+  return JSON.stringify([serverName, toolName]);
+}
+
+function harnessExposesMcpTool(
+  harness: WorkflowHarnessConfig,
+  serverName: string,
+  toolName: string,
+): boolean {
+  const server = harness.mcpServers.find((candidate) => candidate.serverName === serverName);
+  return Boolean(
+    server &&
+    (server.access.kind === 'entire_server' || server.access.toolNames.includes(toolName)),
+  );
+}
+
+function connectionIsComplete(
+  connection: WorkflowConnectionConfig,
+  availableMcpComponents: readonly WorkflowMcpComponent[],
+): boolean {
   const mechanism = connection.mechanism;
   if (!connection.name.trim() || !connection.receiverNodeId || !mechanism) return false;
+  if (mechanism.kind === 'mcp_native_prompt_agent')
+    return availableMcpComponents.some(
+      (component) =>
+        component.serverName === mechanism.serverName && component.toolName === mechanism.toolName,
+    );
   const selectorComplete =
     Boolean(mechanism.fileSelector.folder.trim()) &&
     (mechanism.fileSelector.kind === 'folder_filename_pattern'
