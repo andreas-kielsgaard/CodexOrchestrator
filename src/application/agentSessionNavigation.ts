@@ -77,7 +77,16 @@ export interface AgentSessionNavigationSession {
   readonly summary: AgentSessionSummaryDto;
   readonly relationshipRoles: readonly string[];
   readonly productLocations: readonly AgentSessionProductLocation[];
+  /** A typed Work Unit result, deliberately separate from invocation process state. */
+  readonly semanticPresentation?: AgentSessionSemanticPresentation;
   readonly identity?: AgentSessionNavigationIdentity;
+}
+
+export interface AgentSessionSemanticPresentation {
+  readonly kind: 'attention' | 'outcome';
+  readonly label: string;
+  /** Exact source values for the collapsed technical disclosure. */
+  readonly technicalDetails: readonly string[];
 }
 
 export interface AgentSessionNavigationFolder {
@@ -120,6 +129,7 @@ interface ResolvedReference {
   readonly reference: ProductAgentSessionReferenceReadModelV1;
   readonly locations: readonly AgentSessionProductLocation[];
   readonly folderPath: readonly { readonly id: string; readonly label: string }[];
+  readonly semanticPresentation?: AgentSessionSemanticPresentation;
 }
 
 /** Read-only projection. Placement comes only from typed product references. */
@@ -172,12 +182,14 @@ export function buildAgentSessionNavigation(
     const relationshipRoles = unique(
       resolved.map(({ reference }) => roleLabel(reference.semanticRole)),
     );
+    const semantic = semanticPresentation(resolved);
     const item: AgentSessionNavigationSession = {
       kind: 'session',
       id: `session:${summary.id}`,
       summary,
       relationshipRoles,
       productLocations: locations,
+      ...(semantic ? { semanticPresentation: semantic } : {}),
       ...(identities.has(summary.id) ? { identity: identities.get(summary.id)! } : {}),
     };
     sessions.set(summary.id, item);
@@ -336,6 +348,13 @@ function resolveReference(
     );
     const match = matches[0];
     if (!match) return { reference, locations: [], folderPath: [] };
+    const semanticCandidates = matches
+      .map(({ unit }) => workUnitSemanticPresentation(unit, reference))
+      .filter((presentation): presentation is AgentSessionSemanticPresentation =>
+        Boolean(presentation),
+      );
+    const semantic =
+      semanticCandidates.find(({ kind }) => kind === 'attention') ?? semanticCandidates[0];
     return {
       reference,
       locations: matches.map(({ view, activity, unit }) => ({
@@ -358,10 +377,67 @@ function resolveReference(
           label: match.unit.title,
         },
       ],
+      ...(semantic ? { semanticPresentation: semantic } : {}),
     };
   }
 
   return { reference, locations: [], folderPath: [] };
+}
+
+function semanticPresentation(
+  references: readonly ResolvedReference[],
+): AgentSessionSemanticPresentation | undefined {
+  return (
+    references.find(({ semanticPresentation: presentation }) => presentation?.kind === 'attention')
+      ?.semanticPresentation ??
+    references.find(({ semanticPresentation: presentation }) => presentation)?.semanticPresentation
+  );
+}
+
+function workUnitSemanticPresentation(
+  unit: ProductReadModelsV1['epics'][number]['sprints'][number]['revisionViews'][number]['workUnits'][number],
+  reference: ProductAgentSessionReferenceReadModelV1,
+): AgentSessionSemanticPresentation | undefined {
+  const referenceDetail = [
+    `Session reference: ${reference.agentSessionRefId}`,
+    `Target: ${reference.targetKind}`,
+    `Target ID: ${reference.targetId}`,
+    `Role: ${reference.semanticRole}`,
+  ];
+  const integrationAttention = unit.integration?.attention;
+  if (integrationAttention)
+    return {
+      kind: 'attention',
+      label: 'Integration needs attention',
+      technicalDetails: [
+        ...referenceDetail,
+        `Integration attention: ${integrationAttention.safeCode}`,
+      ],
+    };
+  if (unit.executionState?.state === 'attention')
+    return {
+      kind: 'attention',
+      label: 'Work Unit needs attention',
+      technicalDetails: [...referenceDetail, `Work Unit state: ${unit.executionState.state}`],
+    };
+
+  const latestDecision = (unit.attemptHistory ?? [])
+    .map(({ handlerDecision }) => handlerDecision)
+    .filter((decision): decision is NonNullable<typeof decision> => Boolean(decision))
+    .at(-1);
+  if (latestDecision?.variant === 'returned')
+    return {
+      kind: 'attention',
+      label: 'Work returned for changes',
+      technicalDetails: [...referenceDetail, `Handler decision: ${latestDecision.variant}`],
+    };
+  if (latestDecision?.variant === 'accepted')
+    return {
+      kind: 'outcome',
+      label: 'Work accepted',
+      technicalDetails: [...referenceDetail, `Handler decision: ${latestDecision.variant}`],
+    };
+  return undefined;
 }
 
 function uniqueLocations(locations: readonly AgentSessionProductLocation[]) {
