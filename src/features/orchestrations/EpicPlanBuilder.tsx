@@ -6,6 +6,7 @@ import type {
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
+import type { EpicOriginProjectClient } from '../../application/epicOriginProject';
 import type {
   EpicPlanningDraftBinding,
   EpicPlanningDraftLifecycleClient,
@@ -20,6 +21,7 @@ import {
 import { AgentIdentityMarker, AgentSessionWorkspace, useAgentSession } from '../agentSessions';
 import { ProductViewHeader } from '../shared/ProductViewHeader';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
+import { EpicOriginPicker } from './EpicOriginPicker';
 import './styles/epicPlanBuilder.css';
 
 export const BUILD_EPIC_PLAN_PROMPT = 'Build the epic plan based on what we have discussed';
@@ -45,6 +47,7 @@ export interface EpicPlanBuilderProps {
   onBack(): void;
   readonly draft?: EpicPlanningDraftBinding;
   readonly lifecycleClient?: EpicPlanningDraftLifecycleClient;
+  readonly originProjectClient?: EpicOriginProjectClient;
 }
 
 /** One normal-app workspace: the shared conversation is primary; the proposal is source-owned. */
@@ -63,6 +66,7 @@ export function EpicPlanBuilder({
   onBack,
   draft,
   lifecycleClient,
+  originProjectClient,
 }: EpicPlanBuilderProps) {
   const proposal = useSyncExternalStore(
     proposalSource.subscribe,
@@ -279,6 +283,7 @@ export function EpicPlanBuilder({
                 }}
                 placeholder="Name this Epic"
               />
+              <EpicOriginPicker client={originProjectClient} />
             </div>
             <div className="epic-plan-builder__controls-actions">
               <button

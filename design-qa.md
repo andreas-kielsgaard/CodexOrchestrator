@@ -67,3 +67,29 @@ The captures render the production React components with deterministic Git fixtu
 - Changed-file details remain intentionally absent from this delivery.
 
 Open visual issues after correction: P0 0, P1 0, P2 0.
+
+---
+
+# Design QA - Epic project and origin branch picker
+
+## Visual target and evidence
+
+- Selected reference: `C:\Users\user\.codex\generated_images\019feac1-3010-71c2-90bb-a2d260720871\exec-80779bb8-65c0-4ae1-aa13-9af8a48244c2.png`
+- Desktop capture: `C:\Users\user\.codex\visualizations\2026\08\10\019feac1-3010-71c2-90bb-a2d260720871\epic-origin-desktop-final.png`
+- Same-input comparison: `C:\Users\user\.codex\visualizations\2026\08\10\019feac1-3010-71c2-90bb-a2d260720871\epic-origin-comparison.png`
+- Responsive evidence: browser geometry at 400 x 800 with no horizontal overflow.
+
+The reference and implementation were compared side by side at 1600 x 960 in the same image. The inspected state has a retained project, detected Git repository, confirmed origin output, open branch map, and selected origin details.
+
+## Result
+
+- The project rail matches the selected hierarchy and desktop width: Epic name, project card, Git status, origin output, and branch action.
+- The dialog matches the target 720 px width and 455 px height, two-column branch-map/detail layout, muted backdrop, origin notice, and footer actions.
+- Selection is explicit. No branch is silently accepted, and the confirmed origin remains visible when the dialog is reopened.
+- At 400 x 800 the dialog becomes full-screen, remains horizontally contained, and every visible dialog control is at least 44 px high or is a 49 px branch row.
+- Focus trapping, Escape close, inert background, focus restoration, and retained selection have automated coverage.
+- Browser console errors: 0.
+
+Open visual issues after correction: P0 0, P1 0, P2 0. Extra baseline and current-checkout metadata are retained as useful Worktree Review conventions.
+
+final result: passed

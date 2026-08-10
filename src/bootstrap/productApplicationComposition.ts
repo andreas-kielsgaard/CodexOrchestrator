@@ -20,6 +20,7 @@ import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrati
 import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+import { tauriEpicOriginProjectClient } from '../infrastructure/epicOriginProject/tauriEpicOriginProject';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
   tauriProductDecisionClient,
@@ -30,6 +31,7 @@ import {
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
+    epicOriginProjectClient: tauriEpicOriginProjectClient,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
@@ -37,7 +39,8 @@ export function createProductApplicationComposition(): AppProps {
     agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
-    nativeProfileApplicationConsumer: createNativeProfileApplicationConsumer(tauriNativeProfileClient),
+    nativeProfileApplicationConsumer:
+      createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,
     productDecisionCorrectionClient: tauriProductDecisionCorrectionClient,
     orchestrationClient: createNativeQueryOrchestrationClient(

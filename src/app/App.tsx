@@ -1,5 +1,6 @@
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
+import type { EpicOriginProjectClient } from '../application/epicOriginProject';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -103,6 +104,7 @@ export interface AppProps {
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
   readonly epicPlanProposalSource?: EpicPlanProposalSource;
+  readonly epicOriginProjectClient?: EpicOriginProjectClient;
   readonly epicInitiationCapability?: EpicInitiationCapability;
   readonly epicInitiationCapabilityForDraft?: (
     draftId: string,
@@ -152,6 +154,7 @@ export function App({
   sprintAutomaticContinuationPolicyController,
   epicAutomaticContinuationPolicyController,
   epicPlanProposalSource = unavailableEpicPlanProposalSource,
+  epicOriginProjectClient,
   epicInitiationCapability = unavailableEpicInitiationCapability,
   epicInitiationCapabilityForDraft,
   epicPlanningDraftLifecycleClient,
@@ -957,6 +960,7 @@ export function App({
           agentSessionClient={managedPlanBuilderSessionClient}
           agentIdentity={managedPlanBuilderAgentIdentity}
           proposalSource={planProposalSource}
+          originProjectClient={epicOriginProjectClient}
           initiationCapability={initiationCapability}
           onRequestInitiation={confirmation.requestButton}
           onInitiationFailure={refreshInitiationFailure}
