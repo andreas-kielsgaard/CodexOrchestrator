@@ -289,7 +289,7 @@ fn projection_keeps_shared_keyed_caches_separate_from_instance_paths() {
 }
 
 #[test]
-fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local() {
+fn planning_shares_cargo_downloads_but_keeps_rust_compilation_instance_local() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = fixture(directory.path(), "planned", 32311, 32312);
     let settings = RuntimeSettings {
@@ -328,12 +328,61 @@ fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local(
     )
     .expect("planned projection");
     assert_eq!(projection.caches.node_reuse, CacheReuse::SharedKeyed);
-    assert_eq!(projection.caches.rust_reuse, CacheReuse::IsolatedFallback);
-    assert!(projection
+    assert_eq!(projection.caches.rust_reuse, CacheReuse::Shared);
+    assert_eq!(
+        projection.caches.rust_path,
+        settings.shared_cache_root.join("cargo")
+    );
+    assert!(!projection
         .caches
         .rust_path
         .starts_with(&projection.paths.instance_root));
+    assert!(projection
+        .paths
+        .cargo_target
+        .starts_with(&projection.paths.instance_root));
     assert!(projection.paths.credentials_home.is_dir());
+}
+
+#[test]
+fn planning_falls_back_to_an_instance_cargo_home_when_the_shared_cache_is_unavailable() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = fixture(directory.path(), "fallback", 32311, 32312);
+    let shared_cache_root = directory.path().join("unavailable-shared-cache");
+    std::fs::write(&shared_cache_root, "not a directory").expect("blocked shared cache root");
+    let settings = RuntimeSettings {
+        instances_root: directory.path().join("fallback-instances"),
+        shared_cache_root,
+        port_start: 32310,
+        port_end: 32319,
+    };
+    let source = SourceSnapshot {
+        git_commit: fixture.identity.git_commit.clone(),
+        source_fingerprint: fixture.identity.source_fingerprint.clone(),
+        node_cache_key: "fallback-node-key".into(),
+        rust_cache_key: "fallback-rust-key".into(),
+        clean: true,
+    };
+
+    let projection = project_runtime(
+        &settings,
+        &fixture.identity,
+        &source,
+        PortProjection {
+            vite: 32311,
+            status: 32312,
+        },
+    )
+    .expect("isolated fallback projection");
+
+    assert_eq!(projection.caches.rust_reuse, CacheReuse::IsolatedFallback);
+    assert_eq!(
+        projection.caches.rust_path,
+        projection
+            .paths
+            .instance_root
+            .join("cache/cargo-home/fallback-rust-key")
+    );
 }
 
 #[test]

@@ -273,11 +273,19 @@ pub(crate) fn project_runtime(
             .map_err(|error| PlanningError::context("create isolated cache fallback", error))?;
         (node, CacheReuse::IsolatedFallback)
     };
-    // Shared Rust compilation remains unavailable until a measured compiler cache such as sccache
-    // is composed. CARGO_TARGET_DIR and this dependency home therefore remain instance-local.
-    let rust_cache_root = instance_root.join("cache/cargo-home");
-    fs::create_dir_all(rust_cache_root.join(&source.rust_cache_key))
-        .map_err(|error| PlanningError::context("create isolated Rust cache", error))?;
+    // Cargo verifies registry packages by checksum, so all review builds can reuse one dependency
+    // home. Compiled outputs remain private in CARGO_TARGET_DIR below the instance root.
+    let shared_rust = settings.shared_cache_root.join("cargo");
+    let rust_shared = fs::create_dir_all(&shared_rust).is_ok();
+    let (rust_cache_root, rust_reuse) = if rust_shared {
+        (shared_rust, CacheReuse::Shared)
+    } else {
+        let rust = instance_root.join("cache/cargo-home");
+        fs::create_dir_all(rust.join(&source.rust_cache_key)).map_err(|error| {
+            PlanningError::context("create isolated Rust cache fallback", error)
+        })?;
+        (rust, CacheReuse::IsolatedFallback)
+    };
     let projection = project_instance(ProjectionRequest {
         instance_id: identity.instance_id.clone(),
         instances_root: settings.instances_root.clone(),
@@ -286,7 +294,7 @@ pub(crate) fn project_runtime(
         node_cache_key: source.node_cache_key.clone(),
         rust_cache_key: source.rust_cache_key.clone(),
         node_cache_reuse: node_reuse,
-        rust_cache_reuse: CacheReuse::IsolatedFallback,
+        rust_cache_reuse: rust_reuse,
         ports,
     })
     .map_err(contract)?;
@@ -610,6 +618,7 @@ fn isolated_environment(
     .collect::<BTreeMap<_, _>>();
     let value = |path: &Path| path.to_string_lossy().into_owned();
     let cache_mode = match projection.caches.rust_reuse {
+        CacheReuse::Shared => "shared",
         CacheReuse::SharedKeyed => "shared_keyed",
         CacheReuse::IsolatedFallback => "isolated_fallback",
     };

@@ -25,11 +25,17 @@ pub(crate) fn project_instance(
     require_absolute(&request.node_cache_root, "node cache root")?;
     require_absolute(&request.rust_cache_root, "Rust cache root")?;
     let root = request.instances_root.join(request.instance_id.as_str());
+    let rust_path = match request.rust_cache_reuse {
+        CacheReuse::Shared => request.rust_cache_root.clone(),
+        CacheReuse::SharedKeyed | CacheReuse::IsolatedFallback => {
+            request.rust_cache_root.join(&request.rust_cache_key)
+        }
+    };
     let projection = InstanceProjection {
         caches: CacheProjection {
             node_path: request.node_cache_root.join(&request.node_cache_key),
             node_reuse: request.node_cache_reuse,
-            rust_path: request.rust_cache_root.join(&request.rust_cache_key),
+            rust_path,
             rust_reuse: request.rust_cache_reuse,
             node_key: request.node_cache_key,
             rust_key: request.rust_cache_key,
