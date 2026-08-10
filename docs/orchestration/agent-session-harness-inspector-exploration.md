@@ -27,6 +27,12 @@ one application-source instance for Epic planning, standalone Agent Sessions, an
 preview. Its in-memory repository is outside React component state, so a working edit and its dirty
 state survive view navigation and component remount. They do not survive an application restart.
 
+`HarnessEditor` is the reusable presentation boundary. Reuse must preserve this reviewed
+composition: control-first version toolbar, distinct cards, focused catalog/detail dialogs,
+categorized policy groups, compact model ranges, and the Version history table. A consumer may
+adapt another application-owned Harness read/command source, but it must not flatten the editor
+into a generic property form or replace those interactions with per-field selectors.
+
 The prototype records these product concepts without claiming production effects:
 
 - The Harness name is the user-facing role. The machine key remains an administrative property;

@@ -223,11 +223,19 @@ describe('HarnessAwareAgentSessionPane', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('epic-plan-builder applicability')).toBeEnabled(),
     );
-    chooseClosedOption('epic-plan-builder applicability', 'Always applicable');
-    await waitFor(() =>
-      expect(screen.getByLabelText('epic-plan-builder applicability')).toHaveValue(
-        'Always applicable',
-      ),
+    const dialog = await screen.findByRole('dialog', { name: 'epic-plan-builder' });
+    expect(within(dialog).getByText(/# Product Epic Plan Builder/)).toBeVisible();
+    expect(
+      within(dialog).getByText(/application can derive it from the calling session/),
+    ).toBeVisible();
+    const applicability = within(dialog).getByLabelText('epic-plan-builder details applicability');
+    expect(applicability).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit skill policy' }));
+    await waitFor(() => expect(applicability).toBeEnabled());
+    fireEvent.change(applicability, { target: { value: 'always_applicable' } });
+    await waitFor(() => expect(applicability).toHaveValue('always_applicable'));
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Close epic-plan-builder details' }),
     );
   });
 
