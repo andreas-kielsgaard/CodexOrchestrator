@@ -12,8 +12,13 @@ export interface HumanReviewSource {
   readonly behind: number;
   readonly forkRevision: string;
   readonly revision: string;
-  readonly compatibility: 'compatible' | 'incompatible';
+  readonly compatibility: 'compatible' | 'incompatible' | 'unavailable';
   readonly compatibilityMessage: string;
+  readonly attached: boolean;
+  readonly refKind: 'branch' | 'remote_branch' | 'tag' | 'archive' | 'detached';
+  readonly mergedDirectly: boolean;
+  readonly equivalentPatches: number;
+  readonly comparisonBranch: string;
 }
 
 export interface HumanReviewSourceHistory {
@@ -119,6 +124,7 @@ export interface HumanReviewRetention {
 export interface HumanReviewLauncherClient {
   listSources(): Promise<readonly HumanReviewSource[]>;
   sourceHistory(sourceRef: string): Promise<HumanReviewSourceHistory>;
+  attachWorktree(sourceRef: string): Promise<HumanReviewSource>;
   listInstances(): Promise<readonly HumanReviewInstance[]>;
   prepare(operationRef: string, sourceRef: string, name: string): Promise<HumanReviewInstance>;
   build(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;

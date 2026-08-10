@@ -222,7 +222,11 @@ describe('HumanReviewLauncherView', () => {
     client.build = vi.fn(async () => ({ ...replacement, build: 'passed' as const }));
     render(<HumanReviewLauncherView client={client} />);
 
-    expect(await screen.findByText('Outdated by 2 commits')).toBeVisible();
+    const outdatedBuild = await screen.findByRole('button', {
+      name: /^Outdated build Outdated by 2 commits/,
+    });
+    fireEvent.click(outdatedBuild);
+    await screen.findByRole('button', { name: 'Rebuild' });
     fireEvent.click(screen.getByRole('button', { name: 'Rebuild' }));
 
     await waitFor(() => expect(client.prepare).toHaveBeenCalledTimes(1));
@@ -303,7 +307,7 @@ describe('HumanReviewLauncherView', () => {
     ).toHaveAttribute('open');
   });
 
-  it('shows a main-rooted branch map and a selectable newest-first commit history', async () => {
+  it('shows one row per branch and a selectable newest-first commit history', async () => {
     const client = new FakeClient();
     client.listSources = async () => [
       source({
@@ -341,18 +345,13 @@ describe('HumanReviewLauncherView', () => {
     ];
     render(<HumanReviewLauncherView client={client} />);
 
-    const detachedToggle = await screen.findByRole('switch', { name: 'Show detached' });
+    await screen.findByRole('heading', { name: 'Repository history' });
     const sourcePicker = screen.getByRole('region', { name: 'Review source' });
-    expect(within(sourcePicker).getByText('codex/child').closest('button')).toBeNull();
-    expect(
-      within(sourcePicker).getByRole('button', {
-        name: /child, attached to codex\/child, at 444444444444/,
-      }),
-    ).toBeVisible();
-    expect(detachedToggle).not.toBeChecked();
+    const childRow = within(sourcePicker).getByRole('button', { name: /codex\/child/ });
+    expect(childRow).toHaveTextContent('Review worktree ready');
     expect(screen.queryByRole('button', { name: /Detached 55555555/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /codex\/child/ }));
-    const historyTrigger = screen.getByRole('button', { name: 'View commit history' });
+    fireEvent.click(childRow);
+    const historyTrigger = screen.getByRole('button', { name: 'Compare with main' });
     fireEvent.click(historyTrigger);
 
     const dialog = await screen.findByRole('dialog', { name: 'codex/child' });
@@ -384,8 +383,11 @@ describe('HumanReviewLauncherView', () => {
       'aria-pressed',
       'true',
     );
-    fireEvent.click(detachedToggle);
-    expect(screen.getByRole('button', { name: /Detached 55555555/ })).toBeVisible();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search repository history' }), {
+      target: { value: 'parent' },
+    });
+    expect(screen.queryByRole('button', { name: /codex\/child/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /codex\/parent/ })).toBeVisible();
   });
 
   it('moves the same attached worktree under its refreshed branch head', async () => {
@@ -400,19 +402,51 @@ describe('HumanReviewLauncherView', () => {
     ];
     render(<HumanReviewLauncherView client={client} />);
 
-    const original = await screen.findByRole('button', {
-      name: /active, attached to codex\/origin/,
-    });
+    const original = await screen.findByRole('button', { name: /codex\/origin/ });
     expect(original).toHaveAttribute('aria-pressed', 'true');
 
     branch = 'codex/new-head';
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
 
-    const moved = await screen.findByRole('button', {
-      name: /active, attached to codex\/new-head/,
-    });
+    const moved = await screen.findByRole('button', { name: /codex\/new-head/ });
     expect(moved).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('codex/origin')).toBeNull();
+  });
+
+  it('makes the worktree prerequisite explicit and updates the same branch row after creation', async () => {
+    const client = new FakeClient();
+    let attached = false;
+    const archived = () =>
+      source({
+        sourceRef: 'archive-source',
+        branch: 'codex/explore-harness-inspector',
+        label: 'codex/explore-harness-inspector',
+        refKind: 'archive',
+        attached,
+        compatibility: attached ? 'compatible' : 'incompatible',
+        compatibilityMessage: attached
+          ? 'Compatible.'
+          : 'Attach a review worktree before preparing a build.',
+      });
+    client.listSources = async () => [archived()];
+    client.attachWorktree = vi.fn(async () => {
+      attached = true;
+      return archived();
+    });
+    render(<HumanReviewLauncherView client={client} />);
+
+    const row = await screen.findByRole('button', { name: /codex\/explore-harness-inspector/ });
+    expect(row).toHaveTextContent('Review worktree needed');
+    expect(screen.getByText(/must be created before this branch can be built/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Prepare new build' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create review worktree' }));
+    await waitFor(() => expect(client.attachWorktree).toHaveBeenCalledWith('archive-source'));
+    expect(await screen.findByText('Review worktree is ready to build.')).toBeVisible();
+    expect(screen.getByRole('button', { name: /codex\/explore-harness-inspector/ })).toHaveTextContent(
+      'Review worktree ready',
+    );
+    expect(screen.getByRole('button', { name: 'Prepare new build' })).toBeEnabled();
   });
 
   it('reports history failures and renders an empty named-branch history truthfully', async () => {
@@ -428,7 +462,7 @@ describe('HumanReviewLauncherView', () => {
       });
     render(<HumanReviewLauncherView client={client} />);
 
-    const trigger = await screen.findByRole('button', { name: 'View commit history' });
+    const trigger = await screen.findByRole('button', { name: 'Compare with main' });
     fireEvent.click(trigger);
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Git could not inspect the selected branch.',
@@ -445,23 +479,9 @@ describe('HumanReviewLauncherView', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
-  it('keeps ambiguous and unrelated histories visibly outside inferred sub-branch lineage', async () => {
+  it('reports raw unrelated-history facts without inferring a product meaning', async () => {
     const client = new FakeClient();
     client.listSources = async () => [
-      source({
-        sourceRef: 'main-source',
-        branch: 'main',
-        label: 'main',
-        isMain: true,
-        parentSourceRef: undefined,
-      }),
-      source({
-        sourceRef: 'ambiguous-source',
-        branch: 'codex/ambiguous',
-        label: 'codex/ambiguous',
-        parentSourceRef: 'main-source',
-        lineageAmbiguous: true,
-      }),
       source({
         sourceRef: 'unrelated-source',
         branch: 'codex/orphan',
@@ -473,13 +493,8 @@ describe('HumanReviewLauncherView', () => {
     ];
     render(<HumanReviewLauncherView client={client} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /codex\/ambiguous/ }));
-    expect(screen.getByText(/Several registered branch tips are equally close/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'View commit history' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: /codex\/orphan/ }));
-    expect(screen.getByText('Other Git histories')).toBeVisible();
-    expect(screen.getAllByText('No common ancestor').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'View commit history' })).toBeDisabled();
+    await waitFor(() => expect(screen.getByText(/No common ancestor with main/)).toBeVisible());
+    expect(screen.getByRole('button', { name: 'Compare with main' })).toBeDisabled();
   });
 
   it('returns to an available source when refresh removes the selected worktree', async () => {
@@ -507,7 +522,7 @@ describe('HumanReviewLauncherView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /^Main checkout, attached to main/ }),
+        screen.getByRole('button', { name: /^main Branch/ }),
       ).toHaveAttribute('aria-pressed', 'true'),
     );
     expect(screen.queryByRole('button', { name: /codex\/temporary/ })).toBeNull();
@@ -520,6 +535,7 @@ class LongBuildClient implements HumanReviewLauncherClient {
   private instance = instance('Long build', 'prepared', 'not-built');
   listSources = async () => [source({ branch: 'codex/long', label: 'codex/long' })];
   sourceHistory: HumanReviewLauncherClient['sourceHistory'] = async () => history();
+  attachWorktree: HumanReviewLauncherClient['attachWorktree'] = async () => source();
   listInstances = async () => [this.instance];
   prepare = async () => this.instance;
   build = async () =>
@@ -564,6 +580,8 @@ class FakeClient implements HumanReviewLauncherClient {
   proofPresentation?: HumanReviewLauncherClient['proofPresentation'];
   listSources: HumanReviewLauncherClient['listSources'] = async () => [source()];
   sourceHistory: HumanReviewLauncherClient['sourceHistory'] = async () => history();
+  attachWorktree: HumanReviewLauncherClient['attachWorktree'] = async (sourceRef) =>
+    source({ sourceRef, attached: true });
   listInstances = async () => (this.instance ? [this.instance] : []);
   prepare = async (_operationRef: string, _sourceRef: string, name: string) =>
     this.set(name, 'prepared', 'not-built');
@@ -653,6 +671,11 @@ function source(overrides: Partial<HumanReviewSource> = {}): HumanReviewSource {
     revision: '444444444444',
     compatibility: 'compatible',
     compatibilityMessage: 'Compatible.',
+    attached: true,
+    refKind: 'branch',
+    mergedDirectly: false,
+    equivalentPatches: 0,
+    comparisonBranch: 'main',
     ...overrides,
   };
 }

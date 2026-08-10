@@ -243,6 +243,21 @@ export function HumanReviewLauncherView({
     setSourceRef(value);
   }
 
+  async function attachWorktree(value: string) {
+    setBusy('attach');
+    setError(null);
+    try {
+      const attached = await client.attachWorktree(value);
+      const nextSources = await client.listSources();
+      setSources(nextSources);
+      setSourceRef(attached.sourceRef);
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rebuild(instance: HumanReviewInstance) {
     setBusy(`rebuild:${instance.instanceRef}`);
     setError(null);
@@ -360,10 +375,10 @@ export function HumanReviewLauncherView({
 
       <section className="human-review__prepare" aria-labelledby="prepare-review-title">
         <div className="human-review__prepare-intro">
-          <h2 id="prepare-review-title">Choose a worktree</h2>
+          <h2 id="prepare-review-title">Choose repository history</h2>
           <p>
-            Select an attached worktree to build directly from its current folder or inspect its
-            retained builds.
+            Select a branch, tag, or archived branch. A review worktree is required before a build
+            can be prepared.
           </p>
         </div>
         <WorktreeSourcePicker
@@ -371,10 +386,12 @@ export function HumanReviewLauncherView({
           selectedSourceRef={sourceRef}
           disabled={busy !== null || historyBusy}
           historyLoading={historyBusy}
+          attaching={busy === 'attach'}
           onSelect={selectSource}
+          onAttach={(value) => void attachWorktree(value)}
           onViewHistory={(value, trigger) => void openHistory(value, trigger)}
         />
-        {selectedSource?.compatibility === 'incompatible' && (
+        {selectedSource?.attached && selectedSource.compatibility === 'incompatible' && (
           <p className="human-review__compatibility" role="status">
             {selectedSource.compatibilityMessage}
           </p>
@@ -402,7 +419,10 @@ export function HumanReviewLauncherView({
             type="button"
             onClick={() => setShowPrepare((current) => !current)}
             disabled={
-              busy !== null || !selectedSource || selectedSource.compatibility === 'incompatible'
+              busy !== null ||
+              !selectedSource ||
+              !selectedSource.attached ||
+              selectedSource.compatibility === 'incompatible'
             }
             aria-expanded={showPrepare}
           >

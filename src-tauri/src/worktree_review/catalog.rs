@@ -7,6 +7,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::Mutex,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,7 +27,18 @@ pub(crate) struct ReviewWorktreeOption {
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+    pub(crate) attached: bool,
+    pub(crate) ref_kind: String,
+    pub(crate) merged_directly: bool,
+    pub(crate) equivalent_patches: usize,
+    pub(crate) comparison_branch: String,
     object_id: String,
+}
+
+#[derive(Clone, Debug)]
+struct DurableReviewRef {
+    option: ReviewWorktreeOption,
+    full_ref: String,
 }
 
 pub(crate) struct ReviewWorktreeCatalog {
@@ -37,6 +49,9 @@ pub(crate) struct ReviewWorktreeCatalog {
     main_head: String,
     common_dir: Option<PathBuf>,
     git: Option<PathBuf>,
+    comparison_branch: String,
+    durable_refs: Vec<DurableReviewRef>,
+    attached_paths: Mutex<HashMap<String, PathBuf>>,
 }
 
 pub(super) struct CatalogComparisonIdentity {
@@ -64,6 +79,14 @@ pub(super) struct CatalogSourceFreshness {
 
 impl ReviewWorktreeCatalog {
     pub(crate) fn discover(current_source: &Path, git: &Path) -> Result<Self, String> {
+        Self::discover_with_comparison(current_source, git, None)
+    }
+
+    pub(crate) fn discover_with_comparison(
+        current_source: &Path,
+        git: &Path,
+        comparison_branch: Option<&str>,
+    ) -> Result<Self, String> {
         let current_source = current_source
             .canonicalize()
             .map_err(|error| format!("resolve launcher source: {error}"))?;
@@ -84,7 +107,24 @@ impl ReviewWorktreeCatalog {
             |path| git_common_dir(path, git),
         )?;
         catalog.git = Some(git.to_path_buf());
+        if let Some(branch) = comparison_branch {
+            let object_id = git_text(
+                &catalog.main_path,
+                git,
+                &["rev-parse", "--verify", &format!("{branch}^{{commit}}")],
+            )?;
+            catalog.main_head = object_id;
+            catalog.comparison_branch = branch.to_owned();
+        } else {
+            catalog.comparison_branch = catalog
+                .options
+                .iter()
+                .find(|option| option.is_main)
+                .and_then(|option| option.branch.clone())
+                .unwrap_or_else(|| "main".into());
+        }
         catalog.populate_relationships(git)?;
+        catalog.populate_durable_refs(git)?;
         Ok(catalog)
     }
 
@@ -148,6 +188,11 @@ impl ReviewWorktreeCatalog {
                 revision: head[..head.len().min(12)].to_owned(),
                 compatibility,
                 compatibility_message,
+                attached: true,
+                ref_kind: if detached { "detached" } else { "branch" }.into(),
+                merged_directly: false,
+                equivalent_patches: 0,
+                comparison_branch: "main".into(),
                 object_id: head,
             });
             paths.insert(source_ref, path);
@@ -171,6 +216,9 @@ impl ReviewWorktreeCatalog {
                 .ok_or_else(|| "No machine-main Git object was discovered".to_string())?,
             common_dir: None,
             git: None,
+            comparison_branch: "main".into(),
+            durable_refs: Vec::new(),
+            attached_paths: Mutex::new(HashMap::new()),
         })
     }
 
@@ -179,7 +227,35 @@ impl ReviewWorktreeCatalog {
     }
 
     pub(crate) fn live_options(&self) -> Result<Vec<ReviewWorktreeOption>, String> {
-        Ok(self.live_snapshot()?.options)
+        let snapshot = self.live_snapshot()?;
+        let mut options = snapshot.options;
+        let attached = self
+            .attached_paths
+            .lock()
+            .map(|paths| paths.clone())
+            .unwrap_or_default();
+        for durable in &self.durable_refs {
+            let mut option = durable.option.clone();
+            let path = attached
+                .get(&option.source_ref)
+                .cloned()
+                .or_else(|| self.registered_attachment(&option.source_ref));
+            if let Some(path) = path {
+                option.attached = true;
+                let (compatibility, message) = compatibility(&path);
+                option.compatibility = compatibility;
+                option.compatibility_message = message;
+            }
+            options.push(option);
+        }
+        options.sort_by(|left, right| {
+            right
+                .is_main
+                .cmp(&left.is_main)
+                .then_with(|| left.branch.cmp(&right.branch))
+                .then_with(|| left.source_ref.cmp(&right.source_ref))
+        });
+        Ok(options)
     }
 
     fn live_snapshot(&self) -> Result<Self, String> {
@@ -191,11 +267,18 @@ impl ReviewWorktreeCatalog {
                 main_head: self.main_head.clone(),
                 common_dir: self.common_dir.clone(),
                 git: None,
+                comparison_branch: self.comparison_branch.clone(),
+                durable_refs: self.durable_refs.clone(),
+                attached_paths: Mutex::new(
+                    self.attached_paths
+                        .lock()
+                        .map(|paths| paths.clone())
+                        .unwrap_or_default(),
+                ),
             });
         };
         let mut options = Vec::new();
         let mut paths = HashMap::new();
-        let mut main_head = None;
         for original in &self.options {
             let Some(path) = self.paths.get(&original.source_ref) else {
                 continue;
@@ -219,9 +302,6 @@ impl ReviewWorktreeCatalog {
             } else {
                 format!("{base} - {folder}")
             };
-            if original.is_main {
-                main_head = Some(object_id.clone());
-            }
             let (compatibility, compatibility_message) = compatibility(path);
             options.push(ReviewWorktreeOption {
                 source_ref: original.source_ref.clone(),
@@ -239,6 +319,11 @@ impl ReviewWorktreeCatalog {
                 revision: abbreviated(&object_id, 12),
                 compatibility,
                 compatibility_message,
+                attached: true,
+                ref_kind: if detached { "detached" } else { "branch" }.into(),
+                merged_directly: false,
+                equivalent_patches: 0,
+                comparison_branch: original.comparison_branch.clone(),
                 object_id,
             });
             paths.insert(original.source_ref.clone(), path.clone());
@@ -247,16 +332,24 @@ impl ReviewWorktreeCatalog {
             options,
             paths,
             main_path: self.main_path.clone(),
-            main_head: main_head
-                .ok_or_else(|| "The machine-main worktree is unavailable.".to_string())?,
+            main_head: self.main_head.clone(),
             common_dir: self.common_dir.clone(),
             git: self.git.clone(),
+            comparison_branch: self.comparison_branch.clone(),
+            durable_refs: self.durable_refs.clone(),
+            attached_paths: Mutex::new(
+                self.attached_paths
+                    .lock()
+                    .map(|paths| paths.clone())
+                    .unwrap_or_default(),
+            ),
         };
         snapshot.populate_relationships(git)?;
         Ok(snapshot)
     }
 
     fn populate_relationships(&mut self, git: &Path) -> Result<(), String> {
+        let comparison_branch = self.comparison_branch.clone();
         let main_ref = self
             .options
             .iter()
@@ -304,6 +397,19 @@ impl ReviewWorktreeCatalog {
             } else {
                 "unrelated".into()
             };
+            option.merged_directly = git_success(
+                path,
+                git,
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    &option.object_id,
+                    &self.main_head,
+                ],
+            );
+            option.equivalent_patches =
+                equivalent_patch_count(path, git, &self.main_head, &option.object_id);
+            option.comparison_branch = comparison_branch.clone();
             option.fork_revision = merge_base
                 .as_deref()
                 .map(|value| abbreviated(value, 12))
@@ -362,19 +468,148 @@ impl ReviewWorktreeCatalog {
         Ok(())
     }
 
-    pub(crate) fn label(&self, source_ref: &str) -> Option<String> {
-        self.options
+    fn populate_durable_refs(&mut self, git: &Path) -> Result<(), String> {
+        let output = Command::new(git)
+            .arg("-C")
+            .arg(&self.main_path)
+            .args([
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)%00%(symref)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ])
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .map_err(|error| format!("discover durable Git references: {error}"))?;
+        if !output.status.success() {
+            return Err("Git durable-reference discovery failed".into());
+        }
+        let text = String::from_utf8(output.stdout)
+            .map_err(|_| "Git returned non-UTF-8 durable references".to_string())?;
+        let existing = self
+            .options
             .iter()
+            .filter_map(|option| option.branch.clone())
+            .collect::<HashSet<_>>();
+        let comparison_branch = self.comparison_branch.clone();
+        let mut seen = HashSet::new();
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let mut fields = line.split('\0');
+            let Some(full_ref) = fields.next() else {
+                continue;
+            };
+            let Some(object_id) = fields.next() else {
+                continue;
+            };
+            let symref = fields.next().unwrap_or_default();
+            if !symref.is_empty() || object_id.is_empty() {
+                continue;
+            }
+            let Some((display, ref_kind)) = display_ref(full_ref) else {
+                continue;
+            };
+            if existing.contains(&display) || !seen.insert(display.clone()) {
+                continue;
+            }
+            let selected_object = match git_text(
+                &self.main_path,
+                git,
+                &["rev-parse", "--verify", &format!("{full_ref}^{{commit}}")],
+            ) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let merge_base = git_text(
+                &self.main_path,
+                git,
+                &["merge-base", &self.main_head, &selected_object],
+            )
+            .ok();
+            let range = format!("{}...{}", self.main_head, selected_object);
+            let (behind, ahead) = git_text(
+                &self.main_path,
+                git,
+                &["rev-list", "--left-right", "--count", &range],
+            )
+            .ok()
+            .and_then(|counts| {
+                let mut counts = counts.split_whitespace();
+                Some((counts.next()?.parse().ok()?, counts.next()?.parse().ok()?))
+            })
+            .unwrap_or((0, 0));
+            let digest = format!("{:x}", Sha256::digest(full_ref.as_bytes()));
+            let source_ref = format!("review-ref-{}", &digest[..20]);
+            let merged_directly = git_success(
+                &self.main_path,
+                git,
+                &[
+                    "merge-base",
+                    "--is-ancestor",
+                    &selected_object,
+                    &self.main_head,
+                ],
+            );
+            let option = ReviewWorktreeOption {
+                source_ref,
+                label: display.clone(),
+                branch: Some(display),
+                detached: false,
+                is_main: false,
+                is_current: false,
+                parent_source_ref: None,
+                lineage_ambiguous: false,
+                relationship: if merge_base.is_some() {
+                    "related".into()
+                } else {
+                    "unrelated".into()
+                },
+                ahead,
+                behind,
+                fork_revision: merge_base
+                    .as_deref()
+                    .map(|value| abbreviated(value, 12))
+                    .unwrap_or_else(|| "No common ancestor".into()),
+                revision: abbreviated(&selected_object, 12),
+                compatibility: "unavailable".into(),
+                compatibility_message: "Attach a review worktree before preparing a build.".into(),
+                attached: false,
+                ref_kind: ref_kind.into(),
+                merged_directly,
+                equivalent_patches: equivalent_patch_count(
+                    &self.main_path,
+                    git,
+                    &self.main_head,
+                    &selected_object,
+                ),
+                comparison_branch: comparison_branch.clone(),
+                object_id: selected_object,
+            };
+            self.durable_refs.push(DurableReviewRef {
+                option,
+                full_ref: full_ref.into(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn label(&self, source_ref: &str) -> Option<String> {
+        self.live_options()
+            .ok()?
+            .into_iter()
             .find(|option| option.source_ref == source_ref)
-            .map(|option| option.label.clone())
+            .map(|option| option.label)
     }
 
     pub(crate) fn ensure_compatible(&self, source_ref: &str) -> Result<(), String> {
-        let option = self
-            .options
+        let options = self.live_options()?;
+        let option = options
             .iter()
             .find(|option| option.source_ref == source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        if !option.attached {
+            return Err("Attach a review worktree before preparing a build.".into());
+        }
         if option.compatibility == "compatible" {
             Ok(())
         } else {
@@ -383,15 +618,11 @@ impl ReviewWorktreeCatalog {
     }
 
     pub(crate) fn compatibility(&self, source_ref: &str) -> (String, String) {
-        self.options
-            .iter()
+        self.live_options()
+            .unwrap_or_default()
+            .into_iter()
             .find(|option| option.source_ref == source_ref)
-            .map(|option| {
-                (
-                    option.compatibility.clone(),
-                    option.compatibility_message.clone(),
-                )
-            })
+            .map(|option| (option.compatibility, option.compatibility_message))
             .unwrap_or_else(|| {
                 (
                     "incompatible".into(),
@@ -406,9 +637,7 @@ impl ReviewWorktreeCatalog {
         name: String,
     ) -> Result<super::worktree_build::WorktreeScope, String> {
         let selected = self
-            .paths
-            .get(source_ref)
-            .cloned()
+            .path_for(source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
         Ok(super::worktree_build::WorktreeScope {
             name,
@@ -422,9 +651,7 @@ impl ReviewWorktreeCatalog {
         source_ref: &str,
     ) -> Result<CatalogComparisonIdentity, String> {
         let selected = self
-            .paths
-            .get(source_ref)
-            .cloned()
+            .path_for(source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
         Ok(CatalogComparisonIdentity {
             main_root: self.main_path.clone(),
@@ -442,8 +669,8 @@ impl ReviewWorktreeCatalog {
         source_ref: &str,
     ) -> Result<CatalogSourceHistoryIdentity, String> {
         let snapshot = self.live_snapshot()?;
-        let option = snapshot
-            .options
+        let options = self.live_options()?;
+        let option = options
             .iter()
             .find(|option| option.source_ref == source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
@@ -457,19 +684,16 @@ impl ReviewWorktreeCatalog {
                     .to_string(),
             );
         }
-        let selected_root = snapshot
-            .paths
-            .get(source_ref)
-            .cloned()
-            .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
+        let selected_root = self
+            .path_for(source_ref)
+            .unwrap_or_else(|| snapshot.main_path.clone());
         Ok(CatalogSourceHistoryIdentity {
             selected_root,
             baseline_object_id: snapshot.main_head.clone(),
             selected_object_id: option.object_id.clone(),
             branch,
             source_label: option.label.clone(),
-            related_branch_tips: snapshot
-                .options
+            related_branch_tips: options
                 .iter()
                 .filter(|candidate| {
                     !candidate.is_main
@@ -495,18 +719,16 @@ impl ReviewWorktreeCatalog {
             .git
             .as_deref()
             .ok_or_else(|| "The catalog Git executable is unavailable.".to_string())?;
-        let snapshot = self.live_snapshot()?;
-        let option = snapshot
-            .options
+        let options = self.live_options()?;
+        let option = options
             .iter()
             .find(|option| option.source_ref == source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
-        let path = snapshot
-            .paths
-            .get(source_ref)
+        let path = self
+            .path_for(source_ref)
             .ok_or_else(|| "The selected worktree is unavailable.".to_string())?;
         let prepared = git_text(
-            path,
+            &path,
             git,
             &[
                 "rev-parse",
@@ -523,12 +745,12 @@ impl ReviewWorktreeCatalog {
             });
         }
         if git_success(
-            path,
+            &path,
             git,
             &["merge-base", "--is-ancestor", &prepared, &option.object_id],
         ) {
             let count = git_text(
-                path,
+                &path,
                 git,
                 &[
                     "rev-list",
@@ -552,10 +774,113 @@ impl ReviewWorktreeCatalog {
             outdated_by_commits: None,
         })
     }
+
+    pub(crate) fn attach_review_worktree(
+        &self,
+        source_ref: &str,
+        attachments_root: &Path,
+    ) -> Result<ReviewWorktreeOption, String> {
+        let durable = self
+            .durable_refs
+            .iter()
+            .find(|candidate| candidate.option.source_ref == source_ref)
+            .ok_or_else(|| "The selected durable Git reference is unavailable.".to_string())?;
+        if let Some(path) = self.path_for(source_ref) {
+            let mut option = durable.option.clone();
+            option.attached = true;
+            let (compatibility, message) = compatibility(&path);
+            option.compatibility = compatibility;
+            option.compatibility_message = message;
+            return Ok(option);
+        }
+        fs::create_dir_all(attachments_root)
+            .map_err(|error| format!("create review worktree root: {error}"))?;
+        let target = attachments_root.join(source_ref);
+        if target.exists() {
+            return Err("The review worktree path already exists but is not registered.".into());
+        }
+        let git = self
+            .git
+            .as_deref()
+            .ok_or_else(|| "The catalog Git executable is unavailable.".to_string())?;
+        let output = Command::new(git)
+            .arg("-C")
+            .arg(&self.main_path)
+            .args(["worktree", "add", "--detach"])
+            .arg(&target)
+            .arg(&durable.full_ref)
+            .output()
+            .map_err(|error| format!("attach review worktree: {error}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(if detail.is_empty() {
+                "Git could not attach the review worktree.".into()
+            } else {
+                format!("Git could not attach the review worktree: {detail}")
+            });
+        }
+        let path = target
+            .canonicalize()
+            .map_err(|error| format!("resolve attached review worktree: {error}"))?;
+        self.attached_paths
+            .lock()
+            .map_err(|_| "Review worktree attachment state is unavailable.".to_string())?
+            .insert(source_ref.to_owned(), path.clone());
+        let mut option = durable.option.clone();
+        option.attached = true;
+        let (compatibility, message) = compatibility(&path);
+        option.compatibility = compatibility;
+        option.compatibility_message = message;
+        Ok(option)
+    }
+
+    fn path_for(&self, source_ref: &str) -> Option<PathBuf> {
+        self.paths
+            .get(source_ref)
+            .cloned()
+            .or_else(|| {
+                self.attached_paths
+                    .lock()
+                    .ok()
+                    .and_then(|paths| paths.get(source_ref).cloned())
+            })
+            .or_else(|| self.registered_attachment(source_ref))
+    }
+
+    fn registered_attachment(&self, source_ref: &str) -> Option<PathBuf> {
+        self.paths.values().find_map(|path| {
+            (path.file_name().and_then(|name| name.to_str()) == Some(source_ref))
+                .then(|| path.clone())
+        })
+    }
 }
 
 fn abbreviated(value: &str, length: usize) -> String {
     value.chars().take(length).collect()
+}
+
+fn display_ref(full_ref: &str) -> Option<(String, &'static str)> {
+    if let Some(branch) = full_ref.strip_prefix("refs/heads/") {
+        return Some((branch.into(), "branch"));
+    }
+    if let Some(branch) = full_ref.strip_prefix("refs/remotes/") {
+        if branch.ends_with("/HEAD") {
+            return None;
+        }
+        return Some((branch.into(), "remote_branch"));
+    }
+    let tag = full_ref.strip_prefix("refs/tags/")?;
+    if let Some(archived) = tag.strip_prefix("archive/") {
+        let (_, original) = archived.split_once('/')?;
+        return Some((original.into(), "archive"));
+    }
+    Some((tag.into(), "tag"))
+}
+
+fn equivalent_patch_count(path: &Path, git: &Path, baseline: &str, selected: &str) -> usize {
+    git_text(path, git, &["cherry", baseline, selected])
+        .map(|output| output.lines().filter(|line| line.starts_with('-')).count())
+        .unwrap_or(0)
 }
 
 fn git_text(path: &Path, git: &Path, args: &[&str]) -> Result<String, String> {
@@ -683,7 +1008,7 @@ fn compatibility(path: &Path) -> (String, String) {
 
 impl TestSourceResolver for ReviewWorktreeCatalog {
     fn resolve(&self, source: &TestSourceRef) -> Result<PathBuf, TestInstanceError> {
-        self.paths.get(source.as_str()).cloned().ok_or_else(|| {
+        self.path_for(source.as_str()).ok_or_else(|| {
             TestInstanceError::new(
                 TestInstanceErrorKind::NotFound,
                 "the selected review worktree is no longer available",
@@ -885,7 +1210,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_ignores_an_unusable_unselected_registered_worktree() {
+    fn discovery_keeps_an_unusable_registered_branch_as_an_unattached_reference() {
         let directory = tempfile::tempdir().expect("directory");
         let main = directory.path().join("main");
         let selected = directory.path().join("selected");
@@ -916,16 +1241,79 @@ mod tests {
         let review = crate::worktree_review::compose(&main, &directory.path().join("runtime"))
             .expect("unrelated unavailable worktree does not prevent review startup");
         let sources = review.sources();
-        assert_eq!(sources.len(), 2);
+        assert_eq!(sources.len(), 3);
         assert!(sources
             .iter()
             .any(|option| option.label.contains("launcher source")));
         assert!(sources
             .iter()
             .any(|option| option.label.contains("selected")));
-        assert!(sources
+        let unavailable = sources
             .iter()
-            .all(|option| !option.label.contains("unavailable")));
+            .find(|option| option.label.contains("unavailable"))
+            .expect("durable branch remains selectable");
+        assert!(!unavailable.attached);
+    }
+
+    #[test]
+    fn archived_branch_can_be_attached_as_an_exact_detached_review_worktree() {
+        let directory = tempfile::tempdir().expect("directory");
+        let main = directory.path().join("main");
+        git(directory.path(), &["init", main.to_str().unwrap()]);
+        git(&main, &["config", "user.email", "test@example.invalid"]);
+        git(&main, &["config", "user.name", "Test"]);
+        fs::create_dir_all(main.join("src-tauri")).unwrap();
+        fs::write(
+            main.join("src-tauri/worktree-review-contract.json"),
+            r#"{"version":1,"readiness":"owned-window-and-rendered-application","provenance":"worktree-build-details-v1"}"#,
+        )
+        .unwrap();
+        fs::write(main.join("source.txt"), "baseline\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "baseline"]);
+        git(&main, &["switch", "-c", "codex/explore-harness-inspector"]);
+        fs::write(main.join("feature.txt"), "archived work\n").unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-m", "archived feature"]);
+        let archived_head = git_output(&main, &["rev-parse", "HEAD"]);
+        git(
+            &main,
+            &["tag", "archive/2026-08-08/codex/explore-harness-inspector"],
+        );
+        git(&main, &["switch", "master"]);
+        git(&main, &["branch", "-D", "codex/explore-harness-inspector"]);
+
+        let catalog = ReviewWorktreeCatalog::discover(&main, Path::new("git")).unwrap();
+        let archived = catalog
+            .live_options()
+            .unwrap()
+            .into_iter()
+            .find(|option| option.ref_kind == "archive")
+            .expect("archive reference");
+        assert_eq!(
+            archived.branch.as_deref(),
+            Some("codex/explore-harness-inspector")
+        );
+        assert!(!archived.attached);
+
+        let attached = catalog
+            .attach_review_worktree(&archived.source_ref, &directory.path().join("attachments"))
+            .unwrap();
+        assert!(attached.attached);
+        let attached_path = catalog
+            .path_for(&archived.source_ref)
+            .expect("attached path");
+        assert_eq!(
+            git_output(&attached_path, &["rev-parse", "HEAD"]),
+            archived_head
+        );
+        let symbolic = Command::new("git")
+            .arg("-C")
+            .arg(&attached_path)
+            .args(["symbolic-ref", "--quiet", "HEAD"])
+            .status()
+            .unwrap();
+        assert!(!symbolic.success(), "review worktree must remain detached");
     }
 
     #[test]

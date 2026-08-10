@@ -12,6 +12,8 @@ export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
   listSources: () => invoke<HumanReviewSource[]>('list_human_review_worktrees'),
   sourceHistory: (sourceRef) =>
     invoke<HumanReviewSourceHistory>('human_review_source_history', { input: { sourceRef } }),
+  attachWorktree: (sourceRef) =>
+    invoke<HumanReviewSource>('attach_human_review_worktree', { input: { sourceRef } }),
   listInstances: () => invoke<HumanReviewInstance[]>('list_human_review_instances'),
   prepare: (operationRef, sourceRef, name) =>
     invoke('prepare_human_review_instance', { input: { operationRef, sourceRef, name } }),

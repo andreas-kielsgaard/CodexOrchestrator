@@ -45,6 +45,11 @@ pub(crate) struct ReviewSourceView {
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+    pub(crate) attached: bool,
+    pub(crate) ref_kind: String,
+    pub(crate) merged_directly: bool,
+    pub(crate) equivalent_patches: usize,
+    pub(crate) comparison_branch: String,
 }
 
 impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
@@ -199,6 +204,11 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
             revision: value.revision.clone(),
             compatibility: value.compatibility.clone(),
             compatibility_message: value.compatibility_message.clone(),
+            attached: value.attached,
+            ref_kind: value.ref_kind.clone(),
+            merged_directly: value.merged_directly,
+            equivalent_patches: value.equivalent_patches,
+            comparison_branch: value.comparison_branch.clone(),
         }
     }
 }
@@ -293,6 +303,7 @@ pub(crate) struct HumanReviewLauncherService {
     launcher_detail_navigation: Mutex<Option<LauncherDetailNavigationView>>,
     launcher_proof_presentation: Mutex<Option<LauncherProofPresentationView>>,
     instances_root: PathBuf,
+    attachments_root: PathBuf,
 }
 
 impl HumanReviewLauncherService {
@@ -346,6 +357,10 @@ impl HumanReviewLauncherService {
                 .map_err(|error| format!("migrate review launcher state: {error}"))?;
         }
         let (instances, built) = load_sessions(&store)?;
+        let attachments_root = instances_root
+            .parent()
+            .unwrap_or(&instances_root)
+            .join("attached-worktrees");
         Ok(Self {
             runtime,
             catalog,
@@ -358,15 +373,12 @@ impl HumanReviewLauncherService {
             launcher_detail_navigation: Mutex::new(None),
             launcher_proof_presentation: Mutex::new(None),
             instances_root,
+            attachments_root,
         })
     }
 
     pub(crate) fn sources(&self) -> Vec<ReviewSourceView> {
-        self.catalog
-            .options()
-            .iter()
-            .map(ReviewSourceView::from)
-            .collect()
+        self.live_sources().unwrap_or_default()
     }
 
     pub(crate) fn source_history(
@@ -380,6 +392,15 @@ impl HumanReviewLauncherService {
         self.catalog
             .live_options()
             .map(|options| options.iter().map(ReviewSourceView::from).collect())
+    }
+
+    pub(crate) fn attach_review_worktree(
+        &self,
+        source_ref: String,
+    ) -> Result<ReviewSourceView, String> {
+        self.catalog
+            .attach_review_worktree(&source_ref, &self.attachments_root)
+            .map(|option| ReviewSourceView::from(&option))
     }
 
     fn build_freshness(

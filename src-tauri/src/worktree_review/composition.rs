@@ -4,7 +4,8 @@ use crate::worktree_runtime::{
     SystemSourceInspector, TcpHealthProbe, ToolchainPrograms, WorktreeRuntimeApplication,
     WorktreeTestInstanceFacade,
 };
-use std::{fs, fs::OpenOptions, io::Write, path::Path, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{fs, fs::OpenOptions, io::Write, path::Path, process::Command, sync::Arc};
 use uuid::Uuid;
 
 pub(crate) fn compose(
@@ -14,9 +15,12 @@ pub(crate) fn compose(
     fs::create_dir_all(review_root)
         .map_err(|error| format!("create review runtime root: {error}"))?;
     let programs = ToolchainPrograms::discover().map_err(|error| error.to_string())?;
-    let catalog = Arc::new(ReviewWorktreeCatalog::discover(
+    let comparison_branch =
+        load_or_infer_comparison_branch(review_root, current_source, &programs.git)?;
+    let catalog = Arc::new(ReviewWorktreeCatalog::discover_with_comparison(
         current_source,
         &programs.git,
+        Some(&comparison_branch),
     )?);
     let registry = Arc::new(
         SqliteInstanceRegistry::open(review_root.join("registry.sqlite"))
@@ -54,6 +58,67 @@ pub(crate) fn compose(
         &review_root.join("launcher.sqlite"),
         review_root.join("instances"),
     )
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositorySettings {
+    comparison_branch: String,
+}
+
+fn load_or_infer_comparison_branch(
+    review_root: &Path,
+    current_source: &Path,
+    git: &Path,
+) -> Result<String, String> {
+    let path = review_root.join("repository-settings.json");
+    if path.exists() {
+        let settings: RepositorySettings = serde_json::from_slice(
+            &fs::read(&path).map_err(|error| format!("read repository settings: {error}"))?,
+        )
+        .map_err(|error| format!("parse repository settings: {error}"))?;
+        return Ok(settings.comparison_branch);
+    }
+    let remote_default = git_output(
+        current_source,
+        git,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    );
+    let current = git_output(
+        current_source,
+        git,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+    );
+    let comparison_branch = remote_default.or(current).unwrap_or_else(|| "main".into());
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&RepositorySettings {
+            comparison_branch: comparison_branch.clone(),
+        })
+        .map_err(|error| format!("encode repository settings: {error}"))?,
+    )
+    .map_err(|error| format!("persist repository settings: {error}"))?;
+    Ok(comparison_branch)
+}
+
+fn git_output(root: &Path, git: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new(git)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn load_or_create_authority(root: &Path) -> Result<AuthoritySecret, String> {

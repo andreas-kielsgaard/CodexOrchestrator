@@ -79,6 +79,17 @@ pub(crate) async fn human_review_source_history(
 }
 
 #[tauri::command]
+pub(crate) async fn attach_human_review_worktree(
+    state: State<'_, HumanReviewLauncherTauriState>,
+    input: ReviewSourceInput,
+) -> Result<ReviewSourceView, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || service.attach_review_worktree(input.source_ref))
+        .await
+        .map_err(|error| format!("Review worktree attachment task failed: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn prepare_human_review_instance(
     state: State<'_, HumanReviewLauncherTauriState>,
     input: PrepareReviewInput,

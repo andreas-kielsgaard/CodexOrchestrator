@@ -372,6 +372,7 @@ pub(crate) fn run() {
             crate::worktree_review::transport::list_human_review_instances,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::human_review_source_history,
+            crate::worktree_review::transport::attach_human_review_worktree,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::prepare_human_review_instance,
             #[cfg(debug_assertions)]
