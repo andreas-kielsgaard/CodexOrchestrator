@@ -1,4 +1,4 @@
-import { GitBranch, GitCommitHorizontal } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal } from 'lucide-react';
 import { useState } from 'react';
 import type { HumanReviewSource } from '../../application/humanReviewLauncher';
 
@@ -7,6 +7,8 @@ export function WorktreeSourcePicker({
   selectedSourceRef,
   disabled,
   historyLoading,
+  showDetached: controlledShowDetached,
+  onShowDetachedChange,
   onSelect,
   onViewHistory,
 }: {
@@ -14,10 +16,17 @@ export function WorktreeSourcePicker({
   readonly selectedSourceRef: string;
   readonly disabled: boolean;
   readonly historyLoading: boolean;
+  readonly showDetached?: boolean;
+  readonly onShowDetachedChange?: (showDetached: boolean) => void;
   readonly onSelect: (sourceRef: string) => void;
   readonly onViewHistory: (sourceRef: string, trigger: HTMLButtonElement) => void;
 }) {
-  const [showDetached, setShowDetached] = useState(false);
+  const [localShowDetached, setLocalShowDetached] = useState(false);
+  const showDetached = controlledShowDetached ?? localShowDetached;
+  const setShowDetached = (next: boolean) => {
+    setLocalShowDetached(next);
+    onShowDetachedChange?.(next);
+  };
   const selected = sources.find((source) => source.sourceRef === selectedSourceRef);
   const named = sources.filter(
     (source) => (!source.detached || source.isMain) && source.relationship === 'related',
@@ -48,7 +57,7 @@ export function WorktreeSourcePicker({
         <header>
           <div>
             <h3>Branch map</h3>
-            <p>Registered worktrees, rooted at the main checkout.</p>
+            <p>Attached worktrees, nested under the branch heads they currently represent.</p>
           </div>
           <label className="worktree-source-picker__toggle">
             <input
@@ -85,22 +94,25 @@ export function WorktreeSourcePicker({
           )}
           {showDetached && detached.length > 0 && (
             <div className="worktree-source-picker__detached">
-              <p>Detached worktrees</p>
+              <p>Detached HEADs</p>
               {detached.map((source) => (
-                <button
-                  key={source.sourceRef}
-                  type="button"
-                  className={source.sourceRef === selectedSourceRef ? 'is-selected' : undefined}
-                  aria-pressed={source.sourceRef === selectedSourceRef}
-                  disabled={disabled}
-                  onClick={() => onSelect(source.sourceRef)}
-                >
-                  <GitCommitHorizontal size={16} />
-                  <span>
-                    <strong>{branchName(source)}</strong>
-                    <small>{source.revision}</small>
-                  </span>
-                </button>
+                <div key={source.sourceRef} className="worktree-source-picker__detached-head">
+                  <div className="worktree-source-picker__branch-head">
+                    <GitCommitHorizontal size={16} />
+                    <span>
+                      <strong>Detached HEAD</strong>
+                      <small>{source.revision}</small>
+                    </span>
+                  </div>
+                  <div className="worktree-source-picker__attachments">
+                    <WorktreeAttachment
+                      source={source}
+                      selectedSourceRef={selectedSourceRef}
+                      disabled={disabled}
+                      onSelect={onSelect}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -108,20 +120,23 @@ export function WorktreeSourcePicker({
             <div className="worktree-source-picker__detached">
               <p>Other Git histories</p>
               {unrelated.map((source) => (
-                <button
-                  key={source.sourceRef}
-                  type="button"
-                  className={source.sourceRef === selectedSourceRef ? 'is-selected' : undefined}
-                  aria-pressed={source.sourceRef === selectedSourceRef}
-                  disabled={disabled}
-                  onClick={() => onSelect(source.sourceRef)}
-                >
-                  <GitBranch size={16} />
-                  <span>
-                    <strong>{branchName(source)}</strong>
-                    <small>No common ancestor with main</small>
-                  </span>
-                </button>
+                <div key={source.sourceRef} className="worktree-source-picker__branch">
+                  <div className="worktree-source-picker__branch-head">
+                    <GitBranch size={16} />
+                    <span>
+                      <strong>{branchName(source)}</strong>
+                      <small>No common ancestor with main</small>
+                    </span>
+                  </div>
+                  <div className="worktree-source-picker__attachments">
+                    <WorktreeAttachment
+                      source={source}
+                      selectedSourceRef={selectedSourceRef}
+                      disabled={disabled}
+                      onSelect={onSelect}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -132,19 +147,23 @@ export function WorktreeSourcePicker({
         {selected ? (
           <>
             <div className="worktree-source-picker__details-title">
-              <GitBranch size={18} />
+              <FolderGit2 size={18} />
               <div>
                 <p>
                   {selected.detached
                     ? 'Detached worktree'
                     : selected.isMain
                       ? 'Main checkout'
-                      : 'Branch'}
+                      : 'Attached worktree'}
                 </p>
-                <h3>{branchName(selected)}</h3>
+                <h3>{worktreeLabel(selected)}</h3>
               </div>
             </div>
             <dl>
+              <div>
+                <dt>Branch head</dt>
+                <dd>{branchName(selected)}</dd>
+              </div>
               <div>
                 <dt>Compatibility</dt>
                 <dd>
@@ -169,7 +188,7 @@ export function WorktreeSourcePicker({
                 <dd>{selected.forkRevision}</dd>
               </div>
               <div>
-                <dt>Current revision</dt>
+                <dt>Checked out revision</dt>
                 <dd>{selected.revision}</dd>
               </div>
             </dl>
@@ -219,23 +238,22 @@ function BranchNode({
   const descendants = children.get(source.sourceRef) ?? [];
   return (
     <div className="worktree-source-picker__branch" data-depth={depth}>
-      <button
-        type="button"
-        className={source.sourceRef === selectedSourceRef ? 'is-selected' : undefined}
-        aria-pressed={source.sourceRef === selectedSourceRef}
-        disabled={disabled}
-        onClick={() => onSelect(source.sourceRef)}
-      >
+      <div className="worktree-source-picker__branch-head">
         <GitBranch size={16} />
         <span>
           <strong>{branchName(source)}</strong>
-          <small>
-            {source.revision}
-            {source.isCurrent ? ' · launcher source' : ''}
-          </small>
+          <small>{source.revision}</small>
         </span>
         {source.isMain && <em>main</em>}
-      </button>
+      </div>
+      <div className="worktree-source-picker__attachments">
+        <WorktreeAttachment
+          source={source}
+          selectedSourceRef={selectedSourceRef}
+          disabled={disabled}
+          onSelect={onSelect}
+        />
+      </div>
       {descendants.length > 0 && (
         <div className="worktree-source-picker__children">
           {descendants.map((child) => (
@@ -255,7 +273,46 @@ function BranchNode({
   );
 }
 
+function WorktreeAttachment({
+  source,
+  selectedSourceRef,
+  disabled,
+  onSelect,
+}: {
+  readonly source: HumanReviewSource;
+  readonly selectedSourceRef: string;
+  readonly disabled: boolean;
+  readonly onSelect: (sourceRef: string) => void;
+}) {
+  const label = worktreeLabel(source);
+  return (
+    <button
+      type="button"
+      className={source.sourceRef === selectedSourceRef ? 'is-selected' : undefined}
+      aria-label={`${label}, attached to ${branchName(source)}, at ${source.revision}`}
+      aria-pressed={source.sourceRef === selectedSourceRef}
+      disabled={disabled}
+      onClick={() => onSelect(source.sourceRef)}
+    >
+      <FolderGit2 size={16} />
+      <span>
+        <strong>{label}</strong>
+        <small>
+          {source.isCurrent ? 'Launcher source · build from this folder' : 'Build from this folder'}
+        </small>
+      </span>
+    </button>
+  );
+}
+
 function branchName(source: HumanReviewSource) {
   if (source.isMain && !source.branch) return 'Main checkout';
   return source.branch ?? `Detached ${source.revision.slice(0, 8)}`;
+}
+
+function worktreeLabel(source: HumanReviewSource) {
+  if (source.isMain) return 'Main checkout';
+  if (source.isCurrent) return 'Launcher worktree';
+  const separator = source.label.lastIndexOf(' - ');
+  return separator >= 0 ? source.label.slice(separator + 3) : 'Attached worktree';
 }

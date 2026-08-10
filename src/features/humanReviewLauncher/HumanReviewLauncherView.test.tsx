@@ -177,7 +177,7 @@ describe('HumanReviewLauncherView', () => {
     expect(await screen.findByRole('heading', { name: 'Retained builds' })).toBeVisible();
   });
 
-  it('shows only the retained builds belonging to the selected branch', async () => {
+  it('shows only the retained builds belonging to the selected worktree', async () => {
     const client = new FakeClient();
     const alpha = {
       ...instance('Alpha retained', 'prepared', 'passed'),
@@ -280,6 +280,7 @@ describe('HumanReviewLauncherView', () => {
     render(<HumanReviewLauncherView client={client} />);
 
     expect(await screen.findByText(/predates the Worktree Review child contract/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /^Legacy build/ }));
     const card = screen.getByRole('heading', { name: 'Legacy build' }).closest('article')!;
     expect(within(card).getByRole('button', { name: 'Build' })).toBeDisabled();
     expect(within(card).getByRole('button', { name: 'Open' })).toBeDisabled();
@@ -341,6 +342,13 @@ describe('HumanReviewLauncherView', () => {
     render(<HumanReviewLauncherView client={client} />);
 
     const detachedToggle = await screen.findByRole('switch', { name: 'Show detached' });
+    const sourcePicker = screen.getByRole('region', { name: 'Review source' });
+    expect(within(sourcePicker).getByText('codex/child').closest('button')).toBeNull();
+    expect(
+      within(sourcePicker).getByRole('button', {
+        name: /child, attached to codex\/child, at 444444444444/,
+      }),
+    ).toBeVisible();
     expect(detachedToggle).not.toBeChecked();
     expect(screen.queryByRole('button', { name: /Detached 55555555/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /codex\/child/ }));
@@ -378,6 +386,33 @@ describe('HumanReviewLauncherView', () => {
     );
     fireEvent.click(detachedToggle);
     expect(screen.getByRole('button', { name: /Detached 55555555/ })).toBeVisible();
+  });
+
+  it('moves the same attached worktree under its refreshed branch head', async () => {
+    const client = new FakeClient();
+    let branch = 'codex/origin';
+    client.listSources = async () => [
+      source({
+        sourceRef: 'moving-worktree',
+        branch,
+        label: `${branch} - active`,
+      }),
+    ];
+    render(<HumanReviewLauncherView client={client} />);
+
+    const original = await screen.findByRole('button', {
+      name: /active, attached to codex\/origin/,
+    });
+    expect(original).toHaveAttribute('aria-pressed', 'true');
+
+    branch = 'codex/new-head';
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    const moved = await screen.findByRole('button', {
+      name: /active, attached to codex\/new-head/,
+    });
+    expect(moved).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('codex/origin')).toBeNull();
   });
 
   it('reports history failures and renders an empty named-branch history truthfully', async () => {
@@ -471,10 +506,9 @@ describe('HumanReviewLauncherView', () => {
     sources = [main];
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^main / })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      ),
+      expect(
+        screen.getByRole('button', { name: /^Main checkout, attached to main/ }),
+      ).toHaveAttribute('aria-pressed', 'true'),
     );
     expect(screen.queryByRole('button', { name: /codex\/temporary/ })).toBeNull();
   });

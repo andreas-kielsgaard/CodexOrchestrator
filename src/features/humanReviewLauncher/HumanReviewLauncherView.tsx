@@ -360,9 +360,10 @@ export function HumanReviewLauncherView({
 
       <section className="human-review__prepare" aria-labelledby="prepare-review-title">
         <div className="human-review__prepare-intro">
-          <h2 id="prepare-review-title">Choose a branch</h2>
+          <h2 id="prepare-review-title">Choose a worktree</h2>
           <p>
-            Select a branch to inspect its retained builds or prepare a new isolated review window.
+            Select an attached worktree to build directly from its current folder or inspect its
+            retained builds.
           </p>
         </div>
         <WorktreeSourcePicker
@@ -393,8 +394,8 @@ export function HumanReviewLauncherView({
             <h2>Retained builds</h2>
             <p>
               {selectedSource
-                ? `Builds prepared for ${selectedSource.branch ?? selectedSource.label}.`
-                : 'Select a branch to inspect its retained builds.'}
+                ? `Builds prepared from ${selectedSource.label}.`
+                : 'Select an attached worktree to inspect its retained builds.'}
             </p>
           </div>
           <button
@@ -434,10 +435,10 @@ export function HumanReviewLauncherView({
         <div className="human-review__build-browser">
           <nav
             className="human-review__build-list"
-            aria-label="Retained builds for selected branch"
+            aria-label="Retained builds for selected worktree"
           >
             {selectedInstances.length === 0 && busy === null ? (
-              <p>No retained builds for this branch yet.</p>
+              <p>No retained builds for this worktree yet.</p>
             ) : (
               selectedInstances.map((instance) => (
                 <button
@@ -503,7 +504,7 @@ export function HumanReviewLauncherView({
             ) : (
               <div className="human-review__build-empty">
                 <h3>No build selected</h3>
-                <p>Choose a retained build, or prepare a new build for this branch.</p>
+                <p>Choose a retained build, or prepare a new build from this worktree.</p>
               </div>
             )}
           </section>
