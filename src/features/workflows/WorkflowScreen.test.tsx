@@ -364,10 +364,12 @@ describe('WorkflowScreen', () => {
     fireEvent.click(canvas, { clientX: 180, clientY: 140 });
 
     let dialog = screen.getByRole('dialog', { name: 'Configure new node' });
-    expect(within(dialog).getByRole('radio', { name: 'From scratch' })).toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: /Existing role/ })).toBeDisabled();
-    expect(screen.getByText('Draft')).toBeVisible();
     await waitFor(() => expect(within(dialog).getByLabelText('Harness name')).toBeEnabled());
+    expect(within(dialog).getByRole('combobox', { name: 'Harness source' })).toHaveValue(
+      'From scratch',
+    );
+    expect(within(dialog).queryByRole('option', { name: /Existing role/ })).toBeNull();
+    expect(screen.getByText('Draft')).toBeVisible();
     expect(within(dialog).queryByRole('button', { name: 'Activate node' })).toBeNull();
 
     fireEvent.change(within(dialog).getByLabelText('Harness name'), {
@@ -604,13 +606,16 @@ describe('WorkflowScreen', () => {
     const base = definitionWithNodes();
     const senderHarness = {
       ...emptyHarness('Sender Harness'),
-      mcpServers: [
-        {
-          serverName: 'workflow_handoff',
-          access: { kind: 'selected_tools' as const, toolNames: ['handoff_to_agent'] },
-        },
-        { serverName: 'other_workflow', access: { kind: 'entire_server' as const } },
-      ],
+      tools: {
+        ...emptyHarness('Sender Harness').tools,
+        mcpServers: [
+          {
+            serverName: 'workflow_handoff',
+            access: { kind: 'selected_tools' as const, toolNames: ['handoff_to_agent'] },
+          },
+          { serverName: 'other_workflow', access: { kind: 'entire_server' as const } },
+        ],
+      },
     };
     const definition: WorkflowDefinition = {
       ...base,
@@ -883,7 +888,10 @@ describe('WorkflowScreen', () => {
   it('edits and removes one inherited field override without detaching the Role', async () => {
     const role = workflowRole('role-reviewer', 'Reviewer', {
       ...emptyHarness('Review Harness'),
-      instructions: 'Inherited instructions',
+      promptPrefix: {
+        ...emptyHarness('Review Harness').promptPrefix,
+        content: 'Inherited instructions',
+      },
     });
     const node: WorkflowNodeConfig = {
       id: 'review',
@@ -919,29 +927,46 @@ describe('WorkflowScreen', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Configure Review' }));
     const dialog = screen.getByRole('dialog', { name: 'Configure Review' });
-    const instructions = within(dialog).getByLabelText('Instructions');
+    const promptSection = within(dialog)
+      .getByRole('heading', { name: 'Prompt prefix' })
+      .closest('section')!;
+    fireEvent.click(within(promptSection).getByRole('button', { name: 'Plain' }));
+    const instructions = within(promptSection).getByLabelText('Prompt prefix plain Markdown');
+    const promptField = instructions.closest('.harness-management__field') as HTMLElement;
     expect(instructions).toHaveValue('Inherited instructions');
     fireEvent.change(instructions, { target: { value: 'Security-only instructions' } });
     await waitFor(() =>
       expect(vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness).toMatchObject({
         kind: 'role',
         roleId: role.id,
-        overrides: { instructions: 'Security-only instructions' },
+        overrides: {
+          promptPrefixContent: 'Security-only instructions',
+        },
       }),
     );
-    const instructionsField = within(dialog).getByText('Instructions').closest('details')!;
-    expect(instructionsField).toHaveClass('is-overridden');
-    fireEvent.click(within(instructionsField).getByRole('button', { name: 'Use inherited value' }));
+    expect(
+      (
+        vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness as unknown as {
+          overrides: Record<string, unknown>;
+        }
+      ).overrides,
+    ).toEqual({ promptPrefixContent: 'Security-only instructions' });
+    await waitFor(() => expect(promptField).toHaveClass('is-overridden'));
+    fireEvent.click(within(promptField).getByRole('button', { name: 'Use inherited value' }));
     await waitFor(() =>
       expect(
         (
           vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness as {
-            overrides: { instructions?: string };
+            overrides: { promptPrefixContent?: unknown };
           }
-        ).overrides.instructions,
+        ).overrides.promptPrefixContent,
       ).toBeUndefined(),
     );
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'From scratch' }));
+    const harnessSource = await waitFor(() =>
+      within(dialog).getByRole('combobox', { name: 'Harness source' }),
+    );
+    fireEvent.click(harnessSource);
+    fireEvent.click(within(dialog).getByRole('option', { name: /From scratch/ }));
     await waitFor(() => expect(client.detachNodeRole).toHaveBeenCalledWith('workflow-1', 'review'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Edit saved Role' }));
     expect(
@@ -969,7 +994,10 @@ describe('WorkflowScreen', () => {
       name: 'Sender copy',
       harnessName: 'Sender Harness',
       isStartingPoint: false,
-      harness: { kind: 'standalone', config: { harnessName: 'Sender Harness' } },
+      harness: {
+        kind: 'standalone',
+        config: { identity: { name: 'Sender Harness' } },
+      },
     });
     expect(brush).toHaveAttribute('aria-pressed', 'true');
   });
@@ -998,7 +1026,10 @@ describe('WorkflowScreen', () => {
           draft: node,
           live: null,
           hasUnpublishedChanges: true,
-          draftEffectiveHarness: { ...role.harness, instructions: 'Local review scope' },
+          draftEffectiveHarness: {
+            ...role.harness,
+            promptPrefix: { ...role.harness.promptPrefix, content: 'Local review scope' },
+          },
         },
       ],
     });
@@ -1038,6 +1069,7 @@ describe('WorkflowScreen', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Node' }));
     fireEvent.click(screen.getByRole('button', { name: 'Roles' }));
     const catalog = screen.getByRole('dialog', { name: 'Saved Roles' });
+    expect(within(catalog).getByTestId('harness-definition-editor')).toBeVisible();
     fireEvent.keyDown(within(catalog).getByLabelText('Role name'), { key: ' ' });
     expect(client.saveNodeDraft).not.toHaveBeenCalled();
     fireEvent.change(within(catalog).getByLabelText('Role name'), {
@@ -1046,7 +1078,7 @@ describe('WorkflowScreen', () => {
     fireEvent.change(within(catalog).getByLabelText('Harness name'), {
       target: { value: 'Security Harness' },
     });
-    fireEvent.change(within(catalog).getByLabelText('Role identity'), {
+    fireEvent.change(within(catalog).getByLabelText('Authority summary'), {
       target: { value: 'Review security boundaries.' },
     });
     fireEvent.click(within(catalog).getByRole('button', { name: 'Create Role' }));
@@ -1054,8 +1086,8 @@ describe('WorkflowScreen', () => {
       expect(client.createRole).toHaveBeenCalledWith({
         name: 'Security reviewer',
         harness: expect.objectContaining({
-          harnessName: 'Security Harness',
-          roleIdentity: 'Review security boundaries.',
+          identity: expect.objectContaining({ name: 'Security Harness' }),
+          runtime: expect.objectContaining({ authoritySummary: 'Review security boundaries.' }),
         }),
       }),
     );
@@ -1275,13 +1307,53 @@ function materializeNode(node: WorkflowNodeConfig) {
 
 function emptyHarness(harnessName = '') {
   return {
-    harnessName,
-    roleIdentity: '',
-    instructions: '',
-    skills: [],
-    mcpServers: [],
+    identity: {
+      name: harnessName,
+      machineKey: harnessName.toLowerCase().replaceAll(' ', '_'),
+      permittedAgentNames: null,
+      visualIdentity: null,
+    },
+    promptPrefix: {
+      content: '',
+      initialDelivery: 'prepend' as const,
+      contextCompressionDelivery: 'deferred' as const,
+    },
+    skills: { availableDiscoveryPolicy: 'whitelist' as const, items: [] },
+    tools: {
+      availableDiscoveryPolicy: 'whitelist' as const,
+      items: [],
+      schemaBoundary: 'Tool schemas remain runtime-owned.',
+      mcpServers: [],
+    },
+    runtime: {
+      modelPolicyMode: 'revision_owned' as const,
+      models: [
+        {
+          modelId: 'gpt-5.6-terra',
+          allowed: true,
+          minReasoning: 'low' as const,
+          maxReasoning: 'xhigh' as const,
+        },
+        {
+          modelId: 'gpt-5.6-sol',
+          allowed: true,
+          minReasoning: 'medium' as const,
+          maxReasoning: 'xhigh' as const,
+        },
+      ],
+      defaultModel: null,
+      defaultReasoning: null,
+      sandbox: 'workspace_write' as const,
+      sandboxOptions: ['read_only', 'workspace_write', 'danger_full_access'] as const,
+      approvalPolicy: 'never' as const,
+      approvalPolicyOptions: ['never'] as const,
+      authoritySummary: '',
+    },
     hooks: [],
-    runtime: { provider: '', model: '', reasoningEffort: '' },
+    updatePolicy: {
+      status: 'not_configured' as const,
+      reason: 'Session replacement applies activated Workflow Harness changes.',
+    },
   };
 }
 

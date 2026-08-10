@@ -1253,6 +1253,30 @@
   text-transform: capitalize;
 }
 
+.workflow-node-config .harness-management__field {
+  padding: 7px 8px;
+  border-left: 4px solid transparent;
+  border-radius: 7px;
+}
+
+.workflow-node-config .harness-management__field.is-inherited {
+  border-left-color: #4b7c68;
+}
+
+.workflow-node-config .harness-management__field.is-overridden {
+  border-left-color: #9a7920;
+  background: #fff9e7;
+}
+
+.workflow-node-config .harness-management__field.is-instance {
+  border-left-color: #6d7180;
+}
+
+.workflow-node-config .harness-management__field.is-overridden .workflow-field-source {
+  background: #f1daa0;
+  color: #665115;
+}
+
 .workflow-harness-field.is-overridden .workflow-field-source {
   background: #f1daa0;
   color: #665115;

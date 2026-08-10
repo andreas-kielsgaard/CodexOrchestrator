@@ -1,3 +1,8 @@
+import type {
+  HarnessEffectiveConfiguration,
+  HarnessMcpServerExposure,
+} from '../conversationHarnesses';
+
 export interface WorkflowTypeSummary {
   readonly id: string;
   readonly name: string;
@@ -7,37 +12,51 @@ export interface WorkflowTypeSummary {
   readonly updatedAt: string;
 }
 
-export interface WorkflowHarnessConfig {
-  readonly harnessName: string;
-  readonly roleIdentity: string;
-  readonly instructions: string;
-  readonly skills: readonly string[];
-  readonly mcpServers: readonly WorkflowMcpServerExposure[];
-  readonly hooks: readonly string[];
-  readonly runtime: WorkflowHarnessRuntimeSettings;
-}
-
-export interface WorkflowMcpServerExposure {
-  readonly serverName: string;
-  readonly access:
-    | { readonly kind: 'entire_server' }
-    | { readonly kind: 'selected_tools'; readonly toolNames: readonly string[] };
-}
-
-export interface WorkflowHarnessRuntimeSettings {
-  readonly provider: string;
-  readonly model: string;
-  readonly reasoningEffort: string;
-}
+/** Detached definition authority shared by Roles, nodes, and Session Harness revisions. */
+export type WorkflowHarnessConfig = HarnessEffectiveConfiguration;
+export type WorkflowMcpServerExposure = HarnessMcpServerExposure;
 
 export interface WorkflowHarnessOverrides {
+  readonly identityName?: string | null;
+  readonly identityMachineKey?: string | null;
+  readonly permittedAgentNames?: readonly string[] | null;
+  readonly visualIdentity?: HarnessEffectiveConfiguration['identity']['visualIdentity'] | null;
+  readonly promptPrefixContent?: string | null;
+  readonly skillDiscoveryPolicy?:
+    HarnessEffectiveConfiguration['skills']['availableDiscoveryPolicy'] | null;
+  readonly skillItems?: HarnessEffectiveConfiguration['skills']['items'] | null;
+  readonly toolDiscoveryPolicy?:
+    HarnessEffectiveConfiguration['tools']['availableDiscoveryPolicy'] | null;
+  readonly toolItems?: HarnessEffectiveConfiguration['tools']['items'] | null;
+  readonly toolSchemaBoundary?: string | null;
+  readonly mcpServers?: readonly WorkflowMcpServerExposure[] | null;
+  readonly runtimeModelPolicyMode?:
+    HarnessEffectiveConfiguration['runtime']['modelPolicyMode'] | null;
+  readonly runtimeModels?: HarnessEffectiveConfiguration['runtime']['models'] | null;
+  readonly runtimeDefaultModel?: string | null;
+  readonly runtimeDefaultReasoning?:
+    HarnessEffectiveConfiguration['runtime']['defaultReasoning'] | null;
+  readonly runtimeSandbox?: HarnessEffectiveConfiguration['runtime']['sandbox'] | null;
+  readonly runtimeSandboxOptions?:
+    HarnessEffectiveConfiguration['runtime']['sandboxOptions'] | null;
+  readonly runtimeApprovalPolicy?:
+    HarnessEffectiveConfiguration['runtime']['approvalPolicy'] | null;
+  readonly runtimeApprovalPolicyOptions?:
+    HarnessEffectiveConfiguration['runtime']['approvalPolicyOptions'] | null;
+  readonly runtimeAuthoritySummary?: string | null;
+  readonly hookItems?: HarnessEffectiveConfiguration['hooks'] | null;
+  readonly updatePolicy?: HarnessEffectiveConfiguration['updatePolicy'] | null;
+  /** v43 compatibility only; new editors write the canonical leaf fields above. */
   readonly harnessName?: string | null;
   readonly roleIdentity?: string | null;
   readonly instructions?: string | null;
   readonly skills?: readonly string[] | null;
-  readonly mcpServers?: readonly WorkflowMcpServerExposure[] | null;
   readonly hooks?: readonly string[] | null;
-  readonly runtime?: WorkflowHarnessRuntimeSettings | null;
+  readonly runtime?: {
+    readonly provider: string;
+    readonly model: string;
+    readonly reasoningEffort: string;
+  } | null;
 }
 
 export type WorkflowNodeHarness =

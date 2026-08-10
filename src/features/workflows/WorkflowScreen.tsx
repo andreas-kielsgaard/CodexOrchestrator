@@ -8,7 +8,6 @@ import {
   GitBranch,
   Paintbrush,
   Plus,
-  RotateCcw,
   Trash2,
   Users,
   X,
@@ -20,9 +19,9 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
-  type ReactNode,
 } from 'react';
 import type { AgentSessionClient } from '../../application/agentSessions';
+import type { HarnessConfigurationCatalogs } from '../../application/conversationHarnesses';
 import type {
   WorkflowApplicationClient,
   WorkflowConnectionConfig,
@@ -35,7 +34,6 @@ import type {
   WorkflowInstance,
   WorkflowInstanceSummary,
   WorkflowMcpComponent,
-  WorkflowMcpServerExposure,
   WorkflowNodeConfig,
   WorkflowNodeElement,
   WorkflowNodeHarness,
@@ -45,6 +43,11 @@ import type {
 import { workflowPersistenceCoordinator } from '../../application/workflows';
 import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
 import { AgentSessionHeaderActionsProvider } from '../agentSessions/AgentSessionWorkspace';
+import {
+  HarnessDefinitionEditor,
+  SearchableSingleSelect,
+  type HarnessDefinitionProperty,
+} from '../conversationHarnesses/HarnessDefinitionEditor';
 import './workflow.css';
 
 export interface WorkflowScreenProps {
@@ -562,7 +565,7 @@ function WorkflowTypeEditor({
     const node: WorkflowNodeConfig = {
       id,
       name: source ? `${source.config.name || 'Node'} copy` : '',
-      harnessName: source?.effectiveHarness.harnessName ?? '',
+      harnessName: source?.effectiveHarness.identity.name ?? '',
       roleName: source?.config.roleName ?? null,
       positionX,
       positionY,
@@ -1018,7 +1021,7 @@ function WorkflowTypeEditor({
               ) : null}
               {element?.draft === null && element.live ? <small>Delete</small> : null}
             </span>
-            <strong>{effectiveHarness.harnessName || 'Choose a role'}</strong>
+            <strong>{effectiveHarness.identity.name || 'Choose a role'}</strong>
             <span>{config.name || 'Name this node'}</span>
           </button>
         ))}
@@ -1036,6 +1039,7 @@ function WorkflowTypeEditor({
             node={selectedNode.config}
             effectiveHarness={selectedNode.effectiveHarness}
             roles={roles}
+            mcpComponents={mcpComponents}
             persistedElement={selectedNode.element}
             locallyChanged={selectedNode.localDraft}
             busy={saving}
@@ -1092,6 +1096,7 @@ function WorkflowTypeEditor({
           <RoleCatalog
             client={client}
             roles={roles}
+            mcpComponents={mcpComponents}
             busy={saving}
             onBusy={setSaving}
             onRoles={setRoles}
@@ -1523,7 +1528,7 @@ function WorkflowInstanceView({
               }}
               className={`workflow-node workflow-instance-node${node.isStartingPoint ? ' is-start' : ''}`}
               style={{ left: node.positionX, top: node.positionY }}
-              aria-label={`Open ${node.harness.harnessName || 'Harness'} node ${node.name}`}
+              aria-label={`Open ${node.harness.identity.name || 'Harness'} node ${node.name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 setConnectionList(null);
@@ -1534,7 +1539,7 @@ function WorkflowInstanceView({
               <span className="workflow-node__badges">
                 {node.isStartingPoint ? <small>Start</small> : null}
               </span>
-              <strong>{node.harness.harnessName || 'Harness'}</strong>
+              <strong>{node.harness.identity.name || 'Harness'}</strong>
               <span>{node.name}</span>
               <small>
                 {sessions.length} {sessions.length === 1 ? 'Session' : 'Sessions'} · {active} active
@@ -1619,7 +1624,7 @@ function WorkflowInstanceNodePopup({
       ref={popupRef}
       className={`workflow-instance-node-popup${view === 'sessions' ? ' is-sessions' : ''}`}
       role="dialog"
-      aria-label={`${node.harness.harnessName || 'Harness'} node details`}
+      aria-label={`${node.harness.identity.name || 'Harness'} node details`}
       tabIndex={-1}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => containWorkflowPopupFocus(event, popupRef.current, onClose)}
@@ -1629,7 +1634,7 @@ function WorkflowInstanceNodePopup({
           <header>
             <div>
               <p className="eyebrow">Harness</p>
-              <h2>{node.harness.harnessName || 'Harness'}</h2>
+              <h2>{node.harness.identity.name || 'Harness'}</h2>
               <p>{node.name}</p>
             </div>
             <button type="button" aria-label="Close node details" onClick={onClose}>
@@ -1649,22 +1654,19 @@ function WorkflowInstanceNodePopup({
           <dl className="workflow-instance-node-popup__configuration">
             <div>
               <dt>Role identity</dt>
-              <dd>{node.harness.roleIdentity || 'Not defined'}</dd>
+              <dd>{node.harness.runtime.authoritySummary || 'Not defined'}</dd>
             </div>
             <div>
               <dt>Capabilities</dt>
               <dd>
-                {node.harness.skills.length} Skills · {node.harness.mcpServers.length} MCP Servers ·{' '}
+                {node.harness.skills.items.length} Skills ·{' '}
+                {node.harness.tools.mcpServers?.length ?? 0} MCP Servers ·{' '}
                 {node.harness.hooks.length} Hooks
               </dd>
             </div>
             <div>
               <dt>Runtime</dt>
-              <dd>
-                {[node.harness.runtime.provider, node.harness.runtime.model]
-                  .filter(Boolean)
-                  .join(' · ') || 'Harness default'}
-              </dd>
+              <dd>{node.harness.runtime.defaultModel || 'Harness default'}</dd>
             </div>
           </dl>
           <footer>
@@ -1681,7 +1683,7 @@ function WorkflowInstanceNodePopup({
       ) : agentSessionClient ? (
         <WorkflowInstanceNodeSessions
           nodeName={node.name}
-          harnessName={node.harness.harnessName || 'Harness'}
+          harnessName={node.harness.identity.name || 'Harness'}
           sessions={orderedSessions}
           client={agentSessionClient}
           onReturn={() => setView('configuration')}
@@ -2178,6 +2180,7 @@ function NodeConfiguration({
   node,
   effectiveHarness,
   roles,
+  mcpComponents,
   persistedElement,
   locallyChanged,
   busy,
@@ -2194,6 +2197,7 @@ function NodeConfiguration({
   readonly node: WorkflowNodeConfig;
   readonly effectiveHarness: WorkflowHarnessConfig;
   readonly roles: readonly WorkflowRole[];
+  readonly mcpComponents: readonly WorkflowMcpComponent[];
   readonly persistedElement?: WorkflowNodeElement;
   readonly locallyChanged: boolean;
   readonly busy: boolean;
@@ -2210,7 +2214,8 @@ function NodeConfiguration({
   const [newRoleName, setNewRoleName] = useState('');
   const pendingDeletion = Boolean(persistedElement?.live && !persistedElement.draft);
   const boundRoleId = node.harness?.kind === 'role' ? node.harness.roleId : null;
-  const valid = Boolean(node.name.trim() && effectiveHarness.harnessName.trim());
+  const valid = Boolean(node.name.trim() && effectiveHarness.identity.name.trim());
+  const catalogs = workflowHarnessCatalogs(mcpComponents);
   const canActivate = Boolean(
     (valid || pendingDeletion) && persistedElement?.hasUnpublishedChanges && !locallyChanged,
   );
@@ -2241,58 +2246,52 @@ function NodeConfiguration({
         <p className="workflow-deletion-note">This node is marked for deletion.</p>
       ) : null}
 
-      <fieldset className="workflow-role-choice" disabled={busy || pendingDeletion}>
-        <legend>Start with a role</legend>
-        <label>
-          <input
-            type="radio"
-            name={`role-mode-${node.id}`}
-            checked={node.harness?.kind === 'role'}
-            disabled={roles.length === 0}
-            onChange={() => {
-              const role = roles[0];
-              if (role) onChange(bindNodeToRole(node, role));
-            }}
-          />
-          <span>
-            Existing role
-            <small>
-              {roles.length ? 'Inherit with field overrides' : 'Create a saved Role first'}
-            </small>
-          </span>
-        </label>
-        <label>
-          <input
-            type="radio"
-            name={`role-mode-${node.id}`}
-            checked={node.harness?.kind !== 'role'}
-            disabled={busy || (node.harness?.kind === 'role' && locallyChanged)}
-            onChange={() => {
-              if (node.harness?.kind === 'role') onDetach();
-            }}
-          />
-          From scratch
-        </label>
-      </fieldset>
+      <SearchableSingleSelect
+        label="Harness source"
+        options={[
+          ...(roles.length
+            ? [
+                {
+                  value: 'existing_role' as const,
+                  label: 'Existing role',
+                  description: 'Inherit with field overrides.',
+                },
+              ]
+            : []),
+          {
+            value: 'from_scratch' as const,
+            label: 'From scratch',
+            description: 'Use a standalone Harness definition.',
+          },
+        ]}
+        value={node.harness?.kind === 'role' ? 'existing_role' : 'from_scratch'}
+        editable={!busy && !pendingDeletion && !(node.harness?.kind === 'role' && locallyChanged)}
+        onChange={(source) => {
+          if (source === 'existing_role') {
+            const role = roles[0];
+            if (role) onChange(bindNodeToRole(node, role));
+          } else if (source === 'from_scratch' && node.harness?.kind === 'role') {
+            onDetach();
+          }
+        }}
+      />
+      {!roles.length ? <small>Create a saved Role before selecting one.</small> : null}
+      {node.harness?.kind === 'role' && locallyChanged ? (
+        <small>Save the node draft before changing its Harness source.</small>
+      ) : null}
 
       {node.harness?.kind === 'role' ? (
-        <label>
-          Saved Role
-          <select
-            value={node.harness.roleId}
-            disabled={busy || pendingDeletion}
-            onChange={(event) => {
-              const role = roles.find((candidate) => candidate.id === event.currentTarget.value);
-              if (role) onChange(bindNodeToRole(node, role));
-            }}
-          >
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SearchableSingleSelect
+          label="Saved Role"
+          options={roles.map((role) => ({ value: role.id, label: role.name }))}
+          value={node.harness.roleId}
+          editable={!busy && !pendingDeletion}
+          unavailableReason="Create a saved Role first."
+          onChange={(roleId) => {
+            const role = roles.find((candidate) => candidate.id === roleId);
+            if (role) onChange(bindNodeToRole(node, role));
+          }}
+        />
       ) : null}
 
       <label>
@@ -2322,186 +2321,17 @@ function NodeConfiguration({
       </label>
 
       {!pendingDeletion ? (
-        <div className="workflow-harness-fields" aria-label="Harness configuration">
-          <HarnessField
-            label="Harness name"
-            source={fieldSource(node, 'harnessName')}
-            onReset={resetHandler(node, 'harnessName', onChange)}
-          >
-            <input
-              aria-label="Harness name"
-              value={effectiveHarness.harnessName}
-              placeholder="For example, Architecture reviewer"
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(node, effectiveHarness, 'harnessName', event.currentTarget.value),
-                )
-              }
-            />
-          </HarnessField>
-          <HarnessField
-            label="Role identity"
-            source={fieldSource(node, 'roleIdentity')}
-            onReset={resetHandler(node, 'roleIdentity', onChange)}
-          >
-            <textarea
-              aria-label="Role identity"
-              value={effectiveHarness.roleIdentity}
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(
-                    node,
-                    effectiveHarness,
-                    'roleIdentity',
-                    event.currentTarget.value,
-                  ),
-                )
-              }
-            />
-          </HarnessField>
-          <HarnessField
-            label="Instructions"
-            source={fieldSource(node, 'instructions')}
-            onReset={resetHandler(node, 'instructions', onChange)}
-          >
-            <textarea
-              aria-label="Instructions"
-              value={effectiveHarness.instructions}
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(
-                    node,
-                    effectiveHarness,
-                    'instructions',
-                    event.currentTarget.value,
-                  ),
-                )
-              }
-            />
-          </HarnessField>
-          <HarnessField
-            label="Skills"
-            source={fieldSource(node, 'skills')}
-            onReset={resetHandler(node, 'skills', onChange)}
-          >
-            <textarea
-              aria-label="Skills"
-              value={effectiveHarness.skills.join('\n')}
-              placeholder="One skill per line"
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(
-                    node,
-                    effectiveHarness,
-                    'skills',
-                    lines(event.currentTarget.value),
-                  ),
-                )
-              }
-            />
-          </HarnessField>
-          <HarnessField
-            label="MCP exposure"
-            source={fieldSource(node, 'mcpServers')}
-            onReset={resetHandler(node, 'mcpServers', onChange)}
-          >
-            <textarea
-              aria-label="MCP exposure"
-              value={formatMcpServers(effectiveHarness.mcpServers)}
-              placeholder={'server-name\nother-server: tool-a, tool-b'}
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(
-                    node,
-                    effectiveHarness,
-                    'mcpServers',
-                    parseMcpServers(event.currentTarget.value),
-                  ),
-                )
-              }
-            />
-            <small>
-              A server name exposes the whole server; add a colon and tool names to select tools.
-            </small>
-          </HarnessField>
-          <HarnessField
-            label="Hooks"
-            source={fieldSource(node, 'hooks')}
-            onReset={resetHandler(node, 'hooks', onChange)}
-          >
-            <textarea
-              aria-label="Hooks"
-              value={effectiveHarness.hooks.join('\n')}
-              placeholder="One hook per line"
-              disabled={busy}
-              onChange={(event) =>
-                onChange(
-                  setHarnessField(
-                    node,
-                    effectiveHarness,
-                    'hooks',
-                    lines(event.currentTarget.value),
-                  ),
-                )
-              }
-            />
-          </HarnessField>
-          <HarnessField
-            label="Runtime settings"
-            source={fieldSource(node, 'runtime')}
-            onReset={resetHandler(node, 'runtime', onChange)}
-          >
-            <div className="workflow-runtime-fields">
-              <input
-                aria-label="Runtime provider"
-                value={effectiveHarness.runtime.provider}
-                placeholder="Provider"
-                disabled={busy}
-                onChange={(event) =>
-                  onChange(
-                    setHarnessField(node, effectiveHarness, 'runtime', {
-                      ...effectiveHarness.runtime,
-                      provider: event.currentTarget.value,
-                    }),
-                  )
-                }
-              />
-              <input
-                aria-label="Runtime model"
-                value={effectiveHarness.runtime.model}
-                placeholder="Model"
-                disabled={busy}
-                onChange={(event) =>
-                  onChange(
-                    setHarnessField(node, effectiveHarness, 'runtime', {
-                      ...effectiveHarness.runtime,
-                      model: event.currentTarget.value,
-                    }),
-                  )
-                }
-              />
-              <input
-                aria-label="Runtime reasoning effort"
-                value={effectiveHarness.runtime.reasoningEffort}
-                placeholder="Reasoning effort"
-                disabled={busy}
-                onChange={(event) =>
-                  onChange(
-                    setHarnessField(node, effectiveHarness, 'runtime', {
-                      ...effectiveHarness.runtime,
-                      reasoningEffort: event.currentTarget.value,
-                    }),
-                  )
-                }
-              />
-            </div>
-          </HarnessField>
-        </div>
+        <HarnessDefinitionEditor
+          configuration={effectiveHarness}
+          catalogs={catalogs}
+          editable={!busy}
+          mcpComponents={mcpComponents}
+          provenance={definitionProvenance(node)}
+          onResetProperty={(property) => onChange(removeHarnessPropertyOverride(node, property))}
+          onChange={(configuration) =>
+            onChange(updateNodeHarnessDefinition(node, effectiveHarness, configuration))
+          }
+        />
       ) : null}
 
       {!pendingDeletion ? (
@@ -2580,46 +2410,10 @@ function NodeConfiguration({
   );
 }
 
-type HarnessFieldKey = keyof WorkflowHarnessOverrides;
-
-function HarnessField({
-  label,
-  source,
-  onReset,
-  children,
-}: {
-  readonly label: string;
-  readonly source: 'inherited' | 'overridden' | 'instance';
-  onReset?: () => void;
-  readonly children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(label === 'Harness name');
-  return (
-    <details
-      className={`workflow-harness-field is-${source}`}
-      open={expanded}
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
-    >
-      <summary>
-        <span>{label}</span>
-        <span className="workflow-field-source">{source === 'instance' ? 'Instance' : source}</span>
-      </summary>
-      <div>
-        {children}
-        {onReset ? (
-          <button type="button" className="workflow-unoverride" onClick={onReset}>
-            <RotateCcw size={13} aria-hidden="true" />
-            Use inherited value
-          </button>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
 function RoleCatalog({
   client,
   roles,
+  mcpComponents,
   busy,
   workflowTypeId,
   initialRoleId,
@@ -2630,6 +2424,7 @@ function RoleCatalog({
 }: {
   readonly client: WorkflowApplicationClient;
   readonly roles: readonly WorkflowRole[];
+  readonly mcpComponents: readonly WorkflowMcpComponent[];
   readonly busy: boolean;
   readonly workflowTypeId: string;
   readonly initialRoleId: string | null;
@@ -2648,6 +2443,7 @@ function RoleCatalog({
   );
   const [creating, setCreating] = useState(roles.length === 0);
   const [error, setError] = useState<string | null>(null);
+  const catalogs = workflowHarnessCatalogs(mcpComponents);
 
   const choose = (role: WorkflowRole) => {
     setSelectedId(role.id);
@@ -2664,7 +2460,7 @@ function RoleCatalog({
     setError(null);
   };
   const save = async () => {
-    if (!draftName.trim() || !draftHarness.harnessName.trim() || busy) return;
+    if (!draftName.trim() || !draftHarness.identity.name.trim() || busy) return;
     onBusy(true);
     setError(null);
     try {
@@ -2707,16 +2503,17 @@ function RoleCatalog({
           <button type="button" className={creating ? 'active' : undefined} onClick={startNew}>
             <Plus size={14} aria-hidden="true" /> New Role
           </button>
-          {roles.map((role) => (
-            <button
-              key={role.id}
-              type="button"
-              className={!creating && role.id === selectedId ? 'active' : undefined}
-              onClick={() => choose(role)}
-            >
-              {role.name}
-            </button>
-          ))}
+          <SearchableSingleSelect
+            label="Saved Role"
+            options={roles.map((role) => ({ value: role.id, label: role.name }))}
+            value={creating ? null : selectedId}
+            editable={!busy}
+            unavailableReason="No saved Roles yet."
+            onChange={(roleId) => {
+              const role = roles.find((candidate) => candidate.id === roleId);
+              if (role) choose(role);
+            }}
+          />
         </nav>
         <div className="workflow-role-editor">
           <label>
@@ -2728,7 +2525,13 @@ function RoleCatalog({
               onChange={(event) => setDraftName(event.currentTarget.value)}
             />
           </label>
-          <HarnessEditor config={draftHarness} busy={busy} onChange={setDraftHarness} />
+          <HarnessDefinitionEditor
+            configuration={draftHarness}
+            catalogs={catalogs}
+            editable={!busy}
+            mcpComponents={mcpComponents}
+            onChange={setDraftHarness}
+          />
           {error ? (
             <p className="workflow-error" role="alert">
               {error}
@@ -2737,7 +2540,7 @@ function RoleCatalog({
           <button
             type="button"
             className="workflow-primary-button"
-            disabled={busy || !draftName.trim() || !draftHarness.harnessName.trim()}
+            disabled={busy || !draftName.trim() || !draftHarness.identity.name.trim()}
             onClick={() => void save()}
           >
             {busy ? 'Saving…' : creating ? 'Create Role' : 'Save Role'}
@@ -2748,184 +2551,299 @@ function RoleCatalog({
   );
 }
 
-function HarnessEditor({
-  config,
-  busy,
-  onChange,
-}: {
-  readonly config: WorkflowHarnessConfig;
-  readonly busy: boolean;
-  onChange(config: WorkflowHarnessConfig): void;
-}) {
-  return (
-    <div className="workflow-role-harness-fields">
-      <label>
-        Harness name
-        <input
-          value={config.harnessName}
-          disabled={busy}
-          onChange={(event) => onChange({ ...config, harnessName: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Role identity
-        <textarea
-          value={config.roleIdentity}
-          disabled={busy}
-          onChange={(event) => onChange({ ...config, roleIdentity: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Instructions
-        <textarea
-          value={config.instructions}
-          disabled={busy}
-          onChange={(event) => onChange({ ...config, instructions: event.currentTarget.value })}
-        />
-      </label>
-      <label>
-        Skills
-        <textarea
-          value={config.skills.join('\n')}
-          placeholder="One skill per line"
-          disabled={busy}
-          onChange={(event) => onChange({ ...config, skills: lines(event.currentTarget.value) })}
-        />
-      </label>
-      <label>
-        MCP exposure
-        <textarea
-          value={formatMcpServers(config.mcpServers)}
-          placeholder={'server-name\nother-server: tool-a, tool-b'}
-          disabled={busy}
-          onChange={(event) =>
-            onChange({ ...config, mcpServers: parseMcpServers(event.currentTarget.value) })
-          }
-        />
-      </label>
-      <label>
-        Hooks
-        <textarea
-          value={config.hooks.join('\n')}
-          placeholder="One hook per line"
-          disabled={busy}
-          onChange={(event) => onChange({ ...config, hooks: lines(event.currentTarget.value) })}
-        />
-      </label>
-      <fieldset>
-        <legend>Runtime settings</legend>
-        <input
-          aria-label="Role runtime provider"
-          value={config.runtime.provider}
-          placeholder="Provider"
-          disabled={busy}
-          onChange={(event) =>
-            onChange({
-              ...config,
-              runtime: { ...config.runtime, provider: event.currentTarget.value },
-            })
-          }
-        />
-        <input
-          aria-label="Role runtime model"
-          value={config.runtime.model}
-          placeholder="Model"
-          disabled={busy}
-          onChange={(event) =>
-            onChange({
-              ...config,
-              runtime: { ...config.runtime, model: event.currentTarget.value },
-            })
-          }
-        />
-        <input
-          aria-label="Role runtime reasoning effort"
-          value={config.runtime.reasoningEffort}
-          placeholder="Reasoning effort"
-          disabled={busy}
-          onChange={(event) =>
-            onChange({
-              ...config,
-              runtime: { ...config.runtime, reasoningEffort: event.currentTarget.value },
-            })
-          }
-        />
-      </fieldset>
-    </div>
-  );
-}
-
 function bindNodeToRole(node: WorkflowNodeConfig, role: WorkflowRole): WorkflowNodeConfig {
   return {
     ...node,
-    harnessName: role.harness.harnessName,
+    harnessName: role.harness.identity.name,
     roleName: role.name,
     harness: { kind: 'role', roleId: role.id, overrides: {} },
   };
 }
 
-function fieldSource(
+function definitionProvenance(
   node: WorkflowNodeConfig,
-  field: HarnessFieldKey,
-): 'inherited' | 'overridden' | 'instance' {
-  if (node.harness?.kind !== 'role') return 'instance';
-  return node.harness.overrides[field] !== undefined && node.harness.overrides[field] !== null
-    ? 'overridden'
-    : 'inherited';
+): Record<HarnessDefinitionProperty, 'inherited' | 'overridden' | 'instance'> {
+  const properties: readonly HarnessDefinitionProperty[] = [
+    'identityName',
+    'identityMachineKey',
+    'permittedAgentNames',
+    'visualIdentity',
+    'promptPrefixContent',
+    'skillDiscoveryPolicy',
+    'skillItems',
+    'toolDiscoveryPolicy',
+    'toolItems',
+    'mcpServers',
+    'runtimeModelPolicyMode',
+    'runtimeModels',
+    'runtimeDefaultModel',
+    'runtimeDefaultReasoning',
+    'runtimeSandbox',
+    'runtimeAuthoritySummary',
+    'hookItems',
+  ];
+  if (node.harness?.kind !== 'role')
+    return Object.fromEntries(properties.map((property) => [property, 'instance'])) as Record<
+      HarnessDefinitionProperty,
+      'instance'
+    >;
+  const overrides = node.harness.overrides;
+  return Object.fromEntries(
+    properties.map((property) => [
+      property,
+      propertyIsOverridden(overrides, property) ? 'overridden' : 'inherited',
+    ]),
+  ) as Record<HarnessDefinitionProperty, 'inherited' | 'overridden'>;
 }
 
-function resetHandler(
+function removeHarnessPropertyOverride(
   node: WorkflowNodeConfig,
-  field: HarnessFieldKey,
-  onChange: (node: WorkflowNodeConfig) => void,
-): (() => void) | undefined {
-  return fieldSource(node, field) === 'overridden'
-    ? () => onChange(removeHarnessOverride(node, field))
-    : undefined;
-}
-
-function removeHarnessOverride(
-  node: WorkflowNodeConfig,
-  field: HarnessFieldKey,
+  property: HarnessDefinitionProperty,
 ): WorkflowNodeConfig {
   if (node.harness?.kind !== 'role') return node;
   const overrides = { ...node.harness.overrides };
-  delete (overrides as Record<string, unknown>)[field];
+  delete (overrides as Record<string, unknown>)[property];
+  deleteLegacyAlias(overrides, property);
   return { ...node, harness: { ...node.harness, overrides } };
 }
 
-function setHarnessField<K extends HarnessFieldKey>(
+function updateNodeHarnessDefinition(
   node: WorkflowNodeConfig,
   effective: WorkflowHarnessConfig,
-  field: K,
-  value: NonNullable<WorkflowHarnessOverrides[K]>,
+  next: WorkflowHarnessConfig,
 ): WorkflowNodeConfig {
-  if (node.harness?.kind === 'role') {
-    const overrides = { ...node.harness.overrides, [field]: value };
+  if (node.harness?.kind !== 'role')
     return {
       ...node,
-      harnessName: field === 'harnessName' ? String(value) : node.harnessName,
-      harness: { ...node.harness, overrides },
+      harnessName: next.identity.name,
+      roleName: null,
+      harness: { kind: 'standalone', config: next },
     };
+  const overrides = { ...node.harness.overrides };
+  const properties: readonly HarnessDefinitionProperty[] = [
+    'identityName',
+    'identityMachineKey',
+    'permittedAgentNames',
+    'visualIdentity',
+    'promptPrefixContent',
+    'skillDiscoveryPolicy',
+    'skillItems',
+    'toolDiscoveryPolicy',
+    'toolItems',
+    'mcpServers',
+    'runtimeModelPolicyMode',
+    'runtimeModels',
+    'runtimeDefaultModel',
+    'runtimeDefaultReasoning',
+    'runtimeSandbox',
+    'runtimeAuthoritySummary',
+    'hookItems',
+  ];
+  for (const property of properties) {
+    const previousValue = harnessProperty(effective, property);
+    const nextValue = harnessProperty(next, property);
+    if (JSON.stringify(previousValue) !== JSON.stringify(nextValue)) {
+      Object.assign(overrides, { [property]: nextValue });
+      deleteLegacyAlias(overrides, property);
+    }
   }
-  const config = { ...effective, [field]: value } as WorkflowHarnessConfig;
   return {
     ...node,
-    harnessName: config.harnessName,
-    roleName: null,
-    harness: { kind: 'standalone', config },
+    harnessName: next.identity.name,
+    harness: { ...node.harness, overrides },
   };
+}
+
+function harnessProperty(
+  harness: WorkflowHarnessConfig,
+  property: HarnessDefinitionProperty,
+): unknown {
+  switch (property) {
+    case 'identityName':
+      return harness.identity.name;
+    case 'identityMachineKey':
+      return harness.identity.machineKey;
+    case 'permittedAgentNames':
+      return harness.identity.permittedAgentNames;
+    case 'visualIdentity':
+      return harness.identity.visualIdentity;
+    case 'promptPrefixContent':
+      return harness.promptPrefix.content;
+    case 'skillDiscoveryPolicy':
+      return harness.skills.availableDiscoveryPolicy;
+    case 'skillItems':
+      return harness.skills.items;
+    case 'toolDiscoveryPolicy':
+      return harness.tools.availableDiscoveryPolicy;
+    case 'toolItems':
+      return harness.tools.items;
+    case 'mcpServers':
+      return harness.tools.mcpServers ?? [];
+    case 'runtimeModelPolicyMode':
+      return harness.runtime.modelPolicyMode;
+    case 'runtimeModels':
+      return harness.runtime.models;
+    case 'runtimeDefaultModel':
+      return harness.runtime.defaultModel;
+    case 'runtimeDefaultReasoning':
+      return harness.runtime.defaultReasoning;
+    case 'runtimeSandbox':
+      return harness.runtime.sandbox;
+    case 'runtimeAuthoritySummary':
+      return harness.runtime.authoritySummary;
+    case 'hookItems':
+      return harness.hooks;
+  }
+}
+
+function propertyIsOverridden(
+  overrides: WorkflowHarnessOverrides,
+  property: HarnessDefinitionProperty,
+): boolean {
+  if (Object.prototype.hasOwnProperty.call(overrides, property)) return true;
+  switch (property) {
+    case 'identityName':
+      return overrides.harnessName !== undefined;
+    case 'promptPrefixContent':
+      return overrides.instructions !== undefined;
+    case 'skillItems':
+      return overrides.skills !== undefined;
+    case 'runtimeModels':
+    case 'runtimeDefaultModel':
+    case 'runtimeDefaultReasoning':
+      return overrides.runtime !== undefined;
+    case 'runtimeAuthoritySummary':
+      return overrides.roleIdentity !== undefined;
+    case 'hookItems':
+      return overrides.hooks !== undefined;
+    default:
+      return false;
+  }
+}
+
+function deleteLegacyAlias(
+  overrides: WorkflowHarnessOverrides,
+  property: HarnessDefinitionProperty,
+) {
+  const mutable = overrides as {
+    harnessName?: unknown;
+    roleIdentity?: unknown;
+    instructions?: unknown;
+    skills?: unknown;
+    hooks?: unknown;
+    runtime?: unknown;
+  };
+  if (property === 'identityName') delete mutable.harnessName;
+  if (property === 'promptPrefixContent') delete mutable.instructions;
+  if (property === 'skillItems') delete mutable.skills;
+  if (property === 'runtimeAuthoritySummary') delete mutable.roleIdentity;
+  if (
+    property === 'runtimeModels' ||
+    property === 'runtimeDefaultModel' ||
+    property === 'runtimeDefaultReasoning'
+  )
+    delete mutable.runtime;
+  if (property === 'hookItems') delete mutable.hooks;
 }
 
 function emptyHarness(): WorkflowHarnessConfig {
   return {
-    harnessName: '',
-    roleIdentity: '',
-    instructions: '',
-    skills: [],
-    mcpServers: [],
+    identity: {
+      name: '',
+      machineKey: '',
+      permittedAgentNames: null,
+      visualIdentity: null,
+    },
+    promptPrefix: {
+      content: '',
+      initialDelivery: 'prepend',
+      contextCompressionDelivery: 'deferred',
+    },
+    skills: { availableDiscoveryPolicy: 'whitelist', items: [] },
+    tools: {
+      availableDiscoveryPolicy: 'whitelist',
+      items: [],
+      schemaBoundary: 'Tool schemas remain runtime-owned.',
+      mcpServers: [],
+    },
+    runtime: {
+      modelPolicyMode: 'revision_owned',
+      models: [
+        {
+          modelId: 'gpt-5.6-terra',
+          allowed: true,
+          minReasoning: 'low',
+          maxReasoning: 'xhigh',
+        },
+        {
+          modelId: 'gpt-5.6-sol',
+          allowed: true,
+          minReasoning: 'medium',
+          maxReasoning: 'xhigh',
+        },
+      ],
+      defaultModel: null,
+      defaultReasoning: null,
+      sandbox: 'workspace_write',
+      sandboxOptions: ['read_only', 'workspace_write', 'danger_full_access'],
+      approvalPolicy: 'never',
+      approvalPolicyOptions: ['never'],
+      authoritySummary: '',
+    },
     hooks: [],
-    runtime: { provider: '', model: '', reasoningEffort: '' },
+    updatePolicy: {
+      status: 'not_configured',
+      reason: 'Session replacement applies activated Workflow Harness changes.',
+    },
+  };
+}
+
+function workflowHarnessCatalogs(
+  mcpComponents: readonly WorkflowMcpComponent[],
+): HarnessConfigurationCatalogs {
+  const toolNames = [...new Set(mcpComponents.map((component) => component.toolName))];
+  return {
+    agentNames: {
+      source: 'not_connected',
+      items: [],
+      reason: 'Agent name catalog unavailable.',
+    },
+    agentVisualIdentities: {
+      source: 'not_connected',
+      items: [],
+      reason: 'Visual identity catalog unavailable.',
+    },
+    skills: {
+      source: 'not_connected',
+      items: [],
+      reason: 'Skill catalog unavailable.',
+    },
+    tools: {
+      source: mcpComponents.length ? 'workflow_mcp_component_catalog' : 'not_connected',
+      items: toolNames.map((name) => ({
+        name,
+        description: mcpComponents.find((component) => component.toolName === name)?.title ?? '',
+      })),
+      reason: mcpComponents.length
+        ? 'Application-owned Workflow MCP components.'
+        : 'Workflow MCP component catalog unavailable.',
+    },
+    models: {
+      source: 'workflow_runtime_catalog',
+      items: [
+        {
+          id: 'gpt-5.6-terra',
+          label: 'GPT-5.6 Terra',
+          reasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        },
+        {
+          id: 'gpt-5.6-sol',
+          label: 'GPT-5.6 Sol',
+          reasoningLevels: ['medium', 'high', 'xhigh'],
+        },
+      ],
+      reason: 'Models currently supported by Workflow runtime launch.',
+    },
   };
 }
 
@@ -2935,42 +2853,6 @@ function cloneNodeHarness(
 ): WorkflowNodeHarness {
   if (!harness) return { kind: 'standalone', config: structuredClone(effective) };
   return structuredClone(harness);
-}
-
-function lines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function formatMcpServers(servers: readonly WorkflowMcpServerExposure[]): string {
-  return servers
-    .map((server) =>
-      server.access.kind === 'entire_server'
-        ? server.serverName
-        : `${server.serverName}: ${server.access.toolNames.join(', ')}`,
-    )
-    .join('\n');
-}
-
-function parseMcpServers(value: string): WorkflowMcpServerExposure[] {
-  const servers: WorkflowMcpServerExposure[] = [];
-  for (const line of lines(value)) {
-    const separator = line.indexOf(':');
-    if (separator < 0) {
-      servers.push({ serverName: line, access: { kind: 'entire_server' } });
-      continue;
-    }
-    const serverName = line.slice(0, separator).trim();
-    const toolNames = line
-      .slice(separator + 1)
-      .split(',')
-      .map((tool) => tool.trim())
-      .filter(Boolean);
-    if (serverName) servers.push({ serverName, access: { kind: 'selected_tools', toolNames } });
-  }
-  return servers;
 }
 
 function ConnectionList({
@@ -3586,22 +3468,210 @@ function resolveNodeHarness(
 ): WorkflowHarnessConfig {
   if (node.harness?.kind === 'standalone') return node.harness.config;
   if (node.harness?.kind === 'role') {
-    const roleId = node.harness.roleId;
-    const role = roles.find((candidate) => candidate.id === roleId);
+    const binding = node.harness;
+    const role = roles.find((candidate) => candidate.id === binding.roleId);
     if (role) {
-      const overrides = node.harness.overrides;
-      return {
-        harnessName: overrides.harnessName ?? role.harness.harnessName,
-        roleIdentity: overrides.roleIdentity ?? role.harness.roleIdentity,
-        instructions: overrides.instructions ?? role.harness.instructions,
-        skills: overrides.skills ?? role.harness.skills,
-        mcpServers: overrides.mcpServers ?? role.harness.mcpServers,
-        hooks: overrides.hooks ?? role.harness.hooks,
-        runtime: overrides.runtime ?? role.harness.runtime,
-      };
+      let resolved: WorkflowHarnessConfig = structuredClone(role.harness);
+      const overrides = binding.overrides;
+      if (overrides.harnessName !== undefined)
+        resolved = {
+          ...resolved,
+          identity: { ...resolved.identity, name: overrides.harnessName ?? '' },
+        };
+      if (overrides.instructions !== undefined)
+        resolved = {
+          ...resolved,
+          promptPrefix: {
+            ...resolved.promptPrefix,
+            content: overrides.instructions ?? '',
+          },
+        };
+      if (overrides.skills)
+        resolved = {
+          ...resolved,
+          skills: {
+            ...resolved.skills,
+            items: overrides.skills.map((name) => ({
+              name,
+              path: name,
+              purpose: '',
+              useWhen: '',
+              policy: 'available',
+            })),
+          },
+        };
+      if (overrides.mcpServers)
+        resolved = {
+          ...resolved,
+          tools: { ...resolved.tools, mcpServers: overrides.mcpServers },
+        };
+      if (overrides.hooks)
+        resolved = {
+          ...resolved,
+          hooks: overrides.hooks.map((name) => ({
+            name,
+            status: 'exposed',
+            detail: '',
+          })),
+        };
+      if (overrides.runtime) resolved = applyLegacyRuntimeOverride(resolved, overrides.runtime);
+      if (overrides.roleIdentity !== undefined)
+        resolved = {
+          ...resolved,
+          runtime: {
+            ...resolved.runtime,
+            authoritySummary: overrides.roleIdentity ?? '',
+          },
+        };
+      if (overrides.identityName !== undefined)
+        resolved = {
+          ...resolved,
+          identity: { ...resolved.identity, name: overrides.identityName ?? '' },
+        };
+      if (overrides.identityMachineKey !== undefined)
+        resolved = {
+          ...resolved,
+          identity: { ...resolved.identity, machineKey: overrides.identityMachineKey ?? '' },
+        };
+      if (Object.prototype.hasOwnProperty.call(overrides, 'permittedAgentNames'))
+        resolved = {
+          ...resolved,
+          identity: {
+            ...resolved.identity,
+            permittedAgentNames: overrides.permittedAgentNames ?? null,
+          },
+        };
+      if (Object.prototype.hasOwnProperty.call(overrides, 'visualIdentity'))
+        resolved = {
+          ...resolved,
+          identity: { ...resolved.identity, visualIdentity: overrides.visualIdentity ?? null },
+        };
+      if (overrides.promptPrefixContent !== undefined)
+        resolved = {
+          ...resolved,
+          promptPrefix: { ...resolved.promptPrefix, content: overrides.promptPrefixContent ?? '' },
+        };
+      if (overrides.skillDiscoveryPolicy)
+        resolved = {
+          ...resolved,
+          skills: {
+            ...resolved.skills,
+            availableDiscoveryPolicy: overrides.skillDiscoveryPolicy,
+          },
+        };
+      if (overrides.skillItems)
+        resolved = { ...resolved, skills: { ...resolved.skills, items: overrides.skillItems } };
+      if (overrides.toolDiscoveryPolicy)
+        resolved = {
+          ...resolved,
+          tools: { ...resolved.tools, availableDiscoveryPolicy: overrides.toolDiscoveryPolicy },
+        };
+      if (overrides.toolItems)
+        resolved = { ...resolved, tools: { ...resolved.tools, items: overrides.toolItems } };
+      if (overrides.toolSchemaBoundary !== undefined)
+        resolved = {
+          ...resolved,
+          tools: { ...resolved.tools, schemaBoundary: overrides.toolSchemaBoundary ?? '' },
+        };
+      if (overrides.runtimeModelPolicyMode)
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, modelPolicyMode: overrides.runtimeModelPolicyMode },
+        };
+      if (overrides.runtimeModels)
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, models: overrides.runtimeModels },
+        };
+      if (Object.prototype.hasOwnProperty.call(overrides, 'runtimeDefaultModel'))
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, defaultModel: overrides.runtimeDefaultModel ?? null },
+        };
+      if (Object.prototype.hasOwnProperty.call(overrides, 'runtimeDefaultReasoning'))
+        resolved = {
+          ...resolved,
+          runtime: {
+            ...resolved.runtime,
+            defaultReasoning: overrides.runtimeDefaultReasoning ?? null,
+          },
+        };
+      if (overrides.runtimeSandbox)
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, sandbox: overrides.runtimeSandbox },
+        };
+      if (overrides.runtimeSandboxOptions)
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, sandboxOptions: overrides.runtimeSandboxOptions },
+        };
+      if (overrides.runtimeApprovalPolicy)
+        resolved = {
+          ...resolved,
+          runtime: { ...resolved.runtime, approvalPolicy: overrides.runtimeApprovalPolicy },
+        };
+      if (overrides.runtimeApprovalPolicyOptions)
+        resolved = {
+          ...resolved,
+          runtime: {
+            ...resolved.runtime,
+            approvalPolicyOptions: overrides.runtimeApprovalPolicyOptions,
+          },
+        };
+      if (overrides.runtimeAuthoritySummary !== undefined)
+        resolved = {
+          ...resolved,
+          runtime: {
+            ...resolved.runtime,
+            authoritySummary: overrides.runtimeAuthoritySummary ?? '',
+          },
+        };
+      if (overrides.hookItems) resolved = { ...resolved, hooks: overrides.hookItems };
+      if (overrides.updatePolicy) resolved = { ...resolved, updatePolicy: overrides.updatePolicy };
+      return resolved;
     }
   }
-  return { ...emptyHarness(), harnessName: node.harnessName, roleIdentity: node.roleName ?? '' };
+  const empty = emptyHarness();
+  return {
+    ...empty,
+    identity: {
+      ...empty.identity,
+      name: node.harnessName,
+      machineKey: node.id,
+    },
+    runtime: {
+      ...empty.runtime,
+      authoritySummary: node.roleName ?? '',
+    },
+  };
+}
+
+function applyLegacyRuntimeOverride(
+  harness: WorkflowHarnessConfig,
+  runtime: NonNullable<WorkflowHarnessOverrides['runtime']>,
+): WorkflowHarnessConfig {
+  const reasoning = ['low', 'medium', 'high', 'xhigh'].includes(runtime.reasoningEffort)
+    ? (runtime.reasoningEffort as WorkflowHarnessConfig['runtime']['defaultReasoning'])
+    : null;
+  return {
+    ...harness,
+    runtime: {
+      ...harness.runtime,
+      models: runtime.model
+        ? [
+            {
+              modelId: runtime.model,
+              allowed: true,
+              minReasoning: 'low',
+              maxReasoning: 'xhigh',
+            },
+          ]
+        : [],
+      defaultModel: runtime.model || null,
+      defaultReasoning: reasoning,
+    },
+  };
 }
 
 function mergeDisplayConnections(
@@ -3731,7 +3801,7 @@ function harnessExposesMcpTool(
   serverName: string,
   toolName: string,
 ): boolean {
-  const server = harness.mcpServers.find((candidate) => candidate.serverName === serverName);
+  const server = harness.tools.mcpServers?.find((candidate) => candidate.serverName === serverName);
   return Boolean(
     server &&
     (server.access.kind === 'entire_server' || server.access.toolNames.includes(toolName)),

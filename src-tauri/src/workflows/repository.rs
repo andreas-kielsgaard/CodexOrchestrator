@@ -12,6 +12,10 @@ use super::{
     },
     mcp::{SERVER_NAME as WORKFLOW_MCP_SERVER, TOOL_NAME as WORKFLOW_MCP_TOOL},
 };
+use crate::orchestration::conversation_harness_working_copy::{
+    HarnessHookConfiguration, HarnessHookStatus, HarnessModelConstraint, HarnessReasoningLevel,
+    HarnessSkillConfiguration, HarnessSkillPolicy,
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
@@ -406,7 +410,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             return Err("Only a Role-backed Workflow node can be detached.".to_string());
         }
         let effective = resolve_node_harness(&transaction, &node)?;
-        node.harness_name = effective.harness_name.clone();
+        node.harness_name = effective.name().to_string();
         node.role_name = None;
         node.harness = Some(WorkflowNodeHarness::Standalone { config: effective });
         save_node_draft_in_transaction(&transaction, workflow_type_id, &node)?;
@@ -1663,8 +1667,8 @@ fn validate_node_harness(connection: &Connection, node: &WorkflowNodeConfig) -> 
 }
 
 fn validate_harness(harness: &WorkflowHarnessConfig) -> Result<(), String> {
-    required(&harness.harness_name, "Harness name")?;
-    for server in &harness.mcp_servers {
+    required(harness.name(), "Harness name")?;
+    for server in harness.mcp_servers() {
         required(&server.server_name, "MCP server name")?;
         if let super::domain::WorkflowMcpServerAccess::SelectedTools { tool_names } = &server.access
         {
@@ -1694,36 +1698,153 @@ fn apply_overrides(
     mut harness: WorkflowHarnessConfig,
     overrides: &WorkflowHarnessOverrides,
 ) -> WorkflowHarnessConfig {
-    if let Some(value) = &overrides.harness_name {
-        harness.harness_name = value.clone();
+    if let Some(value) = &overrides.identity_name {
+        harness.0.identity.name = value.clone();
     }
-    if let Some(value) = &overrides.role_identity {
-        harness.role_identity = value.clone();
+    if let Some(value) = &overrides.identity_machine_key {
+        harness.0.identity.machine_key = value.clone();
     }
-    if let Some(value) = &overrides.instructions {
-        harness.instructions = value.clone();
+    if let Some(value) = &overrides.permitted_agent_names {
+        harness.0.identity.permitted_agent_names = value.clone();
     }
-    if let Some(value) = &overrides.skills {
-        harness.skills = value.clone();
+    if let Some(value) = &overrides.visual_identity {
+        harness.0.identity.visual_identity = value.clone();
+    }
+    if let Some(value) = &overrides.prompt_prefix_content {
+        harness.0.prompt_prefix.content = value.clone();
+    }
+    if let Some(value) = overrides.skill_discovery_policy {
+        harness.0.skills.available_discovery_policy = value;
+    }
+    if let Some(value) = &overrides.skill_items {
+        harness.0.skills.items = value.clone();
+    }
+    if let Some(value) = overrides.tool_discovery_policy {
+        harness.0.tools.available_discovery_policy = value;
+    }
+    if let Some(value) = &overrides.tool_items {
+        harness.0.tools.items = value.clone();
+    }
+    if let Some(value) = &overrides.tool_schema_boundary {
+        harness.0.tools.schema_boundary = value.clone();
     }
     if let Some(value) = &overrides.mcp_servers {
-        harness.mcp_servers = value.clone();
+        harness.0.tools.mcp_servers = value.clone();
     }
-    if let Some(value) = &overrides.hooks {
-        harness.hooks = value.clone();
+    if let Some(value) = overrides.runtime_model_policy_mode {
+        harness.0.runtime.model_policy_mode = value;
     }
-    if let Some(value) = &overrides.runtime {
-        harness.runtime = value.clone();
+    if let Some(value) = &overrides.runtime_models {
+        harness.0.runtime.models = value.clone();
+    }
+    if let Some(value) = &overrides.runtime_default_model {
+        harness.0.runtime.default_model = value.clone();
+    }
+    if let Some(value) = overrides.runtime_default_reasoning {
+        harness.0.runtime.default_reasoning = value;
+    }
+    if let Some(value) = overrides.runtime_sandbox {
+        harness.0.runtime.sandbox = value;
+    }
+    if let Some(value) = &overrides.runtime_sandbox_options {
+        harness.0.runtime.sandbox_options = value.clone();
+    }
+    if let Some(value) = overrides.runtime_approval_policy {
+        harness.0.runtime.approval_policy = value;
+    }
+    if let Some(value) = &overrides.runtime_approval_policy_options {
+        harness.0.runtime.approval_policy_options = value.clone();
+    }
+    if let Some(value) = &overrides.runtime_authority_summary {
+        harness.0.runtime.authority_summary = value.clone();
+    }
+    if let Some(value) = &overrides.hook_items {
+        harness.0.hooks = value.clone();
+    }
+    if let Some(value) = &overrides.update_policy {
+        harness.0.update_policy = value.clone();
+    }
+
+    if overrides.identity_name.is_none() {
+        if let Some(value) = &overrides.harness_name {
+            harness.0.identity.name = value.clone();
+        }
+    }
+    if overrides.runtime_authority_summary.is_none() {
+        if let Some(value) = &overrides.role_identity {
+            harness.0.runtime.authority_summary = value.clone();
+        }
+    }
+    if overrides.prompt_prefix_content.is_none() {
+        if let Some(value) = &overrides.instructions {
+            harness.0.prompt_prefix.content = value.clone();
+        }
+    }
+    if overrides.skill_items.is_none() {
+        if let Some(value) = &overrides.skills {
+            harness.0.skills.items = value
+                .iter()
+                .map(|name| HarnessSkillConfiguration {
+                    name: name.clone(),
+                    path: name.clone(),
+                    purpose: String::new(),
+                    use_when: String::new(),
+                    policy: HarnessSkillPolicy::Available,
+                })
+                .collect();
+        }
+    }
+    if overrides.hook_items.is_none() {
+        if let Some(value) = &overrides.hooks {
+            harness.0.hooks = value
+                .iter()
+                .map(|name| HarnessHookConfiguration {
+                    name: name.clone(),
+                    status: HarnessHookStatus::Exposed,
+                    detail: String::new(),
+                })
+                .collect();
+        }
+    }
+    if let Some(runtime) = &overrides.runtime {
+        if overrides.runtime_models.is_none() && !runtime.model.trim().is_empty() {
+            harness.0.runtime.models = vec![legacy_model_constraint(&runtime.model)];
+        }
+        if overrides.runtime_default_model.is_none() && !runtime.model.trim().is_empty() {
+            harness.0.runtime.default_model = Some(runtime.model.clone());
+        }
+        if overrides.runtime_default_reasoning.is_none() {
+            harness.0.runtime.default_reasoning = legacy_reasoning(&runtime.reasoning_effort);
+        }
     }
     harness
 }
 
-fn legacy_harness(node: &WorkflowNodeConfig) -> WorkflowHarnessConfig {
-    WorkflowHarnessConfig {
-        harness_name: node.harness_name.clone(),
-        role_identity: node.role_name.clone().unwrap_or_default(),
-        ..WorkflowHarnessConfig::default()
+fn legacy_model_constraint(model: &str) -> HarnessModelConstraint {
+    HarnessModelConstraint {
+        model_id: model.to_string(),
+        allowed: true,
+        min_reasoning: HarnessReasoningLevel::Low,
+        max_reasoning: HarnessReasoningLevel::Xhigh,
     }
+}
+
+fn legacy_reasoning(reasoning: &str) -> Option<HarnessReasoningLevel> {
+    match reasoning.trim() {
+        "low" => Some(HarnessReasoningLevel::Low),
+        "medium" => Some(HarnessReasoningLevel::Medium),
+        "high" => Some(HarnessReasoningLevel::High),
+        "xhigh" => Some(HarnessReasoningLevel::Xhigh),
+        _ => None,
+    }
+}
+
+fn legacy_harness(node: &WorkflowNodeConfig) -> WorkflowHarnessConfig {
+    let mut harness = WorkflowHarnessConfig::default();
+    harness.0.identity.name = node.harness_name.clone();
+    harness.0.identity.machine_key = node.id.clone();
+    harness.0.runtime.authority_summary = node.role_name.clone().unwrap_or_default();
+    harness
 }
 
 fn materialize_node(
@@ -2004,19 +2125,140 @@ mod tests {
     }
 
     fn harness(name: &str, identity: &str, instructions: &str) -> WorkflowHarnessConfig {
-        WorkflowHarnessConfig {
-            harness_name: name.to_string(),
-            role_identity: identity.to_string(),
-            instructions: instructions.to_string(),
-            skills: vec!["review".to_string()],
-            mcp_servers: Vec::new(),
-            hooks: vec!["turn_finished".to_string()],
-            runtime: super::super::domain::WorkflowHarnessRuntimeSettings {
-                provider: "codex".to_string(),
-                model: "gpt-5".to_string(),
-                reasoning_effort: "medium".to_string(),
+        let mut harness =
+            WorkflowHarnessConfig::test_definition(name, identity, instructions, "gpt-5", "medium");
+        harness.0.skills.items.push(
+            crate::orchestration::conversation_harness_working_copy::HarnessSkillConfiguration {
+                name: "review".to_string(),
+                path: "review".to_string(),
+                purpose: String::new(),
+                use_when: String::new(),
+                policy: crate::orchestration::conversation_harness_working_copy::HarnessSkillPolicy::Available,
             },
-        }
+        );
+        harness.0.hooks.push(
+            crate::orchestration::conversation_harness_working_copy::HarnessHookConfiguration {
+                name: "turn_finished".to_string(),
+                status: crate::orchestration::conversation_harness_working_copy::HarnessHookStatus::Exposed,
+                detail: String::new(),
+            },
+        );
+        harness
+    }
+
+    #[test]
+    fn v43_overrides_reopen_without_replacing_canonical_runtime_authority() {
+        let overrides: WorkflowHarnessOverrides = serde_json::from_value(serde_json::json!({
+            "skills": ["security-review"],
+            "hooks": ["turn_finished"],
+            "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoningEffort": "high"
+            }
+        }))
+        .unwrap();
+        let mut role = harness("Review Harness", "Review trust boundaries", "Review this.");
+        role.0.runtime.sandbox =
+            crate::orchestration::conversation_harness_working_copy::HarnessSandbox::ReadOnly;
+
+        let effective = apply_overrides(role, &overrides);
+
+        assert_eq!(
+            effective.0.runtime.authority_summary,
+            "Review trust boundaries"
+        );
+        assert_eq!(
+            effective.0.runtime.sandbox,
+            crate::orchestration::conversation_harness_working_copy::HarnessSandbox::ReadOnly
+        );
+        assert_eq!(
+            effective.0.runtime.default_model.as_deref(),
+            Some("gpt-5.6-sol")
+        );
+        assert_eq!(
+            effective.0.runtime.default_reasoning,
+            Some(HarnessReasoningLevel::High)
+        );
+        assert_eq!(effective.0.skills.items[0].name, "security-review");
+        assert_eq!(
+            effective.0.skills.items[0].policy,
+            HarnessSkillPolicy::Available
+        );
+        assert_eq!(effective.0.hooks[0].name, "turn_finished");
+        assert_eq!(effective.0.hooks[0].status, HarnessHookStatus::Exposed);
+    }
+
+    #[test]
+    fn canonical_leaf_overrides_take_precedence_over_v43_aliases() {
+        let overrides: WorkflowHarnessOverrides = serde_json::from_value(serde_json::json!({
+            "identityName": "Canonical name",
+            "harnessName": "Legacy name",
+            "skillItems": [{
+                "name": "canonical-skill",
+                "path": "canonical-skill",
+                "purpose": "",
+                "useWhen": "",
+                "policy": "available"
+            }],
+            "skills": ["legacy-skill"],
+            "hookItems": [{
+                "name": "canonical_hook",
+                "status": "exposed",
+                "detail": ""
+            }],
+            "hooks": ["legacy_hook"]
+        }))
+        .unwrap();
+
+        let effective = apply_overrides(
+            harness("Review Harness", "Reviewer", "Review this."),
+            &overrides,
+        );
+
+        assert_eq!(effective.0.identity.name, "Canonical name");
+        assert_eq!(effective.0.skills.items[0].name, "canonical-skill");
+        assert_eq!(effective.0.hooks[0].name, "canonical_hook");
+    }
+
+    #[test]
+    fn explicit_null_leaf_overrides_clear_nullable_canonical_values() {
+        let overrides: WorkflowHarnessOverrides = serde_json::from_value(serde_json::json!({
+            "permittedAgentNames": null,
+            "visualIdentity": null,
+            "runtimeDefaultModel": null,
+            "runtimeDefaultReasoning": null
+        }))
+        .unwrap();
+        assert_eq!(overrides.permitted_agent_names, Some(None));
+        assert_eq!(overrides.visual_identity, Some(None));
+        assert_eq!(overrides.runtime_default_model, Some(None));
+        assert_eq!(overrides.runtime_default_reasoning, Some(None));
+
+        let serialized = serde_json::to_value(&overrides).unwrap();
+        assert!(serialized["permittedAgentNames"].is_null());
+        assert!(serialized["visualIdentity"].is_null());
+        assert!(serialized["runtimeDefaultModel"].is_null());
+        assert!(serialized["runtimeDefaultReasoning"].is_null());
+        assert_eq!(
+            serde_json::to_value(WorkflowHarnessOverrides::default()).unwrap(),
+            serde_json::json!({})
+        );
+
+        let mut role = harness("Review Harness", "Reviewer", "Review this.");
+        role.0.identity.permitted_agent_names = Some(vec!["reviewer".to_string()]);
+        role.0.identity.visual_identity = Some(
+            crate::orchestration::conversation_harness_working_copy::HarnessVisualIdentity {
+                token: "reviewer".to_string(),
+                accent: "blue".to_string(),
+            },
+        );
+        let effective = apply_overrides(role, &overrides);
+
+        assert_eq!(effective.0.identity.permitted_agent_names, None);
+        assert_eq!(effective.0.identity.visual_identity, None);
+        assert_eq!(effective.0.runtime.default_model, None);
+        assert_eq!(effective.0.runtime.default_reasoning, None);
     }
 
     fn connection(id: &str, sender: &str, receiver: Option<&str>) -> WorkflowConnectionConfig {
@@ -2106,12 +2348,13 @@ mod tests {
             .id;
         let mut sender = node("sender", true);
         let mut sender_harness = harness("Sender", "sender", "Send handoffs.");
-        sender_harness.mcp_servers = vec![super::super::domain::WorkflowMcpServerExposure {
-            server_name: WORKFLOW_MCP_SERVER.to_string(),
-            access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
-                tool_names: vec![WORKFLOW_MCP_TOOL.to_string()],
-            },
-        }];
+        sender_harness.0.tools.mcp_servers =
+            vec![super::super::domain::WorkflowMcpServerExposure {
+                server_name: WORKFLOW_MCP_SERVER.to_string(),
+                access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
+                    tool_names: vec![WORKFLOW_MCP_TOOL.to_string()],
+                },
+            }];
         sender.harness = Some(WorkflowNodeHarness::Standalone {
             config: sender_harness,
         });
@@ -2464,7 +2707,7 @@ mod tests {
         start.harness = Some(WorkflowNodeHarness::Role {
             role_id: role.id.clone(),
             overrides: WorkflowHarnessOverrides {
-                instructions: Some("Instance instructions".to_string()),
+                identity_name: Some("Instance Harness".to_string()),
                 ..WorkflowHarnessOverrides::default()
             },
         });
@@ -2480,19 +2723,31 @@ mod tests {
             .update_role(
                 &role.id,
                 "Reviewer",
-                harness("Review Harness", "Security review", "Changed base"),
+                harness("Changed Review Harness", "Security review", "Changed base"),
             )
             .unwrap();
         let changed = repository.load_workflow_type(&workflow_type_id).unwrap();
         assert!(changed.nodes[0].has_unpublished_changes);
         let effective = changed.nodes[0].draft_effective_harness.as_ref().unwrap();
-        assert_eq!(effective.role_identity, "Security review");
-        assert_eq!(effective.instructions, "Instance instructions");
+        assert_eq!(effective.0.identity.name, "Instance Harness");
+        assert_eq!(effective.0.identity.machine_key, "changed_review_harness");
+        assert_eq!(effective.0.runtime.authority_summary, "Security review");
+        assert_eq!(effective.0.prompt_prefix.content, "Changed base");
         assert_eq!(
             changed.active_recipe.as_ref().unwrap().nodes[0]
                 .harness
-                .role_identity,
+                .0
+                .runtime
+                .authority_summary,
             "Review"
+        );
+        assert_eq!(
+            changed.active_recipe.as_ref().unwrap().nodes[0]
+                .harness
+                .0
+                .identity
+                .machine_key,
+            "review_harness"
         );
 
         let second = repository
@@ -2507,14 +2762,18 @@ mod tests {
         assert_eq!(
             second.active_recipe.as_ref().unwrap().nodes[0]
                 .harness
-                .role_identity,
+                .0
+                .runtime
+                .authority_summary,
             "Security review"
         );
         let connection = repository.lock().unwrap();
         assert_eq!(
             load_recipe(&connection, &first_recipe_id).unwrap().nodes[0]
                 .harness
-                .role_identity,
+                .0
+                .runtime
+                .authority_summary,
             "Review"
         );
     }
@@ -2535,10 +2794,19 @@ mod tests {
             .workflow_type
             .id;
         let mut start = node("start", true);
+        let skills = vec![
+            crate::orchestration::conversation_harness_working_copy::HarnessSkillConfiguration {
+                name: "security".to_string(),
+                path: "security".to_string(),
+                purpose: String::new(),
+                use_when: String::new(),
+                policy: crate::orchestration::conversation_harness_working_copy::HarnessSkillPolicy::Available,
+            },
+        ];
         start.harness = Some(WorkflowNodeHarness::Role {
             role_id: role.id,
             overrides: WorkflowHarnessOverrides {
-                skills: Some(vec!["security".to_string()]),
+                skill_items: Some(skills),
                 ..WorkflowHarnessOverrides::default()
             },
         });
@@ -2553,8 +2821,8 @@ mod tests {
         let Some(WorkflowNodeHarness::Standalone { config }) = &detached_node.harness else {
             panic!("detached node should be standalone");
         };
-        assert_eq!(config.role_identity, "Architect");
-        assert_eq!(config.skills, vec!["security"]);
+        assert_eq!(config.0.runtime.authority_summary, "Architect");
+        assert_eq!(config.0.skills.items[0].name, "security");
 
         let rebound = repository
             .save_node_as_role(&workflow_type_id, "start", "Security architect")
@@ -2635,7 +2903,9 @@ mod tests {
                 .draft_effective_harness
                 .as_ref()
                 .unwrap()
-                .role_identity,
+                .0
+                .runtime
+                .authority_summary,
             "Reviewer"
         );
         let legacy = definition
@@ -2649,7 +2919,9 @@ mod tests {
                 .draft_effective_harness
                 .as_ref()
                 .unwrap()
-                .harness_name,
+                .0
+                .identity
+                .name,
             "Default Harness"
         );
     }

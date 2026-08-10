@@ -13,6 +13,11 @@ describe('Tauri Workflow client', () => {
       positionX: 180,
       positionY: 120,
       isStartingPoint: true,
+      harness: {
+        kind: 'role' as const,
+        roleId: 'role-1',
+        overrides: { promptPrefixContent: 'Review this exact proposal.' },
+      },
     };
     const connection = {
       id: 'connection-1',
@@ -22,13 +27,37 @@ describe('Tauri Workflow client', () => {
       mechanism: null,
     };
     const harness = {
-      harnessName: 'Architecture reviewer',
-      roleIdentity: 'Architecture reviewer',
-      instructions: 'Review the proposal.',
-      skills: ['review'],
-      mcpServers: [],
+      identity: {
+        name: 'Architecture reviewer',
+        machineKey: 'architecture_reviewer',
+        permittedAgentNames: null,
+        visualIdentity: null,
+      },
+      promptPrefix: {
+        content: 'Review the proposal.',
+        initialDelivery: 'prepend' as const,
+        contextCompressionDelivery: 'deferred' as const,
+      },
+      skills: { availableDiscoveryPolicy: 'whitelist' as const, items: [] },
+      tools: {
+        availableDiscoveryPolicy: 'whitelist' as const,
+        items: [],
+        schemaBoundary: 'Runtime-owned schemas.',
+        mcpServers: [],
+      },
+      runtime: {
+        modelPolicyMode: 'revision_owned' as const,
+        models: [],
+        defaultModel: null,
+        defaultReasoning: null,
+        sandbox: 'workspace_write' as const,
+        sandboxOptions: ['workspace_write'] as const,
+        approvalPolicy: 'never' as const,
+        approvalPolicyOptions: ['never'] as const,
+        authoritySummary: 'Architecture reviewer',
+      },
       hooks: [],
-      runtime: { provider: 'codex', model: 'gpt-5', reasoningEffort: 'medium' },
+      updatePolicy: { status: 'not_configured' as const, reason: 'Not configured.' },
     };
 
     await client.listWorkflowTypes();

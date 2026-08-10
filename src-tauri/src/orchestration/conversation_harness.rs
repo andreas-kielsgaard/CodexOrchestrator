@@ -166,6 +166,7 @@ pub(crate) fn initial_work_unit_handler_revision_configuration(
             available_discovery_policy: HarnessDiscoveryPolicy::Whitelist,
             items: vec![HarnessToolConfiguration { name: "request_work_unit_implementer".into(), policy: HarnessToolPolicy::Available }],
             schema_boundary: "Only the application-derived Handler-to-Implementer request is exposed.".into(),
+            mcp_servers: vec![],
         },
         runtime: HarnessRuntimeConfiguration {
             model_policy_mode: HarnessModelPolicyMode::RevisionOwned,
@@ -298,7 +299,7 @@ pub(crate) fn initial_work_unit_implementer_revision_configuration() -> Result<H
         identity: HarnessIdentityConfiguration { name: "Work Unit Implementer".into(), machine_key: profile.key, permitted_agent_names: None, visual_identity: Some(HarnessVisualIdentity { token: "implementer".into(), accent: "green".into() }) },
         prompt_prefix: HarnessPromptPrefixConfiguration { content: profile.context, initial_delivery: HarnessInitialDelivery::Prepend, context_compression_delivery: HarnessContextCompressionDelivery::Deferred },
         skills: HarnessSkillsConfiguration { available_discovery_policy: HarnessDiscoveryPolicy::Whitelist, items: profile.skill_guidance.into_iter().map(|skill| HarnessSkillConfiguration { name: skill.canonical_name, path: skill.canonical_path, purpose: skill.purpose, use_when: skill.use_when, policy: HarnessSkillPolicy::AlwaysApplicable }).collect() },
-        tools: HarnessToolsConfiguration { available_discovery_policy: HarnessDiscoveryPolicy::Whitelist, items: vec![], schema_boundary: "No Implementer MCP action is exposed.".into() },
+        tools: HarnessToolsConfiguration { available_discovery_policy: HarnessDiscoveryPolicy::Whitelist, items: vec![], schema_boundary: "No Implementer MCP action is exposed.".into(), mcp_servers: vec![] },
         runtime: HarnessRuntimeConfiguration { model_policy_mode: HarnessModelPolicyMode::RevisionOwned, models: profile.runtime.model.iter().map(|model| HarnessModelConstraint { model_id: model.clone(), allowed: true, min_reasoning: HarnessReasoningLevel::Low, max_reasoning: HarnessReasoningLevel::Xhigh }).collect(), default_model: profile.runtime.model, default_reasoning: profile.runtime.reasoning_effort.as_deref().and_then(reasoning_from_catalog), sandbox: sandbox_to_revision(profile.runtime.sandbox), sandbox_options: vec![sandbox_to_revision(profile.runtime.sandbox)], approval_policy: RevisionApprovalPolicy::Never, approval_policy_options: vec![RevisionApprovalPolicy::Never], authority_summary: "Writable only within the isolated Implementer execution workspace.".into() },
         hooks: vec![HarnessHookConfiguration { name: "completion".into(), status: HarnessHookStatus::NotConnected, detail: "No Implementer completion, review, or settlement hook is connected.".into() }], update_policy: HarnessUpdatePolicy::NotConfigured { reason: "Pinned revision is immutable.".into() },
     })

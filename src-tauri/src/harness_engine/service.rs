@@ -169,8 +169,8 @@ impl HarnessEngineService {
         harness: &WorkflowHarnessConfig,
     ) -> Result<HarnessMediationPlan, String> {
         let mut server_names = HashSet::new();
-        let mut exposures = Vec::with_capacity(harness.mcp_servers.len());
-        for (index, configured) in harness.mcp_servers.iter().enumerate() {
+        let mut exposures = Vec::with_capacity(harness.mcp_servers().len());
+        for (index, configured) in harness.mcp_servers().iter().enumerate() {
             let server_name = configured.server_name.trim();
             if !server_names.insert(server_name.to_string()) {
                 return Err(format!(
@@ -489,15 +489,17 @@ mod tests {
                 workflow_instance_id: "workflow-instance-1".into(),
                 recipe_id: "recipe-1".into(),
                 node_id: "node-1".into(),
-                harness: WorkflowHarnessConfig {
-                    harness_name: "Review".into(),
-                    mcp_servers: vec![crate::workflows::domain::WorkflowMcpServerExposure {
-                        server_name: "plan_builder".into(),
-                        access: WorkflowMcpServerAccess::SelectedTools {
-                            tool_names: vec!["submit_epic_plan_proposal".into()],
-                        },
-                    }],
-                    ..WorkflowHarnessConfig::default()
+                harness: {
+                    let mut harness =
+                        WorkflowHarnessConfig::test_definition("Review", "", "", "", "");
+                    harness.0.tools.mcp_servers =
+                        vec![crate::workflows::domain::WorkflowMcpServerExposure {
+                            server_name: "plan_builder".into(),
+                            access: WorkflowMcpServerAccess::SelectedTools {
+                                tool_names: vec!["submit_epic_plan_proposal".into()],
+                            },
+                        }];
+                    harness
                 },
             })
             .unwrap();
@@ -510,6 +512,14 @@ mod tests {
             binding.harness_token.as_deref(),
             Some("stable-harness-token")
         );
+        assert_eq!(binding.source_workflow_instance_id, "workflow-instance-1");
+        assert_eq!(binding.source_recipe_id, "recipe-1");
+        assert_eq!(binding.source_node_id, "node-1");
+        let bound_definition: WorkflowHarnessConfig =
+            serde_json::from_str(&binding.harness_snapshot).unwrap();
+        assert_eq!(bound_definition.name(), "Review");
+        assert!(!binding.harness_snapshot.contains("workflowInstanceId"));
+        assert!(!binding.harness_snapshot.contains("sessionId"));
         let extension = service
             .prepare_launch(
                 &AgentSessionId::new("session-1").unwrap(),
@@ -540,13 +550,14 @@ mod tests {
         )
         .unwrap();
         let error = service
-            .compile_plan(&WorkflowHarnessConfig {
-                harness_name: "Review".into(),
-                mcp_servers: vec![crate::workflows::domain::WorkflowMcpServerExposure {
-                    server_name: "arbitrary_server".into(),
-                    access: WorkflowMcpServerAccess::EntireServer,
-                }],
-                ..WorkflowHarnessConfig::default()
+            .compile_plan(&{
+                let mut harness = WorkflowHarnessConfig::test_definition("Review", "", "", "", "");
+                harness.0.tools.mcp_servers =
+                    vec![crate::workflows::domain::WorkflowMcpServerExposure {
+                        server_name: "arbitrary_server".into(),
+                        access: WorkflowMcpServerAccess::EntireServer,
+                    }];
+                harness
             })
             .unwrap_err();
         assert!(error.contains("no application-owned managed upstream"));

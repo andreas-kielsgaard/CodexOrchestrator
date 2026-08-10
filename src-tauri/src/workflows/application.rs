@@ -372,7 +372,7 @@ impl WorkflowApplication {
         let start = starts[0];
         let launch_extension = launch_extension(&start.harness)?;
         let requested_options = AgentRuntimeOptions {
-            model: nonempty(&start.harness.runtime.model),
+            model: nonempty(start.harness.default_model()),
             sandbox: None,
         };
         let instance_id = format!("workflow-instance-{}", Uuid::new_v4());
@@ -698,7 +698,7 @@ impl WorkflowApplication {
                 )
             })?;
         let requested_options = AgentRuntimeOptions {
-            model: nonempty(&receiver.harness.runtime.model),
+            model: nonempty(receiver.harness.default_model()),
             sandbox: None,
         };
         let launch_extension =
@@ -743,7 +743,7 @@ impl WorkflowApplication {
                 .create_application_session(CreateApplicationAgentSessionCommand {
                     session_id: session.clone(),
                     session: CreateAgentSessionCommand {
-                        title: Some(receiver.harness.harness_name.clone()),
+                        title: Some(receiver.harness.name().to_string()),
                         working_directory: Some(trigger.working_directory.clone()),
                         requested_options: requested_options.clone(),
                     },
@@ -1177,27 +1177,15 @@ fn project_connection_activation(
 fn launch_extension(
     harness: &WorkflowHarnessConfig,
 ) -> Result<Option<RuntimeLaunchExtension>, String> {
-    if !harness.skills.is_empty() {
+    if !harness.skills().is_empty() {
         return Err("Workflow launch does not support Harness skills yet.".to_string());
     }
-    if !harness.hooks.is_empty() {
+    if !harness.hooks().is_empty() {
         return Err("Workflow launch does not support Harness hooks yet.".to_string());
     }
-    let provider = harness.runtime.provider.trim();
-    if !provider.is_empty() && !provider.eq_ignore_ascii_case("codex") {
-        return Err(format!(
-            "Workflow launch supports only the Codex provider; found {}.",
-            harness.runtime.provider
-        ));
-    }
-    validate_supported_codex_model(&harness.runtime.model)?;
-    let reasoning = harness.runtime.reasoning_effort.trim();
-    if !reasoning.is_empty() && !["low", "medium", "high", "xhigh"].contains(&reasoning) {
-        return Err(format!(
-            "Unsupported Codex reasoning effort {reasoning}; use low, medium, high, or xhigh."
-        ));
-    }
-    if harness.instructions.contains('\0') || harness.instructions.len() > 65_536 {
+    validate_supported_codex_model(harness.default_model())?;
+    let reasoning = harness.default_reasoning().unwrap_or_default();
+    if harness.prompt_prefix().contains('\0') || harness.prompt_prefix().len() > 65_536 {
         return Err(
             "Workflow Harness instructions are invalid for direct prompt delivery.".to_string(),
         );
@@ -1209,7 +1197,7 @@ fn launch_extension(
             format!("model_reasoning_effort=\"{reasoning}\""),
         ];
     }
-    if let Some(instructions) = nonempty(&harness.instructions) {
+    if let Some(instructions) = nonempty(harness.prompt_prefix()) {
         extension.initial_prompt_prefix = Some(InitialPromptPrefix {
             source: "workflow_recipe_node_instructions".to_string(),
             version: 1,
@@ -1419,8 +1407,8 @@ mod tests {
         workflows::{
             domain::{
                 WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
-                WorkflowHarnessRuntimeSettings, WorkflowInitialCheck, WorkflowLaunchStatus,
-                WorkflowMatchSelection, WorkflowNodeHarness,
+                WorkflowInitialCheck, WorkflowLaunchStatus, WorkflowMatchSelection,
+                WorkflowNodeHarness,
             },
             repository::SqliteWorkflowRepository,
         },
@@ -1561,8 +1549,9 @@ mod tests {
     ) -> String {
         let definition = repository.create_workflow_type("Review loop").unwrap();
         let workflow_type_id = definition.workflow_type.id;
-        if harness.harness_name.is_empty() {
-            harness.harness_name = "Architecture reviewer".to_string();
+        if harness.name().is_empty() {
+            harness.0.identity.name = "Architecture reviewer".to_string();
+            harness.0.identity.machine_key = "architecture_reviewer".to_string();
         }
         repository
             .save_node_draft(
@@ -1570,7 +1559,7 @@ mod tests {
                 WorkflowNodeConfig {
                     id: "start".to_string(),
                     name: "Review architecture".to_string(),
-                    harness_name: harness.harness_name.clone(),
+                    harness_name: harness.name().to_string(),
                     role_name: None,
                     position_x: 80.0,
                     position_y: 100.0,
@@ -1596,19 +1585,13 @@ mod tests {
         let (_directory, repository, runtime, application) = fixture();
         let workflow_type_id = activate_start(
             &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Architecture reviewer".to_string(),
-                role_identity: "Reviewer".to_string(),
-                instructions: "Review the architecture carefully.".to_string(),
-                skills: Vec::new(),
-                mcp_servers: Vec::new(),
-                hooks: Vec::new(),
-                runtime: WorkflowHarnessRuntimeSettings {
-                    provider: "codex".to_string(),
-                    model: "gpt-5.6-sol".to_string(),
-                    reasoning_effort: "high".to_string(),
-                },
-            },
+            WorkflowHarnessConfig::test_definition(
+                "Architecture reviewer",
+                "Reviewer",
+                "Review the architecture carefully.",
+                "gpt-5.6-sol",
+                "high",
+            ),
         );
         let prompt = "Inspect the proposed architecture and identify the main risk.";
 
@@ -1680,16 +1663,13 @@ mod tests {
         let (directory, repository, runtime, application) = fixture();
         let workflow_type_id = activate_start(
             &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Architecture reviewer".to_string(),
-                instructions: "Review the architecture carefully.".to_string(),
-                runtime: WorkflowHarnessRuntimeSettings {
-                    provider: "codex".to_string(),
-                    model: "gpt-5.6-terra".to_string(),
-                    reasoning_effort: "medium".to_string(),
-                },
-                ..WorkflowHarnessConfig::default()
-            },
+            WorkflowHarnessConfig::test_definition(
+                "Architecture reviewer",
+                "",
+                "Review the architecture carefully.",
+                "gpt-5.6-terra",
+                "medium",
+            ),
         );
         let prompt = "Review this durable Workflow launch.";
         let launched = application
@@ -1746,14 +1726,17 @@ mod tests {
     #[test]
     fn unsupported_harness_capabilities_fail_before_instance_or_runtime_creation() {
         let (_directory, repository, runtime, application) = fixture();
-        let workflow_type_id = activate_start(
-            &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Reviewer".to_string(),
-                skills: vec!["security-review".to_string()],
-                ..WorkflowHarnessConfig::default()
+        let mut harness = WorkflowHarnessConfig::test_definition("Reviewer", "", "", "", "");
+        harness.0.skills.items.push(
+            crate::orchestration::conversation_harness_working_copy::HarnessSkillConfiguration {
+                name: "security-review".to_string(),
+                path: "security-review".to_string(),
+                purpose: String::new(),
+                use_when: String::new(),
+                policy: crate::orchestration::conversation_harness_working_copy::HarnessSkillPolicy::Available,
             },
         );
+        let workflow_type_id = activate_start(&repository, harness);
 
         let error = application
             .launch_workflow_instance(&workflow_type_id, None, "Review this.")
@@ -1769,15 +1752,13 @@ mod tests {
         let (_directory, repository, runtime, application) = fixture();
         let workflow_type_id = activate_start(
             &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Reviewer".to_string(),
-                runtime: WorkflowHarnessRuntimeSettings {
-                    provider: "codex".to_string(),
-                    model: "unverified-model".to_string(),
-                    reasoning_effort: "medium".to_string(),
-                },
-                ..WorkflowHarnessConfig::default()
-            },
+            WorkflowHarnessConfig::test_definition(
+                "Reviewer",
+                "",
+                "",
+                "unverified-model",
+                "medium",
+            ),
         );
 
         let error = application
@@ -1794,15 +1775,7 @@ mod tests {
         let (_directory, repository, runtime, application) = fixture();
         let workflow_type_id = activate_start(
             &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Reviewer".to_string(),
-                runtime: WorkflowHarnessRuntimeSettings {
-                    provider: "codex".to_string(),
-                    model: "gpt-5.6-sol".to_string(),
-                    reasoning_effort: "medium".to_string(),
-                },
-                ..WorkflowHarnessConfig::default()
-            },
+            WorkflowHarnessConfig::test_definition("Reviewer", "", "", "gpt-5.6-sol", "medium"),
         );
         runtime.fail_preflight.store(true, Ordering::SeqCst);
 
@@ -1831,17 +1804,12 @@ mod tests {
     fn harness_binding_failure_is_durable_and_prevents_runtime_launch() {
         let (_directory, repository, runtime, application) =
             fixture_with_binder(Arc::new(FailingHarnessBinder));
-        let workflow_type_id = activate_start(
-            &repository,
-            WorkflowHarnessConfig {
-                harness_name: "Reviewer".to_string(),
-                mcp_servers: vec![crate::workflows::domain::WorkflowMcpServerExposure {
-                    server_name: "plan_builder".to_string(),
-                    access: crate::workflows::domain::WorkflowMcpServerAccess::EntireServer,
-                }],
-                ..WorkflowHarnessConfig::default()
-            },
-        );
+        let mut harness = WorkflowHarnessConfig::test_definition("Reviewer", "", "", "", "");
+        harness.0.tools.mcp_servers = vec![crate::workflows::domain::WorkflowMcpServerExposure {
+            server_name: "plan_builder".to_string(),
+            access: crate::workflows::domain::WorkflowMcpServerAccess::EntireServer,
+        }];
+        let workflow_type_id = activate_start(&repository, harness);
 
         let instance = application
             .launch_workflow_instance(&workflow_type_id, None, "Review this.")
@@ -1943,21 +1911,15 @@ mod tests {
             .iter()
             .map(|connection| connection.receiver_node_id.clone().unwrap())
             .collect::<std::collections::BTreeSet<_>>();
-        let harness = |name: &str| WorkflowHarnessConfig {
-            harness_name: name.to_string(),
-            runtime: WorkflowHarnessRuntimeSettings {
-                provider: "codex".to_string(),
-                ..WorkflowHarnessRuntimeSettings::default()
-            },
-            ..WorkflowHarnessConfig::default()
-        };
+        let harness = |name: &str| WorkflowHarnessConfig::test_definition(name, "", "", "", "");
         let mut sender_harness = harness("Sender harness");
-        sender_harness.mcp_servers = vec![super::super::domain::WorkflowMcpServerExposure {
-            server_name: super::super::mcp::SERVER_NAME.to_string(),
-            access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
-                tool_names: vec![super::super::mcp::TOOL_NAME.to_string()],
-            },
-        }];
+        sender_harness.0.tools.mcp_servers =
+            vec![super::super::domain::WorkflowMcpServerExposure {
+                server_name: super::super::mcp::SERVER_NAME.to_string(),
+                access: super::super::domain::WorkflowMcpServerAccess::SelectedTools {
+                    tool_names: vec![super::super::mcp::TOOL_NAME.to_string()],
+                },
+            }];
         workflow_repository
             .save_node_draft(
                 &workflow_type_id,
