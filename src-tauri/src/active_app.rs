@@ -322,6 +322,8 @@ pub(crate) fn run() {
             crate::archive_open_task,
             crate::load_task_run_detail,
             crate::start_codex_task_run,
+            crate::epic_origin::choose_epic_origin_project,
+            crate::epic_origin::inspect_epic_origin_project,
             crate::agent_sessions::transport::create_agent_session,
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,

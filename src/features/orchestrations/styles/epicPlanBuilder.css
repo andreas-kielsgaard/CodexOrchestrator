@@ -85,7 +85,7 @@
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  grid-template-columns: minmax(200px, 230px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 290px) minmax(0, 1fr);
   gap: 10px;
   overflow: hidden;
 }

@@ -1015,7 +1015,7 @@ describe('App orchestration loading', () => {
       /\.epic-plan-builder__body\s*\{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*overflow: hidden;/,
     );
     expect(planStyles).toMatch(
-      /\.epic-plan-builder__layout\s*\{[\s\S]*min-height: 0;[\s\S]*flex: 1 1 auto;[\s\S]*grid-template-columns: minmax\(200px, 230px\) minmax\(0, 1fr\);[\s\S]*overflow: hidden;/,
+      /\.epic-plan-builder__layout\s*\{[\s\S]*min-height: 0;[\s\S]*flex: 1 1 auto;[\s\S]*grid-template-columns: minmax\(260px, 290px\) minmax\(0, 1fr\);[\s\S]*overflow: hidden;/,
     );
     expect(planStyles).toMatch(
       /\.epic-plan-builder__workspace\s*\{[\s\S]*grid-template-columns: minmax\(400px, 1fr\) minmax\(320px, 420px\);[\s\S]*overflow: hidden;/,
