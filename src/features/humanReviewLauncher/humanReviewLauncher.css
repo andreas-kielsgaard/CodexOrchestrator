@@ -402,39 +402,64 @@
   border-top: 2px solid #ccd4cc;
   content: '';
 }
-.worktree-source-picker__branch > button,
-.worktree-source-picker__detached > button {
+.worktree-source-picker__branch-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   width: 100%;
-  min-height: 46px;
+  min-height: 40px;
   margin: 2px 0;
-  border-color: transparent;
-  padding: 7px 10px;
+  padding: 6px 10px;
+  color: #27372d;
   text-align: left;
 }
-.worktree-source-picker__branch > button.is-selected,
-.worktree-source-picker__detached > button.is-selected {
-  border-color: #78897d;
-  background: #e8eee8;
-  box-shadow: inset 3px 0 #596d60;
-}
-.worktree-source-picker__branch > button span,
-.worktree-source-picker__detached > button span {
+.worktree-source-picker__branch-head > span,
+.worktree-source-picker__attachments button > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
-.worktree-source-picker__branch strong,
-.worktree-source-picker__detached strong {
+.worktree-source-picker__attachments {
+  position: relative;
+  margin-left: 20px;
+  border-left: 2px solid #ccd4cc;
+  padding: 1px 0 4px 17px;
+}
+.worktree-source-picker__attachments::before {
+  position: absolute;
+  top: 23px;
+  left: 0;
+  width: 15px;
+  border-top: 2px solid #ccd4cc;
+  content: '';
+}
+.worktree-source-picker__attachments > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 46px;
+  margin: 2px 0;
+  border-color: #d8ddd7;
+  padding: 7px 10px;
+  background: #fbfcf9;
+  text-align: left;
+}
+.worktree-source-picker__attachments > button.is-selected {
+  border-color: #78897d;
+  background: #e8eee8;
+  box-shadow: inset 3px 0 #596d60;
+}
+.worktree-source-picker__branch-head strong,
+.worktree-source-picker__attachments strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.worktree-source-picker__branch small,
-.worktree-source-picker__detached small {
+.worktree-source-picker__branch-head small,
+.worktree-source-picker__attachments small {
   overflow: hidden;
   color: #69756d;
   font-size: 0.69rem;
@@ -450,6 +475,9 @@
   font-size: 0.62rem;
   font-style: normal;
   text-transform: uppercase;
+}
+.worktree-source-picker__detached-head + .worktree-source-picker__detached-head {
+  margin-top: 7px;
 }
 .worktree-source-picker__detached {
   margin-top: 13px;
