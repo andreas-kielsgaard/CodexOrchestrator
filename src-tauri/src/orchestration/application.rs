@@ -871,9 +871,10 @@ mod tests {
         repository::SqliteAgentSessionRepository,
     };
     use rusqlite::{params, Connection};
+    #[cfg(feature = "live-tests")]
+    use std::path::PathBuf;
     use std::{
         fs,
-        path::PathBuf,
         sync::{Arc, Mutex},
     };
 
@@ -1065,10 +1066,12 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "live-tests")]
     struct LiveNotifier {
         registry: Arc<ManagedPlanBuilderRegistry>,
         terminal: Arc<(Mutex<Option<AgentInvocation>>, std::sync::Condvar)>,
     }
+    #[cfg(feature = "live-tests")]
     impl AgentSessionNotifier for LiveNotifier {
         fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
             if let AgentSessionNotification::InvocationTerminal { invocation, .. } = notification {
@@ -1081,6 +1084,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "live-tests")]
     struct LivePlanBuilderHarness {
         _directory: tempfile::TempDir,
         database_path: PathBuf,
@@ -1090,6 +1094,7 @@ mod tests {
         terminal: Arc<(Mutex<Option<AgentInvocation>>, std::sync::Condvar)>,
     }
 
+    #[cfg(feature = "live-tests")]
     impl LivePlanBuilderHarness {
         fn new() -> Self {
             let directory = tempfile::tempdir().unwrap();
@@ -1193,6 +1198,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "live-tests")]
     impl Drop for LivePlanBuilderHarness {
         fn drop(&mut self) {
             self.service.shutdown();
@@ -2355,6 +2361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "paid installed-Codex discussion proof; run only after deterministic MCP and runtime tests"]
     fn installed_codex_plan_builder_discussion_has_zero_semantic_calls() {
         let harness = LivePlanBuilderHarness::new();
@@ -2370,6 +2377,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "paid installed-Codex build/resume proof; run only after deterministic MCP and runtime tests"]
     fn installed_codex_plan_builder_build_and_rebuild_each_submit_once() {
         let harness = LivePlanBuilderHarness::new();
@@ -2403,6 +2411,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "paid installed-Codex proof; run only after deterministic MCP and runtime tests"]
     fn installed_codex_managed_plan_builder_persists_one_structured_proposal() {
         let path = std::env::temp_dir().join(format!(

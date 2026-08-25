@@ -33,8 +33,9 @@ are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
 6. The application lifecycle persists before notification and reconciles missed events by query.
 7. The independent UI shows live work, collapses completed processing, and keeps the final response
    prominent with safe Markdown rendering.
-8. Boundary tests prove continuation, persistence, cancellation, restart recovery, migration
-   compatibility, and installed CLI help compatibility.
+8. Default boundary tests prove continuation, persistence, cancellation, restart recovery, and
+   migration compatibility. Installed CLI help compatibility is a feature-gated, ignored manual
+   probe rather than current default-test proof.
 9. The production app mounts only Agent Sessions. Legacy task handlers fail closed before database
    or process work, while their migration compatibility and isolated component tests remain.
 10. Startup does not probe Codex. The retained SQLite connection uses an explicit foreign-key,
@@ -62,7 +63,16 @@ a provider-determinism claim.
   JSONL or Rust evidence records. It has no Playwright dependency. Browser checks are manual,
   lightweight inspection rather than focus-sensitive desktop automation.
 
-### Non-live commands
+### Deterministic commands
+
+For a short implementation check, use the reduced-debug lane with the narrowest relevant filter:
+
+```powershell
+npm run test:rust:fast -- agent_sessions::
+```
+
+The filter reduces executed tests but Rust still compiles the library test harness. Use the
+default-debug deterministic lane at a Slice or integration boundary:
 
 ```powershell
 npm run format:check
@@ -70,27 +80,35 @@ npm run lint
 npm test
 npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm run test:rust:full
 ```
 
 For the browser harness, run `npm run dev` and open
 `http://localhost:1420/agent-session-harness.html`. The production build must contain both
 `dist/index.html` and `dist/agent-session-harness.html`.
 
-### Optional live smoke command
+### Explicit live or paid proofs
 
 The ignored driver can launch up to four real Codex invocations. Do not run it unless a human has
 explicitly authorized the cost/quota exposure and the account has usable capacity.
 
+First compile the feature and run only its deterministic harness checks:
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib agent_sessions::live_smoke::tests::
+```
+
+Then, after explicit authorization, run the ignored live driver:
+
 ```powershell
 $env:CODEX_AGENT_SESSION_LIVE_SMOKE = 'true'
 $env:CODEX_AGENT_SESSION_LIVE_SMOKE_TIMEOUT_SECS = '180' # optional; per-wait limit, 1-300 seconds
-cargo test --manifest-path src-tauri/Cargo.toml --lib agent_sessions::live_smoke::agent_session_live_smoke_driver -- --ignored --exact --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib agent_sessions::live_smoke::agent_session_live_smoke_driver -- --ignored --exact --nocapture
 ```
 
-Without `CODEX_AGENT_SESSION_LIVE_SMOKE=true`, the ignored test refuses before capability discovery
-or any agent launch. Each polling wait defaults to 180 seconds and may be configured up to 300.
+Live and paid proofs are absent from the default Rust test compilation and remain ignored after
+enabling `live-tests`. Without `CODEX_AGENT_SESSION_LIVE_SMOKE=true`, the driver refuses before
+capability discovery or any agent launch. Each polling wait defaults to 180 seconds and may be configured up to 300.
 Runtime shutdown first allows supervised children a two-second grace period, then requests
 termination and retains ownership until every direct child has been reaped. That authoritative
 cleanup is intentionally not misrepresented as a time-bounded operation. The driver writes
@@ -101,10 +119,10 @@ outcome reports the four-invocation budget, phase results, hashed IDs, final dur
 direct-child cleanup, cancellation state, and stated limitations. A quota/rate-limit result is not
 retried and does not prove provider completion, resume, concurrency, or cancellation.
 
-Current verification status: the cleanup continuation passed the full non-live matrix on
-2026-07-12 (339 frontend tests; 84 Rust tests; two intentional Rust ignores). Recorded-harness
-manual responsive checks previously passed at 1280x800, 860x800, and 390x844. Live Codex lifecycle
-remains pending and was not run during cleanup.
+Historical verification: the cleanup continuation passed the full non-live matrix on 2026-07-12
+(339 frontend tests; 84 Rust tests; two intentional Rust ignores). This is not a claim about the
+current full matrix. Recorded-harness manual responsive checks previously passed at 1280x800,
+860x800, and 390x844. Live Codex lifecycle remains pending and was not run during cleanup.
 
 ## Documents
 

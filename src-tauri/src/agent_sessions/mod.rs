@@ -15,5 +15,5 @@ pub(crate) mod transport;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "live-tests"))]
 mod live_smoke;
