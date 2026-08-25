@@ -1,8 +1,8 @@
 # Workflow Instance Execution Plan
 
 - Date: 2026-08-25
-- Revision: 3
-- Status: Implemented and validated; feature checkpoint pending
+- Revision: 4
+- Status: Implemented, validated, and checkpointed on the candidate branch
 - Candidate branch: `codex/workflow-engine-v1`
 - Canonical plan file: `docs/orchestration/workflow-instance-execution-plan-2026-08-25.md`
 
@@ -500,9 +500,13 @@ When a discovery affects only an adaptable implementation detail, revise this do
 | ARCH-4 Pane and creation dialog       | Complete | ARCH-1, ARCH-2, ARCH-3 | Dialog, navigation, adapter, and reused Agent Session workspace verified |
 | ARCH-5 Convergence and acceptance     | Complete | ARCH-2, ARCH-3, ARCH-4 | Scoped suites green; broader residual documented below                   |
 
-Implementation was authorized on 2026-08-25. All approved architecture steps are complete in the candidate worktree; the implementation commit is the remaining checkpoint action.
+Implementation was authorized on 2026-08-25. All approved architecture steps are complete and checkpointed at candidate commit `6efe281`.
 
 ## Revision log
+
+### Revision 4 — 2026-08-25
+
+- Checkpointed the complete approved implementation and its evidence plan at candidate commit `6efe281` (`Implement workflow instance execution happy flow`).
 
 ### Revision 3 — 2026-08-25
 
