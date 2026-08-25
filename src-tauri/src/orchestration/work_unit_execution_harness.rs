@@ -114,7 +114,8 @@ impl WorkUnitExecutionHarnessService {
     ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
         let revisions = match self
             .orchestration
-            .load_harness_revision_history("work_unit_handler") {
+            .load_harness_revision_history("work_unit_handler")
+        {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
             HarnessRevisionHistoryOutcome::Missing => {
                 return self.pinned_handler_revision_from_revision(
@@ -128,7 +129,9 @@ impl WorkUnitExecutionHarnessService {
         };
         if let Some(revision) = revisions.iter().find(|revision| {
             self.pinned_handler_revision_from_revision((*revision).clone())
-                .map(|pinned| !pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.is_empty())
+                .map(|pinned| {
+                    !pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.is_empty()
+                })
                 .unwrap_or(false)
         }) {
             return self.pinned_handler_revision_from_revision((*revision).clone());
@@ -141,12 +144,17 @@ impl WorkUnitExecutionHarnessService {
     pub(crate) fn current_handler_action_revision(
         &self,
     ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
-        let history = self.orchestration.load_harness_revision_history("work_unit_handler");
+        let history = self
+            .orchestration
+            .load_harness_revision_history("work_unit_handler");
         let revisions = match history {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
             HarnessRevisionHistoryOutcome::Missing => {
                 self.bootstrap_initial_handler_revision()?;
-                match self.orchestration.load_harness_revision_history("work_unit_handler") {
+                match self
+                    .orchestration
+                    .load_harness_revision_history("work_unit_handler")
+                {
                     HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
                     _ => return Err(WorkUnitHarnessError::Unavailable),
                 }
@@ -155,49 +163,69 @@ impl WorkUnitExecutionHarnessService {
         };
         if let Some(revision) = revisions.iter().rev().find(|revision| {
             self.pinned_handler_revision_from_revision((*revision).clone())
-                .map(|pinned| pinned.profile.mcp.required
-                    && pinned.profile.mcp.enabled_tools == ["request_work_unit_implementer"])
+                .map(|pinned| {
+                    pinned.profile.mcp.required
+                        && pinned.profile.mcp.enabled_tools == ["request_work_unit_implementer"]
+                })
                 .unwrap_or(false)
         }) {
             return self.pinned_handler_revision_from_revision((*revision).clone());
         }
         let predecessor = revisions.last().ok_or(WorkUnitHarnessError::Unavailable)?;
-        let copy = self.orchestration.load_harness_working_copy("work_unit_handler")
+        let copy = self
+            .orchestration
+            .load_harness_working_copy("work_unit_handler")
             .map_err(|_| WorkUnitHarnessError::Unavailable)?;
         let expected = copy.as_ref().map_or(0, |copy| copy.draft_revision);
-        let saved = self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
-            harness_key: "work_unit_handler".into(),
-            configuration: conversation_harness::initial_work_unit_handler_revision_configuration()
-                .map_err(|_| WorkUnitHarnessError::Unavailable)?,
-            expected_current_revision: expected,
-            editor: HarnessWorkingCopyEditor {
-                kind: HarnessEditorKind::ApplicationUser,
-                reference: "work-unit-handler-action-continuation".into(),
-            },
-            idempotency_key: format!("work-unit-handler-action-working-copy-{}", predecessor.revision_id),
-        }).map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        let saved = self
+            .orchestration
+            .save_harness_working_copy(SaveHarnessWorkingCopyCommand {
+                harness_key: "work_unit_handler".into(),
+                configuration:
+                    conversation_harness::initial_work_unit_handler_revision_configuration()
+                        .map_err(|_| WorkUnitHarnessError::Unavailable)?,
+                expected_current_revision: expected,
+                editor: HarnessWorkingCopyEditor {
+                    kind: HarnessEditorKind::ApplicationUser,
+                    reference: "work-unit-handler-action-continuation".into(),
+                },
+                idempotency_key: format!(
+                    "work-unit-handler-action-working-copy-{}",
+                    predecessor.revision_id
+                ),
+            })
+            .map_err(|_| WorkUnitHarnessError::Unavailable)?;
         let draft = match saved {
             super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
             | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
         };
-        let revision = match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand {
-            harness_key: "work_unit_handler".into(),
-            expected_source_draft_revision: draft,
-            expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
-            idempotency_key: format!("work-unit-handler-action-revision-{}", predecessor.revision_id),
-            creation_provenance: HarnessRevisionCreationProvenance {
-                kind: HarnessRevisionProvenanceKind::ApplicationUser,
-                reference: "work-unit-handler-action-continuation".into(),
-            },
-        }) {
-            Ok(CreateHarnessRevisionResult::Published(revision))
-            | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
-            Err(HarnessRevisionError::Conflict) => self.load_newly_published_handler_revision()?,
-            Err(_) => return Err(WorkUnitHarnessError::Unavailable),
-        };
+        let revision =
+            match self
+                .orchestration
+                .create_harness_revision(CreateHarnessRevisionCommand {
+                    harness_key: "work_unit_handler".into(),
+                    expected_source_draft_revision: draft,
+                    expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
+                    idempotency_key: format!(
+                        "work-unit-handler-action-revision-{}",
+                        predecessor.revision_id
+                    ),
+                    creation_provenance: HarnessRevisionCreationProvenance {
+                        kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                        reference: "work-unit-handler-action-continuation".into(),
+                    },
+                }) {
+                Ok(CreateHarnessRevisionResult::Published(revision))
+                | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
+                Err(HarnessRevisionError::Conflict) => {
+                    self.load_newly_published_handler_revision()?
+                }
+                Err(_) => return Err(WorkUnitHarnessError::Unavailable),
+            };
         let pinned = self.pinned_handler_revision_from_revision(revision)?;
         if !pinned.profile.mcp.required
-            || pinned.profile.mcp.enabled_tools != ["request_work_unit_implementer"] {
+            || pinned.profile.mcp.enabled_tools != ["request_work_unit_implementer"]
+        {
             return Err(WorkUnitHarnessError::Denied);
         }
         Ok(pinned)
@@ -205,26 +233,54 @@ impl WorkUnitExecutionHarnessService {
 
     /// Publishes once the immutable, read-only Handler review revision. It is selected only by
     /// the application after acceptance and never changes either prior Handler revision.
-    pub(crate) fn current_handler_review_revision(&self) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
-        let revisions = match self.orchestration.load_harness_revision_history("work_unit_handler") {
+    pub(crate) fn current_handler_review_revision(
+        &self,
+    ) -> Result<PinnedHandlerHarnessRevision, WorkUnitHarnessError> {
+        let revisions = match self
+            .orchestration
+            .load_harness_revision_history("work_unit_handler")
+        {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
             HarnessRevisionHistoryOutcome::Missing => {
                 self.bootstrap_initial_handler_revision()?;
-                match self.orchestration.load_harness_revision_history("work_unit_handler") {
+                match self
+                    .orchestration
+                    .load_harness_revision_history("work_unit_handler")
+                {
                     HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
                     _ => return Err(WorkUnitHarnessError::Unavailable),
                 }
             }
             _ => return Err(WorkUnitHarnessError::Unavailable),
         };
-        let expected_tools = ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"];
+        let expected_tools = [
+            "read_handler_review_evidence",
+            "accept_implementation_outcome",
+            "return_implementation_outcome",
+        ];
         if let Some(revision) = revisions.iter().rev().find(|revision| {
-            self.pinned_handler_revision_from_revision((*revision).clone()).map(|pinned| {
-                pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.iter().map(String::as_str).eq(expected_tools)
-            }).unwrap_or(false)
-        }) { return self.pinned_handler_revision_from_revision((*revision).clone()); }
+            self.pinned_handler_revision_from_revision((*revision).clone())
+                .map(|pinned| {
+                    pinned.profile.mcp.required
+                        && pinned
+                            .profile
+                            .mcp
+                            .enabled_tools
+                            .iter()
+                            .map(String::as_str)
+                            .eq(expected_tools)
+                })
+                .unwrap_or(false)
+        }) {
+            return self.pinned_handler_revision_from_revision((*revision).clone());
+        }
         let predecessor = revisions.last().ok_or(WorkUnitHarnessError::Unavailable)?;
-        let expected = self.orchestration.load_harness_working_copy("work_unit_handler").map_err(|_| WorkUnitHarnessError::Unavailable)?.as_ref().map_or(0, |copy| copy.draft_revision);
+        let expected = self
+            .orchestration
+            .load_harness_working_copy("work_unit_handler")
+            .map_err(|_| WorkUnitHarnessError::Unavailable)?
+            .as_ref()
+            .map_or(0, |copy| copy.draft_revision);
         let draft = match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
             harness_key: "work_unit_handler".into(),
             configuration: conversation_harness::handler_outcome_review_revision_configuration().map_err(|_| WorkUnitHarnessError::Unavailable)?,
@@ -235,19 +291,41 @@ impl WorkUnitExecutionHarnessService {
             super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
             | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
         };
-        let revision = match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand {
-            harness_key: "work_unit_handler".into(),
-            expected_source_draft_revision: draft,
-            expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
-            idempotency_key: format!("work-unit-handler-review-revision-{}", predecessor.revision_id),
-            creation_provenance: HarnessRevisionCreationProvenance { kind: HarnessRevisionProvenanceKind::ApplicationUser, reference: "work-unit-handler-outcome-review".into() },
-        }) {
-            Ok(CreateHarnessRevisionResult::Published(revision)) | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
-            Err(HarnessRevisionError::Conflict) => self.load_newly_published_handler_revision()?,
-            Err(_) => return Err(WorkUnitHarnessError::Unavailable),
-        };
+        let revision =
+            match self
+                .orchestration
+                .create_harness_revision(CreateHarnessRevisionCommand {
+                    harness_key: "work_unit_handler".into(),
+                    expected_source_draft_revision: draft,
+                    expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
+                    idempotency_key: format!(
+                        "work-unit-handler-review-revision-{}",
+                        predecessor.revision_id
+                    ),
+                    creation_provenance: HarnessRevisionCreationProvenance {
+                        kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                        reference: "work-unit-handler-outcome-review".into(),
+                    },
+                }) {
+                Ok(CreateHarnessRevisionResult::Published(revision))
+                | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
+                Err(HarnessRevisionError::Conflict) => {
+                    self.load_newly_published_handler_revision()?
+                }
+                Err(_) => return Err(WorkUnitHarnessError::Unavailable),
+            };
         let pinned = self.pinned_handler_revision_from_revision(revision)?;
-        if !pinned.profile.mcp.required || pinned.profile.mcp.enabled_tools.iter().map(String::as_str).ne(expected_tools) { return Err(WorkUnitHarnessError::Denied); }
+        if !pinned.profile.mcp.required
+            || pinned
+                .profile
+                .mcp
+                .enabled_tools
+                .iter()
+                .map(String::as_str)
+                .ne(expected_tools)
+        {
+            return Err(WorkUnitHarnessError::Denied);
+        }
         Ok(pinned)
     }
 
@@ -269,24 +347,49 @@ impl WorkUnitExecutionHarnessService {
         }
         self.pinned_handler_revision_from_revision(revision)
     }
-    pub(crate) fn current_implementer_revision(&self) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
-        let revision = match self.orchestration.load_harness_revision_history("work_unit_implementer") {
-            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions.iter().rev()
-                .find(|revision| self.pinned_implementer_revision_from_revision((*revision).clone()).map(|pinned| !pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools.is_empty()).unwrap_or(false))
-                .cloned().ok_or(WorkUnitHarnessError::Unavailable)?,
-            HarnessRevisionHistoryOutcome::Missing => self.bootstrap_initial_implementer_revision()?,
+    pub(crate) fn current_implementer_revision(
+        &self,
+    ) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
+        let revision = match self
+            .orchestration
+            .load_harness_revision_history("work_unit_implementer")
+        {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
+                .iter()
+                .rev()
+                .find(|revision| {
+                    self.pinned_implementer_revision_from_revision((*revision).clone())
+                        .map(|pinned| {
+                            !pinned.profile.mcp.required
+                                && pinned.profile.mcp.enabled_tools.is_empty()
+                        })
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .ok_or(WorkUnitHarnessError::Unavailable)?,
+            HarnessRevisionHistoryOutcome::Missing => {
+                self.bootstrap_initial_implementer_revision()?
+            }
             _ => return Err(WorkUnitHarnessError::Unavailable),
         };
         self.pinned_implementer_revision_from_revision(revision)
     }
     /// Publishes once a separate reporting revision.  It is never substituted for an attempt's
     /// original actionless revision and is used only by a same-Session continuation.
-    pub(crate) fn current_implementer_reporting_revision(&self) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
-        let revisions = match self.orchestration.load_harness_revision_history("work_unit_implementer") {
+    pub(crate) fn current_implementer_reporting_revision(
+        &self,
+    ) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
+        let revisions = match self
+            .orchestration
+            .load_harness_revision_history("work_unit_implementer")
+        {
             HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
             HarnessRevisionHistoryOutcome::Missing => {
                 self.bootstrap_initial_implementer_revision()?;
-                match self.orchestration.load_harness_revision_history("work_unit_implementer") {
+                match self
+                    .orchestration
+                    .load_harness_revision_history("work_unit_implementer")
+                {
                     HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions,
                     _ => return Err(WorkUnitHarnessError::Unavailable),
                 }
@@ -295,15 +398,25 @@ impl WorkUnitExecutionHarnessService {
         };
         if let Some(revision) = revisions.iter().rev().find(|revision| {
             self.pinned_implementer_revision_from_revision((*revision).clone())
-                .map(|pinned| pinned.profile.mcp.required && pinned.profile.mcp.enabled_tools == ["submit_implementation_outcome", "complete_implementation_outcome"])
+                .map(|pinned| {
+                    pinned.profile.mcp.required
+                        && pinned.profile.mcp.enabled_tools
+                            == [
+                                "submit_implementation_outcome",
+                                "complete_implementation_outcome",
+                            ]
+                })
                 .unwrap_or(false)
         }) {
             return self.pinned_implementer_revision_from_revision((*revision).clone());
         }
         let predecessor = revisions.last().ok_or(WorkUnitHarnessError::Unavailable)?;
-        let expected = self.orchestration.load_harness_working_copy("work_unit_implementer")
+        let expected = self
+            .orchestration
+            .load_harness_working_copy("work_unit_implementer")
             .map_err(|_| WorkUnitHarnessError::Unavailable)?
-            .as_ref().map_or(0, |copy| copy.draft_revision);
+            .as_ref()
+            .map_or(0, |copy| copy.draft_revision);
         let draft = match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand {
             harness_key: "work_unit_implementer".into(),
             configuration: conversation_harness::implementer_outcome_reporting_revision_configuration().map_err(|_| WorkUnitHarnessError::Unavailable)?,
@@ -314,28 +427,116 @@ impl WorkUnitExecutionHarnessService {
             super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy)
             | super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy) => copy.draft_revision,
         };
-        let revision = match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand {
-            harness_key: "work_unit_implementer".into(),
-            expected_source_draft_revision: draft,
-            expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
-            idempotency_key: format!("work-unit-implementer-outcome-revision-{}", predecessor.revision_id),
-            creation_provenance: HarnessRevisionCreationProvenance { kind: HarnessRevisionProvenanceKind::ApplicationUser, reference: "work-unit-implementer-outcome-reporting".into() },
-        }) {
-            Ok(CreateHarnessRevisionResult::Published(revision))
-            | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
-            Err(HarnessRevisionError::Conflict) => self.load_newly_published_implementer_revision()?,
-            Err(_) => return Err(WorkUnitHarnessError::Unavailable),
-        };
+        let revision =
+            match self
+                .orchestration
+                .create_harness_revision(CreateHarnessRevisionCommand {
+                    harness_key: "work_unit_implementer".into(),
+                    expected_source_draft_revision: draft,
+                    expected_predecessor_revision_id: Some(predecessor.revision_id.clone()),
+                    idempotency_key: format!(
+                        "work-unit-implementer-outcome-revision-{}",
+                        predecessor.revision_id
+                    ),
+                    creation_provenance: HarnessRevisionCreationProvenance {
+                        kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                        reference: "work-unit-implementer-outcome-reporting".into(),
+                    },
+                }) {
+                Ok(CreateHarnessRevisionResult::Published(revision))
+                | Ok(CreateHarnessRevisionResult::IdempotentReplay(revision)) => revision,
+                Err(HarnessRevisionError::Conflict) => {
+                    self.load_newly_published_implementer_revision()?
+                }
+                Err(_) => return Err(WorkUnitHarnessError::Unavailable),
+            };
         let pinned = self.pinned_implementer_revision_from_revision(revision)?;
-        if !pinned.profile.mcp.required || pinned.profile.mcp.enabled_tools != ["submit_implementation_outcome", "complete_implementation_outcome"] {
+        if !pinned.profile.mcp.required
+            || pinned.profile.mcp.enabled_tools
+                != [
+                    "submit_implementation_outcome",
+                    "complete_implementation_outcome",
+                ]
+        {
             return Err(WorkUnitHarnessError::Denied);
         }
         Ok(pinned)
     }
-    pub(crate) fn load_pinned_implementer_revision(&self,id:&str,digest:&str,commit:&str)->Result<PinnedImplementerHarnessRevision,WorkUnitHarnessError>{let HarnessRevisionReadOutcome::AvailableAndVerified{revision}=self.orchestration.load_harness_revision(id) else{return Err(WorkUnitHarnessError::Unavailable)};if revision.configuration_digest!=digest||revision.repository_commit_ref!=commit{return Err(WorkUnitHarnessError::Denied)}self.pinned_implementer_revision_from_revision(revision)}
-    fn bootstrap_initial_implementer_revision(&self)->Result<HarnessRevision,WorkUnitHarnessError>{let copy=self.orchestration.load_harness_working_copy("work_unit_implementer").map_err(|_|WorkUnitHarnessError::Unavailable)?;let draft=match copy{Some(copy)=>copy.draft_revision,None=>match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand{harness_key:"work_unit_implementer".into(),configuration:conversation_harness::initial_work_unit_implementer_revision_configuration().map_err(|_|WorkUnitHarnessError::Unavailable)?,expected_current_revision:0,editor:HarnessWorkingCopyEditor{kind:HarnessEditorKind::ApplicationUser,reference:"work-unit-implementer-activation".into()},idempotency_key:"work-unit-implementer-initial-working-copy".into()}){Ok(super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy))|Ok(super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy))=>copy.draft_revision,Err(_)=>return self.load_newly_published_implementer_revision()}};match self.orchestration.create_harness_revision(CreateHarnessRevisionCommand{harness_key:"work_unit_implementer".into(),expected_source_draft_revision:draft,expected_predecessor_revision_id:None,idempotency_key:format!("work-unit-implementer-initial-revision-{draft}"),creation_provenance:HarnessRevisionCreationProvenance{kind:HarnessRevisionProvenanceKind::ApplicationUser,reference:"work-unit-implementer-activation".into()}}){Ok(CreateHarnessRevisionResult::Published(r))|Ok(CreateHarnessRevisionResult::IdempotentReplay(r))=>Ok(r),Err(HarnessRevisionError::Conflict)=>self.load_newly_published_implementer_revision(),Err(_)=>Err(WorkUnitHarnessError::Unavailable)}}
-    fn load_newly_published_implementer_revision(&self)->Result<HarnessRevision,WorkUnitHarnessError>{match self.orchestration.load_harness_revision_history("work_unit_implementer"){HarnessRevisionHistoryOutcome::AvailableAndVerified{revisions}=>revisions.last().cloned().ok_or(WorkUnitHarnessError::Unavailable),_=>Err(WorkUnitHarnessError::Unavailable)}}
-    fn pinned_implementer_revision_from_revision(&self,revision:HarnessRevision)->Result<PinnedImplementerHarnessRevision,WorkUnitHarnessError>{let version=u16::try_from(revision.source_draft_revision).map_err(|_|WorkUnitHarnessError::Denied)?;let profile=conversation_harness::profile_from_immutable_implementer_revision(&revision.configuration,version).map_err(|_|WorkUnitHarnessError::Denied)?;Ok(PinnedHandlerHarnessRevision{revision_id:revision.revision_id,harness_key:revision.harness_key,configuration_digest:revision.configuration_digest,repository_commit_ref:revision.repository_commit_ref,profile})}
+    pub(crate) fn load_pinned_implementer_revision(
+        &self,
+        id: &str,
+        digest: &str,
+        commit: &str,
+    ) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
+        let HarnessRevisionReadOutcome::AvailableAndVerified { revision } =
+            self.orchestration.load_harness_revision(id)
+        else {
+            return Err(WorkUnitHarnessError::Unavailable);
+        };
+        if revision.configuration_digest != digest || revision.repository_commit_ref != commit {
+            return Err(WorkUnitHarnessError::Denied);
+        }
+        self.pinned_implementer_revision_from_revision(revision)
+    }
+    fn bootstrap_initial_implementer_revision(
+        &self,
+    ) -> Result<HarnessRevision, WorkUnitHarnessError> {
+        let copy = self
+            .orchestration
+            .load_harness_working_copy("work_unit_implementer")
+            .map_err(|_| WorkUnitHarnessError::Unavailable)?;
+        let draft=match copy{Some(copy)=>copy.draft_revision,None=>match self.orchestration.save_harness_working_copy(SaveHarnessWorkingCopyCommand{harness_key:"work_unit_implementer".into(),configuration:conversation_harness::initial_work_unit_implementer_revision_configuration().map_err(|_|WorkUnitHarnessError::Unavailable)?,expected_current_revision:0,editor:HarnessWorkingCopyEditor{kind:HarnessEditorKind::ApplicationUser,reference:"work-unit-implementer-activation".into()},idempotency_key:"work-unit-implementer-initial-working-copy".into()}){Ok(super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::Stored(copy))|Ok(super::conversation_harness_working_copy::SaveHarnessWorkingCopyResult::IdempotentReplay(copy))=>copy.draft_revision,Err(_)=>return self.load_newly_published_implementer_revision()}};
+        match self
+            .orchestration
+            .create_harness_revision(CreateHarnessRevisionCommand {
+                harness_key: "work_unit_implementer".into(),
+                expected_source_draft_revision: draft,
+                expected_predecessor_revision_id: None,
+                idempotency_key: format!("work-unit-implementer-initial-revision-{draft}"),
+                creation_provenance: HarnessRevisionCreationProvenance {
+                    kind: HarnessRevisionProvenanceKind::ApplicationUser,
+                    reference: "work-unit-implementer-activation".into(),
+                },
+            }) {
+            Ok(CreateHarnessRevisionResult::Published(r))
+            | Ok(CreateHarnessRevisionResult::IdempotentReplay(r)) => Ok(r),
+            Err(HarnessRevisionError::Conflict) => self.load_newly_published_implementer_revision(),
+            Err(_) => Err(WorkUnitHarnessError::Unavailable),
+        }
+    }
+    fn load_newly_published_implementer_revision(
+        &self,
+    ) -> Result<HarnessRevision, WorkUnitHarnessError> {
+        match self
+            .orchestration
+            .load_harness_revision_history("work_unit_implementer")
+        {
+            HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions } => revisions
+                .last()
+                .cloned()
+                .ok_or(WorkUnitHarnessError::Unavailable),
+            _ => Err(WorkUnitHarnessError::Unavailable),
+        }
+    }
+    fn pinned_implementer_revision_from_revision(
+        &self,
+        revision: HarnessRevision,
+    ) -> Result<PinnedImplementerHarnessRevision, WorkUnitHarnessError> {
+        let version = u16::try_from(revision.source_draft_revision)
+            .map_err(|_| WorkUnitHarnessError::Denied)?;
+        let profile = conversation_harness::profile_from_immutable_implementer_revision(
+            &revision.configuration,
+            version,
+        )
+        .map_err(|_| WorkUnitHarnessError::Denied)?;
+        Ok(PinnedHandlerHarnessRevision {
+            revision_id: revision.revision_id,
+            harness_key: revision.harness_key,
+            configuration_digest: revision.configuration_digest,
+            repository_commit_ref: revision.repository_commit_ref,
+            profile,
+        })
+    }
 
     fn bootstrap_initial_handler_revision(&self) -> Result<HarnessRevision, WorkUnitHarnessError> {
         let working_copy = self
@@ -444,7 +645,9 @@ impl WorkUnitExecutionHarnessService {
             .grant_for_role(attempt_id, role.execution_role())?;
         if role == WorkUnitHarnessRole::Implementer
             && is_exact_implementer_profile(&harness)
-            && Path::new(&reference.working_directory).join(".codex").exists()
+            && Path::new(&reference.working_directory)
+                .join(".codex")
+                .exists()
         {
             // Codex 0.144 loads a trusted project's local configuration after command-line
             // overrides. The application cannot safely enumerate or neutralize its discovery
@@ -480,15 +683,42 @@ impl WorkUnitExecutionHarnessService {
         )?;
         Ok(())
     }
-    pub(crate) fn authorize_implementer_attempt(&self,attempt_id:&str,work_unit_id:&str,authority:&str)->Result<(),WorkUnitHarnessError>{self.authorize_implementer_attempt_at_seed(attempt_id,work_unit_id,authority,None)}
+    pub(crate) fn authorize_implementer_attempt(
+        &self,
+        attempt_id: &str,
+        work_unit_id: &str,
+        authority: &str,
+    ) -> Result<(), WorkUnitHarnessError> {
+        self.authorize_implementer_attempt_at_seed(attempt_id, work_unit_id, authority, None)
+    }
 
     /// The retry coordinator provides a commit it derived and pinned from the accepted
     /// ordinal-0 evidence.  No Harness, caller, or runtime route can choose this seed.
-    pub(crate) fn authorize_implementer_attempt_at_seed(&self,attempt_id:&str,work_unit_id:&str,authority:&str,seed:Option<String>)->Result<(),WorkUnitHarnessError>{self.execution_support.authorize_existing_attempt(AuthorizeExistingWorkUnitExecutionAttempt{attempt_id:attempt_id.into(),work_unit_id:work_unit_id.into(),role:WorkUnitExecutionRole::Implementer,sprint_git_authority_id:authority.into(),execution_seed_object_id:seed})?;Ok(())}
+    pub(crate) fn authorize_implementer_attempt_at_seed(
+        &self,
+        attempt_id: &str,
+        work_unit_id: &str,
+        authority: &str,
+        seed: Option<String>,
+    ) -> Result<(), WorkUnitHarnessError> {
+        self.execution_support.authorize_existing_attempt(
+            AuthorizeExistingWorkUnitExecutionAttempt {
+                attempt_id: attempt_id.into(),
+                work_unit_id: work_unit_id.into(),
+                role: WorkUnitExecutionRole::Implementer,
+                sprint_git_authority_id: authority.into(),
+                execution_seed_object_id: seed,
+            },
+        )?;
+        Ok(())
+    }
 
     /// The provider remains unable to write protected Git metadata in workspace-write mode.
     /// Seal only its durable, already-authorized isolated candidate after its original turn ends.
-    pub(crate) fn commit_implementer_candidate(&self, attempt_id: &str) -> Result<bool, WorkUnitHarnessError> {
+    pub(crate) fn commit_implementer_candidate(
+        &self,
+        attempt_id: &str,
+    ) -> Result<bool, WorkUnitHarnessError> {
         self.execution_support
             .commit_implementer_candidate(attempt_id)
             .map_err(Into::into)
@@ -502,7 +732,10 @@ fn is_exact_implementer_profile(harness: &ConversationHarnessProfile) -> bool {
         && ((!harness.mcp.required && harness.mcp.enabled_tools.is_empty())
             || (harness.mcp.required
                 && harness.mcp.enabled_tools
-                    == ["submit_implementation_outcome", "complete_implementation_outcome"]))
+                    == [
+                        "submit_implementation_outcome",
+                        "complete_implementation_outcome",
+                    ]))
 }
 
 /// A constructed package contains the application-derived working directory and opaque
@@ -582,7 +815,10 @@ impl WorkUnitExecutionHarnessPackage {
     }
 
     pub(crate) fn capture_authorization_id(&self) -> Result<String, WorkUnitHarnessError> {
-        match self.execution_support.consume(&self.reference.capability_ref, ExecutionSupportIntent::CaptureAuthorization)? {
+        match self.execution_support.consume(
+            &self.reference.capability_ref,
+            ExecutionSupportIntent::CaptureAuthorization,
+        )? {
             ExecutionSupportResponse::CaptureAuthorization(value) => Ok(value),
             _ => Err(WorkUnitHarnessError::Unavailable),
         }
@@ -685,8 +921,10 @@ mod tests {
 
     #[test]
     fn roles_expose_only_the_implemented_handler_action() {
-        let handler = conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
-        let implementer = conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
+        let handler =
+            conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
+        let implementer =
+            conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
         assert_eq!(handler.mcp.enabled_tools, ["request_work_unit_implementer"]);
         assert!(handler.mcp.required);
         assert!(implementer.mcp.enabled_tools.is_empty());
@@ -694,20 +932,27 @@ mod tests {
 
     #[test]
     fn exact_implementer_profile_accepts_only_actionless_or_exact_reporting_pair() {
-        let actionless = conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
+        let actionless =
+            conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
         assert!(is_exact_implementer_profile(&actionless));
         let mut false_nonempty = actionless.clone();
         false_nonempty.mcp.enabled_tools = vec!["unexpected".into()];
         assert!(!is_exact_implementer_profile(&false_nonempty));
         let mut false_pair = actionless.clone();
-        false_pair.mcp.enabled_tools = vec!["submit_implementation_outcome".into(), "complete_implementation_outcome".into()];
+        false_pair.mcp.enabled_tools = vec![
+            "submit_implementation_outcome".into(),
+            "complete_implementation_outcome".into(),
+        ];
         assert!(!is_exact_implementer_profile(&false_pair));
         let mut required_empty = actionless.clone();
         required_empty.mcp.required = true;
         assert!(!is_exact_implementer_profile(&required_empty));
         let mut reporting = actionless;
         reporting.mcp.required = true;
-        reporting.mcp.enabled_tools = vec!["submit_implementation_outcome".into(), "complete_implementation_outcome".into()];
+        reporting.mcp.enabled_tools = vec![
+            "submit_implementation_outcome".into(),
+            "complete_implementation_outcome".into(),
+        ];
         assert!(is_exact_implementer_profile(&reporting));
     }
 
@@ -737,36 +982,53 @@ mod tests {
     fn workspace_write_package_carries_only_its_exact_ephemeral_project_trust_override() {
         let implementer =
             conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
-        let handler = conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
+        let handler =
+            conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
         let working_directory = r"C:\isolated\execution-workspace";
         let writable = package_runtime_launch_configuration(&implementer, working_directory);
         let read_only = package_runtime_launch_configuration(&handler, working_directory);
         let mut foreign_workspace_write = implementer.clone();
         foreign_workspace_write.key = "future_workspace_write_role".into();
-        let foreign = package_runtime_launch_configuration(&foreign_workspace_write, working_directory);
+        let foreign =
+            package_runtime_launch_configuration(&foreign_workspace_write, working_directory);
         let mut malformed_workspace_write = implementer.clone();
         malformed_workspace_write.mcp.enabled_tools = vec!["unexpected".into()];
-        let malformed = package_runtime_launch_configuration(&malformed_workspace_write, working_directory);
+        let malformed =
+            package_runtime_launch_configuration(&malformed_workspace_write, working_directory);
 
-        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
-            arguments[0] == "-c"
-                && arguments[1]
-                    == r#"projects.'c:\isolated\execution-workspace'.trust_level="trusted""#
-        }));
+        assert!(writable
+            .extension
+            .additional_args
+            .windows(2)
+            .any(|arguments| {
+                arguments[0] == "-c"
+                    && arguments[1]
+                        == r#"projects.'c:\isolated\execution-workspace'.trust_level="trusted""#
+            }));
         assert!(!read_only.extension.additional_args.iter().any(|argument| {
             argument.contains("trust_level") || argument.contains("execution-workspace")
         }));
         assert!(read_only.extension.environment.is_empty());
         for configuration in [&foreign, &malformed] {
-            assert!(!configuration.extension.additional_args.iter().any(|argument| {
+            assert!(!configuration
+                .extension
+                .additional_args
+                .iter()
+                .any(|argument| {
                     argument.contains("trust_level")
-                    || argument == "--ignore-rules"
-                    || argument == "mcp_servers={}"
-            }));
+                        || argument == "--ignore-rules"
+                        || argument == "mcp_servers={}"
+                }));
         }
-        assert!(writable.extension.additional_args.iter().any(|argument| argument == "--ignore-rules"));
-        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
-            arguments == ["-c", "mcp_servers={}"]
-        }));
+        assert!(writable
+            .extension
+            .additional_args
+            .iter()
+            .any(|argument| argument == "--ignore-rules"));
+        assert!(writable
+            .extension
+            .additional_args
+            .windows(2)
+            .any(|arguments| { arguments == ["-c", "mcp_servers={}"] }));
     }
 }

@@ -128,9 +128,22 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
 pub(crate) fn initialize_accepted_candidate_authority_schema(
     connection: &Connection,
 ) -> Result<(), String> {
-    connection.execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA).map_err(|e| e.to_string())?;
-    let has_attempt_baseline = connection.prepare("PRAGMA table_info(accepted_handler_candidates)").and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())?.iter().any(|column| column == "attempt_baseline_object_id");
-    if !has_attempt_baseline { connection.execute("ALTER TABLE accepted_handler_candidates ADD COLUMN attempt_baseline_object_id TEXT", []).map_err(|error| format!("Unable to migrate accepted candidate baseline: {error}"))?; }
+    connection
+        .execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    let has_attempt_baseline = connection
+        .prepare("PRAGMA table_info(accepted_handler_candidates)")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|column| column == "attempt_baseline_object_id");
+    if !has_attempt_baseline {
+        connection.execute("ALTER TABLE accepted_handler_candidates ADD COLUMN attempt_baseline_object_id TEXT", []).map_err(|error| format!("Unable to migrate accepted candidate baseline: {error}"))?;
+    }
     Ok(())
 }
 
@@ -194,7 +207,10 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
     ]);
     let retained:Option<(String,String,String,Option<String>,Option<String>)>=connection.query_row("SELECT candidate_commit_id,candidate_tree_id,evidence_fingerprint,pinned_at,attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id=?1",[&candidate_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|e.to_string())?;
     if let Some((commit, tree, stored, Some(_), retained_baseline)) = retained {
-        if commit != row.capture_commit || stored != evidence || retained_baseline.as_deref() != Some(row.baseline.as_str()) {
+        if commit != row.capture_commit
+            || stored != evidence
+            || retained_baseline.as_deref() != Some(row.baseline.as_str())
+        {
             return record_attention(
                 connection,
                 &candidate_id,
@@ -303,8 +319,7 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
         return Err("repository_root_drift".into());
     }
     if git_path(&root, "--git-common-dir")? != canonical(&PathBuf::from(&row.common))?
-        || git_path(&repo, "--git-common-dir")?
-            != canonical(&PathBuf::from(&row.common))?
+        || git_path(&repo, "--git-common-dir")? != canonical(&PathBuf::from(&row.common))?
     {
         return Err("repository_common_dir_drift".into());
     }
@@ -404,7 +419,8 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
             && git_object(&current)
             && version >= 1
             && initialized <= updated
-            && binding == sprint_target_binding_fingerprint(&row.authority_id, &reference, &current);
+            && binding
+                == sprint_target_binding_fingerprint(&row.authority_id, &reference, &current);
         return if exact {
             Ok(())
         } else {
@@ -437,8 +453,7 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
             &["rev-parse", "--verify", &format!("{ref_name}^{{commit}}")],
         )? != current
         || current != row.authority_current
-        || git_path(&worktree, "--git-common-dir")?
-            != canonical(&PathBuf::from(&row.common))?
+        || git_path(&worktree, "--git-common-dir")? != canonical(&PathBuf::from(&row.common))?
     {
         return record_target_attention(connection, &row.authority_id, "target_worktree_drift");
     }
@@ -490,7 +505,11 @@ fn canonical(path: &Path) -> Result<String, String> {
 }
 fn git_path(root: &Path, argument: &str) -> Result<String, String> {
     let path = PathBuf::from(git(root, &["rev-parse", argument])?);
-    let resolved = if path.is_absolute() { path } else { root.join(path) };
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
     canonical(&resolved)
 }
 fn safe_ref(value: &str) -> bool {
@@ -539,7 +558,12 @@ fn fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(prefix.as_bytes());
     h.update([0]);
-    h.update(value.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+    h.update(
+        value
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    );
     format!("{prefix}-{:x}", h.finalize())
 }
 

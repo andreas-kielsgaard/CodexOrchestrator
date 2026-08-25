@@ -34,11 +34,17 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active v37 schema evolution: {error}"))?;
-        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-            .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
-        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+            &transaction,
+        )
+        .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
+        transaction
+            .execute_batch(
+                crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+            )
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
-        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        transaction
+            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
         crate::orchestration::epic_settlement::initialize(&transaction)
             .map_err(|error| format!("Unable to evolve Epic settlement schema: {error}"))?;
@@ -142,23 +148,38 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
         crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
             .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
-        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-            .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
-        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+            &transaction,
+        )
+        .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
+        transaction
+            .execute_batch(
+                crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+            )
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
-        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        transaction
+            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
         if current_version <= 21 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile readiness schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile readiness schema: {error}")
+                })?;
         }
         if current_version <= 22 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile attention schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile attention schema: {error}")
+                })?;
         }
         if current_version <= 23 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile producer-attempt schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile producer-attempt schema: {error}")
+                })?;
         }
         if current_version <= 24 {
             let has_full_access_canary = transaction
@@ -173,12 +194,18 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 transaction.execute_batch("ALTER TABLE native_codex_profile_readiness ADD COLUMN danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked'));")
                     .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
             }
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native execution-mode authority schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native execution-mode authority schema: {error}")
+                })?;
         }
         if current_version <= 25 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native full-access canary schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native full-access canary schema: {error}")
+                })?;
         }
         if current_version <= 26 {
             transaction
@@ -265,13 +292,19 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if legacy_full_access_canary {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
-                    .map_err(|error| format!("Unable to migrate native full-access canary evidence: {error}"))?;
+                    .execute_batch(
+                        crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
+                    )
+                    .map_err(|error| {
+                        format!("Unable to migrate native full-access canary evidence: {error}")
+                    })?;
             }
         }
         if current_version <= 34 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION)
+                .execute_batch(
+                    crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native MCP reporting dispatch claims: {error}")
                 })?;
@@ -358,11 +391,17 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
     crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
         .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
-    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-        .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
-    transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+        &transaction,
+    )
+    .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
+    transaction
+        .execute_batch(
+            crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+        )
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
-    transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+    transaction
+        .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     crate::orchestration::epic_settlement::initialize(&transaction)
         .map_err(|error| format!("Unable to initialize Epic settlement schema: {error}"))?;
@@ -403,11 +442,9 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 8)
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
-    Ok(
-        native_profile_schema_is_present
-            && epic_settlement_schema_is_present
-            && product_decision_schema_is_present,
-    )
+    Ok(native_profile_schema_is_present
+        && epic_settlement_schema_is_present
+        && product_decision_schema_is_present)
 }
 use std::time::Duration;
 
@@ -760,18 +797,67 @@ mod tests {
         assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='terminal-candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved terminal missing baseline"), None);
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get::<_, String>(0)).expect("terminal stage"), "settled");
-        let evolved_columns = reopened.prepare("PRAGMA table_info(accepted_work_unit_integrations)").unwrap().query_map([], |row| row.get::<_, String>(1)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        for column in ["stage","authorization_recorded_at","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        let evolved_columns = reopened
+            .prepare("PRAGMA table_info(accepted_work_unit_integrations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "stage",
+            "authorization_recorded_at",
+            "commit_fingerprint",
+            "object_created_at",
+            "ref_advanced_at",
+            "runtime_advanced_at",
+            "db_advanced_at",
+            "notification_intent_recorded_at",
+            "notification_delivered_at",
+        ] {
+            assert!(
+                evolved_columns.contains(&column.to_string()),
+                "missing {column}"
+            );
+        }
         assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "t");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "terminal-intent-at");
         let terminal: (String, Option<String>, Option<String>) = reopened.query_row("SELECT notification_intent_recorded_at,notification_delivered_at,commit_fingerprint FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
         assert_eq!(terminal, ("terminal-settled-at".into(), None, None));
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT evidence_id FROM accepted_work_unit_integration_evidence", [], |row| row.get(0)).unwrap(), "terminal-evidence-id");
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT settlement_id FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), "terminal-settlement-id");
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT contribution_id FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), "terminal-contribution-id");
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT evidence_id FROM accepted_work_unit_integration_evidence",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-evidence-id"
+        );
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT settlement_id FROM work_unit_settlements",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-settlement-id"
+        );
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT contribution_id FROM work_unit_prerequisite_contributions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-contribution-id"
+        );
         assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
         assert!(reopened.execute("UPDATE accepted_work_unit_integrations SET stage='unknown' WHERE integration_id='integration'", []).is_err());
-        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened).expect("NULL baseline remains non-integratable");
+        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened)
+            .expect("NULL baseline remains non-integratable");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "intent_reserved");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "settled");
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
@@ -1575,7 +1661,10 @@ mod tests {
             .expect("seed real v33 native-profile predecessor");
 
         initialize_active_database(&connection).expect("migrate v33 through dispatch claim");
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         assert_eq!(
             connection
                 .query_row(

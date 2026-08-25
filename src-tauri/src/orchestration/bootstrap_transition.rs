@@ -634,7 +634,10 @@ impl SqliteBootstrapTransitionRepository {
         match selections.as_slice() {
             [] => Ok(false),
             [(selected_sprint, selected_epic)]
-                if selected_sprint == sprint_id && selected_epic == &record.epic_id => Ok(true),
+                if selected_sprint == sprint_id && selected_epic == &record.epic_id =>
+            {
+                Ok(true)
+            }
             _ => Err(TransitionError::IdentityMismatch(
                 "Epic Runner selection does not match its durable Sprint authority".into(),
             )),
@@ -656,7 +659,8 @@ impl SqliteBootstrapTransitionRepository {
         ).map_err(sql_unavailable("bind Epic Runner no-selection recovery"))?;
         if changed != 1 {
             return Err(TransitionError::IdentityMismatch(
-                "Epic Runner no-selection recovery does not match the completed durable invocation".into(),
+                "Epic Runner no-selection recovery does not match the completed durable invocation"
+                    .into(),
             ));
         }
         Ok(invocation_id)
@@ -667,8 +671,15 @@ impl SqliteBootstrapTransitionRepository {
         initiation_id: &str,
         column: &str,
     ) -> Result<(), TransitionError> {
-        if !["runner_recovery_harness_applied_at", "runner_recovery_launch_accepted_at"].contains(&column) {
-            return Err(TransitionError::Unavailable("invalid Epic Runner recovery stage".into()));
+        if ![
+            "runner_recovery_harness_applied_at",
+            "runner_recovery_launch_accepted_at",
+        ]
+        .contains(&column)
+        {
+            return Err(TransitionError::Unavailable(
+                "invalid Epic Runner recovery stage".into(),
+            ));
         }
         let now = self.timestamp();
         self.lock()?.execute(
@@ -1517,8 +1528,11 @@ impl PostConfirmationTransitionService {
                         invocation_id: invocation_id.clone(),
                         message: SendAgentSessionMessageCommand {
                             session_id: Some(session_id.clone()),
-                            submitted_text: self
-                                .runner_prompt(&refreshed, accepted_attempt_id, &authorized_sprint_id)?,
+                            submitted_text: self.runner_prompt(
+                                &refreshed,
+                                accepted_attempt_id,
+                                &authorized_sprint_id,
+                            )?,
                             title: None,
                             working_directory: Some(discovery_root),
                             requested_options: Some(harness.runtime_options()),
@@ -2041,19 +2055,24 @@ mod tests {
     use super::*;
     use crate::{
         agent_sessions::{
-            application::{AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders},
-            domain::{AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase},
+            application::{
+                AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders,
+            },
+            domain::{
+                AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus,
+                AgentRuntimeEventSource, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase,
+            },
             ports::{
-                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationMode,
+                AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
                 RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
-                RuntimeEventDraft, RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
+                RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
             },
             repository::SqliteAgentSessionRepository,
         },
         orchestration::{
-            application::OrchestrationApplication,
             accepted_candidate_authority::reconcile_accepted_candidate_authorities,
             accepted_integration::reconcile_accepted_integrations,
+            application::OrchestrationApplication,
             conversation_harness::{self, ConversationHarnessRole},
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             execution_support::ProductExecutionSupportState,
@@ -2062,13 +2081,17 @@ mod tests {
                 WorktreeRuntimeGitComparison,
             },
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
-            work_unit_execution_harness::{
-                WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
-            },
+            work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUnitHarnessRole},
         },
         runtime::codex::CodexCliRuntime,
     };
     use sha2::{Digest, Sha256};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Barrier, Weak,
+    };
+    use std::thread;
+    use std::time::{Duration, Instant};
     use std::{
         collections::BTreeMap,
         env,
@@ -2078,12 +2101,6 @@ mod tests {
         path::{Path, PathBuf},
         process::{Command, Stdio},
     };
-    use std::sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Barrier, Weak,
-    };
-    use std::thread;
-    use std::time::{Duration, Instant};
 
     struct PrivateCodexHome {
         directory: tempfile::TempDir,
@@ -2167,7 +2184,8 @@ mod tests {
 
     impl LoopbackMcpSentinel {
         fn start() -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test-owned loopback sentinel");
+            let listener =
+                TcpListener::bind("127.0.0.1:0").expect("bind test-owned loopback sentinel");
             listener
                 .set_nonblocking(true)
                 .expect("make test-owned loopback sentinel nonblocking");
@@ -2241,10 +2259,12 @@ mod tests {
                     .entry(format!("{:?}", normalized.kind).to_ascii_lowercase())
                     .or_insert(0usize) += 1;
                 agent_message_count += usize::from(
-                    normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::AgentMessage,
+                    normalized.kind
+                        == crate::agent_sessions::domain::NormalizedRuntimeEventKind::AgentMessage,
                 );
                 tool_activity_count += usize::from(
-                    normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::ToolActivity,
+                    normalized.kind
+                        == crate::agent_sessions::domain::NormalizedRuntimeEventKind::ToolActivity,
                 );
             }
         }
@@ -2389,7 +2409,9 @@ mod tests {
         entries
     }
 
-    fn private_home_artifact_names_and_types(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+    fn private_home_artifact_names_and_types(
+        root: &Path,
+    ) -> Result<Vec<serde_json::Value>, String> {
         fn collect(root: &Path, entries: &mut Vec<serde_json::Value>) -> Result<(), String> {
             for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
                 let entry = entry.map_err(|error| error.to_string())?;
@@ -2400,8 +2422,7 @@ mod tests {
                         "directory".to_owned()
                     } else if file_type.is_file() {
                         let path = entry.path();
-                        path
-                            .extension()
+                        path.extension()
                             .and_then(|extension| extension.to_str())
                             .filter(|extension| !extension.is_empty())
                             .map(str::to_owned)
@@ -2504,35 +2525,56 @@ mod tests {
     }
 
     impl AgentRuntime for SynchronousProvenanceRuntime {
-        fn preflight_invocation(&self, mode: RuntimeInvocationMode, requested_options: &AgentRuntimeOptions) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+        fn preflight_invocation(
+            &self,
+            mode: RuntimeInvocationMode,
+            requested_options: &AgentRuntimeOptions,
+        ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
             self.inner.preflight_invocation(mode, requested_options)
         }
 
-        fn start_invocation(&self, request: RuntimeInvocationRequest, sink: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> {
+        fn start_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
             self.starts.fetch_add(1, Ordering::SeqCst);
-            sink.emit_update(&request.invocation_id, RuntimeUpdate::Event(RuntimeEventDraft {
-                source: AgentRuntimeEventSource::Runtime,
-                raw_payload: serde_json::json!({
-                    "kind": "codex_launch_provenance",
-                    "executable": "codex.exe",
-                    "invocationMode": "start",
-                    "configurationKeys": ["approval_policy"],
-                    "environmentKeys": []
+            sink.emit_update(
+                &request.invocation_id,
+                RuntimeUpdate::Event(RuntimeEventDraft {
+                    source: AgentRuntimeEventSource::Runtime,
+                    raw_payload: serde_json::json!({
+                        "kind": "codex_launch_provenance",
+                        "executable": "codex.exe",
+                        "invocationMode": "start",
+                        "configurationKeys": ["approval_policy"],
+                        "environmentKeys": []
+                    }),
+                    normalized: None,
                 }),
-                normalized: None,
-            }))?;
+            )?;
             self.inner.start_invocation(request, sink)
         }
 
-        fn resume_invocation(&self, request: RuntimeInvocationRequest, context: crate::agent_sessions::domain::ExternalRuntimeContextId, sink: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> {
+        fn resume_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            context: crate::agent_sessions::domain::ExternalRuntimeContextId,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
             self.inner.resume_invocation(request, context, sink)
         }
 
-        fn cancel_invocation(&self, invocation_id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+        fn cancel_invocation(
+            &self,
+            invocation_id: &AgentInvocationId,
+        ) -> Result<(), RuntimePortError> {
             self.inner.cancel_invocation(invocation_id)
         }
 
-        fn shutdown(&self) -> Result<(), RuntimePortError> { self.inner.shutdown() }
+        fn shutdown(&self) -> Result<(), RuntimePortError> {
+            self.inner.shutdown()
+        }
     }
 
     impl AgentRuntime for RecordedRuntime {
@@ -2575,15 +2617,27 @@ mod tests {
                     )
                 })?;
                 let workspace = Path::new(working_directory);
-                fs::write(workspace.join("README.md"), "implementer candidate evidence\n").map_err(|error| {
+                fs::write(
+                    workspace.join("README.md"),
+                    "implementer candidate evidence\n",
+                )
+                .map_err(|error| {
                     RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, error.to_string())
                 })?;
-                for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "implementer candidate evidence"].as_slice()] {
+                for arguments in [
+                    ["add", "README.md"].as_slice(),
+                    ["commit", "-m", "implementer candidate evidence"].as_slice(),
+                ] {
                     let output = std::process::Command::new("git")
                         .args(arguments)
                         .current_dir(workspace)
                         .output()
-                        .map_err(|error| RuntimePortError::new(RuntimePortErrorKind::LaunchFailed, error.to_string()))?;
+                        .map_err(|error| {
+                            RuntimePortError::new(
+                                RuntimePortErrorKind::LaunchFailed,
+                                error.to_string(),
+                            )
+                        })?;
                     if !output.status.success() {
                         return Err(RuntimePortError::new(
                             RuntimePortErrorKind::LaunchFailed,
@@ -2650,7 +2704,11 @@ mod tests {
     #[derive(Default)]
     struct TransitionNotifier {
         service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
-        sprint: Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>,
+        sprint: Mutex<
+            Option<
+                Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            >,
+        >,
     }
 
     impl TransitionNotifier {
@@ -2660,7 +2718,9 @@ mod tests {
 
         fn set_sprint(
             &self,
-            service: &Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            service: &Arc<
+                crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService,
+            >,
         ) {
             *self.sprint.lock().unwrap() = Some(Arc::downgrade(service));
         }
@@ -2699,7 +2759,11 @@ mod tests {
     #[derive(Default)]
     struct LiveTransitionNotifier {
         service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
-        sprint: Mutex<Option<Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>>>,
+        sprint: Mutex<
+            Option<
+                Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            >,
+        >,
         terminals: Mutex<Vec<AgentInvocation>>,
         ready: std::sync::Condvar,
     }
@@ -2711,7 +2775,9 @@ mod tests {
 
         fn set_sprint(
             &self,
-            service: &Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+            service: &Arc<
+                crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService,
+            >,
         ) {
             *self.sprint.lock().unwrap() = Some(Arc::downgrade(service));
         }
@@ -2946,21 +3012,23 @@ mod tests {
             self.service.query().unwrap().transitions[0].clone()
         }
 
-        fn prepare_work_slice_planner(&self) -> (
+        fn prepare_work_slice_planner(
+            &self,
+        ) -> (
             Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
             AgentInvocationId,
             String,
         ) {
             let bootstrap = self.status();
-            let bootstrap_invocation = AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap();
+            let bootstrap_invocation =
+                AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap();
             self.service
-                .complete_bootstrap(
-                    &bootstrap_invocation,
-                    Self::materials(),
-                )
+                .complete_bootstrap(&bootstrap_invocation, Self::materials())
                 .unwrap();
-            self.runtime
-                .finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+            self.runtime.finish(
+                &bootstrap.bootstrap_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            );
             let runner = self.status();
             let sprint_id: String = Connection::open(&self.database_path)
                 .unwrap()
@@ -2984,10 +3052,9 @@ mod tests {
                 )
                 .unwrap();
             let control = AgentInvocationId::new("planning-control-http-invocation").unwrap();
-            let control_harness = conversation_harness::profile(
-                ConversationHarnessRole::SprintRunnerPlanningControl,
-            )
-            .unwrap();
+            let control_harness =
+                conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl)
+                    .unwrap();
             Connection::open(&self.database_path)
                 .unwrap()
                 .execute(
@@ -3027,10 +3094,8 @@ mod tests {
                     crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
                 )
                 .unwrap();
-            let planner_invocation = AgentInvocationId::new(
-                status.work_slice_planner_invocation_id.unwrap(),
-            )
-            .unwrap();
+            let planner_invocation =
+                AgentInvocationId::new(status.work_slice_planner_invocation_id.unwrap()).unwrap();
             self.notifier.set_sprint(&service);
             (service, planner_invocation, sprint_id)
         }
@@ -3311,49 +3376,139 @@ mod tests {
         drop(connection);
         // Deterministic semantic state-machine: semantic outcome, matching terminal observation,
         // delivery, sole Epic authorization, same-session continuation, and reevaluation.
-        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
-        let outcome = crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "forecast A".into(), material_uncertainty: "uncertainty A".into(), application_owned_prerequisite: "Epic authorization".into() };
-        service.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), outcome.clone()).unwrap();
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let outcome = crate::orchestration::sprint_runner_transition::PreStartOutcome {
+            forecast_and_concerns: "forecast A".into(),
+            material_uncertainty: "uncertainty A".into(),
+            application_owned_prerequisite: "Epic authorization".into(),
+        };
+        service
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(),
+                outcome.clone(),
+            )
+            .unwrap();
         assert!(matches!(service.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "different".into(), material_uncertainty: "uncertainty A".into(), application_owned_prerequisite: "Epic authorization".into() }), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture.runtime.finish(
+            &request.sprint_runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         service.reconcile_startup().unwrap();
-        let accepted=service.query().unwrap().transitions.into_iter().next().unwrap();
+        let accepted = service
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .next()
+            .unwrap();
         assert!(accepted.accepted, "{accepted:?}");
-        assert_eq!(fixture.runtime.requests().len(),4);
-        let delivery=&fixture.runtime.requests()[3];assert!(delivery.submitted_text.contains("forecast A"));assert!(delivery.submitted_text.contains("uncertainty A"));assert!(delivery.submitted_text.contains("Epic authorization"));
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        let delivery = &fixture.runtime.requests()[3];
+        assert!(delivery.submitted_text.contains("forecast A"));
+        assert!(delivery.submitted_text.contains("uncertainty A"));
+        assert!(delivery.submitted_text.contains("Epic authorization"));
         assert!(matches!(service.start_selected_sprint(&AgentInvocationId::new("wrong-epic-continuation").unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        let barrier=Arc::new(Barrier::new(2));let start_calls=(0..2).map(|_|{let service=service.clone();let barrier=barrier.clone();let invocation=accepted.epic_continuation_invocation_id.clone().unwrap();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(invocation).unwrap())})}).collect::<Vec<_>>();let start_results=start_calls.into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>();assert!(start_results.iter().all(Result::is_ok),"{start_results:?}");
-        let started=service.query().unwrap().transitions.into_iter().next().unwrap();assert_eq!(started.sprint_runner_session_id,request.sprint_runner_session_id);assert!(started.sprint_continuation_launch_accepted_at.is_some());assert_eq!(fixture.runtime.requests().len(),5);
-        let reevaluation=crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"branch is clean".into(),started_forecast_and_concerns:"started concern".into()};service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap()).unwrap(),reevaluation.clone()).unwrap();assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let final_state=service.query().unwrap().transitions.into_iter().next().unwrap();assert!(final_state.planning_ready_at.is_none());assert!(final_state.downstream_not_started);
+        let barrier = Arc::new(Barrier::new(2));
+        let start_calls = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                let invocation = accepted.epic_continuation_invocation_id.clone().unwrap();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.start_selected_sprint(&AgentInvocationId::new(invocation).unwrap())
+                })
+            })
+            .collect::<Vec<_>>();
+        let start_results = start_calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(start_results.iter().all(Result::is_ok), "{start_results:?}");
+        let started = service
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            started.sprint_runner_session_id,
+            request.sprint_runner_session_id
+        );
+        assert!(started.sprint_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 5);
+        let reevaluation = crate::orchestration::sprint_runner_transition::StartedReevaluation {
+            repository_branch_evaluation: "branch is clean".into(),
+            started_forecast_and_concerns: "started concern".into(),
+        };
+        service
+            .record_started_reevaluation(
+                &AgentInvocationId::new(started.sprint_continuation_invocation_id.clone().unwrap())
+                    .unwrap(),
+                reevaluation.clone(),
+            )
+            .unwrap();
+        assert!(matches!(service.record_started_reevaluation(&AgentInvocationId::new(started.sprint_continuation_invocation_id.unwrap()).unwrap(),crate::orchestration::sprint_runner_transition::StartedReevaluation{repository_branch_evaluation:"different branch".into(),started_forecast_and_concerns:"started concern".into()}),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let final_state = service
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(final_state.planning_ready_at.is_none());
+        assert!(final_state.downstream_not_started);
     }
 
     #[test]
     fn completed_unselected_runner_recovers_once_with_the_durable_sprint_identity() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
-        fixture.service.complete_bootstrap(
-            &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
-            Fixture::materials(),
-        ).unwrap();
-        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         let runner = fixture.status();
-        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal LIMIT 1",
-            [&runner.epic_id], |row| row.get(0),
-        ).unwrap();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal LIMIT 1",
+                [&runner.epic_id],
+                |row| row.get(0),
+            )
+            .unwrap();
 
         // The original request did not make a selection. Its durable terminal observation creates
         // one fresh application-owned continuation in the same Session without changing it.
-        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         assert_eq!(fixture.runtime.requests().len(), 3);
         let recovery = fixture.runtime.requests()[2].clone();
         assert_eq!(recovery.session_id.as_str(), runner.runner_session_id);
-        assert!(recovery.submitted_text.contains(&format!("exact durable Sprint ID: {sprint_id}")));
+        assert!(recovery
+            .submitted_text
+            .contains(&format!("exact durable Sprint ID: {sprint_id}")));
         assert!(recovery.submitted_text.contains("historical and immutable"));
         let recovery_id = recovery.invocation_id.clone();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         assert!(matches!(
             sprint.request_next_sprint_runner(
                 &recovery_id,
@@ -3361,10 +3516,14 @@ mod tests {
             ),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
-        let later_sprint: String = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal DESC LIMIT 1",
-            [&runner.epic_id], |row| row.get(0),
-        ).unwrap();
+        let later_sprint: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal DESC LIMIT 1",
+                [&runner.epic_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(matches!(
             sprint.request_next_sprint_runner(
                 &recovery_id,
@@ -3372,20 +3531,34 @@ mod tests {
             ),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
-        sprint.request_next_sprint_runner(
-            &recovery_id,
-            crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
-        ).unwrap();
+        sprint
+            .request_next_sprint_runner(
+                &recovery_id,
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
         fixture.service.reconcile_startup().unwrap();
         fixture.service.reconcile_startup().unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_bootstrap_transitions WHERE runner_recovery_invocation_id=?1 AND runner_authorized_sprint_id=?2", params![recovery.invocation_id.as_str(),sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(fixture.runtime.requests().len(), 4);
     }
 
     #[test]
-    fn historical_epic_runner_v2_binding_is_not_relabelled_when_it_uses_its_existing_request_route() {
+    fn historical_epic_runner_v2_binding_is_not_relabelled_when_it_uses_its_existing_request_route()
+    {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
         fixture
@@ -3415,11 +3588,12 @@ mod tests {
                 [&bootstrap.initiation_id],
             )
             .unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         sprint
             .request_next_sprint_runner(
                 &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
@@ -3451,29 +3625,77 @@ mod tests {
     fn reconciliation_drain_accepts_semantic_lifecycle_overlap_without_manual_replay() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
-        fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(), Fixture::materials()).unwrap();
-        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         let runner = fixture.status();
-        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&sprint);
-        let request = sprint.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id }).unwrap();
+        let request = sprint
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id },
+            )
+            .unwrap();
         // A continuation is legal for this overlap; only the Sprint semantic/lifecycle facts race.
-        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         let used = Arc::new(AtomicUsize::new(0));
         sprint.set_test_reconcile_snapshot_hook(Arc::new({
-            let entered = entered.clone(); let release = release.clone(); let used = used.clone();
-            move || if used.fetch_add(1, Ordering::SeqCst) == 0 { entered.wait(); release.wait(); }
+            let entered = entered.clone();
+            let release = release.clone();
+            let used = used.clone();
+            move || {
+                if used.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered.wait();
+                    release.wait();
+                }
+            }
         }));
         let outcome_service = sprint.clone();
         let outcome_id = request.sprint_runner_invocation_id.clone();
-        let outcome = std::thread::spawn(move || outcome_service.record_pre_start_outcome(&AgentInvocationId::new(outcome_id).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "overlap forecast".into(), material_uncertainty: "overlap uncertainty".into(), application_owned_prerequisite: "overlap prerequisite".into() }));
+        let outcome = std::thread::spawn(move || {
+            outcome_service.record_pre_start_outcome(
+                &AgentInvocationId::new(outcome_id).unwrap(),
+                crate::orchestration::sprint_runner_transition::PreStartOutcome {
+                    forecast_and_concerns: "overlap forecast".into(),
+                    material_uncertainty: "overlap uncertainty".into(),
+                    application_owned_prerequisite: "overlap prerequisite".into(),
+                },
+            )
+        });
         entered.wait();
         // This terminal travels through AgentSessionApplication's notifier while the elected
         // semantic pass still holds its stale snapshot. It must set a drain generation, not drop.
-        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture.runtime.finish(
+            &request.sprint_runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         release.wait();
         outcome.join().unwrap().unwrap();
         let accepted = sprint.query().unwrap().transitions.remove(0);
@@ -3485,45 +3707,6 @@ mod tests {
 
     #[test]
     fn reconciliation_drain_unblocks_origin_terminal_overlap_without_manual_replay() {
-        let fixture = Fixture::new();
-        let bootstrap = fixture.status();
-        fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(), Fixture::materials()).unwrap();
-        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
-        let runner = fixture.status();
-        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        fixture.notifier.set_sprint(&sprint);
-        let request = sprint.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(), crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id }).unwrap();
-        let input = crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "origin overlap forecast".into(), material_uncertainty: "origin overlap uncertainty".into(), application_owned_prerequisite: "origin overlap prerequisite".into() };
-        sprint.record_pre_start_outcome(&AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(), input.clone()).unwrap();
-        fixture.runtime.finish(&request.sprint_runner_invocation_id, AgentInvocationTerminalStatus::Completed);
-        assert!(sprint.query().unwrap().transitions[0].accepted);
-        assert_eq!(fixture.runtime.requests().len(), 3);
-        let entered = Arc::new(Barrier::new(2));
-        let release = Arc::new(Barrier::new(2));
-        let used = Arc::new(AtomicUsize::new(0));
-        sprint.set_test_origin_snapshot_hook(Arc::new({
-            let entered = entered.clone(); let release = release.clone(); let used = used.clone();
-            move || if used.fetch_add(1, Ordering::SeqCst) == 0 { entered.wait(); release.wait(); }
-        }));
-        // A duplicate semantic action elects the first reconciliation pass and pauses after it
-        // snapshots origin-active. The origin terminal notifier must make that pass drain again.
-        let replay_service = sprint.clone();
-        let replay_id = request.sprint_runner_invocation_id.clone();
-        let replay = std::thread::spawn(move || replay_service.record_pre_start_outcome(&AgentInvocationId::new(replay_id).unwrap(), input));
-        entered.wait();
-        fixture.runtime.finish(&runner.runner_invocation_id, AgentInvocationTerminalStatus::Completed);
-        release.wait();
-        replay.join().unwrap().unwrap();
-        let launched = sprint.query().unwrap().transitions.remove(0);
-        assert!(launched.epic_continuation_launch_accepted_at.is_some());
-        assert_eq!(fixture.runtime.requests().len(), 4);
-        sprint.reconcile_startup().unwrap();
-        assert_eq!(fixture.runtime.requests().len(), 4);
-    }
-
-    #[test]
-    fn accepted_outcome_defers_epic_continuation_until_origin_terminal_notifier_and_restart_recovery() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
         fixture
@@ -3546,11 +3729,103 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        fixture.notifier.set_sprint(&sprint);
+        let request = sprint
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id },
+            )
+            .unwrap();
+        let input = crate::orchestration::sprint_runner_transition::PreStartOutcome {
+            forecast_and_concerns: "origin overlap forecast".into(),
+            material_uncertainty: "origin overlap uncertainty".into(),
+            application_owned_prerequisite: "origin overlap prerequisite".into(),
+        };
+        sprint
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(request.sprint_runner_invocation_id.clone()).unwrap(),
+                input.clone(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &request.sprint_runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        assert!(sprint.query().unwrap().transitions[0].accepted);
+        assert_eq!(fixture.runtime.requests().len(), 3);
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let used = Arc::new(AtomicUsize::new(0));
+        sprint.set_test_origin_snapshot_hook(Arc::new({
+            let entered = entered.clone();
+            let release = release.clone();
+            let used = used.clone();
+            move || {
+                if used.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered.wait();
+                    release.wait();
+                }
+            }
+        }));
+        // A duplicate semantic action elects the first reconciliation pass and pauses after it
+        // snapshots origin-active. The origin terminal notifier must make that pass drain again.
+        let replay_service = sprint.clone();
+        let replay_id = request.sprint_runner_invocation_id.clone();
+        let replay = std::thread::spawn(move || {
+            replay_service
+                .record_pre_start_outcome(&AgentInvocationId::new(replay_id).unwrap(), input)
+        });
+        entered.wait();
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        release.wait();
+        replay.join().unwrap().unwrap();
+        let launched = sprint.query().unwrap().transitions.remove(0);
+        assert!(launched.epic_continuation_launch_accepted_at.is_some());
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        sprint.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 4);
+    }
+
+    #[test]
+    fn accepted_outcome_defers_epic_continuation_until_origin_terminal_notifier_and_restart_recovery(
+    ) {
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&sprint);
         let request = sprint
             .request_next_sprint_runner(
@@ -3586,11 +3861,12 @@ mod tests {
 
         // Production-equivalent reopen before the origin terminal retains only the durable
         // deferred state. The next terminal arrives through AgentSessionApplication's notifier.
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&reopened);
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests().len(), 3);
@@ -3604,13 +3880,16 @@ mod tests {
         let continuation = &fixture.runtime.requests()[3];
         assert!(continuation.submitted_text.contains("deferred forecast"));
         assert!(continuation.submitted_text.contains("deferred uncertainty"));
-        assert!(continuation.submitted_text.contains("deferred prerequisite"));
+        assert!(continuation
+            .submitted_text
+            .contains("deferred prerequisite"));
         reopened.reconcile_startup().unwrap();
-        let after_terminal = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let after_terminal =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         after_terminal.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests().len(), 4);
         assert_eq!(
@@ -3650,11 +3929,12 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&sprint);
 
         // The fresh v2 pre-start invocation terminal is synchronously persisted and routed back
@@ -3727,11 +4007,12 @@ mod tests {
             .iter()
             .find(|candidate| candidate.invocation.id.as_str() == epic)
             .is_some_and(|candidate| candidate.invocation.status.is_terminal()));
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests().len(), 5);
     }
@@ -3747,11 +4028,12 @@ mod tests {
                 Fixture::materials(),
             )
             .unwrap();
-        let sprint = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let sprint =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&sprint);
 
         // Bootstrap terminal delivery enters PostConfirmationTransitionService. Its Runner
@@ -3803,14 +4085,113 @@ mod tests {
 
     #[test]
     fn v1_pre_start_upgrade_recovers_only_matching_v2_terminal_and_starts_once() {
-        let fixture=Fixture::new();let bootstrap=fixture.status();fixture.service.complete_bootstrap(&AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),Fixture::materials()).unwrap();fixture.runtime.finish(&bootstrap.bootstrap_invocation_id,AgentInvocationTerminalStatus::Completed);let runner=fixture.status();let sprint_id:String=Connection::open(&fixture.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|row|row.get(0)).unwrap();let service=crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path,fixture.sessions.clone()).unwrap();let initial=service.request_next_sprint_runner(&AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),crate::orchestration::sprint_runner_transition::SprintRunnerSelection{sprint_id:sprint_id.clone()}).unwrap();assert_eq!(fixture.runtime.requests().len(),3);
+        let fixture = Fixture::new();
+        let bootstrap = fixture.status();
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let runner = fixture.status();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let initial = service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 3);
         // Simulate a persisted historical v1 record. Its identity is retained after terminal.
-        Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET sprint_runner_harness_version=1 WHERE sprint_id=?1",[&sprint_id]).unwrap();fixture.runtime.finish(&runner.runner_invocation_id,AgentInvocationTerminalStatus::Completed);fixture.runtime.finish(&initial.sprint_runner_invocation_id,AgentInvocationTerminalStatus::Completed);service.reconcile_startup().unwrap();let connection=Connection::open(&fixture.database_path).unwrap();let upgrade:String=connection.query_row("SELECT pre_start_upgrade_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap();assert_eq!(connection.query_row::<u16,_,_>("SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),1);drop(connection);assert_eq!(fixture.runtime.requests().len(),4);
-        service.record_pre_start_outcome(&AgentInvocationId::new(upgrade.clone()).unwrap(),crate::orchestration::sprint_runner_transition::PreStartOutcome{forecast_and_concerns:"v2 forecast".into(),material_uncertainty:"v2 uncertainty".into(),application_owned_prerequisite:"v2 prerequisite".into()}).unwrap();assert!(!service.query().unwrap().transitions[0].accepted);assert_eq!(fixture.runtime.requests().len(),4);
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET sprint_runner_harness_version=1 WHERE sprint_id=?1",[&sprint_id]).unwrap();
+        fixture.runtime.finish(
+            &runner.runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        fixture.runtime.finish(
+            &initial.sprint_runner_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        service.reconcile_startup().unwrap();
+        let connection = Connection::open(&fixture.database_path).unwrap();
+        let upgrade:String=connection.query_row("SELECT pre_start_upgrade_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap();
+        assert_eq!(connection.query_row::<u16,_,_>("SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),1);
+        drop(connection);
+        assert_eq!(fixture.runtime.requests().len(), 4);
+        service
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(upgrade.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::PreStartOutcome {
+                    forecast_and_concerns: "v2 forecast".into(),
+                    material_uncertainty: "v2 uncertainty".into(),
+                    application_owned_prerequisite: "v2 prerequisite".into(),
+                },
+            )
+            .unwrap();
+        assert!(!service.query().unwrap().transitions[0].accepted);
+        assert_eq!(fixture.runtime.requests().len(), 4);
         // No transition notifier receives this terminal. Production-equivalent reopen must recover
         // the v2 invocation from durable history and deliver the correlated outcome exactly once.
-        fixture.runtime.finish(&upgrade,AgentInvocationTerminalStatus::Completed);let reopened=crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path,fixture.sessions.clone()).unwrap();reopened.reconcile_startup().unwrap();let accepted=reopened.query().unwrap().transitions[0].clone();assert!(accepted.accepted);assert_eq!(fixture.runtime.requests().len(),5);let delivery=&fixture.runtime.requests()[4];assert!(delivery.submitted_text.contains("v2 forecast"));assert!(delivery.submitted_text.contains("v2 uncertainty"));assert!(delivery.submitted_text.contains("v2 prerequisite"));reopened.reconcile_startup().unwrap();assert_eq!(fixture.runtime.requests().len(),5);
-        let continuation=accepted.epic_continuation_invocation_id.clone().unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version+1]).unwrap();assert!(matches!(reopened.start_selected_sprint(&AgentInvocationId::new(continuation.clone()).unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version]).unwrap();let barrier=Arc::new(Barrier::new(2));let starts=(0..2).map(|_|{let service=reopened.clone();let barrier=barrier.clone();let continuation=continuation.clone();std::thread::spawn(move||{barrier.wait();service.start_selected_sprint(&AgentInvocationId::new(continuation).unwrap())})}).collect::<Vec<_>>();assert!(starts.into_iter().all(|call|call.join().unwrap().is_ok()));assert_eq!(fixture.runtime.requests().len(),6);let conn=Connection::open(&fixture.database_path).unwrap();assert_eq!(conn.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')",[],|row|row.get(0)).unwrap(),0);
+        fixture
+            .runtime
+            .finish(&upgrade, AgentInvocationTerminalStatus::Completed);
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        reopened.reconcile_startup().unwrap();
+        let accepted = reopened.query().unwrap().transitions[0].clone();
+        assert!(accepted.accepted);
+        assert_eq!(fixture.runtime.requests().len(), 5);
+        let delivery = &fixture.runtime.requests()[4];
+        assert!(delivery.submitted_text.contains("v2 forecast"));
+        assert!(delivery.submitted_text.contains("v2 uncertainty"));
+        assert!(delivery.submitted_text.contains("v2 prerequisite"));
+        reopened.reconcile_startup().unwrap();
+        assert_eq!(fixture.runtime.requests().len(), 5);
+        let continuation = accepted.epic_continuation_invocation_id.clone().unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version+1]).unwrap();
+        assert!(matches!(reopened.start_selected_sprint(&AgentInvocationId::new(continuation.clone()).unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
+        Connection::open(&fixture.database_path).unwrap().execute("UPDATE sprint_runner_transitions SET epic_continuation_harness_version=?2 WHERE sprint_id=?1",params![&sprint_id,harness.version]).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let starts = (0..2)
+            .map(|_| {
+                let service = reopened.clone();
+                let barrier = barrier.clone();
+                let continuation = continuation.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.start_selected_sprint(&AgentInvocationId::new(continuation).unwrap())
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(starts.into_iter().all(|call| call.join().unwrap().is_ok()));
+        assert_eq!(fixture.runtime.requests().len(), 6);
+        let conn = Connection::open(&fixture.database_path).unwrap();
+        assert_eq!(conn.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('work_slice_planning_points','work_unit_executions')",[],|row|row.get(0)).unwrap(),0);
     }
 
     #[test]
@@ -4075,13 +4456,18 @@ mod tests {
         connection.execute("UPDATE sprint_runner_transitions SET sprint_runner_harness_version=1 WHERE sprint_id=?1", [&sprint_id]).unwrap();
         drop(connection);
         runtime.finish(&invocation_id, AgentInvocationTerminalStatus::Completed);
-        let upgraded = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, bootstrap.sessions.clone()).unwrap();
+        let upgraded =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                bootstrap.sessions.clone(),
+            )
+            .unwrap();
         assert_eq!(upgraded.reconcile_startup().unwrap(), 1);
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<u16,_,_>("SELECT sprint_runner_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),1);
         assert_eq!(connection.query_row::<u16,_,_>("SELECT pre_start_upgrade_harness_version FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),sprint_harness.version);
         assert_eq!(connection.query_row::<String,_,_>("SELECT sprint_runner_session_id FROM sprint_runner_transitions WHERE sprint_id=?1",[&sprint_id],|row|row.get(0)).unwrap(),session_id);
-        assert_eq!(runtime.requests().len(),2);
+        assert_eq!(runtime.requests().len(), 2);
         assert_eq!(
             connection
                 .query_row::<i64, _, _>(
@@ -4155,7 +4541,10 @@ mod tests {
             results[0].sprint_runner_invocation_id,
             results[1].sprint_runner_invocation_id
         );
-        assert!(results.iter().all(|result| result.pre_start_ready), "{results:?}");
+        assert!(
+            results.iter().all(|result| result.pre_start_ready),
+            "{results:?}"
+        );
         assert_eq!(fixture.runtime.requests().len(), 3);
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(
@@ -4233,8 +4622,14 @@ mod tests {
         let before_restart = runner.status();
         assert_eq!(runner.restart_application(), 1);
         let recovered = runner.status();
-        assert_eq!(recovered.runner_session_id, before_restart.runner_session_id);
-        assert_eq!(recovered.runner_invocation_id, before_restart.runner_invocation_id);
+        assert_eq!(
+            recovered.runner_session_id,
+            before_restart.runner_session_id
+        );
+        assert_eq!(
+            recovered.runner_invocation_id,
+            before_restart.runner_invocation_id
+        );
         assert!(recovered.material_accepted_at.is_some());
         assert!(recovered.runner_session_created_at.is_some());
         assert!(recovered.runner_launched_at.is_some());
@@ -4242,11 +4637,16 @@ mod tests {
         runner.service.reconcile_startup().unwrap();
         assert_eq!(runner.all_requests().len(), 3);
         let connection = Connection::open(&runner.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
-            [&recovered.runner_session_id],
-            |row| row.get(0),
-        ).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&recovered.runner_session_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application'",
             params![&recovered.runner_invocation_id, &recovered.runner_session_id],
@@ -4925,7 +5325,8 @@ mod tests {
         );
 
         let runner_session = AgentSessionId::new(status.runner_session_id.clone()).unwrap();
-        let runner_invocation = AgentInvocationId::new(status.runner_invocation_id.clone()).unwrap();
+        let runner_invocation =
+            AgentInvocationId::new(status.runner_invocation_id.clone()).unwrap();
         assert_eq!(
             sessions
                 .application_invocation_launch_evidence(&runner_invocation, &runner_session)
@@ -4933,7 +5334,11 @@ mod tests {
             ApplicationInvocationLaunchEvidence::LaunchAccepted
         );
         let runner_history = sessions.load_session(&runner_session).unwrap();
-        assert!(runner_history.session.runtime_binding.external_context_id.is_some());
+        assert!(runner_history
+            .session
+            .runtime_binding
+            .external_context_id
+            .is_some());
         let runner = runner_history
             .invocations
             .iter()
@@ -5142,13 +5547,14 @@ mod tests {
     async fn work_slice_planner_scoped_mcp_is_identity_free_and_transport_bound() {
         let fixture = Fixture::new();
         let (service, invocation, _sprint_id) = fixture.prepare_work_slice_planner();
-        let server = crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
-            service.clone(),
-            invocation.clone(),
-            "planner-bearer".into(),
-            vec!["tauri://localhost".into()],
-        )
-        .unwrap();
+        let server =
+            crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
+                service.clone(),
+                invocation.clone(),
+                "planner-bearer".into(),
+                vec!["tauri://localhost".into()],
+            )
+            .unwrap();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
@@ -5228,7 +5634,10 @@ mod tests {
             .header("accept", "application/json, text/event-stream")
             .header("authorization", "Bearer planner-bearer")
             .header("mcp-session-id", &session)
-            .body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string())
+            .body(
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+                    .to_string(),
+            )
             .send()
             .await
             .unwrap();
@@ -5245,7 +5654,10 @@ mod tests {
         let listed = mcp_response_json(listed).await;
         let tools = listed["result"]["tools"].as_array().unwrap();
         assert_eq!(
-            tools.iter().map(|tool| tool["name"].as_str().unwrap()).collect::<Vec<_>>(),
+            tools
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
             [
                 "complete_work_slice_planning",
                 "read_current_planning_context",
@@ -5269,8 +5681,23 @@ mod tests {
             };
             assert_eq!(property_names, expected_properties);
             let schema_text = schema.to_string().to_ascii_lowercase();
-            for forbidden in ["session", "invocation", "sprint", "point", "route", "repository", "idempotency", "revision", "token", "acceptance", "authority"] {
-                assert!(!schema_text.contains(forbidden), "Planner schema leaked {forbidden}: {schema_text}");
+            for forbidden in [
+                "session",
+                "invocation",
+                "sprint",
+                "point",
+                "route",
+                "repository",
+                "idempotency",
+                "revision",
+                "token",
+                "acceptance",
+                "authority",
+            ] {
+                assert!(
+                    !schema_text.contains(forbidden),
+                    "Planner schema leaked {forbidden}: {schema_text}"
+                );
             }
         }
         let proposal_args = serde_json::json!({
@@ -5309,7 +5736,15 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(submitted_text).unwrap(),
             serde_json::json!({"status":"proposal_validated","accepted":false,"materializationReady":false})
         );
-        for forbidden in ["revision", "fingerprint", "command", "idempotency", "route", "token", "authority"] {
+        for forbidden in [
+            "revision",
+            "fingerprint",
+            "command",
+            "idempotency",
+            "route",
+            "token",
+            "authority",
+        ] {
             assert!(!submitted_text.to_ascii_lowercase().contains(forbidden));
         }
         let replay = client
@@ -5318,7 +5753,11 @@ mod tests {
             .header("accept", "application/json, text/event-stream")
             .header("authorization", "Bearer planner-bearer")
             .header("mcp-session-id", &session)
-            .body(request(5, "tools/call", serde_json::json!({"name":"submit_work_slice_proposal","arguments":proposal_args})))
+            .body(request(
+                5,
+                "tools/call",
+                serde_json::json!({"name":"submit_work_slice_proposal","arguments":proposal_args}),
+            ))
             .send()
             .await
             .unwrap();
@@ -5328,13 +5767,14 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(replay_text).unwrap(),
             serde_json::json!({"status":"proposal_replayed","accepted":false,"materializationReady":false})
         );
-        let foreign = crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
-            service,
-            AgentInvocationId::new("foreign-planner-invocation").unwrap(),
-            "foreign-bearer".into(),
-            vec!["tauri://localhost".into()],
-        )
-        .unwrap();
+        let foreign =
+            crate::orchestration::sprint_runner_transition::start_work_slice_planner_test_server(
+                service,
+                AgentInvocationId::new("foreign-planner-invocation").unwrap(),
+                "foreign-bearer".into(),
+                vec!["tauri://localhost".into()],
+            )
+            .unwrap();
         let foreign_initialized = client
             .post(foreign.url())
             .header("content-type", "application/json")
@@ -5357,7 +5797,10 @@ mod tests {
             .header("accept", "application/json, text/event-stream")
             .header("authorization", "Bearer foreign-bearer")
             .header("mcp-session-id", &foreign_session)
-            .body(serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string())
+            .body(
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+                    .to_string(),
+            )
             .send()
             .await
             .unwrap();
@@ -5367,14 +5810,23 @@ mod tests {
             .header("accept", "application/json, text/event-stream")
             .header("authorization", "Bearer foreign-bearer")
             .header("mcp-session-id", &foreign_session)
-            .body(request(6, "tools/call", serde_json::json!({"name":"read_current_planning_context","arguments":{}})))
+            .body(request(
+                6,
+                "tools/call",
+                serde_json::json!({"name":"read_current_planning_context","arguments":{}}),
+            ))
             .send()
             .await
             .unwrap();
         let foreign_call = mcp_response_json(foreign_call).await;
         assert_eq!(foreign_call["result"]["isError"], false);
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(foreign_call["result"]["content"][0]["text"].as_str().unwrap()).unwrap(),
+            serde_json::from_str::<serde_json::Value>(
+                foreign_call["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+            )
+            .unwrap(),
             serde_json::json!({"status":"rejected","code":"forbidden"})
         );
         foreign.stop();
@@ -5385,7 +5837,8 @@ mod tests {
     fn planner_context_carries_the_exact_current_sprint_movement_and_rejects_drift() {
         let fixture = Fixture::new();
         let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
-        let intended_movement = "Update the exact README marker, verify git status, and create one local-only commit.";
+        let intended_movement =
+            "Update the exact README marker, verify git status, and create one local-only commit.";
         Connection::open(&fixture.database_path)
             .unwrap()
             .execute(
@@ -5399,50 +5852,67 @@ mod tests {
             .into_iter()
             .find(|request| request.invocation_id == planner)
             .unwrap();
-        assert!(initial_launch
-            .submitted_text
-            .contains("Read the application-bound current planning context before proposing work."));
+        assert!(initial_launch.submitted_text.contains(
+            "Read the application-bound current planning context before proposing work."
+        ));
 
         let context = service.read_work_slice_planning_context(&planner).unwrap();
         assert_eq!(context["sprint"], sprint_id);
         assert_eq!(context["currentSprint"]["id"], sprint_id);
-        assert_eq!(context["currentSprint"]["intendedMovement"], intended_movement);
-
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
         assert_eq!(
-            reopened.read_work_slice_planning_context(&planner).unwrap()["currentSprint"]["intendedMovement"],
+            context["currentSprint"]["intendedMovement"],
+            intended_movement
+        );
+
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            reopened.read_work_slice_planning_context(&planner).unwrap()["currentSprint"]
+                ["intendedMovement"],
             intended_movement,
         );
 
         let proposal = crate::orchestration::sprint_runner_transition::WorkSliceProposal {
             objective: intended_movement.into(),
-            lanes: vec![crate::orchestration::sprint_runner_transition::WorkSliceLane {
-                title: "README marker candidate".into(),
-                specification: intended_movement.into(),
-                depends_on: vec![],
-            }],
+            lanes: vec![
+                crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                    title: "README marker candidate".into(),
+                    specification: intended_movement.into(),
+                    depends_on: vec![],
+                },
+            ],
         };
-        reopened.submit_work_slice_proposal(&planner, proposal).unwrap();
-        reopened.complete_work_slice_planning(
-            &planner,
-            crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
-        ).unwrap();
-        fixture.runtime.finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
+        reopened
+            .submit_work_slice_proposal(&planner, proposal)
+            .unwrap();
+        reopened
+            .complete_work_slice_planning(
+                &planner,
+                crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+            )
+            .unwrap();
+        fixture
+            .runtime
+            .finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
         let connection = Connection::open(&fixture.database_path).unwrap();
-        let persisted_proposal: String = connection.query_row(
-            "SELECT proposal_json FROM work_slice_proposal_revisions WHERE is_current=1",
-            [],
-            |row| row.get(0),
-        ).unwrap();
-        let materialized_specification: String = connection.query_row(
-            "SELECT specification FROM work_units ORDER BY lane_ordinal LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let persisted_proposal: String = connection
+            .query_row(
+                "SELECT proposal_json FROM work_slice_proposal_revisions WHERE is_current=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let materialized_specification: String = connection
+            .query_row(
+                "SELECT specification FROM work_units ORDER BY lane_ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(persisted_proposal.contains(intended_movement));
         assert_eq!(materialized_specification, intended_movement);
         drop(connection);
@@ -5589,7 +6059,9 @@ mod tests {
             )
             .unwrap();
         let control = AgentInvocationId::new("application-planning-control").unwrap();
-        let harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let harness =
+            conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl)
+                .unwrap();
         Connection::open(&fixture.database_path)
             .unwrap()
             .execute(
@@ -5649,24 +6121,44 @@ mod tests {
     fn work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness() {
         let fixture = Fixture::new();
         let bootstrap = fixture.status();
-        fixture.service.complete_bootstrap(
-            &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
-            Fixture::materials(),
-        ).unwrap();
-        fixture.runtime.finish(&bootstrap.bootstrap_invocation_id, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .service
+            .complete_bootstrap(
+                &AgentInvocationId::new(bootstrap.bootstrap_invocation_id.clone()).unwrap(),
+                Fixture::materials(),
+            )
+            .unwrap();
+        fixture.runtime.finish(
+            &bootstrap.bootstrap_invocation_id,
+            AgentInvocationTerminalStatus::Completed,
+        );
         let runner = fixture.status();
-        let sprint_id: String = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0),
-        ).unwrap();
-        let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
-        let sprint = service.request_next_sprint_runner(
-            &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
-            crate::orchestration::sprint_runner_transition::SprintRunnerSelection { sprint_id: sprint_id.clone() },
-        ).unwrap();
+        let sprint_id: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let sprint = service
+            .request_next_sprint_runner(
+                &AgentInvocationId::new(runner.runner_invocation_id).unwrap(),
+                crate::orchestration::sprint_runner_transition::SprintRunnerSelection {
+                    sprint_id: sprint_id.clone(),
+                },
+            )
+            .unwrap();
         let control = AgentInvocationId::new("planning-control-invocation").unwrap();
-        let control_harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl).unwrap();
+        let control_harness =
+            conversation_harness::profile(ConversationHarnessRole::SprintRunnerPlanningControl)
+                .unwrap();
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE sprint_runner_transitions SET planning_control_invocation_id=?2,planning_control_harness_key=?3,planning_control_harness_version=?4,planning_control_harness_applied_at=?5,planning_control_launch_accepted_at=?5,planning_ready_at=?5 WHERE sprint_id=?1",
             params![sprint_id, control.as_str(), control_harness.key, control_harness.version, "2026-08-02T00:00:00Z"],
@@ -5680,81 +6172,192 @@ mod tests {
         let worktree_root = repository_root.join("worktree");
         fs::create_dir_all(&worktree_root).unwrap();
         let initial_authority = InitiatedSprintGitAuthorityWrite {
-                sprint_id: sprint_id.clone(), idempotency_key: "wsp1-route-authority".into(),
-                repository_id: "wsp1-repository".into(), repository_root: repository_root.to_string_lossy().into_owned(),
-                repository_common_dir: repository_root.to_string_lossy().into_owned(), worktree_id: "wsp1-worktree".into(),
-                worktree_root: worktree_root.to_string_lossy().into_owned(), baseline_object_id: "a".repeat(40),
-                current_object_id: "b".repeat(40), runtime_instance_ref: "wsp1-runtime".into(),
-                runtime_source_ref: "wsp1-source".into(), source_fingerprint: "c".repeat(64),
-            };
-        let authority_repository = SqliteOrchestrationRepository::open(&fixture.database_path).unwrap();
-        authority_repository.store_initiated_sprint_git_authority(initial_authority.clone()).unwrap();
+            sprint_id: sprint_id.clone(),
+            idempotency_key: "wsp1-route-authority".into(),
+            repository_id: "wsp1-repository".into(),
+            repository_root: repository_root.to_string_lossy().into_owned(),
+            repository_common_dir: repository_root.to_string_lossy().into_owned(),
+            worktree_id: "wsp1-worktree".into(),
+            worktree_root: worktree_root.to_string_lossy().into_owned(),
+            baseline_object_id: "a".repeat(40),
+            current_object_id: "b".repeat(40),
+            runtime_instance_ref: "wsp1-runtime".into(),
+            runtime_source_ref: "wsp1-source".into(),
+            source_fingerprint: "c".repeat(64),
+        };
+        let authority_repository =
+            SqliteOrchestrationRepository::open(&fixture.database_path).unwrap();
+        authority_repository
+            .store_initiated_sprint_git_authority(initial_authority.clone())
+            .unwrap();
 
-        assert!(serde_json::from_value::<crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest>(serde_json::json!({"sprintId":"forged"})).is_err());
+        assert!(serde_json::from_value::<
+            crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest,
+        >(serde_json::json!({"sprintId":"forged"}))
+        .is_err());
         assert!(matches!(
             service.request_work_slice_planner(&AgentInvocationId::new("foreign-planning-control").unwrap(), crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
         let connection = Connection::open(&fixture.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_planning_requests",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         drop(connection);
 
         let launches_before = fixture.runtime.requests().len();
         let barrier = Arc::new(Barrier::new(2));
-        let calls = (0..2).map(|_| {
-            let service = service.clone();
-            let barrier = barrier.clone();
-            let control = control.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {})
+        let calls = (0..2)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                let control = control.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.request_work_slice_planner(
+                        &control,
+                        crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {},
+                    )
+                })
             })
-        }).collect::<Vec<_>>();
-        let results = calls.into_iter().map(|call| call.join().unwrap().unwrap()).collect::<Vec<_>>();
-        assert_eq!(results[0].work_slice_planner_request_id, results[1].work_slice_planner_request_id);
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            results[0].work_slice_planner_request_id,
+            results[1].work_slice_planner_request_id
+        );
         assert!(results[0].work_slice_planner_requested_at.is_some());
         assert!(results[0].work_slice_planner_authorized_at.is_some());
         assert!(
             results[0].work_slice_planner_requested_at.as_ref()
                 <= results[0].work_slice_planner_authorized_at.as_ref()
         );
-        assert_eq!(results[0].work_slice_planning_point_id, results[1].work_slice_planning_point_id);
-        assert_eq!(results[0].work_slice_planner_session_id, results[1].work_slice_planner_session_id);
-        assert_eq!(results[0].work_slice_planner_invocation_id, results[1].work_slice_planner_invocation_id);
+        assert_eq!(
+            results[0].work_slice_planning_point_id,
+            results[1].work_slice_planning_point_id
+        );
+        assert_eq!(
+            results[0].work_slice_planner_session_id,
+            results[1].work_slice_planner_session_id
+        );
+        assert_eq!(
+            results[0].work_slice_planner_invocation_id,
+            results[1].work_slice_planner_invocation_id
+        );
         assert!(results[0].work_slice_planner_session_created_at.is_some());
-        assert!(results[0].work_slice_planner_invocation_created_at.is_some());
+        assert!(results[0]
+            .work_slice_planner_invocation_created_at
+            .is_some());
         assert!(results[0].work_slice_planner_harness_applied_at.is_some());
         assert!(results[0].work_slice_planner_launch_requested_at.is_some());
         assert!(results[0].work_slice_planner_launch_accepted_at.is_some());
         assert!(results[0].work_slice_planner_ready_at.is_some());
-        assert_eq!(results[0].work_slice_planner_provider_activation_observed_at, None);
+        assert_eq!(
+            results[0].work_slice_planner_provider_activation_observed_at,
+            None
+        );
         assert_eq!(results[0].work_slice_planner_lifecycle_observed_at, None);
-        assert_eq!(results[0].work_slice_planner_repository_worktree_route, Some(worktree_root.to_string_lossy().into_owned()));
+        assert_eq!(
+            results[0].work_slice_planner_repository_worktree_route,
+            Some(worktree_root.to_string_lossy().into_owned())
+        );
         let launches = fixture.runtime.requests();
         assert_eq!(launches.len(), launches_before + 1);
         let launch = &launches[launches_before];
-        assert_eq!(launch.session_id.as_str(), results[0].work_slice_planner_session_id.as_deref().unwrap());
-        assert_eq!(launch.invocation_id.as_str(), results[0].work_slice_planner_invocation_id.as_deref().unwrap());
-        assert_eq!(launch.working_directory.as_deref(), Some(worktree_root.to_string_lossy().as_ref()));
-        assert!(launch.submitted_text.contains("product_initial_prompt_prefix"));
-        assert!(launch.submitted_text.contains("Submit only proposal-local lanes through the supplied actions"));
-        assert!(!launch.submitted_text.contains("Review current Sprint reality and become ready to plan"));
+        assert_eq!(
+            launch.session_id.as_str(),
+            results[0].work_slice_planner_session_id.as_deref().unwrap()
+        );
+        assert_eq!(
+            launch.invocation_id.as_str(),
+            results[0]
+                .work_slice_planner_invocation_id
+                .as_deref()
+                .unwrap()
+        );
+        assert_eq!(
+            launch.working_directory.as_deref(),
+            Some(worktree_root.to_string_lossy().as_ref())
+        );
+        assert!(launch
+            .submitted_text
+            .contains("product_initial_prompt_prefix"));
+        assert!(launch
+            .submitted_text
+            .contains("Submit only proposal-local lanes through the supplied actions"));
+        assert!(!launch
+            .submitted_text
+            .contains("Review current Sprint reality and become ready to plan"));
         assert!(launch.submitted_text.contains("Do not accept a proposal"));
-        assert!(launch.submitted_text.contains("create Work Units, Handler or Implementer Sessions"));
-        assert!(launch.submitted_text.contains("settle the Sprint, or advance to a later planning point"));
+        assert!(launch
+            .submitted_text
+            .contains("create Work Units, Handler or Implementer Sessions"));
+        assert!(launch
+            .submitted_text
+            .contains("settle the Sprint, or advance to a later planning point"));
         let extension = launch.launch_extension.as_ref().unwrap();
-        assert_eq!(&extension.additional_args[..2], &["-c", "approval_policy=\"never\""]);
-        assert!(extension.additional_args.iter().any(|value| value.contains("mcp_servers.work_slice_planner_")));
+        assert_eq!(
+            &extension.additional_args[..2],
+            &["-c", "approval_policy=\"never\""]
+        );
+        assert!(extension
+            .additional_args
+            .iter()
+            .any(|value| value.contains("mcp_servers.work_slice_planner_")));
         assert_eq!(extension.environment.len(), 1);
-        assert!(extension.environment[0].0.starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        assert!(extension.environment[0]
+            .0
+            .starts_with("CODEX_ORCHESTRATOR_MCP_"));
 
         let connection = Connection::open(&fixture.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<String, _, _>("SELECT parent_sprint_runner_session_id FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), sprint.sprint_runner_session_id);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_planning_requests",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT parent_sprint_runner_session_id FROM work_slice_planning_requests",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            sprint.sprint_runner_session_id
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-slice-planner-session-%'", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<String, _, _>("SELECT working_directory FROM agent_sessions WHERE id=?1", [&results[0].work_slice_planner_session_id.clone().unwrap()], |row| row.get(0)).unwrap(), worktree_root.to_string_lossy());
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT working_directory FROM agent_sessions WHERE id=?1",
+                    [&results[0].work_slice_planner_session_id.clone().unwrap()],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            worktree_root.to_string_lossy()
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-slice-planner-invocation-%' AND input_provenance='application' AND status='running'", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_units", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>("SELECT COUNT(*) FROM work_units", [], |row| row.get(0))
+                .unwrap(),
+            0
+        );
         drop(connection);
 
         Connection::open(&fixture.database_path).unwrap().execute(
@@ -5768,19 +6371,60 @@ mod tests {
             "UPDATE sprint_runner_transitions SET planning_control_harness_version=?2 WHERE sprint_id=?1", params![sprint_id, control_harness.version],
         ).unwrap();
 
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         reopened.reconcile_startup().unwrap();
-        let after_reopen = reopened.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
-        assert_eq!(after_reopen.work_slice_planning_point_id, results[0].work_slice_planning_point_id);
-        assert_eq!(after_reopen.work_slice_planner_requested_at, results[0].work_slice_planner_requested_at);
-        assert_eq!(after_reopen.work_slice_planner_authorized_at, results[0].work_slice_planner_authorized_at);
-        assert_eq!(after_reopen.work_slice_planner_session_created_at, results[0].work_slice_planner_session_created_at);
-        assert_eq!(after_reopen.work_slice_planner_invocation_created_at, results[0].work_slice_planner_invocation_created_at);
-        assert_eq!(after_reopen.work_slice_planner_harness_applied_at, results[0].work_slice_planner_harness_applied_at);
-        assert_eq!(after_reopen.work_slice_planner_launch_requested_at, results[0].work_slice_planner_launch_requested_at);
-        assert_eq!(after_reopen.work_slice_planner_launch_accepted_at, results[0].work_slice_planner_launch_accepted_at);
-        assert_eq!(after_reopen.work_slice_planner_ready_at, results[0].work_slice_planner_ready_at);
-        assert_eq!(after_reopen.work_slice_planner_provider_activation_observed_at, None);
+        let after_reopen = reopened
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|status| status.sprint_id == sprint_id)
+            .unwrap();
+        assert_eq!(
+            after_reopen.work_slice_planning_point_id,
+            results[0].work_slice_planning_point_id
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_requested_at,
+            results[0].work_slice_planner_requested_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_authorized_at,
+            results[0].work_slice_planner_authorized_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_session_created_at,
+            results[0].work_slice_planner_session_created_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_invocation_created_at,
+            results[0].work_slice_planner_invocation_created_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_harness_applied_at,
+            results[0].work_slice_planner_harness_applied_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_launch_requested_at,
+            results[0].work_slice_planner_launch_requested_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_launch_accepted_at,
+            results[0].work_slice_planner_launch_accepted_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_ready_at,
+            results[0].work_slice_planner_ready_at
+        );
+        assert_eq!(
+            after_reopen.work_slice_planner_provider_activation_observed_at,
+            None
+        );
         assert_eq!(after_reopen.work_slice_planner_lifecycle_observed_at, None);
         assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
 
@@ -5790,42 +6434,116 @@ mod tests {
             "UPDATE work_slice_planning_requests SET planner_launch_accepted_at=NULL,planner_ready_at=NULL WHERE sprint_id=?1",
             [&sprint_id],
         ).unwrap();
-        let accepted_before_projection = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        let accepted_before_projection = accepted_before_projection.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap();
-        assert!(accepted_before_projection.work_slice_planner_launch_accepted_at.is_some());
-        assert!(accepted_before_projection.work_slice_planner_ready_at.is_some());
+        let accepted_before_projection =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let accepted_before_projection = accepted_before_projection
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|status| status.sprint_id == sprint_id)
+            .unwrap();
+        assert!(accepted_before_projection
+            .work_slice_planner_launch_accepted_at
+            .is_some());
+        assert!(accepted_before_projection
+            .work_slice_planner_ready_at
+            .is_some());
         assert_eq!(fixture.runtime.requests().len(), launches_before + 1);
 
         let planner_session = results[0].work_slice_planner_session_id.clone().unwrap();
         let planner_invocation = results[0].work_slice_planner_invocation_id.clone().unwrap();
-        let snapshot: String = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT planner_harness_json FROM work_slice_planning_requests WHERE sprint_id=?1", [&sprint_id], |row| row.get(0),
-        ).unwrap();
+        let snapshot: String = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT planner_harness_json FROM work_slice_planning_requests WHERE sprint_id=?1",
+                [&sprint_id],
+                |row| row.get(0),
+            )
+            .unwrap();
 
         // A Session-only partial effect reconstructs its reserved invocation and Harness facts.
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "DELETE FROM agent_session_invocations WHERE id=?1", [&planner_invocation],
-        ).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "DELETE FROM agent_session_invocations WHERE id=?1",
+                [&planner_invocation],
+            )
+            .unwrap();
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_slice_planning_requests SET planner_invocation_created_at=NULL,planner_harness_applied_at=NULL,planner_harness_json=NULL WHERE sprint_id=?1", [&sprint_id],
         ).unwrap();
-        let session_only = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        assert!(session_only.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap().work_slice_planner_harness_applied_at.is_some());
+        let session_only =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(session_only
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|status| status.sprint_id == sprint_id)
+            .unwrap()
+            .work_slice_planner_harness_applied_at
+            .is_some());
 
         // An invocation-without-Harness partial effect reconstructs only the missing Harness stage.
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_slice_planning_requests SET planner_harness_applied_at=NULL,planner_harness_json=NULL WHERE sprint_id=?1", [&sprint_id],
         ).unwrap();
-        let invocation_only = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        assert!(invocation_only.query().unwrap().transitions.into_iter().find(|status| status.sprint_id == sprint_id).unwrap().work_slice_planner_harness_applied_at.is_some());
+        let invocation_only =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(invocation_only
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|status| status.sprint_id == sprint_id)
+            .unwrap()
+            .work_slice_planner_harness_applied_at
+            .is_some());
         assert_eq!(fixture.runtime.requests().len(), launches_before + 2);
 
-        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_sessions SET working_directory='conflict' WHERE id=?1", [&planner_session]).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_sessions SET working_directory='conflict' WHERE id=?1",
+                [&planner_session],
+            )
+            .unwrap();
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))));
-        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_sessions SET working_directory=?2 WHERE id=?1", params![planner_session, worktree_root.to_string_lossy()]).unwrap();
-        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_session_invocations SET input_provenance='user' WHERE id=?1", [&planner_invocation]).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
+                params![planner_session, worktree_root.to_string_lossy()],
+            )
+            .unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_session_invocations SET input_provenance='user' WHERE id=?1",
+                [&planner_invocation],
+            )
+            .unwrap();
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))));
-        Connection::open(&fixture.database_path).unwrap().execute("UPDATE agent_session_invocations SET input_provenance='application' WHERE id=?1", [&planner_invocation]).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_session_invocations SET input_provenance='application' WHERE id=?1",
+                [&planner_invocation],
+            )
+            .unwrap();
         Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json='{}' WHERE sprint_id=?1", [&sprint_id]).unwrap();
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         Connection::open(&fixture.database_path).unwrap().execute("UPDATE work_slice_planning_requests SET planner_harness_json=?2 WHERE sprint_id=?1", params![sprint_id, snapshot]).unwrap();
@@ -5833,15 +6551,21 @@ mod tests {
         ambiguous_authority.idempotency_key = "wsp1-route-authority-ambiguous".into();
         ambiguous_authority.runtime_instance_ref = "wsp1-runtime-ambiguous".into();
         ambiguous_authority.runtime_source_ref = "wsp1-source-ambiguous".into();
-        authority_repository.store_initiated_sprint_git_authority(ambiguous_authority).unwrap();
+        authority_repository
+            .store_initiated_sprint_git_authority(ambiguous_authority)
+            .unwrap();
         assert!(matches!(
             reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
         ));
 
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id],
-        ).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
         let alternative_worktree = repository_root.join("alternative-worktree");
         fs::create_dir_all(&alternative_worktree).unwrap();
         let mut conflicting_authority = initial_authority;
@@ -5850,7 +6574,9 @@ mod tests {
         conflicting_authority.worktree_root = alternative_worktree.to_string_lossy().into_owned();
         conflicting_authority.runtime_instance_ref = "wsp1-runtime-conflict".into();
         conflicting_authority.runtime_source_ref = "wsp1-source-conflict".into();
-        authority_repository.store_initiated_sprint_git_authority(conflicting_authority).unwrap();
+        authority_repository
+            .store_initiated_sprint_git_authority(conflicting_authority)
+            .unwrap();
         assert!(matches!(
             reopened.request_work_slice_planner(&control, crate::orchestration::sprint_runner_transition::WorkSlicePlannerRequest {}),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
@@ -5881,28 +6607,36 @@ mod tests {
             reopened.read_work_slice_planning_context(&planner_invocation),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
-        let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
+        let planner_harness =
+            conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner).unwrap();
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_slice_planning_requests SET planner_harness_version=?2 WHERE sprint_id=?1",
             params![sprint_id, planner_harness.version],
         ).unwrap();
 
-        let lane = |title: &str, depends_on: Vec<&str>| crate::orchestration::sprint_runner_transition::WorkSliceLane {
-            title: title.into(), specification: format!("Bounded specification for {title}."),
-            depends_on: depends_on.into_iter().map(str::to_owned).collect(),
+        let lane = |title: &str, depends_on: Vec<&str>| {
+            crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                title: title.into(),
+                specification: format!("Bounded specification for {title}."),
+                depends_on: depends_on.into_iter().map(str::to_owned).collect(),
+            }
         };
         let proposal = crate::orchestration::sprint_runner_transition::WorkSliceProposal {
             objective: "Harden the current planning exchange.".into(),
             lanes: vec![lane("Inspect", vec![]), lane("Verify", vec!["Inspect"])],
         };
         let invalid = |lanes| crate::orchestration::sprint_runner_transition::WorkSliceProposal {
-            objective: "Invalid proposal".into(), lanes,
+            objective: "Invalid proposal".into(),
+            lanes,
         };
         for candidate in [
             invalid(vec![]),
             invalid(vec![lane("Duplicate", vec![]), lane("Duplicate", vec![])]),
             invalid(vec![lane("Missing", vec!["Unknown"])]),
-            invalid(vec![lane("Cycle A", vec!["Cycle B"]), lane("Cycle B", vec!["Cycle A"])]),
+            invalid(vec![
+                lane("Cycle A", vec!["Cycle B"]),
+                lane("Cycle B", vec!["Cycle A"]),
+            ]),
         ] {
             assert!(matches!(
                 reopened.submit_work_slice_proposal(&planner_invocation, candidate),
@@ -5929,50 +6663,118 @@ mod tests {
                 })
             );
             let payload = result.to_string();
-            for forbidden in ["revision", "fingerprint", "command", "idempotency", "route", "token", "authority"] {
-                assert!(!payload.to_ascii_lowercase().contains(forbidden), "Planner payload leaked {forbidden}: {payload}");
+            for forbidden in [
+                "revision",
+                "fingerprint",
+                "command",
+                "idempotency",
+                "route",
+                "token",
+                "authority",
+            ] {
+                assert!(
+                    !payload.to_ascii_lowercase().contains(forbidden),
+                    "Planner payload leaked {forbidden}: {payload}"
+                );
             }
         };
         let barrier = Arc::new(Barrier::new(2));
-        let exact_calls = (0..2).map(|_| {
-            let service = reopened.clone();
-            let barrier = barrier.clone();
-            let invocation = planner_invocation.clone();
-            let proposal = proposal.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.submit_work_slice_proposal(&invocation, proposal)
+        let exact_calls = (0..2)
+            .map(|_| {
+                let service = reopened.clone();
+                let barrier = barrier.clone();
+                let invocation = planner_invocation.clone();
+                let proposal = proposal.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.submit_work_slice_proposal(&invocation, proposal)
+                })
             })
-        }).collect::<Vec<_>>();
-        let exact_results = exact_calls.into_iter().map(|call| call.join().unwrap().unwrap()).collect::<Vec<_>>();
-        assert_eq!(exact_results.iter().filter(|result| result["status"] == "proposal_validated").count(), 1);
-        assert_eq!(exact_results.iter().filter(|result| result["status"] == "proposal_replayed").count(), 1);
-        assert_public_result(exact_results.iter().find(|result| result["status"] == "proposal_validated").unwrap(), "proposal_validated");
-        assert_public_result(exact_results.iter().find(|result| result["status"] == "proposal_replayed").unwrap(), "proposal_replayed");
+            .collect::<Vec<_>>();
+        let exact_results = exact_calls
+            .into_iter()
+            .map(|call| call.join().unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            exact_results
+                .iter()
+                .filter(|result| result["status"] == "proposal_validated")
+                .count(),
+            1
+        );
+        assert_eq!(
+            exact_results
+                .iter()
+                .filter(|result| result["status"] == "proposal_replayed")
+                .count(),
+            1
+        );
+        assert_public_result(
+            exact_results
+                .iter()
+                .find(|result| result["status"] == "proposal_validated")
+                .unwrap(),
+            "proposal_validated",
+        );
+        assert_public_result(
+            exact_results
+                .iter()
+                .find(|result| result["status"] == "proposal_replayed")
+                .unwrap(),
+            "proposal_replayed",
+        );
         let connection = Connection::open(&fixture.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_proposal_revisions", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_proposal_revisions WHERE is_current=1", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_proposal_revisions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_proposal_revisions WHERE is_current=1",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         drop(connection);
         let mut divergent = proposal.clone();
         divergent.objective = "Divergent objective.".into();
-        reopened.request_work_slice_refinement(
-            &planner_invocation,
-            crate::orchestration::sprint_runner_transition::WorkSliceRefinement { reason: "Verify one boundary more carefully.".into() },
-        ).unwrap();
+        reopened
+            .request_work_slice_refinement(
+                &planner_invocation,
+                crate::orchestration::sprint_runner_transition::WorkSliceRefinement {
+                    reason: "Verify one boundary more carefully.".into(),
+                },
+            )
+            .unwrap();
         let barrier = Arc::new(Barrier::new(2));
-        let refinement_calls = (0..2).map(|_| {
-            let service = reopened.clone();
-            let barrier = barrier.clone();
-            let invocation = planner_invocation.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.request_work_slice_refinement(
-                    &invocation,
-                    crate::orchestration::sprint_runner_transition::WorkSliceRefinement { reason: "Verify one boundary more carefully.".into() },
-                )
+        let refinement_calls = (0..2)
+            .map(|_| {
+                let service = reopened.clone();
+                let barrier = barrier.clone();
+                let invocation = planner_invocation.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.request_work_slice_refinement(
+                        &invocation,
+                        crate::orchestration::sprint_runner_transition::WorkSliceRefinement {
+                            reason: "Verify one boundary more carefully.".into(),
+                        },
+                    )
+                })
             })
-        }).collect::<Vec<_>>();
-        assert!(refinement_calls.into_iter().all(|call| call.join().unwrap().is_ok()));
+            .collect::<Vec<_>>();
+        assert!(refinement_calls
+            .into_iter()
+            .all(|call| call.join().unwrap().is_ok()));
         assert!(matches!(
             reopened.request_work_slice_refinement(
                 &planner_invocation,
@@ -5987,23 +6789,47 @@ mod tests {
         let mut alternate = proposal.clone();
         alternate.objective = "Alternate divergent objective.".into();
         let barrier = Arc::new(Barrier::new(2));
-        let divergent_calls = [divergent.clone(), alternate.clone()].into_iter().map(|candidate| {
-            let service = reopened.clone();
-            let barrier = barrier.clone();
-            let invocation = planner_invocation.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                let result = service.submit_work_slice_proposal(&invocation, candidate.clone());
-                (candidate, result)
+        let divergent_calls = [divergent.clone(), alternate.clone()]
+            .into_iter()
+            .map(|candidate| {
+                let service = reopened.clone();
+                let barrier = barrier.clone();
+                let invocation = planner_invocation.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let result = service.submit_work_slice_proposal(&invocation, candidate.clone());
+                    (candidate, result)
+                })
             })
-        }).collect::<Vec<_>>();
-        let divergent_results = divergent_calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
-        assert_eq!(divergent_results.iter().filter(|(_, result)| result.is_ok()).count(), 1);
+            .collect::<Vec<_>>();
+        let divergent_results = divergent_calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            divergent_results
+                .iter()
+                .filter(|(_, result)| result.is_ok())
+                .count(),
+            1
+        );
         assert_eq!(divergent_results.iter().filter(|(_, result)| matches!(result, Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict))).count(), 1);
-        let successor = divergent_results.into_iter().find_map(|(candidate, result)| result.ok().map(|result| (candidate, result))).unwrap();
+        let successor = divergent_results
+            .into_iter()
+            .find_map(|(candidate, result)| result.ok().map(|result| (candidate, result)))
+            .unwrap();
         assert_public_result(&successor.1, "proposal_validated");
         let connection = Connection::open(&fixture.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_episodes", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_planning_episodes",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         let revisions = connection.prepare(
             "SELECT revision_id,revision_number,is_current,parent_revision_id,refinement_requested_at,semantic_completed_at,accepted_at FROM work_slice_proposal_revisions ORDER BY revision_number",
         ).unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?,row.get::<_, i64>(1)?,row.get::<_, i64>(2)?,row.get::<_, Option<String>>(3)?,row.get::<_, Option<String>>(4)?,row.get::<_, Option<String>>(5)?,row.get::<_, Option<String>>(6)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
@@ -6017,15 +6843,39 @@ mod tests {
         assert_eq!(revisions[1].2, 1);
         assert_eq!(revisions[1].3.as_deref(), Some(revisions[0].0.as_str()));
         drop(connection);
-        reopened.complete_work_slice_planning(&planner_invocation, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}).unwrap();
-        let before_terminal = reopened.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        reopened
+            .complete_work_slice_planning(
+                &planner_invocation,
+                crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+            )
+            .unwrap();
+        let before_terminal = reopened
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|item| item.sprint_id == sprint_id)
+            .unwrap();
         assert!(before_terminal.work_slice_semantic_completed_at.is_some());
-        assert!(before_terminal.work_slice_terminal_lifecycle_observed_at.is_none());
+        assert!(before_terminal
+            .work_slice_terminal_lifecycle_observed_at
+            .is_none());
         assert!(before_terminal.work_slice_application_accepted_at.is_none());
-        assert!(before_terminal.work_slice_materialization_ready_at.is_none());
+        assert!(before_terminal
+            .work_slice_materialization_ready_at
+            .is_none());
         let launches_before_acceptance = fixture.runtime.requests().len();
-        fixture.runtime.finish(planner_invocation.as_str(), AgentInvocationTerminalStatus::Completed);
-        let accepted = reopened.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        fixture.runtime.finish(
+            planner_invocation.as_str(),
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let accepted = reopened
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|item| item.sprint_id == sprint_id)
+            .unwrap();
         assert!(accepted.work_slice_terminal_lifecycle_observed_at.is_some());
         assert!(accepted.work_slice_application_accepted_at.is_some());
         assert!(accepted.work_slice_materialization_ready_at.is_some());
@@ -6035,8 +6885,19 @@ mod tests {
             "UPDATE work_slice_proposal_revisions SET materialization_ready_at=NULL WHERE is_current=1",
             [],
         ).unwrap();
-        let repaired = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        let repaired = repaired.query().unwrap().transitions.into_iter().find(|item| item.sprint_id == sprint_id).unwrap();
+        let repaired =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        let repaired = repaired
+            .query()
+            .unwrap()
+            .transitions
+            .into_iter()
+            .find(|item| item.sprint_id == sprint_id)
+            .unwrap();
         assert!(repaired.work_slice_application_accepted_at.is_some());
         assert!(repaired.work_slice_materialization_ready_at.is_some());
         assert_eq!(repaired.work_slice_application_accepted_at, accepted_at);
@@ -6050,23 +6911,70 @@ mod tests {
         assert!(materialization.6.is_some());
         assert!(materialization.7.is_some());
         assert!(materialization.8.is_some());
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_units WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_relationships WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap(), 7);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_units WHERE materialization_id=?1",
+                    [&materialization.0],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_relationships WHERE materialization_id=?1",
+                    [&materialization.0],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            7
+        );
         let unit_ids = connection.prepare("SELECT work_unit_id FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         let relationship_ids = connection.prepare("SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 ORDER BY relationship_id").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-        connection.execute("DELETE FROM work_unit_relationships WHERE relationship_id=?1", [&relationship_ids[0]]).unwrap();
+        connection
+            .execute(
+                "DELETE FROM work_unit_relationships WHERE relationship_id=?1",
+                [&relationship_ids[0]],
+            )
+            .unwrap();
         connection.execute("UPDATE work_unit_materializations SET relationships_completed_at=NULL,settled_at=NULL WHERE materialization_id=?1", [&materialization.0]).unwrap();
         drop(connection);
-        let replayed = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
+        let replayed =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         let repaired_unit_ids = connection.prepare("SELECT work_unit_id FROM work_units WHERE materialization_id=?1 ORDER BY lane_ordinal").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         let repaired_relationship_ids = connection.prepare("SELECT relationship_id FROM work_unit_relationships WHERE materialization_id=?1 ORDER BY relationship_id").unwrap().query_map([&materialization.0], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         assert_eq!(repaired_unit_ids, unit_ids);
         assert_eq!(repaired_relationship_ids, relationship_ids);
-        assert_eq!(connection.query_row::<Option<String>, _, _>("SELECT settled_at FROM work_unit_materializations WHERE materialization_id=?1", [&materialization.0], |row| row.get(0)).unwrap().is_some(), true);
+        assert_eq!(
+            connection
+                .query_row::<Option<String>, _, _>(
+                    "SELECT settled_at FROM work_unit_materializations WHERE materialization_id=?1",
+                    [&materialization.0],
+                    |row| row.get(0)
+                )
+                .unwrap()
+                .is_some(),
+            true
+        );
         drop(connection);
-        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
-        assert_eq!(native["workUnitMaterializations"].as_array().unwrap().len(), 1);
+        let native = serde_json::to_value(
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            native["workUnitMaterializations"].as_array().unwrap().len(),
+            1
+        );
         assert_eq!(native["workUnits"].as_array().unwrap().len(), 2);
         assert_eq!(native["workUnitRelationships"].as_array().unwrap().len(), 7);
 
@@ -6075,58 +6983,176 @@ mod tests {
         // ready fact; the dependent remains blocked even after the root is ready.
         let handler_repository_root = fixture._directory.path().join("handler-repository");
         let handler_sprint_root = fixture._directory.path().join("handler-sprint-worktree");
-        let handler_application_root = fixture._directory.path().join("handler-application-worktree");
+        let handler_application_root = fixture
+            ._directory
+            .path()
+            .join("handler-application-worktree");
         fs::create_dir_all(&handler_repository_root).unwrap();
-        for arguments in [&["init"][..], &["config", "user.email", "handler@example.test"][..], &["config", "user.name", "Handler Test"][..]] {
-            assert!(std::process::Command::new("git").args(arguments).current_dir(&handler_repository_root).status().unwrap().success());
+        for arguments in [
+            &["init"][..],
+            &["config", "user.email", "handler@example.test"][..],
+            &["config", "user.name", "Handler Test"][..],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(&handler_repository_root)
+                .status()
+                .unwrap()
+                .success());
         }
-        fs::write(handler_repository_root.join("README.md"), "handler fixture\n").unwrap();
-        assert!(std::process::Command::new("git").args(["add", "README.md"]).current_dir(&handler_repository_root).status().unwrap().success());
-        assert!(std::process::Command::new("git").args(["commit", "-m", "handler fixture"]).current_dir(&handler_repository_root).status().unwrap().success());
-        let handler_initial = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&handler_repository_root).output().unwrap().stdout).unwrap().trim().to_owned();
-        assert!(std::process::Command::new("git").args(["worktree", "add", "-b", "handler-sprint", handler_sprint_root.to_string_lossy().as_ref(), &handler_initial]).current_dir(&handler_repository_root).status().unwrap().success());
-        fs::write(handler_sprint_root.join("README.md"), "handler sprint fixture\n").unwrap();
-        assert!(std::process::Command::new("git").args(["add", "README.md"]).current_dir(&handler_sprint_root).status().unwrap().success());
-        assert!(std::process::Command::new("git").args(["commit", "-m", "handler sprint fixture"]).current_dir(&handler_sprint_root).status().unwrap().success());
-        let handler_head = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&handler_sprint_root).output().unwrap().stdout).unwrap().trim().to_owned();
-        assert!(std::process::Command::new("git").args(["worktree", "add", "--detach", handler_application_root.to_string_lossy().as_ref(), &handler_initial]).current_dir(&handler_repository_root).status().unwrap().success());
+        fs::write(
+            handler_repository_root.join("README.md"),
+            "handler fixture\n",
+        )
+        .unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&handler_repository_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(std::process::Command::new("git")
+            .args(["commit", "-m", "handler fixture"])
+            .current_dir(&handler_repository_root)
+            .status()
+            .unwrap()
+            .success());
+        let handler_initial = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&handler_repository_root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        assert!(std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                "handler-sprint",
+                handler_sprint_root.to_string_lossy().as_ref(),
+                &handler_initial
+            ])
+            .current_dir(&handler_repository_root)
+            .status()
+            .unwrap()
+            .success());
+        fs::write(
+            handler_sprint_root.join("README.md"),
+            "handler sprint fixture\n",
+        )
+        .unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&handler_sprint_root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(std::process::Command::new("git")
+            .args(["commit", "-m", "handler sprint fixture"])
+            .current_dir(&handler_sprint_root)
+            .status()
+            .unwrap()
+            .success());
+        let handler_head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&handler_sprint_root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        assert!(std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "--detach",
+                handler_application_root.to_string_lossy().as_ref(),
+                &handler_initial
+            ])
+            .current_dir(&handler_repository_root)
+            .status()
+            .unwrap()
+            .success());
         let handler_repository_root = handler_repository_root.canonicalize().unwrap();
         let handler_sprint_root = handler_sprint_root.canonicalize().unwrap();
-        let handler_workspace_parent = handler_application_root.canonicalize().unwrap()
+        let handler_workspace_parent = handler_application_root
+            .canonicalize()
+            .unwrap()
             .join("app-data")
             .join("execution-workspaces");
         let handler_common = handler_repository_root.join(".git").canonicalize().unwrap();
-        let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
-        let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
+        let handler_repository =
+            Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let handler_orchestration =
+            Arc::new(OrchestrationApplication::new(handler_repository.clone()));
         let handler_support = ProductExecutionSupportState::new(
             &fixture.database_path,
             handler_workspace_parent.clone(),
             handler_repository,
-        ).unwrap();
+        )
+        .unwrap();
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
-            handler_support.service(), fixture.sessions.clone(), handler_orchestration.clone(),
+            handler_support.service(),
+            fixture.sessions.clone(),
+            handler_orchestration.clone(),
         ));
-        let handler_runner = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
+        let handler_runner =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&handler_runner);
         let handler_launches_before = fixture.runtime.requests().len();
-        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
-        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
+        handler_runner
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
         let blocked_without_authority: (String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT blocked_reason,execution_support_granted_at,handler_session_created_at,handler_invocation_prepared_at FROM work_unit_handler_activations WHERE blocked_reason='initiated_sprint_git_authority_missing' LIMIT 1", [],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
         ).unwrap();
-        assert_eq!(blocked_without_authority.0, "initiated_sprint_git_authority_missing");
-        assert!(blocked_without_authority.1.is_none() && blocked_without_authority.2.is_none() && blocked_without_authority.3.is_none());
+        assert_eq!(
+            blocked_without_authority.0,
+            "initiated_sprint_git_authority_missing"
+        );
+        assert!(
+            blocked_without_authority.1.is_none()
+                && blocked_without_authority.2.is_none()
+                && blocked_without_authority.3.is_none()
+        );
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before);
-        SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
-            sprint_id: sprint_id.clone(), idempotency_key: "handler-authority".into(),
-            repository_id: "handler-repository".into(), repository_root: handler_repository_root.to_string_lossy().into_owned(),
-            repository_common_dir: handler_common.to_string_lossy().into_owned(), worktree_id: "handler-sprint-worktree".into(),
-            worktree_root: handler_sprint_root.to_string_lossy().into_owned(), baseline_object_id: handler_initial,
-            current_object_id: handler_head, runtime_instance_ref: "handler-runtime".into(), runtime_source_ref: "handler-source".into(), source_fingerprint: "d".repeat(64),
-        }).unwrap();
+        SqliteOrchestrationRepository::open(&fixture.database_path)
+            .unwrap()
+            .store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
+                sprint_id: sprint_id.clone(),
+                idempotency_key: "handler-authority".into(),
+                repository_id: "handler-repository".into(),
+                repository_root: handler_repository_root.to_string_lossy().into_owned(),
+                repository_common_dir: handler_common.to_string_lossy().into_owned(),
+                worktree_id: "handler-sprint-worktree".into(),
+                worktree_root: handler_sprint_root.to_string_lossy().into_owned(),
+                baseline_object_id: handler_initial,
+                current_object_id: handler_head,
+                runtime_instance_ref: "handler-runtime".into(),
+                runtime_source_ref: "handler-source".into(),
+                source_fingerprint: "d".repeat(64),
+            })
+            .unwrap();
         // A durable authorization without a grant is recoverable only after the authority
         // worktree becomes valid again. This test-owned dirty marker forces the real product
         // resolver to reject the first package before it can create a grant, Session, or launch.
@@ -6144,23 +7170,84 @@ mod tests {
         .filter(|line| line.starts_with("worktree "))
         .count();
         fs::write(&handler_dirty_marker, "test-owned transient dirty state\n").unwrap();
-        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        let failed_handler: (String, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,
+        handler_runner
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+        let failed_handler: (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,
                     authorized_at,attempt_created_at,execution_support_granted_at,
                     isolated_worktree_ready_at,handler_session_created_at,
                     handler_invocation_prepared_at,failure_reason
              FROM work_unit_handler_activations WHERE eligibility_state='eligible' LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?)),
-        ).unwrap();
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
+                    ))
+                },
+            )
+            .unwrap();
         assert!(failed_handler.4.is_some() && failed_handler.5.is_some());
-        for stage in [&failed_handler.6,&failed_handler.7,&failed_handler.8,&failed_handler.9] { assert!(stage.is_none()); }
-        assert_eq!(failed_handler.10.as_deref(), Some("handler_execution_support_grant_failed"));
+        for stage in [
+            &failed_handler.6,
+            &failed_handler.7,
+            &failed_handler.8,
+            &failed_handler.9,
+        ] {
+            assert!(stage.is_none());
+        }
+        assert_eq!(
+            failed_handler.10.as_deref(),
+            Some("handler_execution_support_grant_failed")
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE attempt_id=?1 AND role_kind='work_unit_handler'", [&failed_handler.1], |row| row.get(0)).unwrap(), 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1 AND role_id='work_unit_handler'", [&failed_handler.1], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&failed_handler.2], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&failed_handler.3], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&failed_handler.2],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&failed_handler.3],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(fixture.runtime.requests().len(), handler_launches_before);
         let failure_projection = serde_json::to_value(
             SqliteOrchestrationRepository::open(&fixture.database_path)
@@ -6201,7 +7288,9 @@ mod tests {
         // The production notifier synchronously re-enters Handler reconciliation from sequence-0
         // launch provenance before the initial runtime start returns.
         fixture.runtime.event_on_next_start();
-        handler_runner.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        handler_runner
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         let activations = connection.prepare("SELECT work_unit_id,attempt_id,handler_session_id,handler_invocation_id,eligibility_state,blocked_reason,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,handler_ready_at,provider_activation_observed_at FROM work_unit_handler_activations ORDER BY work_unit_id").unwrap().query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,Option<String>>(9)?,row.get::<_,Option<String>>(10)?,row.get::<_,Option<String>>(11)?,row.get::<_,Option<String>>(12)?,row.get::<_,Option<String>>(13)?,row.get::<_,Option<String>>(14)?,row.get::<_,Option<String>>(15)?,row.get::<_,Option<String>>(16)?,row.get::<_,Option<String>>(17)?,row.get::<_,Option<String>>(18)?,row.get::<_,Option<String>>(19)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         assert_eq!(activations.len(), 2);
@@ -6214,13 +7303,41 @@ mod tests {
         assert_eq!(root.1, failed_handler.1);
         assert_eq!(root.2, failed_handler.2);
         assert_eq!(root.3, failed_handler.3);
-        for timestamp in [&root.9,&root.10,&root.11,&root.12,&root.13,&root.14,&root.15,&root.16,&root.17,&root.18] { assert!(timestamp.is_some()); }
-        assert!(root.6.as_deref().is_some_and(|value| value.starts_with("harness-revision-")));
+        for timestamp in [
+            &root.9, &root.10, &root.11, &root.12, &root.13, &root.14, &root.15, &root.16,
+            &root.17, &root.18,
+        ] {
+            assert!(timestamp.is_some());
+        }
+        assert!(root
+            .6
+            .as_deref()
+            .is_some_and(|value| value.starts_with("harness-revision-")));
         assert!(root.7.as_deref().is_some_and(|value| value.len() == 64));
-        assert!(root.8.as_deref().is_some_and(|value| value.contains("harness-revision-commit/v1")));
+        assert!(root
+            .8
+            .as_deref()
+            .is_some_and(|value| value.contains("harness-revision-commit/v1")));
         let dependent = activations.iter().find(|row| row.4 == "blocked").unwrap();
-        assert!(dependent.5.as_deref().is_some_and(|reason| reason.starts_with("missing_prerequisite_contributions:")));
-        for timestamp in [&dependent.9,&dependent.10,&dependent.11,&dependent.12,&dependent.13,&dependent.14,&dependent.15,&dependent.16,&dependent.17,&dependent.18,&dependent.19] { assert!(timestamp.is_none()); }
+        assert!(dependent
+            .5
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("missing_prerequisite_contributions:")));
+        for timestamp in [
+            &dependent.9,
+            &dependent.10,
+            &dependent.11,
+            &dependent.12,
+            &dependent.13,
+            &dependent.14,
+            &dependent.15,
+            &dependent.16,
+            &dependent.17,
+            &dependent.18,
+            &dependent.19,
+        ] {
+            assert!(timestamp.is_none());
+        }
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id LIKE 'work-unit-handler-session-%'", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id LIKE 'work-unit-handler-invocation-%' AND input_provenance='application'", [], |row| row.get(0)).unwrap(), 1);
         let provenance: (i64,String,String,i64,i64) = connection.query_row(
@@ -6237,7 +7354,10 @@ mod tests {
         assert_eq!(provenance, (0, "codex.exe".into(), "start".into(), 1, 0));
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).unwrap(), 0);
         drop(connection);
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 1
+        );
         assert_eq!(
             String::from_utf8(
                 Command::new("git")
@@ -6253,13 +7373,23 @@ mod tests {
             .count(),
             handler_worktrees_before + 1
         );
-        let handler_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
-        handler_reopen.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 1);
+        let handler_reopen =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        handler_reopen
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 1
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1 AND role_id='work_unit_handler'", [&root.1], |row| row.get(0)).unwrap(), 1);
-        fixture.runtime.finish(&root.3, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .runtime
+            .finish(&root.3, AgentInvocationTerminalStatus::Completed);
         let continuation: (String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,
                     blocked_reason,authorized_at,invocation_prepared_at,harness_bound_at,launch_accepted_at,action_ready_at
@@ -6269,12 +7399,35 @@ mod tests {
         assert_eq!(continuation.0, root.1);
         assert_eq!(continuation.1, root.2);
         assert_eq!(continuation.2, root.3);
-        assert!(continuation.3.starts_with("work-unit-handler-action-invocation-"));
+        assert!(continuation
+            .3
+            .starts_with("work-unit-handler-action-invocation-"));
         assert!(continuation.4.is_none());
-        for timestamp in [&continuation.5,&continuation.6,&continuation.7,&continuation.8,&continuation.9] { assert!(timestamp.is_some()); }
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 2);
+        for timestamp in [
+            &continuation.5,
+            &continuation.6,
+            &continuation.7,
+            &continuation.8,
+            &continuation.9,
+        ] {
+            assert!(timestamp.is_some());
+        }
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 2
+        );
         assert!(matches!(handler_runner.request_work_unit_implementer_from_authenticated_continuation(&root.3), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_activations",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         // Every rejected caller fails before it can record an Implementer request or grant.
         // In particular, a terminal continuation cannot rely on an old action_ready_at fact.
         let (action_digest, action_launch_requested): (String, String) = Connection::open(&fixture.database_path).unwrap().query_row(
@@ -6288,11 +7441,14 @@ mod tests {
                 Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
             ));
             assert_eq!(
-                Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM work_unit_implementer_activations",
-                    [],
-                    |row| row.get(0),
-                ).unwrap(),
+                Connection::open(&fixture.database_path)
+                    .unwrap()
+                    .query_row::<i64, _, _>(
+                        "SELECT COUNT(*) FROM work_unit_implementer_activations",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap(),
                 0
             );
         };
@@ -6378,14 +7534,31 @@ mod tests {
             "UPDATE work_unit_handler_activations SET eligibility_state='eligible',blocked_reason=NULL WHERE work_unit_id=?1",
             [&root.0],
         ).unwrap();
-        let upstream_before: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
+        let upstream_before: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
                     sprint_continuation_invocation_id,sprint_continuation_launch_accepted_at,
                     planning_ready_at
              FROM sprint_runner_transitions WHERE sprint_id=?1",
-            [&sprint_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        ).unwrap();
+                [&sprint_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
         let materialization_before: (i64, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT COUNT(*),MAX(settled_at) FROM work_unit_materializations WHERE materialization_id=?1",
             [&materialization.0],
@@ -6399,9 +7572,22 @@ mod tests {
             "work-unit-implementer-invocation-{:x}",
             implementer_invocation_hash.finalize()
         );
-        fixture.runtime.stage_candidate_change(&expected_implementer_invocation);
-        let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
-        let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
+        fixture
+            .runtime
+            .stage_candidate_change(&expected_implementer_invocation);
+        let injection = handler_runner
+            .prepared_handler_action_injection(&continuation.3)
+            .unwrap();
+        let endpoint = injection
+            .configuration_args
+            .iter()
+            .find_map(|argument| {
+                argument
+                    .strip_prefix("mcp_servers.")
+                    .and_then(|value| value.split_once(".url=\""))
+                    .map(|(_, value)| value.trim_end_matches('"').to_owned())
+            })
+            .unwrap();
         let bearer = injection.environment.1.clone();
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
             let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
@@ -6425,7 +7611,9 @@ mod tests {
             assert_eq!(result["result"]["isError"], false);
             assert_eq!(serde_json::from_str::<serde_json::Value>(result["result"]["content"][0]["text"].as_str().unwrap()).unwrap()["status"], "implementer_request_recorded");
         });
-        handler_runner.request_work_unit_implementer_from_authenticated_continuation(&continuation.3).unwrap();
+        handler_runner
+            .request_work_unit_implementer_from_authenticated_continuation(&continuation.3)
+            .unwrap();
         let implementer: (String,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,
                     implementer_harness_configuration_digest,authorized_at,execution_support_granted_at,
@@ -6435,11 +7623,22 @@ mod tests {
         ).unwrap();
         assert_eq!(implementer.0, root.1);
         assert!(implementer.1.starts_with("work-unit-implementer-session-"));
-        assert!(implementer.2.starts_with("work-unit-implementer-invocation-"));
+        assert!(implementer
+            .2
+            .starts_with("work-unit-implementer-invocation-"));
         assert_eq!(implementer.2, expected_implementer_invocation);
         assert!(implementer.3.starts_with("harness-revision-"));
         assert_eq!(implementer.4.len(), 64);
-        for timestamp in [&implementer.5,&implementer.6,&implementer.7,&implementer.8,&implementer.9,&implementer.10] { assert!(timestamp.is_some()); }
+        for timestamp in [
+            &implementer.5,
+            &implementer.6,
+            &implementer.7,
+            &implementer.8,
+            &implementer.9,
+            &implementer.10,
+        ] {
+            assert!(timestamp.is_some());
+        }
         let grants = Connection::open(&fixture.database_path).unwrap().prepare("SELECT role_id,capability_ref,workspace_id FROM execution_support_grants WHERE attempt_id=?1 ORDER BY role_id").unwrap().query_map([&root.1], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
         assert_eq!(grants.len(), 2);
         assert_eq!(grants[0].0, "work_unit_handler");
@@ -6464,7 +7663,10 @@ mod tests {
             .iter()
             .find(|launch| launch.invocation_id.as_str() == implementer.2)
             .unwrap();
-        let shared_working_directory = original_handler_launch.working_directory.as_deref().unwrap();
+        let shared_working_directory = original_handler_launch
+            .working_directory
+            .as_deref()
+            .unwrap();
         assert_eq!(
             action_handler_launch.working_directory.as_deref(),
             Some(shared_working_directory)
@@ -6496,7 +7698,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(implementer_launch.submitted_text.contains("Application-derived Work Unit specification:"));
+        assert!(implementer_launch
+            .submitted_text
+            .contains("Application-derived Work Unit specification:"));
         assert!(implementer_launch.submitted_text.contains(&specification));
         for handler_launch in [original_handler_launch, action_handler_launch] {
             let extension = handler_launch.launch_extension.as_ref().unwrap();
@@ -6514,16 +7718,26 @@ mod tests {
             &implementer_extension.additional_args[..2],
             &["-c", "approval_policy=\"never\""]
         );
-        assert!(implementer_extension.additional_args.contains(&"--ignore-rules".into()));
-        assert!(implementer_extension.additional_args.windows(2).any(|arguments| {
-            arguments == ["-c", "mcp_servers={}"]
-        }));
-        assert!(implementer_extension.additional_args.iter().any(|argument| {
-            argument.starts_with("projects.'") && argument.ends_with(".trust_level=\"trusted\"")
-        }));
+        assert!(implementer_extension
+            .additional_args
+            .contains(&"--ignore-rules".into()));
+        assert!(implementer_extension
+            .additional_args
+            .windows(2)
+            .any(|arguments| { arguments == ["-c", "mcp_servers={}"] }));
+        assert!(implementer_extension
+            .additional_args
+            .iter()
+            .any(|argument| {
+                argument.starts_with("projects.'") && argument.ends_with(".trust_level=\"trusted\"")
+            }));
         assert!(implementer_extension.environment.is_empty());
         assert_eq!(
-            implementer_extension.initial_prompt_prefix.as_ref().unwrap().source,
+            implementer_extension
+                .initial_prompt_prefix
+                .as_ref()
+                .unwrap()
+                .source,
             "work_unit_implementer"
         );
         let (implementer_revision, implementer_digest, implementer_commit): (String, String, String) =
@@ -6560,13 +7774,18 @@ mod tests {
         assert_eq!(changed[0].display_name, "README.md");
         let comparison = evidence_package.comparison().unwrap();
         assert!(!comparison.is_empty());
-        let content = evidence_package.evidence_content(&changed[0].evidence_ref).unwrap();
+        let content = evidence_package
+            .evidence_content(&changed[0].evidence_ref)
+            .unwrap();
         let content: serde_json::Value = serde_json::from_slice(&content).unwrap();
         assert_eq!(
             content["content"]["bytesBase64"],
             "aW1wbGVtZW50ZXIgY2FuZGlkYXRlIGV2aWRlbmNlCg=="
         );
-        assert!(!evidence_package.capture_authorization_id().unwrap().is_empty());
+        assert!(!evidence_package
+            .capture_authorization_id()
+            .unwrap()
+            .is_empty());
         let persisted_directories = Connection::open(&fixture.database_path)
             .unwrap()
             .prepare("SELECT id,working_directory FROM agent_sessions WHERE id IN (?1,?2)")
@@ -6583,34 +7802,68 @@ mod tests {
             .all(|(_, directory)| directory == shared_working_directory));
         // The valid action creates only its own continuation/Implementer boundary for the eligible
         // root. The dependency remains blocked and has no action continuation or Implementer.
-        let action_continuations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_handler_action_continuations", [], |row| row.get(0),
-        ).unwrap();
-        let implementer_activations = Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_implementer_activations", [], |row| row.get(0),
-        ).unwrap();
+        let action_continuations = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM work_unit_handler_action_continuations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let implementer_activations = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row::<i64, _, _>(
+                "SELECT COUNT(*) FROM work_unit_implementer_activations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(action_continuations, 1);
         assert_eq!(implementer_activations, 1);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
             [&dependent.0], |row| row.get(0),
         ).unwrap(), 0);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
-            [&dependent.0], |row| row.get(0),
-        ).unwrap(), 0);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+                    [&dependent.0],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
             "SELECT eligibility_state FROM work_unit_handler_activations WHERE work_unit_id=?1",
             [&dependent.0], |row| row.get(0),
         ).unwrap(), "blocked");
-        let upstream_after: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
+        let upstream_after: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT epic_continuation_invocation_id,epic_continuation_launch_accepted_at,
                     sprint_continuation_invocation_id,sprint_continuation_launch_accepted_at,
                     planning_ready_at
              FROM sprint_runner_transitions WHERE sprint_id=?1",
-            [&sprint_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        ).unwrap();
+                [&sprint_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
         let materialization_after: (i64, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT COUNT(*),MAX(settled_at) FROM work_unit_materializations WHERE materialization_id=?1",
             [&materialization.0],
@@ -6618,43 +7871,100 @@ mod tests {
         ).unwrap();
         assert_eq!(upstream_after, upstream_before);
         assert_eq!(materialization_after, materialization_before);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
                 'work_unit_implementation_outputs','work_unit_implementation_feedback',
                 'work_unit_handler_acceptances','work_unit_handler_returns',
                 'work_unit_integrations',
                 'work_unit_handoffs','work_unit_executions')",
-            [], |row| row.get(0),
-        ).unwrap(), 0);
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            0
+        );
         let projected = serde_json::to_value(
-            SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap(),
-        ).unwrap();
-        let projected_unit = projected["workUnits"].as_array().unwrap().iter()
-            .find(|unit| unit["workUnitId"] == root.0).unwrap();
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        let projected_unit = projected["workUnits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|unit| unit["workUnitId"] == root.0)
+            .unwrap();
         assert_eq!(projected_unit["handlerActivation"]["attemptId"], root.1);
-        assert_eq!(projected_unit["actionContinuation"]["originalHandlerInvocationId"], root.3);
-        assert_eq!(projected_unit["actionContinuation"]["actionInvocationId"], continuation.3);
+        assert_eq!(
+            projected_unit["actionContinuation"]["originalHandlerInvocationId"],
+            root.3
+        );
+        assert_eq!(
+            projected_unit["actionContinuation"]["actionInvocationId"],
+            continuation.3
+        );
         assert_eq!(projected_unit["implementerActivation"]["attemptId"], root.1);
-        assert_eq!(projected_unit["implementerActivation"]["handlerActionInvocationId"], continuation.3);
+        assert_eq!(
+            projected_unit["implementerActivation"]["handlerActionInvocationId"],
+            continuation.3
+        );
         assert!(projected_unit["implementerActivation"]["launchAcceptedAt"].is_string());
         assert!(projected_unit["implementerActivation"]["implementerReadyAt"].is_string());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
-        let concurrent_requests = (0..2).map(|_| {
-            let service = handler_runner.clone();
-            let invocation = continuation.3.clone();
-            std::thread::spawn(move || service.request_work_unit_implementer_from_authenticated_continuation(&invocation))
-        }).collect::<Vec<_>>();
-        assert!(concurrent_requests.into_iter().all(|request| request.join().unwrap().is_ok()));
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "UPDATE work_unit_implementer_activations
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
+        let concurrent_requests = (0..2)
+            .map(|_| {
+                let service = handler_runner.clone();
+                let invocation = continuation.3.clone();
+                std::thread::spawn(move || {
+                    service
+                        .request_work_unit_implementer_from_authenticated_continuation(&invocation)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(concurrent_requests
+            .into_iter()
+            .all(|request| request.join().unwrap().is_ok()));
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+                    [&root.0],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_implementer_activations
              SET implementer_harness_bound_at=NULL,launch_accepted_at=NULL,implementer_ready_at=NULL
              WHERE work_unit_id=?1",
-            [&root.0],
-        ).unwrap();
-        let partial_implementer = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        partial_implementer.attach_work_unit_handler_activation(handler.clone()).unwrap();
+                [&root.0],
+            )
+            .unwrap();
+        let partial_implementer =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        partial_implementer
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
         let recovered_implementer: (String,String,String,String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,
                     implementer_harness_bound_at,launch_accepted_at,implementer_ready_at
@@ -6665,70 +7975,124 @@ mod tests {
         assert_eq!(recovered_implementer.1, implementer.1);
         assert_eq!(recovered_implementer.2, implementer.2);
         assert_eq!(recovered_implementer.3, implementer.3);
-        for timestamp in [&recovered_implementer.4,&recovered_implementer.5,&recovered_implementer.6] { assert!(timestamp.is_some()); }
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        for timestamp in [
+            &recovered_implementer.4,
+            &recovered_implementer.5,
+            &recovered_implementer.6,
+        ] {
+            assert!(timestamp.is_some());
+        }
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         Connection::open(&fixture.database_path).unwrap().execute(
             "INSERT INTO agent_session_runtime_events (id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES (?1,?2,0,'runtime','{}',?3,?4)",
             params!["implementer-provider-activity", implementer.2, r#"{"kind":"processing_started","text":null,"externalContextId":null,"usage":null,"details":null}"#, chrono::Utc::now().to_rfc3339()],
         ).unwrap();
-        let observed_implementer = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        observed_implementer.attach_work_unit_handler_activation(handler.clone()).unwrap();
+        let observed_implementer =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        observed_implementer
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
         let observation: (Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT provider_activation_observed_at,implementer_ready_at FROM work_unit_implementer_activations WHERE work_unit_id=?1",
             [&root.0], |row| Ok((row.get(0)?,row.get(1)?)),
         ).unwrap();
         assert!(observation.0.is_some() && observation.1.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         // Once the authenticated action has recorded the Implementer request it may terminate.
         // Reopen drains only that persisted request, does not recreate the terminal action MCP
         // server, and does not make the public action callable from a terminal invocation.
-        fixture.runtime.finish(&continuation.3, AgentInvocationTerminalStatus::Completed);
-        assert!(handler_runner.prepared_handler_action_injection(&continuation.3).is_none());
-        let terminal_action_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
-        terminal_action_reopen.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert!(terminal_action_reopen.prepared_handler_action_injection(&continuation.3).is_none());
+        fixture
+            .runtime
+            .finish(&continuation.3, AgentInvocationTerminalStatus::Completed);
+        assert!(handler_runner
+            .prepared_handler_action_injection(&continuation.3)
+            .is_none());
+        let terminal_action_reopen =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        terminal_action_reopen
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+        assert!(terminal_action_reopen
+            .prepared_handler_action_injection(&continuation.3)
+            .is_none());
         assert!(matches!(
             terminal_action_reopen.request_work_unit_implementer_from_authenticated_continuation(&continuation.3),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
         ));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         // Full startup re-entry reaches the same terminal Handler-action route without
         // recreating any Handler, action, or Implementer launch.
         terminal_action_reopen.reconcile_startup().unwrap();
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         // A cold re-entry consumes the exact durable action route as a no-op. A replacement
         // original Handler correlation remains a routing conflict rather than a recovery route.
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "UPDATE work_unit_handler_action_continuations
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_handler_action_continuations
              SET original_handler_invocation_id='foreign-original-handler'
              WHERE work_unit_id=?1",
-            [&root.0],
-        ).unwrap();
-        let divergent_terminal_action = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
+                [&root.0],
+            )
+            .unwrap();
+        let divergent_terminal_action =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         assert!(matches!(
             divergent_terminal_action.attach_work_unit_handler_activation(handler.clone()),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)
         ));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "UPDATE work_unit_handler_action_continuations
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE work_unit_handler_action_continuations
              SET original_handler_invocation_id=?2
              WHERE work_unit_id=?1",
-            params![root.0, continuation.2],
-        ).unwrap();
+                params![root.0, continuation.2],
+            )
+            .unwrap();
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET status='running',completed_at=NULL WHERE id=?1",
             [&continuation.3],
         ).unwrap();
         // Publish a legitimate newer Handler revision B after this activation pinned A. Reopen
         // must keep loading A, rather than consulting the now-newer current revision.
-        let working_copy = handler_orchestration.load_harness_working_copy("work_unit_handler").unwrap().unwrap();
+        let working_copy = handler_orchestration
+            .load_harness_working_copy("work_unit_handler")
+            .unwrap()
+            .unwrap();
         let mut newer_configuration = working_copy.configuration.clone();
-        newer_configuration.prompt_prefix.content.push_str("\nRevision B is for future activations only.");
+        newer_configuration
+            .prompt_prefix
+            .content
+            .push_str("\nRevision B is for future activations only.");
         let saved = handler_orchestration.save_harness_working_copy(
             crate::orchestration::conversation_harness_working_copy::SaveHarnessWorkingCopyCommand {
                 harness_key: "work_unit_handler".into(), configuration: newer_configuration,
@@ -6768,9 +8132,19 @@ mod tests {
             "INSERT INTO agent_session_runtime_events (id,invocation_id,sequence,source,raw_payload_json,normalized_json,recorded_at) VALUES (?1,?2,1,'runtime','{}',?3,?4)",
             params!["handler-provider-activity", root.3, r#"{"kind":"processing_started","text":null,"externalContextId":null,"usage":null,"details":null}"#, chrono::Utc::now().to_rfc3339()],
         ).unwrap();
-        let replayed_handlers = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        replayed_handlers.attach_work_unit_handler_activation(handler.clone()).unwrap();
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        let replayed_handlers =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        replayed_handlers
+            .attach_work_unit_handler_activation(handler.clone())
+            .unwrap();
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String,_,_>("SELECT handler_harness_revision_id FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap(), root.6.clone().unwrap());
         assert!(Connection::open(&fixture.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT provider_activation_observed_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0], |row| row.get(0)).unwrap().is_some());
         // Recover durable partial stages without replacing any identity or starting another
@@ -6779,7 +8153,8 @@ mod tests {
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_bound_at=NULL,launch_accepted_at=NULL,handler_ready_at=NULL WHERE work_unit_id=?1", [&root.0],
         ).unwrap();
-        let partial_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let partial_repository =
+            Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let partial_handler = Arc::new(WorkUnitExecutionHarnessService::new(
             ProductExecutionSupportState::new(
                 &fixture.database_path,
@@ -6791,22 +8166,44 @@ mod tests {
             fixture.sessions.clone(),
             Arc::new(OrchestrationApplication::new(partial_repository)),
         ));
-        let partial_recovery = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        partial_recovery.attach_work_unit_handler_activation(partial_handler).unwrap();
+        let partial_recovery =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        partial_recovery
+            .attach_work_unit_handler_activation(partial_handler)
+            .unwrap();
         let recovered: (String,String,String,Option<String>,Option<String>,Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT attempt_id,handler_session_id,handler_invocation_id,handler_harness_bound_at,launch_accepted_at,handler_ready_at FROM work_unit_handler_activations WHERE work_unit_id=?1", [&root.0],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
         ).unwrap();
-        assert_eq!(recovered.0, root.1); assert_eq!(recovered.1, root.2); assert_eq!(recovered.2, root.3);
+        assert_eq!(recovered.0, root.1);
+        assert_eq!(recovered.1, root.2);
+        assert_eq!(recovered.2, root.3);
         assert!(recovered.3.is_some() && recovered.4.is_some() && recovered.5.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         // Missing immutable evidence fails closed and never falls forward to newly published B.
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id='harness-revision-00000000-0000-0000-0000-000000000000' WHERE work_unit_id=?1", [&root.0],
         ).unwrap();
-        let missing_pinned = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        assert!(missing_pinned.attach_work_unit_handler_activation(handler.clone()).is_err());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        let missing_pinned =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(missing_pinned
+            .attach_work_unit_handler_activation(handler.clone())
+            .is_err());
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE work_unit_handler_activations SET handler_harness_revision_id=?2 WHERE work_unit_id=?1", params![root.0, root.6],
         ).unwrap();
@@ -6826,35 +8223,50 @@ mod tests {
                 service.attach_work_unit_handler_activation(handler)
             })
         }).collect::<Vec<_>>();
-        assert!(concurrent_handler_services.into_iter().all(|call| call.join().unwrap().is_ok()));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
+        assert!(concurrent_handler_services
+            .into_iter()
+            .all(|call| call.join().unwrap().is_ok()));
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
         let concurrent = (0..2).map(|_| { let service = replayed.clone(); let path = fixture.database_path.clone(); let sessions = fixture.sessions.clone(); std::thread::spawn(move || { drop(service); crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(path, sessions) }) }).collect::<Vec<_>>();
-        assert!(concurrent.into_iter().all(|call| call.join().unwrap().is_ok()));
+        assert!(concurrent
+            .into_iter()
+            .all(|call| call.join().unwrap().is_ok()));
         // A retryable pre-terminal failure retains the prepared identity. Restoring the durable
         // Session invariant lets the same row become launch-accepted and ready exactly once.
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.execute(
-            "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
-            [&implementer.2],
-        ).unwrap();
-        connection.execute(
-            "UPDATE agent_session_invocations
+        connection
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                [&implementer.2],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE agent_session_invocations
              SET status='pending',effective_options_json=NULL,started_at=NULL,completed_at=NULL,
                  exit_code=NULL,signal=NULL,runtime_error_json=NULL
              WHERE id=?1",
-            [&implementer.2],
-        ).unwrap();
-        connection.execute(
-            "UPDATE work_unit_implementer_activations
+                [&implementer.2],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE work_unit_implementer_activations
              SET implementer_harness_bound_at=NULL,launch_requested_at=NULL,launch_accepted_at=NULL,
                  provider_activation_observed_at=NULL,implementer_ready_at=NULL,failure_reason=NULL
              WHERE work_unit_id=?1",
-            [&root.0],
-        ).unwrap();
-        connection.execute(
-            "UPDATE agent_sessions SET working_directory='retryable-conflict' WHERE id=?1",
-            [&implementer.1],
-        ).unwrap();
+                [&root.0],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE agent_sessions SET working_directory='retryable-conflict' WHERE id=?1",
+                [&implementer.1],
+            )
+            .unwrap();
         drop(connection);
         assert!(matches!(
             handler_runner.request_work_unit_implementer_from_authenticated_continuation(&continuation.3),
@@ -6871,43 +8283,85 @@ mod tests {
         assert_eq!(retryable_failure.2, implementer.2);
         assert_eq!(retryable_failure.3, "implementer_session_creation_failed");
         assert!(retryable_failure.4.is_none());
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
-            "SELECT status FROM agent_session_invocations WHERE id=?1", [&implementer.2], |row| row.get(0),
-        ).unwrap(), "pending");
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 3);
-        Connection::open(&fixture.database_path).unwrap().execute(
-            "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
-            params![implementer.1, shared_working_directory],
-        ).unwrap();
-        handler_runner.request_work_unit_implementer_from_authenticated_continuation(&continuation.3).unwrap();
-        let recovered_retryable: (String, String, String, Option<String>, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT attempt_id,implementer_session_id,implementer_invocation_id,
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT status FROM agent_session_invocations WHERE id=?1",
+                    [&implementer.2],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "pending"
+        );
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 3
+        );
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
+                params![implementer.1, shared_working_directory],
+            )
+            .unwrap();
+        handler_runner
+            .request_work_unit_implementer_from_authenticated_continuation(&continuation.3)
+            .unwrap();
+        let recovered_retryable: (
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT attempt_id,implementer_session_id,implementer_invocation_id,
                     failure_reason,launch_accepted_at,implementer_ready_at
              FROM work_unit_implementer_activations WHERE work_unit_id=?1",
-            [&root.0],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-        ).unwrap();
+                [&root.0],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
         assert_eq!(recovered_retryable.0, retryable_failure.0);
         assert_eq!(recovered_retryable.1, retryable_failure.1);
         assert_eq!(recovered_retryable.2, retryable_failure.2);
         assert!(recovered_retryable.3.is_none());
         assert!(recovered_retryable.4.is_some() && recovered_retryable.5.is_some());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 4);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 4
+        );
         // A failed start terminalizes this exact persisted Implementer invocation. Reopen and
         // replay preserve the row and all correlations, keep readiness absent, and never launch
         // a replacement or retry the terminal process.
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.execute(
-            "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
-            [&implementer.2],
-        ).unwrap();
-        connection.execute(
-            "UPDATE agent_session_invocations
+        connection
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                [&implementer.2],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE agent_session_invocations
              SET status='pending',effective_options_json=NULL,started_at=NULL,completed_at=NULL,
                  exit_code=NULL,signal=NULL,runtime_error_json=NULL
              WHERE id=?1",
-            [&implementer.2],
-        ).unwrap();
+                [&implementer.2],
+            )
+            .unwrap();
         connection.execute(
             "UPDATE work_unit_implementer_activations
              SET launch_requested_at=NULL,launch_accepted_at=NULL,provider_activation_observed_at=NULL,
@@ -6934,58 +8388,109 @@ mod tests {
         assert_eq!(terminal_failure.3, implementer.3);
         assert_eq!(terminal_failure.4, "implementer_launch_not_accepted");
         assert!(terminal_failure.5.is_none() && terminal_failure.6.is_none());
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
-            "SELECT status FROM agent_session_invocations WHERE id=?1", [&implementer.2], |row| row.get(0),
-        ).unwrap(), "failed");
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 5);
-        let terminal_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()).unwrap();
-        assert!(terminal_reopen.attach_work_unit_handler_activation(handler.clone()).is_err());
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT status FROM agent_session_invocations WHERE id=?1",
+                    [&implementer.2],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "failed"
+        );
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 5
+        );
+        let terminal_reopen =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(terminal_reopen
+            .attach_work_unit_handler_activation(handler.clone())
+            .is_err());
         assert!(matches!(
             terminal_reopen.request_work_unit_implementer_from_authenticated_continuation(&continuation.3),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Unavailable(_))
         ));
-        let replayed_terminal_failure: (String, String, String, String, Option<String>, Option<String>) = Connection::open(&fixture.database_path).unwrap().query_row(
-            "SELECT attempt_id,implementer_session_id,implementer_invocation_id,
+        let replayed_terminal_failure: (
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT attempt_id,implementer_session_id,implementer_invocation_id,
                     implementer_harness_revision_id,launch_accepted_at,implementer_ready_at
              FROM work_unit_implementer_activations WHERE work_unit_id=?1",
-            [&root.0],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-        ).unwrap();
+                [&root.0],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
         assert_eq!(replayed_terminal_failure.0, terminal_failure.0);
         assert_eq!(replayed_terminal_failure.1, terminal_failure.1);
         assert_eq!(replayed_terminal_failure.2, terminal_failure.2);
         assert_eq!(replayed_terminal_failure.3, terminal_failure.3);
         assert!(replayed_terminal_failure.4.is_none() && replayed_terminal_failure.5.is_none());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 5);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 5
+        );
 
         // A terminal failure of the same-Session Handler action continuation is also durable and
         // factual. Reopen keeps the pinned action identity, projects the failure reason, and does
         // not launch a replacement or retry the terminal invocation.
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.execute(
-            "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
-            [&continuation.3],
-        ).unwrap();
-        connection.execute(
-            "UPDATE agent_session_invocations
+        connection
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                [&continuation.3],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE agent_session_invocations
              SET status='pending',effective_options_json=NULL,started_at=NULL,completed_at=NULL,
                  exit_code=NULL,signal=NULL,runtime_error_json=NULL
              WHERE id=?1",
-            [&continuation.3],
-        ).unwrap();
-        connection.execute(
-            "UPDATE work_unit_handler_action_continuations
+                [&continuation.3],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE work_unit_handler_action_continuations
              SET launch_requested_at=NULL,launch_accepted_at=NULL,
                  provider_activation_observed_at=NULL,action_ready_at=NULL,failure_reason=NULL
              WHERE work_unit_id=?1",
-            [&root.0],
-        ).unwrap();
+                [&root.0],
+            )
+            .unwrap();
         drop(connection);
         fixture.runtime.fail_next_launch();
-        let failed_action = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
-        assert!(failed_action.attach_work_unit_handler_activation(handler.clone()).is_err());
+        let failed_action =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(failed_action
+            .attach_work_unit_handler_activation(handler.clone())
+            .is_err());
         let action_terminal_failure: (String, String, String, Option<String>, Option<String>) =
             Connection::open(&fixture.database_path).unwrap().query_row(
                 "SELECT action_invocation_id,failure_reason,
@@ -6996,33 +8501,63 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             ).unwrap();
         assert_eq!(action_terminal_failure.0, continuation.3);
-        assert_eq!(action_terminal_failure.1, "handler_action_launch_not_accepted");
+        assert_eq!(
+            action_terminal_failure.1,
+            "handler_action_launch_not_accepted"
+        );
         assert_eq!(action_terminal_failure.2, "failed");
         assert!(action_terminal_failure.3.is_none() && action_terminal_failure.4.is_none());
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
-        let failed_action_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path, fixture.sessions.clone(),
-        ).unwrap();
-        assert!(failed_action_reopen.attach_work_unit_handler_activation(handler.clone()).is_err());
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 6
+        );
+        let failed_action_reopen =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
+        assert!(failed_action_reopen
+            .attach_work_unit_handler_activation(handler.clone())
+            .is_err());
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<String, _, _>(
             "SELECT failure_reason FROM work_unit_handler_action_continuations WHERE work_unit_id=?1",
             [&root.0], |row| row.get(0),
         ).unwrap(), action_terminal_failure.1);
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 6
+        );
         let failed_action_projection = serde_json::to_value(
-            SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap(),
-        ).unwrap();
-        let projected_failed_action = failed_action_projection["workUnits"].as_array().unwrap().iter()
-            .find(|unit| unit["workUnitId"] == root.0).unwrap();
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        let projected_failed_action = failed_action_projection["workUnits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|unit| unit["workUnitId"] == root.0)
+            .unwrap();
         assert_eq!(
             projected_failed_action["actionContinuation"]["failureReason"],
             "handler_action_launch_not_accepted",
         );
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.execute("UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1", [&materialization.2]).unwrap();
+        connection
+            .execute(
+                "UPDATE work_slice_proposal_revisions SET is_current=0 WHERE revision_id=?1",
+                [&materialization.2],
+            )
+            .unwrap();
         drop(connection);
         assert!(matches!(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(&fixture.database_path, fixture.sessions.clone()), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
-        assert_eq!(fixture.runtime.requests().len(), handler_launches_before + 6);
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            handler_launches_before + 6
+        );
     }
 
     #[test]
@@ -7073,7 +8608,10 @@ mod tests {
             String::from_utf8(output.stdout).unwrap().trim().to_owned()
         };
         git(&repository_root, &["init"]);
-        git(&repository_root, &["config", "user.email", "drain@example.test"]);
+        git(
+            &repository_root,
+            &["config", "user.email", "drain@example.test"],
+        );
         git(&repository_root, &["config", "user.name", "Drain Test"]);
         fs::write(repository_root.join("README.md"), "drain base\n").unwrap();
         git(&repository_root, &["add", "README.md"]);
@@ -7135,7 +8673,8 @@ mod tests {
                 authority_id,
             } => authority_id,
         };
-        let repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
+        let repository =
+            Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
             ProductExecutionSupportState::new(
                 &fixture.database_path,
@@ -7221,9 +8760,12 @@ mod tests {
         fixture.notifier.set_sprint(&service);
         service.attach_reporting_test_harness(handler.clone());
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
-        connection.execute(
-            "INSERT INTO work_unit_handler_reviews (
+        connection
+            .execute_batch("PRAGMA foreign_keys=OFF;")
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_reviews (
                 attempt_id,work_unit_id,reporting_invocation_id,handler_session_id,
                 original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,
                 review_harness_revision_id,review_harness_configuration_digest,
@@ -7237,22 +8779,23 @@ mod tests {
                        'accepted-review-revision','accepted-review-digest',
                        'accepted-review-commit','t','t','{}','accepted-review-delivery',
                        'accept','accepted-review-judgment','t','t','completed')",
-            [&root_a],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO work_unit_handler_decisions (
+                [&root_a],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_decisions (
                 review_invocation_id,attempt_id,work_unit_id,decision_variant,
                 decision_fingerprint,decision_recorded_at,implementation_accepted_at
              ) VALUES ('accepted-review-terminal-drain','accepted-review-terminal-attempt',?1,
                        'accepted','accepted-review-terminal-decision','t','t')",
-            [&root_a],
-        ).unwrap();
+                [&root_a],
+            )
+            .unwrap();
         connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         drop(connection);
         service
-            .reconcile_handler_review_terminal_movement_for_test(
-                "accepted-review-terminal-drain",
-            )
+            .reconcile_handler_review_terminal_movement_for_test("accepted-review-terminal-drain")
             .unwrap();
 
         let materialization: (String, String) = Connection::open(&fixture.database_path)
@@ -7361,11 +8904,8 @@ mod tests {
         ] {
             assert_eq!(
                 connection
-                    .query_row::<i64, _, _>(
-                        &format!("SELECT COUNT(*) FROM {table}"),
-                        [],
-                        |row| row.get(0),
-                    )
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row
+                        .get(0),)
                     .unwrap(),
                 0,
                 "{table}"
@@ -7391,7 +8931,9 @@ mod tests {
         // proof; neither boundary duplicates the existing root or middle Handler activations.
         let seed_accepted_generation = |unit: &str, dependent: &str| {
             let connection = Connection::open(&fixture.database_path).unwrap();
-            connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+            connection
+                .execute_batch("PRAGMA foreign_keys=OFF;")
+                .unwrap();
             let integration = format!("drain-integration-{unit}");
             connection.execute(
                 "INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at,stage,integration_commit_id,integration_tree_id,object_created_at,ref_advanced_at,runtime_advanced_at,db_advanced_at,settled_at,notification_intent_recorded_at) VALUES (?1,?2,?3,?4,'refs/heads/drain',?5,1,?5,?6,?5,?7,'t','t','settled',?5,?6,'t','t','t','t','t','t')",
@@ -7421,11 +8963,12 @@ mod tests {
                 [&root_b],
             )
             .unwrap();
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&reopened);
         reopened
             .attach_work_unit_handler_activation(handler.clone())
@@ -7433,34 +8976,122 @@ mod tests {
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2) AND handler_ready_at IS NOT NULL", params![root_a, root_b], |row| row.get(0)).unwrap(), 2);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1 AND eligibility_state='eligible' AND handler_ready_at IS NOT NULL", [&middle], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id IN (?1,?2)", params![root_a, root_b], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&middle], |row| row.get(0)).unwrap(), "active");
-        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), "waiting_on_prerequisites");
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1",
+                    [&middle],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "active"
+        );
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1",
+                    [&leaf],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "waiting_on_prerequisites"
+        );
         drop(connection);
 
         seed_accepted_generation(&middle, &leaf);
         // No callback is delivered for the second accepted generation. A fresh service instance
         // must discover the durable contribution and activate the leaf without Sprint/Epic work.
-        let missed_notification_reopen = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        )
-        .unwrap();
+        let missed_notification_reopen =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         fixture.notifier.set_sprint(&missed_notification_reopen);
         missed_notification_reopen
             .attach_work_unit_handler_activation(handler)
             .unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE eligibility_state='eligible' AND handler_ready_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 4);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(DISTINCT attempt_id) FROM work_unit_handler_activations", [], |row| row.get(0)).unwrap(), 4);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE stage='settled'", [], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), "active");
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(DISTINCT attempt_id) FROM work_unit_handler_activations",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM accepted_work_unit_integrations WHERE stage='settled'",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_settlements", [], |row| row
+                    .get(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_prerequisite_contributions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id=?1",
+                    [&leaf],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1",
+                    [&leaf],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "active"
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_settlements','epic_settlements')", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_settlements",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(connection.query_row::<String, _, _>("SELECT accepted_revision_id FROM work_unit_execution_states WHERE work_unit_id=?1", [&leaf], |row| row.get(0)).unwrap(), materialization.1);
     }
 
@@ -7474,7 +9105,10 @@ mod tests {
     }
 
     fn terminal_authority_fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
-        let hex = value.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let hex = value
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let mut hash = Sha256::new();
         hash.update(prefix.as_bytes());
         hash.update([0]);
@@ -7491,7 +9125,8 @@ mod tests {
     }
 
     fn terminal_authority_base64(value: &[u8]) -> String {
-        const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut encoded = String::new();
         for chunk in value.chunks(3) {
             let first = chunk[0];
@@ -7499,8 +9134,16 @@ mod tests {
             let third = *chunk.get(2).unwrap_or(&0);
             encoded.push(TABLE[(first >> 2) as usize] as char);
             encoded.push(TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-            encoded.push(if chunk.len() > 1 { TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char } else { '=' });
-            encoded.push(if chunk.len() > 2 { TABLE[(third & 0b0011_1111) as usize] as char } else { '=' });
+            encoded.push(if chunk.len() > 1 {
+                TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char
+            } else {
+                '='
+            });
+            encoded.push(if chunk.len() > 2 {
+                TABLE[(third & 0b0011_1111) as usize] as char
+            } else {
+                '='
+            });
         }
         encoded
     }
@@ -7513,7 +9156,11 @@ mod tests {
             .env("GIT_CONFIG_GLOBAL", "NUL")
             .output()
             .unwrap();
-        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
@@ -7539,16 +9186,28 @@ mod tests {
                 "Leaf" => "execution-leaf",
                 title => panic!("unexpected terminal fixture lane {title}"),
             };
-            assert!(unit_ids.insert(unit["workUnitId"].as_str().unwrap(), fixture_id).is_none());
+            assert!(unit_ids
+                .insert(unit["workUnitId"].as_str().unwrap(), fixture_id)
+                .is_none());
         }
         assert_eq!(unit_ids.len(), 4);
         let normalize = |value: &str| -> String {
-            if value == materialization_id { "execution-materialization-fixture".into() }
-            else if value == planning_point_id { "execution-planning-point-fixture".into() }
-            else if value == accepted_revision_id { "execution-accepted-revision-fixture".into() }
-            else if value == sprint_id { "sprint-fixture".into() }
-            else if value == work_slice_id { "execution-work-slice-fixture".into() }
-            else { unit_ids.get(value).unwrap_or_else(|| panic!("foreign execution identity {value}")).to_string() }
+            if value == materialization_id {
+                "execution-materialization-fixture".into()
+            } else if value == planning_point_id {
+                "execution-planning-point-fixture".into()
+            } else if value == accepted_revision_id {
+                "execution-accepted-revision-fixture".into()
+            } else if value == sprint_id {
+                "sprint-fixture".into()
+            } else if value == work_slice_id {
+                "execution-work-slice-fixture".into()
+            } else {
+                unit_ids
+                    .get(value)
+                    .unwrap_or_else(|| panic!("foreign execution identity {value}"))
+                    .to_string()
+            }
         };
         let sort = |values: Vec<serde_json::Value>| {
             let mut values = values;
@@ -7659,16 +9318,29 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        let attempt_root = fixture._directory.path().join(format!("terminal-attempt-{ordinal}"));
+        let attempt_root = fixture
+            ._directory
+            .path()
+            .join(format!("terminal-attempt-{ordinal}"));
         terminal_authority_git(
             repository_root,
-            &["worktree", "add", "-b", &format!("terminal-candidate-{ordinal}"), attempt_root.to_string_lossy().as_ref(), baseline],
+            &[
+                "worktree",
+                "add",
+                "-b",
+                &format!("terminal-candidate-{ordinal}"),
+                attempt_root.to_string_lossy().as_ref(),
+                baseline,
+            ],
         );
         let content = format!("terminal candidate {ordinal}\n");
         let filename = format!("terminal-{ordinal}.txt");
         fs::write(attempt_root.join(&filename), &content).unwrap();
         terminal_authority_git(&attempt_root, &["add", &filename]);
-        terminal_authority_git(&attempt_root, &["commit", "-m", &format!("terminal candidate {ordinal}")]);
+        terminal_authority_git(
+            &attempt_root,
+            &["commit", "-m", &format!("terminal candidate {ordinal}")],
+        );
         let candidate = terminal_authority_git(&attempt_root, &["rev-parse", "HEAD"]);
 
         let suffix = ordinal.to_string();
@@ -7677,10 +9349,8 @@ mod tests {
             "work-unit-implementer-reporting-invocation",
             &attempt_id,
         );
-        let review = terminal_authority_projection_id(
-            "work-unit-handler-review-invocation",
-            &attempt_id,
-        );
+        let review =
+            terminal_authority_projection_id("work-unit-handler-review-invocation", &attempt_id);
         let document = format!("terminal-document-{suffix}");
         let artifact = format!("terminal-artifact-{suffix}");
         let capture = format!("terminal-capture-{suffix}");
@@ -7707,7 +9377,8 @@ mod tests {
             )
         }])
         .to_string();
-        let comparison = terminal_authority_fingerprint_bytes("implementer-evidence-comparison", &payload);
+        let comparison =
+            terminal_authority_fingerprint_bytes("implementer-evidence-comparison", &payload);
         let review_payload = format!(
             r#"{{"summary":{},"validationStatement":"Local Git candidate captured.","changedFiles":[{{"evidenceRef":{},"displayName":{},"changeKind":"added"}}],"comparisonFingerprint":{},"evidenceContentFingerprints":[{{"evidenceRef":{},"contentFingerprint":{}}}]}}"#,
             serde_json::to_string(&format!("Accepted terminal candidate {ordinal}.")).unwrap(),
@@ -7718,42 +9389,70 @@ mod tests {
             serde_json::to_string(&terminal_authority_fingerprint_bytes(
                 "implementer-evidence-content",
                 &serde_json::to_vec(&payload_value["files"][0]).unwrap(),
-            )).unwrap(),
+            ))
+            .unwrap(),
         );
-        let delivery_fingerprint = terminal_authority_projection_id(
-            "work-unit-handler-review-delivery",
-            &review_payload,
-        );
+        let delivery_fingerprint =
+            terminal_authority_projection_id("work-unit-handler-review-delivery", &review_payload);
         let outcome_payload = format!(
             r#"{{"outcome":"review_pending","summary":{},"validationStatement":"Local Git candidate captured."}}"#,
             serde_json::to_string(&format!("Accepted terminal candidate {ordinal}.")).unwrap(),
         );
-        let outcome_fingerprint = terminal_authority_projection_id("implementer-outcome", &outcome_payload);
+        let outcome_fingerprint =
+            terminal_authority_projection_id("implementer-outcome", &outcome_payload);
         let repository_route = repository_root.to_string_lossy().to_string();
         let attempt_route = attempt_root.to_string_lossy().to_string();
         let capture_fingerprint = terminal_authority_fingerprint(&[
-            &capture, &format!("terminal-capture-key-{suffix}"), &epic_id, &sprint_id, &provenance_id, "terminal-repository",
-            &repository_route, &format!("terminal-attempt-worktree-{suffix}"), &attempt_route, baseline, &candidate,
+            &capture,
+            &format!("terminal-capture-key-{suffix}"),
+            &epic_id,
+            &sprint_id,
+            &provenance_id,
+            "terminal-repository",
+            &repository_route,
+            &format!("terminal-attempt-worktree-{suffix}"),
+            &attempt_route,
+            baseline,
+            &candidate,
         ]);
         let now = "2026-08-05T00:00:00Z";
         connection.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
-        connection.execute(
-            "INSERT INTO work_unit_handler_activations
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations
                (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,
                 handler_invocation_id,handler_harness_key,handler_harness_version,
                 eligibility_state,requested_at)
              VALUES(?1,?2,?3,?4,?5,?6,'terminal-handler',1,'eligible',?7)",
-            params![work_unit_id, materialization_id, sprint_id, attempt_id, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO work_unit_handler_action_continuations
+                params![
+                    work_unit_id,
+                    materialization_id,
+                    sprint_id,
+                    attempt_id,
+                    format!("terminal-handler-session-{suffix}"),
+                    format!("terminal-handler-invocation-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_action_continuations
                (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,
                 action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,
                 action_harness_repository_commit_ref,requested_at)
              VALUES(?1,?2,?3,?4,?5,'terminal-action-revision','terminal-action-digest',
                     'terminal-action-commit',?6)",
-            params![work_unit_id, attempt_id, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), format!("terminal-handler-action-{suffix}"), now],
-        ).unwrap();
+                params![
+                    work_unit_id,
+                    attempt_id,
+                    format!("terminal-handler-session-{suffix}"),
+                    format!("terminal-handler-invocation-{suffix}"),
+                    format!("terminal-handler-action-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
         connection.execute(
             "INSERT INTO work_unit_implementer_activations
                (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,
@@ -7780,55 +9479,118 @@ mod tests {
                     'terminal-review-digest','terminal-review-commit',?8,?8,?8,?8,?8,?8,?9,?10,'accept',?11,?8,?8,'completed')",
             params![work_unit_id, attempt_id, reporting, format!("terminal-handler-session-{suffix}"), format!("terminal-handler-invocation-{suffix}"), format!("terminal-handler-action-{suffix}"), review, now, review_payload, delivery_fingerprint, format!("terminal-review-judgment-{suffix}")],
         ).unwrap();
-        connection.execute(
-            "INSERT INTO work_unit_handler_decisions
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_decisions
                (work_unit_id,attempt_id,review_invocation_id,decision_variant,decision_fingerprint,
                 decision_recorded_at,implementation_accepted_at)
              VALUES(?1,?2,?3,'accepted',?4,?5,?5)",
-            params![work_unit_id, attempt_id, review, format!("terminal-decision-{suffix}"), now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO execution_support_grants
+                params![
+                    work_unit_id,
+                    attempt_id,
+                    review,
+                    format!("terminal-decision-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_support_grants
                (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,
                 workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at)
              VALUES(?1,?2,?3,?4,?5,'terminal-repository','work_unit_implementer',
                     ?6,'terminal-workspace-fingerprint','terminal-correlation-fingerprint',?7)",
-            params![attempt_id, format!("terminal-capability-{suffix}"), epic_id, sprint_id, work_unit_id, format!("terminal-attempt-worktree-{suffix}"), now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO execution_support_attempt_authorizations
+                params![
+                    attempt_id,
+                    format!("terminal-capability-{suffix}"),
+                    epic_id,
+                    sprint_id,
+                    work_unit_id,
+                    format!("terminal-attempt-worktree-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_support_attempt_authorizations
                (attempt_id,work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,
                 authorization_fingerprint,recorded_at)
              VALUES(?1,?2,'work_unit_implementer',?3,?4,?5,?6)",
-            params![attempt_id, work_unit_id, authority_id, baseline, format!("terminal-authorization-{suffix}"), now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO file_review_documents
+                params![
+                    attempt_id,
+                    work_unit_id,
+                    authority_id,
+                    baseline,
+                    format!("terminal-authorization-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_review_documents
                (document_ref_id,epic_id,sprint_id,provenance_id,opaque_reference,title,
                 idempotency_key,payload_fingerprint,recorded_at)
              VALUES(?1,?2,?3,?4,?5,'Terminal evidence',?6,?7,?8)",
-            params![document, epic_id, sprint_id, provenance_id, format!("terminal-opaque-{suffix}"), format!("terminal-document-key-{suffix}"), format!("terminal-document-fingerprint-{suffix}"), now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO file_review_changed_files
+                params![
+                    document,
+                    epic_id,
+                    sprint_id,
+                    provenance_id,
+                    format!("terminal-opaque-{suffix}"),
+                    format!("terminal-document-key-{suffix}"),
+                    format!("terminal-document-fingerprint-{suffix}"),
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_review_changed_files
                (document_ref_id,changed_file_reference_id,display_name,change_kind,ordinal)
              VALUES(?1,?2,?3,'added',0)",
-            params![document, evidence_ref, filename],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO file_review_git_capture_authorizations
+                params![document, evidence_ref, filename],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_review_git_capture_authorizations
                (capture_authorization_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,
                 provenance_id,repository_id,repository_root,worktree_id,worktree_root,
                 baseline_object_id,current_object_id,recorded_at)
              VALUES(?1,?2,?3,?4,?5,?6,'terminal-repository',?7,?8,?9,?10,?11,?12)",
-            params![capture, format!("terminal-capture-key-{suffix}"), capture_fingerprint, epic_id, sprint_id, provenance_id, repository_route, format!("terminal-attempt-worktree-{suffix}"), attempt_route, baseline, candidate, now],
-        ).unwrap();
-        connection.execute(
-            "INSERT INTO stored_file_review_artifacts
+                params![
+                    capture,
+                    format!("terminal-capture-key-{suffix}"),
+                    capture_fingerprint,
+                    epic_id,
+                    sprint_id,
+                    provenance_id,
+                    repository_route,
+                    format!("terminal-attempt-worktree-{suffix}"),
+                    attempt_route,
+                    baseline,
+                    candidate,
+                    now
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO stored_file_review_artifacts
                (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id)
              VALUES(?1,?2,'stored-file-review-artifact/v1',?3,?4,?5)",
-            params![artifact, document, payload, payload.len() as i64, provenance_id],
-        ).unwrap();
+                params![
+                    artifact,
+                    document,
+                    payload,
+                    payload.len() as i64,
+                    provenance_id
+                ],
+            )
+            .unwrap();
         connection.execute(
             "INSERT INTO file_review_git_capture_documents
                (capture_authorization_id,document_ref_id,artifact_id,linkage_fingerprint,recorded_at)
@@ -7860,36 +9622,90 @@ mod tests {
     fn terminal_authority_fixture_converges_product_materialization_and_real_git_gateway() {
         let fixture = Fixture::new();
         let (service, planner, sprint_id) = fixture.prepare_work_slice_planner();
-        service.submit_work_slice_proposal(&planner, crate::orchestration::sprint_runner_transition::WorkSliceProposal {
-            objective: "Converge the terminal authority fixture.".into(),
-            lanes: vec![
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root A".into(), specification: "Canonical execution fixture responsibility: Root A.".into(), depends_on: vec![] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Root B".into(), specification: "Canonical execution fixture responsibility: Root B.".into(), depends_on: vec![] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Middle".into(), specification: "Canonical execution fixture responsibility: Middle.".into(), depends_on: vec!["Root A".into()] },
-                crate::orchestration::sprint_runner_transition::WorkSliceLane { title: "Leaf".into(), specification: "Canonical execution fixture responsibility: Leaf.".into(), depends_on: vec!["Middle".into()] },
-            ],
-        }).unwrap();
-        service.complete_work_slice_planning(&planner, crate::orchestration::sprint_runner_transition::WorkSliceCompletion {}).unwrap();
-        fixture.runtime.finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
+        service
+            .submit_work_slice_proposal(
+                &planner,
+                crate::orchestration::sprint_runner_transition::WorkSliceProposal {
+                    objective: "Converge the terminal authority fixture.".into(),
+                    lanes: vec![
+                        crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                            title: "Root A".into(),
+                            specification: "Canonical execution fixture responsibility: Root A."
+                                .into(),
+                            depends_on: vec![],
+                        },
+                        crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                            title: "Root B".into(),
+                            specification: "Canonical execution fixture responsibility: Root B."
+                                .into(),
+                            depends_on: vec![],
+                        },
+                        crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                            title: "Middle".into(),
+                            specification: "Canonical execution fixture responsibility: Middle."
+                                .into(),
+                            depends_on: vec!["Root A".into()],
+                        },
+                        crate::orchestration::sprint_runner_transition::WorkSliceLane {
+                            title: "Leaf".into(),
+                            specification: "Canonical execution fixture responsibility: Leaf."
+                                .into(),
+                            depends_on: vec!["Middle".into()],
+                        },
+                    ],
+                },
+            )
+            .unwrap();
+        service
+            .complete_work_slice_planning(
+                &planner,
+                crate::orchestration::sprint_runner_transition::WorkSliceCompletion {},
+            )
+            .unwrap();
+        fixture
+            .runtime
+            .finish(planner.as_str(), AgentInvocationTerminalStatus::Completed);
 
-        let repository_root = fixture._directory.path().join("terminal-authority-repository");
+        let repository_root = fixture
+            ._directory
+            .path()
+            .join("terminal-authority-repository");
         fs::create_dir_all(&repository_root).unwrap();
         terminal_authority_git(&repository_root, &["init", "-b", "main"]);
-        terminal_authority_git(&repository_root, &["config", "user.email", "terminal@example.test"]);
+        terminal_authority_git(
+            &repository_root,
+            &["config", "user.email", "terminal@example.test"],
+        );
         terminal_authority_git(&repository_root, &["config", "user.name", "Terminal Test"]);
         fs::write(repository_root.join("README.md"), "terminal base\n").unwrap();
         terminal_authority_git(&repository_root, &["add", "README.md"]);
         terminal_authority_git(&repository_root, &["commit", "-m", "terminal base"]);
         let baseline = terminal_authority_git(&repository_root, &["rev-parse", "HEAD"]);
         let sprint_root = fixture._directory.path().join("terminal-authority-sprint");
-        terminal_authority_git(&repository_root, &["worktree", "add", "-b", "terminal-sprint", sprint_root.to_string_lossy().as_ref(), &baseline]);
+        terminal_authority_git(
+            &repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "terminal-sprint",
+                sprint_root.to_string_lossy().as_ref(),
+                &baseline,
+            ],
+        );
         fs::write(sprint_root.join("SPRINT.md"), "terminal sprint\n").unwrap();
         terminal_authority_git(&sprint_root, &["add", "SPRINT.md"]);
         terminal_authority_git(&sprint_root, &["commit", "-m", "terminal sprint"]);
         let current = terminal_authority_git(&sprint_root, &["rev-parse", "HEAD"]);
         let repository_root = repository_root.canonicalize().unwrap();
         let sprint_root = sprint_root.canonicalize().unwrap();
-        Connection::open(&fixture.database_path).unwrap().execute("DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1", [&sprint_id]).unwrap();
+        Connection::open(&fixture.database_path)
+            .unwrap()
+            .execute(
+                "DELETE FROM initiated_sprint_git_authorities WHERE sprint_id=?1",
+                [&sprint_id],
+            )
+            .unwrap();
         let authority_id = match SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
             sprint_id: sprint_id.clone(), idempotency_key: "terminal-authority".into(), repository_id: "terminal-repository".into(),
             repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().unwrap().to_string_lossy().into_owned(),
@@ -7899,14 +9715,42 @@ mod tests {
             crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
             | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
         };
-        let units = Connection::open(&fixture.database_path).unwrap().prepare("SELECT work_unit_id FROM work_units ORDER BY lane_ordinal").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let units = Connection::open(&fixture.database_path)
+            .unwrap()
+            .prepare("SELECT work_unit_id FROM work_units ORDER BY lane_ordinal")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(units.len(), 4);
-        let attempts = units.iter().enumerate().map(|(ordinal, unit)| record_terminal_authority_candidate(&fixture, &repository_root, &baseline, &authority_id, unit, ordinal)).collect::<Vec<_>>();
+        let attempts = units
+            .iter()
+            .enumerate()
+            .map(|(ordinal, unit)| {
+                record_terminal_authority_candidate(
+                    &fixture,
+                    &repository_root,
+                    &baseline,
+                    &authority_id,
+                    unit,
+                    ordinal,
+                )
+            })
+            .collect::<Vec<_>>();
         let mut connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions d JOIN work_unit_handler_reviews r ON r.review_invocation_id=d.review_invocation_id JOIN work_unit_implementer_outcomes o ON o.work_unit_id=d.work_unit_id AND o.reporting_invocation_id=r.reporting_invocation_id JOIN work_unit_handler_activations h ON h.work_unit_id=d.work_unit_id AND h.attempt_id=o.attempt_id JOIN work_unit_materializations m ON m.materialization_id=h.materialization_id JOIN initiated_sprint_git_authorities a ON a.sprint_id=m.sprint_id JOIN execution_support_attempt_authorizations x ON x.attempt_id=o.attempt_id AND x.work_unit_id=d.work_unit_id AND x.role_kind='work_unit_implementer' AND x.sprint_git_authority_id=a.authority_id JOIN execution_support_grants g ON g.attempt_id=o.attempt_id AND g.role_id='work_unit_implementer' JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=o.file_review_capture_authorization_id AND c.worktree_id=g.workspace_id AND c.repository_id=a.repository_id AND c.baseline_object_id=x.baseline_object_id JOIN file_review_git_capture_documents l ON l.capture_authorization_id=c.capture_authorization_id WHERE d.decision_variant='accepted' AND d.implementation_accepted_at IS NOT NULL AND r.lifecycle_status='completed' AND r.semantic_judgment_variant='accept' AND o.evidence_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL", [], |row| row.get(0)).unwrap(), 4);
         reconcile_accepted_candidate_authorities(&mut connection).unwrap();
         for attempt in attempts {
-            terminal_authority_git(&repository_root, &["worktree", "remove", "--force", attempt.to_string_lossy().as_ref()]);
+            terminal_authority_git(
+                &repository_root,
+                &[
+                    "worktree",
+                    "remove",
+                    "--force",
+                    attempt.to_string_lossy().as_ref(),
+                ],
+            );
         }
         reconcile_accepted_integrations(&mut connection).unwrap();
         reconcile_accepted_integrations(&mut connection).unwrap();
@@ -7937,16 +9781,66 @@ mod tests {
 
         let candidate_status = connection.prepare("SELECT candidate_id,pinned_at,attention_reason FROM accepted_handler_candidates ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         let candidate_attentions = connection.prepare("SELECT candidate_id,attention_reason FROM accepted_candidate_authority_attentions ORDER BY candidate_id").unwrap().query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        assert_eq!(candidate_status.iter().filter(|(_, pinned, attention)| pinned.is_some() && attention.is_none()).count(), 4, "{candidate_status:?}; {candidate_attentions:?}");
-        for table in ["accepted_work_unit_integrations", "accepted_work_unit_integration_evidence", "work_unit_settlements"] {
-            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table} WHERE 1"), [], |row| row.get(0)).unwrap(), 4, "{table}");
+        assert_eq!(
+            candidate_status
+                .iter()
+                .filter(|(_, pinned, attention)| pinned.is_some() && attention.is_none())
+                .count(),
+            4,
+            "{candidate_status:?}; {candidate_attentions:?}"
+        );
+        for table in [
+            "accepted_work_unit_integrations",
+            "accepted_work_unit_integration_evidence",
+            "work_unit_settlements",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row::<i64, _, _>(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE 1"),
+                        [],
+                        |row| row.get(0)
+                    )
+                    .unwrap(),
+                4,
+                "{table}"
+            );
         }
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), 2);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_prerequisite_contributions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            2
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_prerequisite_contributions p JOIN work_unit_relationships e ON e.relationship_id=p.relationship_id WHERE e.relationship_kind='depends_on' AND e.to_id=p.prerequisite_work_unit_id AND e.from_id=p.dependent_work_unit_id", [], |row| row.get(0)).unwrap(), 2);
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap(), 1, "{table}");
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row
+                        .get(0))
+                    .unwrap(),
+                1,
+                "{table}"
+            );
         }
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions WHERE sprint_id=?1 AND decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_current_decisions current JOIN sprint_continuation_decisions decision ON decision.decision_id=current.decision_id WHERE current.sprint_id=?1 AND current.decision_state='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results result JOIN sprint_continuation_decisions decision ON decision.decision_id=result.decision_id WHERE result.sprint_id=?1 AND result.result_kind='settled' AND decision.decision_state='settled'", [&sprint_id], |row| row.get(0)).unwrap(), 1);
@@ -7969,29 +9863,42 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert!(receiver_facts.0.is_some() && receiver_facts.1.is_some() && receiver_facts.2.is_some(), "{receiver_facts:?}");
-        let disposition = crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
-            movement_kind: "advance_to_next_approved_sprint".into(),
-            rationale: "the exact settled Sprint selects only its immediate approved successor".into(),
-            considered_intent: Some("derive one successor from durable plan order".into()),
-            downstream_request: None,
-            human_external_attention: None,
-        };
+        assert!(
+            receiver_facts.0.is_some() && receiver_facts.1.is_some() && receiver_facts.2.is_some(),
+            "{receiver_facts:?}"
+        );
+        let disposition =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "advance_to_next_approved_sprint".into(),
+                rationale: "the exact settled Sprint selects only its immediate approved successor"
+                    .into(),
+                considered_intent: Some("derive one successor from durable plan order".into()),
+                downstream_request: None,
+                human_external_attention: None,
+            };
         let launches_before_successor = fixture.runtime.requests().len();
-        let concurrent = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        ).unwrap();
+        let concurrent =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         let barrier = Arc::new(Barrier::new(2));
-        let results = [service.clone(), concurrent].into_iter().map(|service| {
-            let barrier = barrier.clone();
-            let receiver = receiver.clone();
-            let disposition = disposition.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.record_sprint_result_disposition_for_test(&receiver, disposition)
+        let results = [service.clone(), concurrent]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                let receiver = receiver.clone();
+                let disposition = disposition.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.record_sprint_result_disposition_for_test(&receiver, disposition)
+                })
             })
-        }).collect::<Vec<_>>().into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
         assert!(results.iter().all(Result::is_ok), "{results:?}");
 
         let (successor, session, invocation): (String, String, String) = Connection::open(&fixture.database_path)
@@ -8002,23 +9909,68 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(fixture.runtime.requests().len(), launches_before_successor + 1);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&successor],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            fixture.runtime.requests().len(),
+            launches_before_successor + 1
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_realizations WHERE result_id=?1", [&result_id], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&invocation],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id=?1", [&result_id], |row| row.get(0)).unwrap(), 0);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1",
+                    [&successor],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
         Connection::open(&fixture.database_path).unwrap().execute(
             "UPDATE epic_runner_sprint_result_realizations SET successor_request_id=NULL,successor_request_recorded_at=NULL WHERE result_id=?1",
             [&result_id],
         ).unwrap();
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        ).unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         let recovered: (String, String, String) = Connection::open(&fixture.database_path).unwrap().query_row(
             "SELECT r.successor_request_id,t.sprint_runner_session_id,t.sprint_runner_invocation_id FROM epic_runner_sprint_result_realizations r JOIN sprint_runner_transitions t ON t.sprint_id=r.successor_sprint_id WHERE r.result_id=?1",
             [&result_id],
@@ -8026,34 +9978,120 @@ mod tests {
         ).unwrap();
         assert_eq!(recovered.1, session);
         assert_eq!(recovered.2, invocation);
-        assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fixture.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&successor],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         drop(reopened);
-        fixture.runtime.finish(&receiver, AgentInvocationTerminalStatus::Completed);
-        service.record_pre_start_outcome(&AgentInvocationId::new(invocation.clone()).unwrap(), crate::orchestration::sprint_runner_transition::PreStartOutcome { forecast_and_concerns: "successor forecast".into(), material_uncertainty: "successor uncertainty".into(), application_owned_prerequisite: "successor prerequisite".into() }).unwrap();
-        fixture.runtime.finish(&invocation, AgentInvocationTerminalStatus::Completed);
-        let terminal = fixture.sessions.load_session(&AgentSessionId::new(session.clone()).unwrap()).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == invocation).unwrap().invocation;
-        service.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: AgentSessionId::new(session.clone()).unwrap(), invocation: terminal }).unwrap();
+        fixture
+            .runtime
+            .finish(&receiver, AgentInvocationTerminalStatus::Completed);
+        service
+            .record_pre_start_outcome(
+                &AgentInvocationId::new(invocation.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::PreStartOutcome {
+                    forecast_and_concerns: "successor forecast".into(),
+                    material_uncertainty: "successor uncertainty".into(),
+                    application_owned_prerequisite: "successor prerequisite".into(),
+                },
+            )
+            .unwrap();
+        fixture
+            .runtime
+            .finish(&invocation, AgentInvocationTerminalStatus::Completed);
+        let terminal = fixture
+            .sessions
+            .load_session(&AgentSessionId::new(session.clone()).unwrap())
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == invocation)
+            .unwrap()
+            .invocation;
+        service
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: AgentSessionId::new(session.clone()).unwrap(),
+                invocation: terminal,
+            })
+            .unwrap();
         let epic_start: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT epic_continuation_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap();
-        service.start_selected_sprint(&AgentInvocationId::new(epic_start).unwrap()).unwrap();
+        service
+            .start_selected_sprint(&AgentInvocationId::new(epic_start).unwrap())
+            .unwrap();
         let started: String = Connection::open(&fixture.database_path).unwrap().query_row("SELECT sprint_continuation_invocation_id FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap();
-        service.record_started_reevaluation(&AgentInvocationId::new(started.clone()).unwrap(), crate::orchestration::sprint_runner_transition::StartedReevaluation { repository_branch_evaluation: "successor repository branch".into(), started_forecast_and_concerns: "before planning".into() }).unwrap();
-        fixture.runtime.finish(&started, AgentInvocationTerminalStatus::Completed);
-        let terminal = fixture.sessions.load_session(&AgentSessionId::new(session.clone()).unwrap()).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == started).unwrap().invocation;
-        service.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: AgentSessionId::new(session).unwrap(), invocation: terminal }).unwrap();
+        service
+            .record_started_reevaluation(
+                &AgentInvocationId::new(started.clone()).unwrap(),
+                crate::orchestration::sprint_runner_transition::StartedReevaluation {
+                    repository_branch_evaluation: "successor repository branch".into(),
+                    started_forecast_and_concerns: "before planning".into(),
+                },
+            )
+            .unwrap();
+        fixture
+            .runtime
+            .finish(&started, AgentInvocationTerminalStatus::Completed);
+        let terminal = fixture
+            .sessions
+            .load_session(&AgentSessionId::new(session.clone()).unwrap())
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == started)
+            .unwrap()
+            .invocation;
+        service
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: AgentSessionId::new(session).unwrap(),
+                invocation: terminal,
+            })
+            .unwrap();
         let connection = Connection::open(&fixture.database_path).unwrap();
         let stages: (Option<String>, Option<String>, Option<String>, Option<String>, Option<String>) = connection.query_row("SELECT pre_start_outcome_accepted_at,epic_continuation_launch_accepted_at,sprint_start_persisted_at,repository_branch_reevaluation_recorded_at,planning_ready_at FROM sprint_runner_transitions WHERE sprint_id=?1", [&successor], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))).unwrap();
-        assert!(stages.0.is_some() && stages.1.is_some() && stages.2.is_some() && stages.3.is_some() && stages.4.is_some(), "{stages:?}");
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
+        assert!(
+            stages.0.is_some()
+                && stages.1.is_some()
+                && stages.2.is_some()
+                && stages.3.is_some()
+                && stages.4.is_some(),
+            "{stages:?}"
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_planning_requests WHERE sprint_id=?1",
+                    [&successor],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_units u JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE m.sprint_id=?1", [&successor], |row| row.get(0)).unwrap(), 0);
 
-        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap().native_query().unwrap()).unwrap();
+        let native = serde_json::to_value(
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
         let direct_result = native["sprintResultProjections"]
             .as_array()
             .unwrap()
             .iter()
             .find(|projection| projection["resultId"].as_str() == Some(result_id.as_str()))
             .expect("production fixture direct Sprint result projection");
-        assert_eq!(direct_result["realization"]["outcomeKind"], "successor_request");
+        assert_eq!(
+            direct_result["realization"]["outcomeKind"],
+            "successor_request"
+        );
         assert_eq!(direct_result["realization"]["successorSprintId"], successor);
         assert!(direct_result["realization"]["successorRequestRecordedAt"].is_string());
         let successor_transition = &direct_result["realization"]["successorTransition"];
@@ -8071,7 +10109,10 @@ mod tests {
             "repositoryBranchReevaluationRecordedAt",
             "startedReevaluationLifecycleObservedAt",
         ] {
-            assert!(successor_transition[field].is_string(), "missing direct-result successor stage {field}");
+            assert!(
+                successor_transition[field].is_string(),
+                "missing direct-result successor stage {field}"
+            );
         }
         let direct_serialized = serde_json::to_string(direct_result).unwrap();
         for private_field in [
@@ -8084,9 +10125,15 @@ mod tests {
             "route",
             "worktree",
         ] {
-            assert!(!direct_serialized.contains(private_field), "private direct-result field leaked: {private_field}");
+            assert!(
+                !direct_serialized.contains(private_field),
+                "private direct-result field leaked: {private_field}"
+            );
         }
-        let canonical: serde_json::Value = serde_json::from_str(include_str!("fixtures/orchestration-native-query-v2/valid-execution-graph.json")).unwrap();
+        let canonical: serde_json::Value = serde_json::from_str(include_str!(
+            "fixtures/orchestration-native-query-v2/valid-execution-graph.json"
+        ))
+        .unwrap();
         assert_eq!(
             normalized_terminal_execution_projection(&native),
             normalized_terminal_execution_projection(&canonical),
@@ -8119,7 +10166,8 @@ mod tests {
 
     struct ReportingFixture {
         base: Fixture,
-        transition: Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
+        transition:
+            Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
         handler: Arc<WorkUnitExecutionHarnessService>,
         work_unit_id: String,
         attempt_id: String,
@@ -8141,17 +10189,21 @@ mod tests {
 
         fn with_project_mcp_sentinel(
             project_mcp_endpoint: Option<&str>,
-        ) -> Result<Self, crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError> {
+        ) -> Result<Self, crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError>
+        {
             let base = Fixture::unstarted();
             let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
                 &base.database_path,
                 base.sessions.clone(),
             ).unwrap();
-            let sprint_id: String = Connection::open(&base.database_path).unwrap().query_row(
-                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
-                [],
-                |row| row.get(0),
-            ).unwrap();
+            let sprint_id: String = Connection::open(&base.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
 
             let repository_root = base._directory.path().join("reporting-repository");
             let sprint_root = base._directory.path().join("reporting-sprint-worktree");
@@ -8166,7 +10218,10 @@ mod tests {
                 String::from_utf8(output.stdout).unwrap().trim().to_owned()
             };
             git(&repository_root, &["init"]);
-            git(&repository_root, &["config", "user.email", "reporting@example.test"]);
+            git(
+                &repository_root,
+                &["config", "user.email", "reporting@example.test"],
+            );
             git(&repository_root, &["config", "user.name", "Reporting Test"]);
             fs::write(repository_root.join("README.md"), "base\n").unwrap();
             git(&repository_root, &["add", "README.md"]);
@@ -8187,8 +10242,7 @@ mod tests {
             git(&sprint_root, &["add", "README.md"]);
             git(&sprint_root, &["commit", "-m", "reporting sprint baseline"]);
             if project_mcp_endpoint.is_some()
-                || std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
-                    == Ok("true")
+                || std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref() == Ok("true")
             {
                 let codex = sprint_root.join(".codex");
                 fs::create_dir_all(codex.join("rules")).unwrap();
@@ -8206,12 +10260,16 @@ mod tests {
                 )
                 .unwrap();
                 git(&sprint_root, &["add", ".codex"]);
-                git(&sprint_root, &["commit", "-m", "adversarial Codex project state"]);
+                git(
+                    &sprint_root,
+                    &["commit", "-m", "adversarial Codex project state"],
+                );
             }
             let current = git(&sprint_root, &["rev-parse", "HEAD"]);
             let repository_root = repository_root.canonicalize().unwrap();
             let sprint_root = sprint_root.canonicalize().unwrap();
-            let repository = Arc::new(SqliteOrchestrationRepository::open(&base.database_path).unwrap());
+            let repository =
+                Arc::new(SqliteOrchestrationRepository::open(&base.database_path).unwrap());
             let authority_id = match repository.store_initiated_sprint_git_authority(
                 InitiatedSprintGitAuthorityWrite {
                     sprint_id,
@@ -8236,7 +10294,8 @@ mod tests {
                 &base.database_path,
                 base._directory.path().join("reporting-workspaces"),
                 repository,
-            ).unwrap();
+            )
+            .unwrap();
             let handler = Arc::new(WorkUnitExecutionHarnessService::new(
                 support.service(),
                 base.sessions.clone(),
@@ -8244,7 +10303,9 @@ mod tests {
             ));
             let work_unit_id = "implementer-reporting-work-unit".to_string();
             let attempt_id = "implementer-reporting-attempt".to_string();
-            handler.authorize_implementer_attempt(&attempt_id, &work_unit_id, &authority_id).unwrap();
+            handler
+                .authorize_implementer_attempt(&attempt_id, &work_unit_id, &authority_id)
+                .unwrap();
             let original_revision = handler.current_implementer_revision().unwrap();
             let reporting_revision = handler.current_implementer_reporting_revision().unwrap();
             let original_package = handler.construct_for_pinned_profile(
@@ -8257,7 +10318,10 @@ mod tests {
                 WorkUnitHarnessRole::Implementer,
                 reporting_revision.profile.clone(),
             )?;
-            assert_eq!(original_package.working_directory(), reporting_package.working_directory());
+            assert_eq!(
+                original_package.working_directory(),
+                reporting_package.working_directory()
+            );
             let working_directory = PathBuf::from(original_package.working_directory());
             let session_id = "implementer-reporting-session".to_string();
             let implementer_invocation_id = "implementer-original-invocation".to_string();
@@ -8266,50 +10330,71 @@ mod tests {
                 hash.update(b"work-unit-implementer-reporting-invocation");
                 hash.update([0]);
                 hash.update(attempt_id.as_bytes());
-                format!("work-unit-implementer-reporting-invocation-{:x}", hash.finalize())
+                format!(
+                    "work-unit-implementer-reporting-invocation-{:x}",
+                    hash.finalize()
+                )
             };
             let original_runtime = original_package.runtime_launch_configuration();
-            base.sessions.create_application_session(CreateApplicationAgentSessionCommand {
-                session_id: AgentSessionId::new(session_id.clone()).unwrap(),
-                session: CreateAgentSessionCommand {
-                    title: Some("Implementer reporting test".into()),
-                    working_directory: Some(working_directory.to_string_lossy().into_owned()),
-                    requested_options: original_runtime.requested_options.clone(),
-                },
-            }).unwrap();
-            base.sessions.send_idempotent_application_message_with_launch_observation(
-                SendIdempotentApplicationAgentSessionMessageCommand {
-                    invocation_id: AgentInvocationId::new(implementer_invocation_id.clone()).unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
-                        submitted_text: "Implement the bounded Work Unit.".into(),
-                        title: None,
+            base.sessions
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: AgentSessionId::new(session_id.clone()).unwrap(),
+                    session: CreateAgentSessionCommand {
+                        title: Some("Implementer reporting test".into()),
                         working_directory: Some(working_directory.to_string_lossy().into_owned()),
-                        requested_options: Some(original_runtime.requested_options),
+                        requested_options: original_runtime.requested_options.clone(),
                     },
-                },
-                Some(original_runtime.extension),
-            ).unwrap();
-            base.runtime.finish(&implementer_invocation_id, AgentInvocationTerminalStatus::Completed);
+                })
+                .unwrap();
+            base.sessions
+                .send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: AgentInvocationId::new(implementer_invocation_id.clone())
+                            .unwrap(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                            submitted_text: "Implement the bounded Work Unit.".into(),
+                            title: None,
+                            working_directory: Some(
+                                working_directory.to_string_lossy().into_owned(),
+                            ),
+                            requested_options: Some(original_runtime.requested_options),
+                        },
+                    },
+                    Some(original_runtime.extension),
+                )
+                .unwrap();
+            base.runtime.finish(
+                &implementer_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            );
             let reporting_runtime = reporting_package.runtime_launch_configuration();
-            let reporting_launch = base.sessions.send_idempotent_application_message_with_launch_observation(
-                SendIdempotentApplicationAgentSessionMessageCommand {
-                    invocation_id: AgentInvocationId::new(reporting_invocation_id.clone()).unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
-                        submitted_text: "Report the completed implementation.".into(),
-                        title: None,
-                        working_directory: Some(working_directory.to_string_lossy().into_owned()),
-                        requested_options: Some(reporting_runtime.requested_options),
+            let reporting_launch = base
+                .sessions
+                .send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: AgentInvocationId::new(reporting_invocation_id.clone())
+                            .unwrap(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                            submitted_text: "Report the completed implementation.".into(),
+                            title: None,
+                            working_directory: Some(
+                                working_directory.to_string_lossy().into_owned(),
+                            ),
+                            requested_options: Some(reporting_runtime.requested_options),
+                        },
                     },
-                },
-                Some(reporting_runtime.extension),
-            ).unwrap();
+                    Some(reporting_runtime.extension),
+                )
+                .unwrap();
             assert!(reporting_launch.launch_accepted);
 
             let now = "2026-08-04T00:00:00Z";
             let connection = Connection::open(&base.database_path).unwrap();
-            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", false)
+                .unwrap();
             connection.execute(
                 "INSERT INTO work_unit_implementer_activations (
                     work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,
@@ -8352,7 +10437,9 @@ mod tests {
                     now,
                 ],
             ).unwrap();
-            connection.pragma_update(None, "foreign_keys", true).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .unwrap();
             transition.attach_reporting_test_harness(handler.clone());
             let expected_identities = (
                 work_unit_id.clone(),
@@ -8383,7 +10470,9 @@ mod tests {
             AgentInvocationId::new(self.reporting_invocation_id.clone()).unwrap()
         }
 
-        fn claims(&self) -> crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
+        fn claims(
+            &self,
+        ) -> crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
             crate::orchestration::sprint_runner_transition::ImplementationOutcomeClaims {
                 outcome: crate::orchestration::sprint_runner_transition::ImplementationOutcomeVariant::ReviewPending,
                 summary: "Implemented the reporting boundary.".into(),
@@ -8423,7 +10512,10 @@ mod tests {
 
         fn write_evidence(&self, content: &str) {
             fs::write(self.working_directory.join("README.md"), content).unwrap();
-            for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "reporting evidence"].as_slice()] {
+            for arguments in [
+                ["add", "README.md"].as_slice(),
+                ["commit", "-m", "reporting evidence"].as_slice(),
+            ] {
                 let output = std::process::Command::new("git")
                     .args(arguments)
                     .current_dir(&self.working_directory)
@@ -8434,28 +10526,51 @@ mod tests {
         }
 
         fn assert_pinned_evidence_available(&self) {
-            let (revision, digest, commit): (String, String, String) = Connection::open(&self.base.database_path).unwrap().query_row(
+            let (revision, digest, commit): (String, String, String) = Connection::open(
+                &self.base.database_path,
+            )
+            .unwrap()
+            .query_row(
                 "SELECT reporting_harness_revision_id,reporting_harness_configuration_digest,
                         reporting_harness_repository_commit_ref
                  FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
                 [&self.work_unit_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).unwrap();
-            let pinned = self.handler.load_pinned_implementer_revision(&revision, &digest, &commit).unwrap();
-            let package = self.handler.construct_for_pinned_profile(
-                &self.attempt_id,
-                WorkUnitHarnessRole::Implementer,
-                pinned.profile,
-            ).unwrap();
-            package.bind_correlated_invocation(
-                AgentSessionId::new(self.session_id.clone()).unwrap(),
-                self.invocation(),
-            ).unwrap();
+            )
+            .unwrap();
+            let pinned = self
+                .handler
+                .load_pinned_implementer_revision(&revision, &digest, &commit)
+                .unwrap();
+            let package = self
+                .handler
+                .construct_for_pinned_profile(
+                    &self.attempt_id,
+                    WorkUnitHarnessRole::Implementer,
+                    pinned.profile,
+                )
+                .unwrap();
+            package
+                .bind_correlated_invocation(
+                    AgentSessionId::new(self.session_id.clone()).unwrap(),
+                    self.invocation(),
+                )
+                .unwrap();
             let manifest = package.changed_file_manifest().unwrap();
             assert!(!manifest.is_empty(), "expected a changed-file manifest");
-            assert!(!package.comparison().unwrap().is_empty(), "expected File Review comparison bytes");
+            assert!(
+                !package.comparison().unwrap().is_empty(),
+                "expected File Review comparison bytes"
+            );
             for entry in manifest {
-                assert!(!package.evidence_content(&entry.evidence_ref).unwrap().is_empty(), "missing evidence content for {}", entry.display_name);
+                assert!(
+                    !package
+                        .evidence_content(&entry.evidence_ref)
+                        .unwrap()
+                        .is_empty(),
+                    "missing evidence content for {}",
+                    entry.display_name
+                );
             }
         }
 
@@ -8464,10 +10579,15 @@ mod tests {
         }
 
         fn finish(&self, status: AgentInvocationTerminalStatus) {
-            self.base.runtime.finish(&self.reporting_invocation_id, status);
+            self.base
+                .runtime
+                .finish(&self.reporting_invocation_id, status);
         }
 
-        fn reopened(&self) -> Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService> {
+        fn reopened(
+            &self,
+        ) -> Arc<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>
+        {
             let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
                 &self.base.database_path,
                 self.base.sessions.clone(),
@@ -8477,43 +10597,111 @@ mod tests {
         }
 
         fn enable_handler_review_route(&self) {
-            self.handler.authorize_handler_attempt(&self.attempt_id, &self.work_unit_id, &self.authority_id).unwrap();
+            self.handler
+                .authorize_handler_attempt(&self.attempt_id, &self.work_unit_id, &self.authority_id)
+                .unwrap();
             let original = self.handler.current_handler_revision().unwrap();
             let action = self.handler.current_handler_action_revision().unwrap();
-            let original_package = self.handler.construct_for_pinned_profile(&self.attempt_id, WorkUnitHarnessRole::Handler, original.profile.clone()).unwrap();
-            let action_package = self.handler.construct_for_pinned_profile(&self.attempt_id, WorkUnitHarnessRole::Handler, action.profile.clone()).unwrap();
-            assert_eq!(original_package.working_directory(), action_package.working_directory());
+            let original_package = self
+                .handler
+                .construct_for_pinned_profile(
+                    &self.attempt_id,
+                    WorkUnitHarnessRole::Handler,
+                    original.profile.clone(),
+                )
+                .unwrap();
+            let action_package = self
+                .handler
+                .construct_for_pinned_profile(
+                    &self.attempt_id,
+                    WorkUnitHarnessRole::Handler,
+                    action.profile.clone(),
+                )
+                .unwrap();
+            assert_eq!(
+                original_package.working_directory(),
+                action_package.working_directory()
+            );
             let session = AgentSessionId::new(self.handler_session_id.clone()).unwrap();
             let runtime = original_package.runtime_launch_configuration();
-            self.base.sessions.create_application_session(CreateApplicationAgentSessionCommand {
-                session_id: session.clone(),
-                session: CreateAgentSessionCommand { title: Some("Handler review test".into()), working_directory: Some(original_package.working_directory().into()), requested_options: runtime.requested_options.clone() },
-            }).unwrap();
-            self.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand {
-                invocation_id: AgentInvocationId::new(self.handler_invocation_id.clone()).unwrap(),
-                message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: "Original Handler.".into(), title: None, working_directory: Some(original_package.working_directory().into()), requested_options: Some(runtime.requested_options) },
-            }, Some(runtime.extension)).unwrap();
-            self.base.runtime.finish(&self.handler_invocation_id, AgentInvocationTerminalStatus::Completed);
+            self.base
+                .sessions
+                .create_application_session(CreateApplicationAgentSessionCommand {
+                    session_id: session.clone(),
+                    session: CreateAgentSessionCommand {
+                        title: Some("Handler review test".into()),
+                        working_directory: Some(original_package.working_directory().into()),
+                        requested_options: runtime.requested_options.clone(),
+                    },
+                })
+                .unwrap();
+            self.base
+                .sessions
+                .send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: AgentInvocationId::new(self.handler_invocation_id.clone())
+                            .unwrap(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(session.clone()),
+                            submitted_text: "Original Handler.".into(),
+                            title: None,
+                            working_directory: Some(original_package.working_directory().into()),
+                            requested_options: Some(runtime.requested_options),
+                        },
+                    },
+                    Some(runtime.extension),
+                )
+                .unwrap();
+            self.base.runtime.finish(
+                &self.handler_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            );
             let action_runtime = action_package.runtime_launch_configuration();
-            self.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand {
-                invocation_id: AgentInvocationId::new(self.handler_action_invocation_id.clone()).unwrap(),
-                message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "Handler action.".into(), title: None, working_directory: Some(action_package.working_directory().into()), requested_options: Some(action_runtime.requested_options) },
-            }, Some(action_runtime.extension)).unwrap();
-            self.base.runtime.finish(&self.handler_action_invocation_id, AgentInvocationTerminalStatus::Completed);
+            self.base
+                .sessions
+                .send_idempotent_application_message_with_launch_observation(
+                    SendIdempotentApplicationAgentSessionMessageCommand {
+                        invocation_id: AgentInvocationId::new(
+                            self.handler_action_invocation_id.clone(),
+                        )
+                        .unwrap(),
+                        message: SendAgentSessionMessageCommand {
+                            session_id: Some(session),
+                            submitted_text: "Handler action.".into(),
+                            title: None,
+                            working_directory: Some(action_package.working_directory().into()),
+                            requested_options: Some(action_runtime.requested_options),
+                        },
+                    },
+                    Some(action_runtime.extension),
+                )
+                .unwrap();
+            self.base.runtime.finish(
+                &self.handler_action_invocation_id,
+                AgentInvocationTerminalStatus::Completed,
+            );
             let connection = Connection::open(&self.base.database_path).unwrap();
-            connection.pragma_update(None, "foreign_keys", false).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", false)
+                .unwrap();
             let now = "2026-08-04T00:00:00Z";
             connection.execute("INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Handler review test')", [&self.work_unit_id]).unwrap();
             connection.execute("INSERT INTO work_unit_handler_activations (work_unit_id,materialization_id,sprint_id,attempt_id,handler_session_id,handler_invocation_id,handler_harness_key,handler_harness_version,handler_harness_revision_id,handler_harness_configuration_digest,handler_harness_repository_commit_ref,eligibility_state,requested_at,authorized_at,attempt_created_at,execution_support_granted_at,isolated_worktree_ready_at,handler_session_created_at,handler_invocation_prepared_at,handler_harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,handler_ready_at) VALUES (?1,'reporting-materialization','reporting-sprint',?2,?3,?4,?5,?6,?7,?8,?9,'eligible',?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10,?10)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,original.profile.key,original.profile.version,original.revision_id,original.configuration_digest,original.repository_commit_ref,now]).unwrap();
             connection.execute("INSERT INTO work_unit_handler_action_continuations (work_unit_id,attempt_id,handler_session_id,original_handler_invocation_id,action_invocation_id,action_harness_revision_id,action_harness_configuration_digest,action_harness_repository_commit_ref,requested_at,authorized_at,invocation_prepared_at,harness_bound_at,launch_requested_at,launch_accepted_at,provider_activation_observed_at,action_ready_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,?9,?9,?9,?9,?9,?9)", params![self.work_unit_id,self.attempt_id,self.handler_session_id,self.handler_invocation_id,self.handler_action_invocation_id,action.revision_id,action.configuration_digest,action.repository_commit_ref,now]).unwrap();
-            connection.pragma_update(None, "foreign_keys", true).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .unwrap();
         }
 
         fn ready_review(&self) -> String {
             self.enable_handler_review_route();
-            self.transition.submit_implementation_outcome(&self.invocation(), self.claims()).unwrap();
+            self.transition
+                .submit_implementation_outcome(&self.invocation(), self.claims())
+                .unwrap();
             self.write_evidence("review evidence\n");
-            self.transition.complete_implementation_outcome(&self.invocation()).unwrap();
+            self.transition
+                .complete_implementation_outcome(&self.invocation())
+                .unwrap();
             self.enable_notifications();
             self.finish(AgentInvocationTerminalStatus::Completed);
             Connection::open(&self.base.database_path).unwrap().query_row("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&self.work_unit_id], |row| row.get(0)).unwrap()
@@ -8522,25 +10710,37 @@ mod tests {
         fn assert_no_submission_evidence_or_completion(&self) {
             let facts = self.facts();
             assert!(facts.summary.is_none() && facts.validation.is_none());
-            assert!(facts.payload.is_none() && facts.fingerprint.is_none() && facts.submitted_at.is_none());
+            assert!(
+                facts.payload.is_none()
+                    && facts.fingerprint.is_none()
+                    && facts.submitted_at.is_none()
+            );
             assert!(facts.validation_result.is_none());
             assert!(facts.evidence_manifest.is_none() && facts.comparison_fingerprint.is_none());
             assert!(facts.evidence_contents.is_none() && facts.evidence_ready_at.is_none());
             assert!(facts.semantic_completed_at.is_none() && facts.semantic_invocation.is_none());
-            assert!(facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none());
+            assert!(
+                facts.application_accepted_at.is_none() && facts.handler_review_ready_at.is_none()
+            );
         }
 
         fn return_one_retry(&self) -> (String, String, String, String) {
             let review = self.ready_review();
-            self.transition.record_handler_review_judgment_for_test(
-                &review,
-                "return",
-                Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
-                    code: "review_failed".into(),
-                    explanation: "evidence requires correction".into(),
-                }),
-            ).unwrap();
-            self.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+            self.transition
+                .record_handler_review_judgment_for_test(
+                    &review,
+                    "return",
+                    Some(
+                        crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+                            code: "review_failed".into(),
+                            explanation: "evidence requires correction".into(),
+                        },
+                    ),
+                )
+                .unwrap();
+            self.base
+                .runtime
+                .finish(&review, AgentInvocationTerminalStatus::Completed);
             Connection::open(&self.base.database_path).unwrap().query_row(
                 "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,private_ref_name
                  FROM work_unit_retry_attempts WHERE work_unit_id=?1",
@@ -8559,24 +10759,34 @@ mod tests {
 
         fn remove_prepared_reporting_continuation(&self) {
             let connection = Connection::open(&self.base.database_path).unwrap();
-            connection.pragma_update(None, "foreign_keys", false).unwrap();
-            connection.execute(
-                "DELETE FROM agent_session_runtime_events WHERE invocation_id=?1",
-                [&self.reporting_invocation_id],
-            ).unwrap();
-            connection.execute(
-                "DELETE FROM agent_session_invocations WHERE id=?1",
-                [&self.reporting_invocation_id],
-            ).unwrap();
-            connection.execute(
-                "DELETE FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
-                [&self.attempt_id],
-            ).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", false)
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM agent_session_runtime_events WHERE invocation_id=?1",
+                    [&self.reporting_invocation_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM agent_session_invocations WHERE id=?1",
+                    [&self.reporting_invocation_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&self.attempt_id],
+                )
+                .unwrap();
             connection.execute(
                 "INSERT OR IGNORE INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'reporting-materialization','reporting-slice','reporting-revision',0,'Reporting','Bounded reporting candidate')",
                 [&self.work_unit_id],
             ).unwrap();
-            connection.pragma_update(None, "foreign_keys", true).unwrap();
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .unwrap();
         }
 
         fn candidate_failure(&self) -> Option<String> {
@@ -8588,11 +10798,14 @@ mod tests {
         }
 
         fn reporting_failure(&self) -> Option<String> {
-            Connection::open(&self.base.database_path).unwrap().query_row(
-                "SELECT failure_reason FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
-                [&self.attempt_id],
-                |row| row.get(0),
-            ).unwrap()
+            Connection::open(&self.base.database_path)
+                .unwrap()
+                .query_row(
+                    "SELECT failure_reason FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&self.attempt_id],
+                    |row| row.get(0),
+                )
+                .unwrap()
         }
     }
 
@@ -8602,16 +10815,56 @@ mod tests {
         fixture.remove_prepared_reporting_continuation();
         let launches = fixture.base.runtime.requests().len();
 
-        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
-        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_absent"));
+        fixture
+            .transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
+        assert_eq!(
+            fixture.candidate_failure().as_deref(),
+            Some("implementer_candidate_absent")
+        );
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&fixture.reporting_invocation_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&fixture.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&fixture.reporting_invocation_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(fixture.base.runtime.requests().len(), launches);
 
-        fixture.reopened().prepare_later_attempt_reporting_for_test().unwrap();
-        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_absent"));
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
+        fixture
+            .reopened()
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
+        assert_eq!(
+            fixture.candidate_failure().as_deref(),
+            Some("implementer_candidate_absent")
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&fixture.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(fixture.base.runtime.requests().len(), launches);
     }
 
@@ -8619,23 +10872,73 @@ mod tests {
     fn newly_sealed_and_already_sealed_candidates_both_gate_one_reporting_continuation() {
         let fresh = ReportingFixture::new();
         fresh.remove_prepared_reporting_continuation();
-        fs::write(fresh.working_directory.join("README.md"), "fresh candidate\n").unwrap();
-        fresh.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        fs::write(
+            fresh.working_directory.join("README.md"),
+            "fresh candidate\n",
+        )
+        .unwrap();
+        fresh
+            .transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
         assert!(fresh.candidate_failure().is_none());
-        assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fresh.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&fresh.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         fresh.assert_pinned_evidence_available();
         let fresh_launches = fresh.base.runtime.requests().len();
-        fresh.reopened().prepare_later_attempt_reporting_for_test().unwrap();
+        fresh
+            .reopened()
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
         assert_eq!(fresh.base.runtime.requests().len(), fresh_launches);
-        assert_eq!(Connection::open(&fresh.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fresh.attempt_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fresh.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&fresh.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
 
         let replay = ReportingFixture::new();
         replay.remove_prepared_reporting_continuation();
-        fs::write(replay.working_directory.join("README.md"), "already sealed candidate\n").unwrap();
-        assert!(replay.handler.commit_implementer_candidate(&replay.attempt_id).unwrap());
-        replay.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        fs::write(
+            replay.working_directory.join("README.md"),
+            "already sealed candidate\n",
+        )
+        .unwrap();
+        assert!(replay
+            .handler
+            .commit_implementer_candidate(&replay.attempt_id)
+            .unwrap());
+        replay
+            .transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
         assert!(replay.candidate_failure().is_none());
-        assert_eq!(Connection::open(&replay.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&replay.attempt_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&replay.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&replay.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         replay.assert_pinned_evidence_available();
     }
 
@@ -8643,14 +10946,51 @@ mod tests {
     fn dirty_descendant_candidate_is_rejected_before_reporting_creation() {
         let fixture = ReportingFixture::new();
         fixture.remove_prepared_reporting_continuation();
-        fs::write(fixture.working_directory.join("README.md"), "sealed candidate\n").unwrap();
-        assert!(fixture.handler.commit_implementer_candidate(&fixture.attempt_id).unwrap());
-        fs::write(fixture.working_directory.join("README.md"), "dirty descendant\n").unwrap();
+        fs::write(
+            fixture.working_directory.join("README.md"),
+            "sealed candidate\n",
+        )
+        .unwrap();
+        assert!(fixture
+            .handler
+            .commit_implementer_candidate(&fixture.attempt_id)
+            .unwrap());
+        fs::write(
+            fixture.working_directory.join("README.md"),
+            "dirty descendant\n",
+        )
+        .unwrap();
 
-        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
-        assert_eq!(fixture.candidate_failure().as_deref(), Some("implementer_candidate_revalidation_failed"));
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&fixture.attempt_id], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&fixture.reporting_invocation_id], |row| row.get(0)).unwrap(), 0);
+        fixture
+            .transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
+        assert_eq!(
+            fixture.candidate_failure().as_deref(),
+            Some("implementer_candidate_revalidation_failed")
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id=?1",
+                    [&fixture.attempt_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&fixture.reporting_invocation_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -8658,7 +10998,10 @@ mod tests {
         let fixture = ReportingFixture::new();
         fixture.enable_notifications();
         fixture.finish(AgentInvocationTerminalStatus::Completed);
-        assert_eq!(fixture.reporting_failure().as_deref(), Some("reporting_required_semantic_effects_missing"));
+        assert_eq!(
+            fixture.reporting_failure().as_deref(),
+            Some("reporting_required_semantic_effects_missing")
+        );
         fixture.assert_no_submission_evidence_or_completion();
         let facts = fixture.facts();
         assert_eq!(facts.lifecycle_status.as_deref(), Some("completed"));
@@ -8701,8 +11044,8 @@ mod tests {
             .output()
             .expect("run installed Codex sandbox help");
         let sandbox_help_text = String::from_utf8_lossy(&sandbox_help.stdout);
-        let sandbox_initialization_option_present = sandbox_help_text.contains("--init")
-            || sandbox_help_text.contains("initialize");
+        let sandbox_initialization_option_present =
+            sandbox_help_text.contains("--init") || sandbox_help_text.contains("initialize");
         let diagnostic = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
         let artifacts = private_home_artifact_names_and_types(home.path())
             .expect("list private-home artifact names and types");
@@ -8733,41 +11076,97 @@ mod tests {
     #[test]
     #[ignore = "requires CODEX_PIP01H_HANDLER_LIVE=true and launches one real Codex Handler invocation"]
     fn installed_codex_handler_reentrant_launch_preserves_the_initial_boundary() {
-        assert_eq!(std::env::var("CODEX_PIP01H_HANDLER_LIVE").as_deref(), Ok("true"), "refusing live Handler proof without explicit opt-in");
+        assert_eq!(
+            std::env::var("CODEX_PIP01H_HANDLER_LIVE").as_deref(),
+            Ok("true"),
+            "refusing live Handler proof without explicit opt-in"
+        );
         let fixture = Fixture::unstarted();
         let runtime = Arc::new(CodexCliRuntime::system("codex", None));
-        let controlled_runtime = Arc::new(SynchronousProvenanceRuntime { inner: runtime.clone(), starts: AtomicUsize::new(0) });
+        let controlled_runtime = Arc::new(SynchronousProvenanceRuntime {
+            inner: runtime.clone(),
+            starts: AtomicUsize::new(0),
+        });
         let notifier = Arc::new(TransitionNotifier::default());
         let sessions = Arc::new(AgentSessionApplication::new(
-            Arc::new(SqliteAgentSessionRepository::new(Connection::open(&fixture.database_path).expect("open owned live database")).expect("compose owned live repository")),
-            controlled_runtime.clone(), notifier.clone(), Arc::new(SystemAgentSessionProviders), Arc::new(SystemAgentSessionProviders), Some("pip01h-installed-codex".into()),
+            Arc::new(
+                SqliteAgentSessionRepository::new(
+                    Connection::open(&fixture.database_path).expect("open owned live database"),
+                )
+                .expect("compose owned live repository"),
+            ),
+            controlled_runtime.clone(),
+            notifier.clone(),
+            Arc::new(SystemAgentSessionProviders),
+            Arc::new(SystemAgentSessionProviders),
+            Some("pip01h-installed-codex".into()),
         ));
-        let (sprint_id, epic_id): (String, String) = Connection::open(&fixture.database_path).expect("open owned live database").query_row(
-            "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).expect("load owned Sprint route");
+        let (sprint_id, epic_id): (String, String) = Connection::open(&fixture.database_path)
+            .expect("open owned live database")
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load owned Sprint route");
         let repository_root = fixture._directory.path().join("pip01h-live-repository");
         let sprint_root = fixture._directory.path().join("pip01h-live-sprint");
         fs::create_dir_all(&repository_root).expect("create owned live repository");
         let git = |root: &Path, arguments: &[&str]| -> String {
-            let output = std::process::Command::new("git").args(arguments).current_dir(root).output().expect("run owned Git command");
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(root)
+                .output()
+                .expect("run owned Git command");
             assert!(output.status.success(), "owned Git command failed");
-            String::from_utf8(output.stdout).expect("decode owned Git output").trim().into()
+            String::from_utf8(output.stdout)
+                .expect("decode owned Git output")
+                .trim()
+                .into()
         };
         git(&repository_root, &["init"]);
-        git(&repository_root, &["config", "user.email", "pip01h@example.test"]);
+        git(
+            &repository_root,
+            &["config", "user.email", "pip01h@example.test"],
+        );
         git(&repository_root, &["config", "user.name", "PIP-01H Test"]);
-        fs::write(repository_root.join("README.md"), "owned Handler proof\n").expect("write owned live workspace");
+        fs::write(repository_root.join("README.md"), "owned Handler proof\n")
+            .expect("write owned live workspace");
         git(&repository_root, &["add", "README.md"]);
         git(&repository_root, &["commit", "-m", "owned Handler proof"]);
         let baseline = git(&repository_root, &["rev-parse", "HEAD"]);
-        git(&repository_root, &["worktree", "add", "-b", "pip01h-live-sprint", sprint_root.to_string_lossy().as_ref(), &baseline]);
-        fs::write(sprint_root.join("README.md"), "owned Handler proof Sprint state\n").expect("advance owned live Sprint workspace");
+        git(
+            &repository_root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "pip01h-live-sprint",
+                sprint_root.to_string_lossy().as_ref(),
+                &baseline,
+            ],
+        );
+        fs::write(
+            sprint_root.join("README.md"),
+            "owned Handler proof Sprint state\n",
+        )
+        .expect("advance owned live Sprint workspace");
         git(&sprint_root, &["add", "README.md"]);
-        git(&sprint_root, &["commit", "-m", "owned Handler proof Sprint state"]);
+        git(
+            &sprint_root,
+            &["commit", "-m", "owned Handler proof Sprint state"],
+        );
         let current = git(&sprint_root, &["rev-parse", "HEAD"]);
-        let repository_root = repository_root.canonicalize().expect("canonicalize owned repository");
-        let sprint_root = sprint_root.canonicalize().expect("canonicalize owned Sprint worktree");
-        let authority_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).expect("open owned authority repository"));
+        let repository_root = repository_root
+            .canonicalize()
+            .expect("canonicalize owned repository");
+        let sprint_root = sprint_root
+            .canonicalize()
+            .expect("canonicalize owned Sprint worktree");
+        let authority_repository = Arc::new(
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .expect("open owned authority repository"),
+        );
         let authority_id = match authority_repository.store_initiated_sprint_git_authority(InitiatedSprintGitAuthorityWrite {
             sprint_id: sprint_id.clone(), idempotency_key: "pip01h-live-authority".into(), repository_id: "pip01h-live-repository".into(),
             repository_root: repository_root.to_string_lossy().into_owned(), repository_common_dir: repository_root.join(".git").canonicalize().expect("canonicalize owned Git metadata").to_string_lossy().into_owned(),
@@ -8777,15 +11176,18 @@ mod tests {
             crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::Stored { authority_id }
             | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
         };
-        let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            sessions.clone(),
-        )
-        .expect("compose owned Handler transition");
-        let planner_harness = conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner)
-            .expect("load configured Planner Harness");
+        let transition =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                sessions.clone(),
+            )
+            .expect("compose owned Handler transition");
+        let planner_harness =
+            conversation_harness::profile(ConversationHarnessRole::WorkSlicePlanner)
+                .expect("load configured Planner Harness");
         let now = "2026-08-06T00:00:00Z";
-        let connection = Connection::open(&fixture.database_path).expect("open owned live database");
+        let connection =
+            Connection::open(&fixture.database_path).expect("open owned live database");
         connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'pip01h-request','pip01h-epic-session','pip01h-epic-invocation','epic_runner',1,'sprint_runner',1,'pip01h-sprint-session','pip01h-sprint-invocation',?3,?3)", params![sprint_id,epic_id,now]).expect("seed owned Sprint route");
         connection.execute("INSERT INTO work_slice_planning_requests (planning_point_id,sprint_id,planning_episode,is_current,request_fact_id,parent_sprint_runner_session_id,parent_planning_control_invocation_id,authority_id,authority_epic_id,authority_provenance_id,authority_repository_id,authority_worktree_id,authority_baseline_object_id,authority_current_object_id,authority_source_fingerprint,repository_worktree_route,requested_at,authorized_at,planner_harness_key,planner_harness_version,planner_session_id,planner_invocation_id) VALUES ('pip01h-point',?1,1,1,'pip01h-request-fact','pip01h-sprint-session','pip01h-control',?2,?3,'pip01h-provenance','pip01h-live-repository','pip01h-live-sprint-worktree',?4,?5,?6,'owned-route',?7,?7,'work_slice_planner',?8,'pip01h-planner-session','pip01h-planner-invocation')", params![sprint_id,authority_id,epic_id,baseline,current,"f".repeat(64),now,planner_harness.version]).expect("seed owned planning request");
         connection.execute("INSERT INTO work_slice_planning_episodes (planning_point_id,sprint_id,authority_id,planner_session_id,planner_invocation_id,harness_json,repository_worktree_route,created_at) VALUES ('pip01h-point',?1,?2,'pip01h-planner-session','pip01h-planner-invocation','{}','owned-route',?3)", params![sprint_id,authority_id,now]).expect("seed owned planning episode");
@@ -8793,36 +11195,92 @@ mod tests {
         connection.execute("INSERT INTO work_unit_materializations (materialization_id,planning_point_id,accepted_revision_id,epic_id,sprint_id,work_slice_id,authorization_recorded_at,attempt_recorded_at,work_units_created_at,relationships_completed_at,settled_at) VALUES ('pip01h-materialization','pip01h-point','pip01h-revision',?1,?2,'pip01h-slice',?3,?3,?3,?3,?3)", params![epic_id,sprint_id,now]).expect("seed owned materialization");
         connection.execute("INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES ('pip01h-handler-unit','pip01h-materialization','pip01h-slice','pip01h-revision',0,'Handler proof','Bounded initial Handler proof.')", []).expect("seed owned Work Unit");
         drop(connection);
-        let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).expect("open owned Handler repository"));
+        let handler_repository = Arc::new(
+            SqliteOrchestrationRepository::open(&fixture.database_path)
+                .expect("open owned Handler repository"),
+        );
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
-            ProductExecutionSupportState::new(&fixture.database_path, fixture._directory.path().join("pip01h-live-workspaces"), handler_repository.clone()).expect("compose owned execution support").service(),
-            sessions.clone(), Arc::new(OrchestrationApplication::new(handler_repository)),
+            ProductExecutionSupportState::new(
+                &fixture.database_path,
+                fixture._directory.path().join("pip01h-live-workspaces"),
+                handler_repository.clone(),
+            )
+            .expect("compose owned execution support")
+            .service(),
+            sessions.clone(),
+            Arc::new(OrchestrationApplication::new(handler_repository)),
         ));
         notifier.set_sprint(&transition);
-        transition.attach_work_unit_handler_activation(handler.clone()).expect("launch owned initial Handler");
+        transition
+            .attach_work_unit_handler_activation(handler.clone())
+            .expect("launch owned initial Handler");
         let (session_id, invocation_id): (String, String) = Connection::open(&fixture.database_path).expect("open owned live database").query_row("SELECT handler_session_id,handler_invocation_id FROM work_unit_handler_activations WHERE work_unit_id='pip01h-handler-unit'", [], |row| Ok((row.get(0)?,row.get(1)?))).expect("load owned Handler identity");
         let session = AgentSessionId::new(session_id).expect("parse owned Handler session");
-        let invocation = AgentInvocationId::new(invocation_id.clone()).expect("parse owned Handler invocation");
-        transition.attach_work_unit_handler_activation(handler).expect("reconcile owned active Handler");
-        assert_eq!(controlled_runtime.starts.load(Ordering::SeqCst), 1, "Handler reconciliation launched more than one initial runtime");
+        let invocation =
+            AgentInvocationId::new(invocation_id.clone()).expect("parse owned Handler invocation");
+        transition
+            .attach_work_unit_handler_activation(handler)
+            .expect("reconcile owned active Handler");
+        assert_eq!(
+            controlled_runtime.starts.load(Ordering::SeqCst),
+            1,
+            "Handler reconciliation launched more than one initial runtime"
+        );
         let deadline = Instant::now() + Duration::from_secs(180);
         let completed = loop {
-            let history = sessions.load_session(&session).expect("load owned Handler history");
-            let entry = history.invocations.iter().find(|entry| entry.invocation.id == invocation).expect("retain owned Handler invocation");
+            let history = sessions
+                .load_session(&session)
+                .expect("load owned Handler history");
+            let entry = history
+                .invocations
+                .iter()
+                .find(|entry| entry.invocation.id == invocation)
+                .expect("retain owned Handler invocation");
             if entry.invocation.status.is_terminal() {
-                break (history.session.runtime_binding.external_context_id.is_some(), entry.invocation.clone());
+                break (
+                    history
+                        .session
+                        .runtime_binding
+                        .external_context_id
+                        .is_some(),
+                    entry.invocation.clone(),
+                );
             }
-            assert!(Instant::now() < deadline, "installed Handler did not reach a terminal state");
+            assert!(
+                Instant::now() < deadline,
+                "installed Handler did not reach a terminal state"
+            );
             std::thread::sleep(Duration::from_millis(100));
         };
-        assert!(completed.0, "installed Handler did not persist external context");
-        assert_eq!(completed.1.status, AgentInvocationStatus::Completed, "installed Handler terminal was not completed");
-        assert_eq!(completed.1.exit_code, Some(0), "installed Handler terminal did not report exit 0");
-        let connection = Connection::open(&fixture.database_path).expect("open owned live database");
+        assert!(
+            completed.0,
+            "installed Handler did not persist external context"
+        );
+        assert_eq!(
+            completed.1.status,
+            AgentInvocationStatus::Completed,
+            "installed Handler terminal was not completed"
+        );
+        assert_eq!(
+            completed.1.exit_code,
+            Some(0),
+            "installed Handler terminal did not report exit 0"
+        );
+        let connection =
+            Connection::open(&fixture.database_path).expect("open owned live database");
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_activations WHERE work_unit_id='pip01h-handler-unit' AND launch_accepted_at IS NOT NULL AND handler_ready_at IS NOT NULL", [], |row| row.get(0)).expect("read Handler readiness"), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM agent_session_runtime_events WHERE invocation_id=?1 AND sequence=0 AND json_extract(raw_payload_json,'$.kind')='codex_launch_provenance'", [&invocation_id], |row| row.get(0)).expect("read safe sequence-zero provenance"), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE role_kind='implementer'", [], |row| row.get(0)).expect("read Implementer authority count"), 0);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |row| row.get(0)).expect("read Sprint settlement count"), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_settlements",
+                    [],
+                    |row| row.get(0)
+                )
+                .expect("read Sprint settlement count"),
+            0
+        );
         drop(connection);
         runtime.shutdown().expect("shut down owned live runtime");
     }
@@ -8835,16 +11293,18 @@ mod tests {
             Ok("true"),
             "refusing live reporting probe without explicit opt-in"
         );
-        let project_mcp_sentinel = (std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref()
-            == Ok("true"))
-            .then(LoopbackMcpSentinel::start);
+        let project_mcp_sentinel =
+            (std::env::var("CODEX_PIP01W_ADVERSARIAL_PROJECT_STATE").as_deref() == Ok("true"))
+                .then(LoopbackMcpSentinel::start);
         let fixture = match ReportingFixture::with_project_mcp_sentinel(
-            project_mcp_sentinel.as_ref().map(LoopbackMcpSentinel::endpoint),
+            project_mcp_sentinel
+                .as_ref()
+                .map(LoopbackMcpSentinel::endpoint),
         ) {
             Ok(fixture) => fixture,
-            Err(crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError::Denied)
-                if project_mcp_sentinel.is_some() =>
-            {
+            Err(
+                crate::orchestration::work_unit_execution_harness::WorkUnitHarnessError::Denied,
+            ) if project_mcp_sentinel.is_some() => {
                 assert_eq!(
                     project_mcp_sentinel
                         .as_ref()
@@ -8857,49 +11317,65 @@ mod tests {
             }
             Err(_) => panic!("the product rejected a non-adversarial Implementer package"),
         };
-        let mut private_home = (std::env::var("CODEX_PIP01W_PRIVATE_HOME_LIVE").as_deref()
-            == Ok("true"))
-            .then(|| PrivateCodexHome::new(fixture.base._directory.path()).expect("private Codex home"));
+        let mut private_home =
+            (std::env::var("CODEX_PIP01W_PRIVATE_HOME_LIVE").as_deref() == Ok("true")).then(|| {
+                PrivateCodexHome::new(fixture.base._directory.path()).expect("private Codex home")
+            });
         let private_home_scope = private_home
             .as_ref()
             .map(|home| ScopedCodexHome::set(home.path()));
         let runtime = Arc::new(CodexCliRuntime::system("codex", None));
         let notifier = Arc::new(TransitionNotifier::default());
         let sessions = Arc::new(AgentSessionApplication::new(
-            Arc::new(SqliteAgentSessionRepository::new(Connection::open(&fixture.base.database_path).unwrap()).unwrap()),
+            Arc::new(
+                SqliteAgentSessionRepository::new(
+                    Connection::open(&fixture.base.database_path).unwrap(),
+                )
+                .unwrap(),
+            ),
             runtime.clone(),
             notifier.clone(),
             Arc::new(SystemAgentSessionProviders),
             Arc::new(SystemAgentSessionProviders),
             Some("pip01w-live-reporting".into()),
         ));
-        let transition = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.base.database_path,
-            sessions.clone(),
-        ).unwrap();
+        let transition =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.base.database_path,
+                sessions.clone(),
+            )
+            .unwrap();
         notifier.set_sprint(&transition);
         transition.attach_reporting_test_harness(fixture.handler.clone());
 
         let work_unit_id = "live-reporting-work-unit";
         let attempt_id = "live-reporting-attempt";
-        fixture.handler.authorize_implementer_attempt(attempt_id, work_unit_id, &fixture.authority_id).unwrap();
+        fixture
+            .handler
+            .authorize_implementer_attempt(attempt_id, work_unit_id, &fixture.authority_id)
+            .unwrap();
         let original = fixture.handler.current_implementer_revision().unwrap();
-        let package = fixture.handler.construct_for_pinned_profile(
-            attempt_id,
-            WorkUnitHarnessRole::Implementer,
-            original.profile.clone(),
-        ).unwrap();
+        let package = fixture
+            .handler
+            .construct_for_pinned_profile(
+                attempt_id,
+                WorkUnitHarnessRole::Implementer,
+                original.profile.clone(),
+            )
+            .unwrap();
         let session_id = AgentSessionId::new("live-reporting-session").unwrap();
         let original_invocation = AgentInvocationId::new("live-reporting-original").unwrap();
         let launch = package.runtime_launch_configuration();
-        sessions.create_application_session(CreateApplicationAgentSessionCommand {
-            session_id: session_id.clone(),
-            session: CreateAgentSessionCommand {
-                title: Some("Live Implementer reporting probe".into()),
-                working_directory: Some(package.working_directory().into()),
-                requested_options: launch.requested_options.clone(),
-            },
-        }).unwrap();
+        sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session_id.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Live Implementer reporting probe".into()),
+                    working_directory: Some(package.working_directory().into()),
+                    requested_options: launch.requested_options.clone(),
+                },
+            })
+            .unwrap();
         sessions.send_idempotent_application_message_with_launch_observation(
             SendIdempotentApplicationAgentSessionMessageCommand {
                 invocation_id: original_invocation.clone(),
@@ -8917,9 +11393,17 @@ mod tests {
         while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "original provider did not finish");
+        assert_eq!(
+            runtime.active_direct_child_count().unwrap(),
+            0,
+            "original provider did not finish"
+        );
         let original_history = sessions.load_session(&session_id).unwrap();
-        assert!(original_history.invocations.iter().any(|entry| entry.invocation.id == original_invocation && entry.invocation.status == AgentInvocationStatus::Completed));
+        assert!(original_history
+            .invocations
+            .iter()
+            .any(|entry| entry.invocation.id == original_invocation
+                && entry.invocation.status == AgentInvocationStatus::Completed));
         let candidate_sealed = fixture
             .handler
             .commit_implementer_candidate(attempt_id)
@@ -8969,7 +11453,9 @@ mod tests {
             "UPDATE work_unit_implementer_activations SET implementer_ready_at=NULL WHERE work_unit_id=?1",
             [&fixture.work_unit_id],
         ).unwrap();
-        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
         connection.execute(
             "INSERT INTO work_units (work_unit_id,materialization_id,work_slice_id,accepted_revision_id,lane_ordinal,lane_title,specification) VALUES (?1,'live-reporting-materialization','live-reporting-slice','live-reporting-revision',0,'Live reporting','Bounded live reporting probe')",
             [work_unit_id],
@@ -8978,28 +11464,52 @@ mod tests {
             "INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at,authorized_at,execution_support_granted_at,isolated_worktree_ready_at,implementer_session_created_at,implementer_invocation_prepared_at,implementer_harness_bound_at,launch_requested_at,launch_accepted_at,implementer_ready_at) VALUES (?1,'live-handler-attempt','live-handler-action',?2,?3,?4,?5,?6,?7,?8,?8,?8,?8,?8,?8,?8,?8,?8,?8)",
             params![work_unit_id,attempt_id,session_id.as_str(),original_invocation.as_str(),original.revision_id,original.configuration_digest,original.repository_commit_ref,now],
         ).unwrap();
-        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
         drop(connection);
 
-        transition.prepare_later_attempt_reporting_for_test().unwrap();
+        transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
         while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "reporting provider did not finish");
+        assert_eq!(
+            runtime.active_direct_child_count().unwrap(),
+            0,
+            "reporting provider did not finish"
+        );
         let history = sessions.load_session(&session_id).unwrap();
-        let reporting_id = AgentInvocationId::new(format!("work-unit-implementer-reporting-invocation-{:x}", {
-            let mut hash = Sha256::new();
-            hash.update(b"work-unit-implementer-reporting-invocation");
-            hash.update([0]);
-            hash.update(attempt_id.as_bytes());
-            hash.finalize()
-        })).unwrap();
-        let original_entry = history.invocations.iter().find(|entry| entry.invocation.id == original_invocation).unwrap();
-        let reporting_entry = history.invocations.iter().find(|entry| entry.invocation.id == reporting_id).unwrap();
-        let provenance = |entry: &crate::agent_sessions::ports::AgentInvocationHistory| entry.events.iter()
-            .find(|event| event.raw_payload["kind"] == "codex_launch_provenance")
-            .map(|event| event.raw_payload.clone())
-            .expect("sanitized Codex launch provenance");
+        let reporting_id = AgentInvocationId::new(format!(
+            "work-unit-implementer-reporting-invocation-{:x}",
+            {
+                let mut hash = Sha256::new();
+                hash.update(b"work-unit-implementer-reporting-invocation");
+                hash.update([0]);
+                hash.update(attempt_id.as_bytes());
+                hash.finalize()
+            }
+        ))
+        .unwrap();
+        let original_entry = history
+            .invocations
+            .iter()
+            .find(|entry| entry.invocation.id == original_invocation)
+            .unwrap();
+        let reporting_entry = history
+            .invocations
+            .iter()
+            .find(|entry| entry.invocation.id == reporting_id)
+            .unwrap();
+        let provenance = |entry: &crate::agent_sessions::ports::AgentInvocationHistory| {
+            entry
+                .events
+                .iter()
+                .find(|event| event.raw_payload["kind"] == "codex_launch_provenance")
+                .map(|event| event.raw_payload.clone())
+                .expect("sanitized Codex launch provenance")
+        };
         let start_provenance = provenance(original_entry);
         let resume_provenance = provenance(reporting_entry);
         assert_eq!(start_provenance["invocationMode"], "start");
@@ -9015,7 +11525,10 @@ mod tests {
             "unverified_until_application_candidate_evidence"
         );
         assert_eq!(start_provenance["workingDirectory"]["absolute"], true);
-        assert_eq!(start_provenance["workingDirectory"]["extendedLengthPrefix"], false);
+        assert_eq!(
+            start_provenance["workingDirectory"]["extendedLengthPrefix"],
+            false
+        );
         assert_eq!(
             start_provenance["parentCodeHomePresent"],
             private_home.is_some()
@@ -9034,7 +11547,10 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|key| !key.as_str().unwrap_or_default().contains(package.working_directory())));
+                .all(|key| !key
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(package.working_directory())));
             assert_eq!(provenance["launchRestrictions"]["strictConfig"], false);
             assert_eq!(provenance["launchRestrictions"]["ignoresUserConfig"], false);
             assert_eq!(provenance["launchRestrictions"]["ignoresRules"], true);
@@ -9050,25 +11566,61 @@ mod tests {
                 provenance["launchRestrictions"]["dangerouslyBypassesHookTrust"],
                 false
             );
-            assert_eq!(provenance["launchRestrictions"]["liveWebSearchEnabled"], false);
+            assert_eq!(
+                provenance["launchRestrictions"]["liveWebSearchEnabled"],
+                false
+            );
         }
-        assert!(start_provenance["configurationKeys"].as_array().unwrap().iter().all(|key| {
-            !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
-                && key != "sandbox_workspace_write.network_access"
-                && key != "features.network_proxy"
-        }));
-        assert!(start_provenance["environmentKeys"].as_array().unwrap().is_empty());
-        assert!(!original_entry.events.iter().any(|event| {
-            event.raw_payload["kind"] == "mcp_tool_call"
-        }));
-        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| {
-            key.as_str().unwrap_or_default().starts_with("mcp_servers.work_unit_implementer_reporting_")
-        }));
-        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "sandbox_workspace_write.network_access"));
-        assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "features.network_proxy"));
-        assert_eq!(resume_provenance["environmentKeys"].as_array().unwrap().len(), 1);
-        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("CODEX_ORCHESTRATOR_MCP_"));
-        let tools = reporting_entry.events.iter()
+        assert!(start_provenance["configurationKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|key| {
+                !key.as_str().unwrap_or_default().starts_with("mcp_servers.")
+                    && key != "sandbox_workspace_write.network_access"
+                    && key != "features.network_proxy"
+            }));
+        assert!(start_provenance["environmentKeys"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(!original_entry
+            .events
+            .iter()
+            .any(|event| { event.raw_payload["kind"] == "mcp_tool_call" }));
+        assert!(resume_provenance["configurationKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| {
+                key.as_str()
+                    .unwrap_or_default()
+                    .starts_with("mcp_servers.work_unit_implementer_reporting_")
+            }));
+        assert!(resume_provenance["configurationKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "sandbox_workspace_write.network_access"));
+        assert!(resume_provenance["configurationKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "features.network_proxy"));
+        assert_eq!(
+            resume_provenance["environmentKeys"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(resume_provenance["environmentKeys"][0]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        let tools = reporting_entry
+            .events
+            .iter()
             .filter_map(|event| event.normalized.as_ref())
             .filter_map(|event| event.tool_activity.as_ref())
             .filter(|activity| activity.phase == ToolActivityPhase::Completed)
@@ -9083,13 +11635,22 @@ mod tests {
             }),
             "reporting continuation invoked a tool outside its two-action boundary: {tools:?}"
         );
-        let distinct_tools = tools.iter().copied().fold(Vec::new(), |mut distinct, tool| {
-            if !distinct.contains(&tool) {
-                distinct.push(tool);
-            }
-            distinct
-        });
-        assert_eq!(distinct_tools, ["submit_implementation_outcome", "complete_implementation_outcome"]);
+        let distinct_tools = tools
+            .iter()
+            .copied()
+            .fold(Vec::new(), |mut distinct, tool| {
+                if !distinct.contains(&tool) {
+                    distinct.push(tool);
+                }
+                distinct
+            });
+        assert_eq!(
+            distinct_tools,
+            [
+                "submit_implementation_outcome",
+                "complete_implementation_outcome"
+            ]
+        );
         assert_eq!(
             project_mcp_sentinel
                 .as_ref()
@@ -9122,169 +11683,1035 @@ mod tests {
             classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked,
             meaningful_progress: false,
         };
-        no_progress.transition.record_handler_incomplete_disposition_for_test(&review, disposition.clone()).unwrap();
-        no_progress.transition.record_handler_incomplete_disposition_for_test(&review, disposition).unwrap();
-        no_progress.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
-        no_progress.transition.reconcile_handler_reviews_for_test().unwrap();
-        no_progress.transition.reconcile_handler_reviews_for_test().unwrap();
+        no_progress
+            .transition
+            .record_handler_incomplete_disposition_for_test(&review, disposition.clone())
+            .unwrap();
+        no_progress
+            .transition
+            .record_handler_incomplete_disposition_for_test(&review, disposition)
+            .unwrap();
+        no_progress
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
+        no_progress
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
+        no_progress
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
         let connection = Connection::open(&no_progress.base.database_path).unwrap();
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE meaningful_progress=0 AND next_attempt_authorized_at IS NULL", [], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks WHERE sprint_runner_receiver_activated_at IS NULL AND sprint_runner_receiver_decision_at IS NULL", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_retry_attempts",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
     fn direct_sprint_result_receipt_reopens_concurrently_and_preserves_its_exact_attention() {
         let fixture = ReportingFixture::new();
-        let (sprint, epic):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
-        let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap(); let session=AgentSessionId::new("direct-result-epic-session").unwrap();
-        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Direct result Epic Runner".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:harness.runtime_options()}}).unwrap();
-        fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("direct-result-original").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"Original Epic Runner work.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:Some(harness.runtime_options())}},None).unwrap(); fixture.base.runtime.finish("direct-result-original",AgentInvocationTerminalStatus::Completed);
-        let connection=Connection::open(&fixture.base.database_path).unwrap();
+        let (sprint, epic): (String, String) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let session = AgentSessionId::new("direct-result-epic-session").unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Direct result Epic Runner".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("direct-result-original").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session.clone()),
+                        submitted_text: "Original Epic Runner work.".into(),
+                        title: None,
+                        working_directory: Some(
+                            conversation_harness::role_discovery_root(
+                                ConversationHarnessRole::EpicRunner,
+                            )
+                            .unwrap(),
+                        ),
+                        requested_options: Some(harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "direct-result-original",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
         connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'direct-result-request',?3,'direct-result-original','epic_runner',3,'sprint_runner',2,'direct-result-sprint-session','direct-result-sprint-invocation','2026-08-05T00:00:00Z','2026-08-05T00:00:00Z')",params![sprint,epic,session.as_str()]).unwrap();
         connection.execute("INSERT INTO sprint_continuation_decisions VALUES('direct-decision',?1,1,'attention','structured_human_or_external_attention',0,'direct-input','2026-08-05T00:00:00Z')",[&sprint]).unwrap();
         connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'direct-decision','attention','2026-08-05T00:00:00Z')",[&sprint]).unwrap();
         connection.execute("INSERT INTO sprint_continuation_attentions VALUES('direct-decision','direct-attention','exact-result-attention','direct-attention-fingerprint',NULL,'2026-08-05T00:00:00Z')",[]).unwrap();
-        connection.execute("INSERT INTO sprint_upward_results VALUES('direct-result','direct-decision',?1,'attention','direct-chronology','2026-08-05T00:00:00Z')",[&sprint]).unwrap(); drop(connection);
-        let first=fixture.transition.clone(); let second=fixture.transition.clone(); let barrier=Arc::new(Barrier::new(2)); let results=[first.clone(),second.clone()].into_iter().map(|service|{let barrier=barrier.clone();std::thread::spawn(move||{barrier.wait();service.reconcile_sprint_result_receivers_for_test()})}).collect::<Vec<_>>().into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>(); assert!(results.iter().all(Result::is_ok),"{results:?}");
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); let receiver:(String,Option<String>,Option<String>,Option<String>,i64)=connection.query_row("SELECT reassessment_invocation_id,delivery_persisted_at,harness_bound_at,launch_accepted_at,(SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result') FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap(); assert!(receiver.1.is_some()&&receiver.2.is_some()&&receiver.3.is_some());assert_eq!(receiver.4,1); drop(connection);
-        let context=first.sprint_result_reassessment_context_for_test(&receiver.0).unwrap(); assert_eq!(context.pointer("/sprintResult/structuredAttention").and_then(|value|value.as_str()),Some("exact-result-attention"));
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); connection.execute("UPDATE epic_runner_sprint_result_receivers SET launch_accepted_at=NULL WHERE result_id='direct-result'",[]).unwrap(); connection.execute("INSERT INTO sprint_continuation_decisions VALUES('later-decision',?1,2,'attention','later_attention',0,'later-input','2026-08-05T00:01:00Z')",[&sprint]).unwrap(); connection.execute("UPDATE sprint_continuation_current_decisions SET decision_id='later-decision',updated_at='2026-08-05T00:01:00Z' WHERE sprint_id=?1",[&sprint]).unwrap(); drop(connection); first.reconcile_sprint_result_receivers_for_test().unwrap(); assert!(Connection::open(&fixture.base.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|row.get(0)).unwrap().is_some(),"an already-created exact receiver remains recoverable after supersession");
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); connection.execute("INSERT INTO sprint_continuation_decisions VALUES('stale-decision',?1,3,'attention','stale_attention',0,'stale-input','2026-08-05T00:02:00Z')",[&sprint]).unwrap(); connection.execute("INSERT INTO sprint_upward_results VALUES('stale-result','stale-decision',?1,'attention','stale-chronology','2026-08-05T00:02:00Z')",[&sprint]).unwrap(); connection.execute("INSERT INTO sprint_upward_results VALUES('current-settled-result','later-decision',?1,'settled','current-settled-chronology','2026-08-05T00:03:00Z')",[&sprint]).unwrap(); drop(connection); fixture.base.runtime.finish(&receiver.0,AgentInvocationTerminalStatus::Completed); let invocation=fixture.base.sessions.load_session(&session).unwrap().invocations.into_iter().find(|entry|entry.invocation.id.as_str()==receiver.0).unwrap().invocation; first.on_agent_notification(&AgentSessionNotification::InvocationTerminal{session_id:session.clone(),invocation}).unwrap(); let requests=fixture.base.runtime.requests().len(); first.reconcile_sprint_result_receivers_for_test().unwrap(); let connection=Connection::open(&fixture.base.database_path).unwrap(); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='stale-result'",[],|row|row.get(0)).unwrap(),0); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='current-settled-result' AND delivery_persisted_at IS NOT NULL AND launch_accepted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),1); assert_eq!(fixture.base.runtime.requests().len(),requests+1);
-        let lifecycle:(Option<String>,Option<String>)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT provider_activation_observed_at,reassessment_lifecycle_observed_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap(); assert!(lifecycle.0.is_some()&&lifecycle.1.is_some());
-        let disposition=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"consider_other_epic_work".into(),rationale:"retain the exact unresolved concern for later consideration".into(),considered_intent:Some("consider only a later bounded Epic movement".into()),downstream_request:None,human_external_attention:None}; first.record_sprint_result_disposition_for_test(&receiver.0,disposition.clone()).unwrap(); second.record_sprint_result_disposition_for_test(&receiver.0,disposition).unwrap();
-        let divergent=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"consider_other_epic_work".into(),rationale:"different".into(),considered_intent:Some("different movement".into()),downstream_request:None,human_external_attention:None}; assert!(matches!(first.record_sprint_result_disposition_for_test(&receiver.0,divergent),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        let facts:(i64,Option<String>)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT (SELECT COUNT(*) FROM epic_runner_sprint_result_dispositions WHERE result_id='direct-result'),semantic_reassessment_recorded_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();assert_eq!(facts.0,1);assert!(facts.1.is_some());
+        connection.execute("INSERT INTO sprint_upward_results VALUES('direct-result','direct-decision',?1,'attention','direct-chronology','2026-08-05T00:00:00Z')",[&sprint]).unwrap();
+        drop(connection);
+        let first = fixture.transition.clone();
+        let second = fixture.transition.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let results = [first.clone(), second.clone()]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_sprint_result_receivers_for_test()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let receiver:(String,Option<String>,Option<String>,Option<String>,i64)=connection.query_row("SELECT reassessment_invocation_id,delivery_persisted_at,harness_bound_at,launch_accepted_at,(SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result') FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
+        assert!(receiver.1.is_some() && receiver.2.is_some() && receiver.3.is_some());
+        assert_eq!(receiver.4, 1);
+        drop(connection);
+        let context = first
+            .sprint_result_reassessment_context_for_test(&receiver.0)
+            .unwrap();
+        assert_eq!(
+            context
+                .pointer("/sprintResult/structuredAttention")
+                .and_then(|value| value.as_str()),
+            Some("exact-result-attention")
+        );
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("UPDATE epic_runner_sprint_result_receivers SET launch_accepted_at=NULL WHERE result_id='direct-result'",[]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_decisions VALUES('later-decision',?1,2,'attention','later_attention',0,'later-input','2026-08-05T00:01:00Z')",[&sprint]).unwrap();
+        connection.execute("UPDATE sprint_continuation_current_decisions SET decision_id='later-decision',updated_at='2026-08-05T00:01:00Z' WHERE sprint_id=?1",[&sprint]).unwrap();
+        drop(connection);
+        first.reconcile_sprint_result_receivers_for_test().unwrap();
+        assert!(Connection::open(&fixture.base.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|row.get(0)).unwrap().is_some(),"an already-created exact receiver remains recoverable after supersession");
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_decisions VALUES('stale-decision',?1,3,'attention','stale_attention',0,'stale-input','2026-08-05T00:02:00Z')",[&sprint]).unwrap();
+        connection.execute("INSERT INTO sprint_upward_results VALUES('stale-result','stale-decision',?1,'attention','stale-chronology','2026-08-05T00:02:00Z')",[&sprint]).unwrap();
+        connection.execute("INSERT INTO sprint_upward_results VALUES('current-settled-result','later-decision',?1,'settled','current-settled-chronology','2026-08-05T00:03:00Z')",[&sprint]).unwrap();
+        drop(connection);
+        fixture
+            .base
+            .runtime
+            .finish(&receiver.0, AgentInvocationTerminalStatus::Completed);
+        let invocation = fixture
+            .base
+            .sessions
+            .load_session(&session)
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == receiver.0)
+            .unwrap()
+            .invocation;
+        first
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: session.clone(),
+                invocation,
+            })
+            .unwrap();
+        let requests = fixture.base.runtime.requests().len();
+        first.reconcile_sprint_result_receivers_for_test().unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='stale-result'",[],|row|row.get(0)).unwrap(),0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_receivers WHERE result_id='current-settled-result' AND delivery_persisted_at IS NOT NULL AND launch_accepted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),1);
+        assert_eq!(fixture.base.runtime.requests().len(), requests + 1);
+        let lifecycle:(Option<String>,Option<String>)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT provider_activation_observed_at,reassessment_lifecycle_observed_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert!(lifecycle.0.is_some() && lifecycle.1.is_some());
+        let disposition =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "consider_other_epic_work".into(),
+                rationale: "retain the exact unresolved concern for later consideration".into(),
+                considered_intent: Some("consider only a later bounded Epic movement".into()),
+                downstream_request: None,
+                human_external_attention: None,
+            };
+        first
+            .record_sprint_result_disposition_for_test(&receiver.0, disposition.clone())
+            .unwrap();
+        second
+            .record_sprint_result_disposition_for_test(&receiver.0, disposition)
+            .unwrap();
+        let divergent =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "consider_other_epic_work".into(),
+                rationale: "different".into(),
+                considered_intent: Some("different movement".into()),
+                downstream_request: None,
+                human_external_attention: None,
+            };
+        assert!(matches!(first.record_sprint_result_disposition_for_test(&receiver.0,divergent),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let facts:(i64,Option<String>)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT (SELECT COUNT(*) FROM epic_runner_sprint_result_dispositions WHERE result_id='direct-result'),semantic_reassessment_recorded_at FROM epic_runner_sprint_result_receivers WHERE result_id='direct-result'",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(facts.0, 1);
+        assert!(facts.1.is_some());
     }
 
     #[test]
     fn settled_last_sprint_result_records_terminal_readiness_without_another_sprint() {
-        let fixture=ReportingFixture::new();let (source,epic):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();let session=AgentSessionId::new("terminal-result-epic-session").unwrap();fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Terminal result Epic Runner".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:harness.runtime_options()}}).unwrap();fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("terminal-result-origin").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"Origin.".into(),title:None,working_directory:None,requested_options:Some(harness.runtime_options())}},None).unwrap();fixture.base.runtime.finish("terminal-result-origin",AgentInvocationTerminalStatus::Completed);
-        let connection=Connection::open(&fixture.base.database_path).unwrap();connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'terminal-result-request',?3,'terminal-result-origin','epic_runner',3,'sprint_runner',2,'terminal-result-sprint-session','terminal-result-sprint-invocation','now','now')",params![source,epic,session.as_str()]).unwrap();let priors:Vec<String>=connection.prepare("SELECT id FROM initiated_sprints WHERE epic_id=?1 AND ordinal<(SELECT ordinal FROM initiated_sprints WHERE id=?2) ORDER BY ordinal").unwrap().query_map(params![epic,source],|row|row.get(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();for (ordinal,prior) in priors.iter().enumerate(){connection.execute("DELETE FROM sprint_upward_results WHERE sprint_id=?1",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_attentions WHERE decision_id IN (SELECT decision_id FROM sprint_continuation_decisions WHERE sprint_id=?1)",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_current_decisions WHERE sprint_id=?1",[prior]).unwrap();connection.execute("DELETE FROM sprint_continuation_decisions WHERE sprint_id=?1",[prior]).unwrap();let decision=format!("terminal-prior-decision-{ordinal}");let result=format!("terminal-prior-result-{ordinal}");connection.execute("INSERT INTO sprint_continuation_decisions VALUES(?1,?2,1,'settled','settled',0,?3,'now')",params![decision,prior,format!("terminal-prior-input-{ordinal}")]).unwrap();connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,?2,'settled','now')",params![prior,decision]).unwrap();connection.execute("INSERT INTO sprint_upward_results VALUES(?1,?2,?3,'settled',?4,'now')",params![result,decision,prior,format!("terminal-prior-chronology-{ordinal}")]).unwrap();}connection.execute("INSERT INTO sprint_continuation_decisions VALUES('terminal-result-decision',?1,1,'settled','settled',0,'terminal-result-input','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'terminal-result-decision','settled','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_upward_results VALUES('terminal-result','terminal-result-decision',?1,'settled','terminal-result-chronology','now')",[&source]).unwrap();drop(connection);fixture.transition.reconcile_sprint_result_receivers_for_test().unwrap();let receiver:String=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap();fixture.transition.record_sprint_result_disposition_for_test(&receiver,crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"advance_to_next_approved_sprint".into(),rationale:"the settled final Sprint has no approved successor".into(),considered_intent:Some("derive terminal readiness from the durable plan horizon".into()),downstream_request:None,human_external_attention:None}).unwrap();let connection=Connection::open(&fixture.base.database_path).unwrap();assert_eq!(connection.query_row::<String,_,_>("SELECT outcome_kind FROM epic_runner_sprint_result_realizations WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),"terminal_readiness");assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),1);assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1",[&epic],|row|row.get(0)).unwrap(),1);
+        let fixture = ReportingFixture::new();
+        let (source, epic): (String, String) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let session = AgentSessionId::new("terminal-result-epic-session").unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Terminal result Epic Runner".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("terminal-result-origin").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session.clone()),
+                        submitted_text: "Origin.".into(),
+                        title: None,
+                        working_directory: None,
+                        requested_options: Some(harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "terminal-result-origin",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'terminal-result-request',?3,'terminal-result-origin','epic_runner',3,'sprint_runner',2,'terminal-result-sprint-session','terminal-result-sprint-invocation','now','now')",params![source,epic,session.as_str()]).unwrap();
+        let priors:Vec<String>=connection.prepare("SELECT id FROM initiated_sprints WHERE epic_id=?1 AND ordinal<(SELECT ordinal FROM initiated_sprints WHERE id=?2) ORDER BY ordinal").unwrap().query_map(params![epic,source],|row|row.get(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        for (ordinal, prior) in priors.iter().enumerate() {
+            connection
+                .execute(
+                    "DELETE FROM sprint_upward_results WHERE sprint_id=?1",
+                    [prior],
+                )
+                .unwrap();
+            connection.execute("DELETE FROM sprint_continuation_attentions WHERE decision_id IN (SELECT decision_id FROM sprint_continuation_decisions WHERE sprint_id=?1)",[prior]).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM sprint_continuation_current_decisions WHERE sprint_id=?1",
+                    [prior],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM sprint_continuation_decisions WHERE sprint_id=?1",
+                    [prior],
+                )
+                .unwrap();
+            let decision = format!("terminal-prior-decision-{ordinal}");
+            let result = format!("terminal-prior-result-{ordinal}");
+            connection.execute("INSERT INTO sprint_continuation_decisions VALUES(?1,?2,1,'settled','settled',0,?3,'now')",params![decision,prior,format!("terminal-prior-input-{ordinal}")]).unwrap();
+            connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,?2,'settled','now')",params![prior,decision]).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sprint_upward_results VALUES(?1,?2,?3,'settled',?4,'now')",
+                    params![
+                        result,
+                        decision,
+                        prior,
+                        format!("terminal-prior-chronology-{ordinal}")
+                    ],
+                )
+                .unwrap();
+        }
+        connection.execute("INSERT INTO sprint_continuation_decisions VALUES('terminal-result-decision',?1,1,'settled','settled',0,'terminal-result-input','now')",[&source]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'terminal-result-decision','settled','now')",[&source]).unwrap();
+        connection.execute("INSERT INTO sprint_upward_results VALUES('terminal-result','terminal-result-decision',?1,'settled','terminal-result-chronology','now')",[&source]).unwrap();
         drop(connection);
-        fixture.base.runtime.finish(&receiver, AgentInvocationTerminalStatus::Completed);
-        let reassessment = fixture.base.sessions.load_session(&session).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == receiver).unwrap().invocation;
-        fixture.transition.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: session.clone(), invocation: reassessment }).unwrap();
+        fixture
+            .transition
+            .reconcile_sprint_result_receivers_for_test()
+            .unwrap();
+        let receiver:String=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap();
+        fixture.transition.record_sprint_result_disposition_for_test(&receiver,crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"advance_to_next_approved_sprint".into(),rationale:"the settled final Sprint has no approved successor".into(),considered_intent:Some("derive terminal readiness from the durable plan horizon".into()),downstream_request:None,human_external_attention:None}).unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(connection.query_row::<String,_,_>("SELECT outcome_kind FROM epic_runner_sprint_result_realizations WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),"terminal_readiness");
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id='terminal-result'",[],|row|row.get(0)).unwrap(),1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1",
+                    [&epic],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        drop(connection);
+        fixture
+            .base
+            .runtime
+            .finish(&receiver, AgentInvocationTerminalStatus::Completed);
+        let reassessment = fixture
+            .base
+            .sessions
+            .load_session(&session)
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == receiver)
+            .unwrap()
+            .invocation;
+        fixture
+            .transition
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: session.clone(),
+                invocation: reassessment,
+            })
+            .unwrap();
         Connection::open(&fixture.base.database_path).unwrap().execute_batch("UPDATE sprint_continuation_decisions SET continuation_kind='all_authoritative_sprint_work_settled',accepted_materialization_count=1,recorded_at='2026-08-05T00:00:00Z' WHERE decision_state='settled'; UPDATE sprint_continuation_current_decisions SET updated_at='2026-08-05T00:00:00Z' WHERE updated_at='now'; UPDATE sprint_upward_results SET recorded_at='2026-08-05T00:00:00Z' WHERE recorded_at='now'; UPDATE sprint_runner_transitions SET requested_at='2026-08-05T00:00:00Z',authorized_at='2026-08-05T00:00:00Z' WHERE requested_at='now' OR authorized_at='now'; DELETE FROM work_unit_handler_decisions WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units); DELETE FROM work_unit_handler_reviews WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units); DELETE FROM work_unit_implementer_outcomes WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units);").unwrap();
-        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.base.database_path).unwrap().native_query().unwrap()).unwrap();
-        let direct = native["sprintResultProjections"].as_array().unwrap().iter().find(|projection| projection["resultId"] == "terminal-result").unwrap();
+        let native = serde_json::to_value(
+            SqliteOrchestrationRepository::open(&fixture.base.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        let direct = native["sprintResultProjections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|projection| projection["resultId"] == "terminal-result")
+            .unwrap();
         assert_eq!(direct["realization"]["outcomeKind"], "terminal_readiness");
         assert!(direct["realization"]["terminalReadinessRecordedAt"].is_string());
         assert!(direct["receiver"]["reassessmentLifecycleObservedAt"].is_string());
         let serialized = serde_json::to_string(direct).unwrap();
-        for private in ["reassessmentInvocationId", "governingRunnerSessionId", "harnessKey", "harnessVersion", "route", "worktree"] {
-            assert!(!serialized.contains(private), "private terminal projection field leaked: {private}");
+        for private in [
+            "reassessmentInvocationId",
+            "governingRunnerSessionId",
+            "harnessKey",
+            "harnessVersion",
+            "route",
+            "worktree",
+        ] {
+            assert!(
+                !serialized.contains(private),
+                "private terminal projection field leaked: {private}"
+            );
         }
     }
 
     #[test]
     fn settled_last_sprint_with_an_earlier_unsettled_sprint_retains_attention() {
         let fixture = ReportingFixture::new();
-        let (source, epic): (String, String) = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1", [], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let (source, epic): (String, String) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
         let session = AgentSessionId::new("terminal-unsettled-epic-session").unwrap();
-        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: session.clone(), session: CreateAgentSessionCommand { title: Some("Terminal unsettled Epic Runner".into()), working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()), requested_options: harness.runtime_options() } }).unwrap();
-        fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new("terminal-unsettled-origin").unwrap(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: "Origin.".into(), title: None, working_directory: None, requested_options: Some(harness.runtime_options()) } }, None).unwrap();
-        fixture.base.runtime.finish("terminal-unsettled-origin", AgentInvocationTerminalStatus::Completed);
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Terminal unsettled Epic Runner".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("terminal-unsettled-origin").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session.clone()),
+                        submitted_text: "Origin.".into(),
+                        title: None,
+                        working_directory: None,
+                        requested_options: Some(harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "terminal-unsettled-origin",
+            AgentInvocationTerminalStatus::Completed,
+        );
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'terminal-unsettled-request',?3,'terminal-unsettled-origin','epic_runner',3,'sprint_runner',2,'terminal-unsettled-sprint-session','terminal-unsettled-sprint-invocation','now','now')", params![source,epic,session.as_str()]).unwrap();
         connection.execute("INSERT INTO sprint_continuation_decisions VALUES('terminal-unsettled-decision',?1,1,'settled','settled',0,'terminal-unsettled-input','now')", [&source]).unwrap();
         connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'terminal-unsettled-decision','settled','now')", [&source]).unwrap();
         connection.execute("INSERT INTO sprint_upward_results VALUES('terminal-unsettled-result','terminal-unsettled-decision',?1,'settled','terminal-unsettled-chronology','now')", [&source]).unwrap();
         drop(connection);
-        fixture.transition.reconcile_sprint_result_receivers_for_test().unwrap();
+        fixture
+            .transition
+            .reconcile_sprint_result_receivers_for_test()
+            .unwrap();
         let receiver: String = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap();
         fixture.transition.record_sprint_result_disposition_for_test(&receiver, crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind: "advance_to_next_approved_sprint".into(), rationale: "an earlier approved Sprint is not settled".into(), considered_intent: Some("retain plan-order attention".into()), downstream_request: None, human_external_attention: None }).unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         assert_eq!(connection.query_row::<String,_,_>("SELECT outcome_kind FROM epic_runner_sprint_result_realizations WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), "retained_attention");
         assert_eq!(connection.query_row::<String,_,_>("SELECT attention_code FROM epic_runner_sprint_result_retained_attentions WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), "nonconsecutive_plan_state");
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_terminal_readiness WHERE result_id='terminal-unsettled-result'", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1", [&epic], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_id=?1",
+                    [&epic],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         drop(connection);
         Connection::open(&fixture.base.database_path).unwrap().execute_batch("UPDATE sprint_continuation_decisions SET continuation_kind='all_authoritative_sprint_work_settled',accepted_materialization_count=1,recorded_at='2026-08-05T00:00:00Z' WHERE decision_state='settled'; UPDATE sprint_continuation_current_decisions SET updated_at='2026-08-05T00:00:00Z' WHERE updated_at='now'; UPDATE sprint_upward_results SET recorded_at='2026-08-05T00:00:00Z' WHERE recorded_at='now'; UPDATE sprint_runner_transitions SET requested_at='2026-08-05T00:00:00Z',authorized_at='2026-08-05T00:00:00Z' WHERE requested_at='now' OR authorized_at='now'; DELETE FROM work_unit_handler_decisions WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units); DELETE FROM work_unit_handler_reviews WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units); DELETE FROM work_unit_implementer_outcomes WHERE work_unit_id NOT IN (SELECT work_unit_id FROM work_units);").unwrap();
-        fixture.base.runtime.finish(&receiver, AgentInvocationTerminalStatus::Completed);
-        let reassessment = fixture.base.sessions.load_session(&session).unwrap().invocations.into_iter().find(|entry| entry.invocation.id.as_str() == receiver).unwrap().invocation;
-        fixture.transition.on_agent_notification(&AgentSessionNotification::InvocationTerminal { session_id: session.clone(), invocation: reassessment }).unwrap();
-        let native = serde_json::to_value(SqliteOrchestrationRepository::open(&fixture.base.database_path).unwrap().native_query().unwrap()).unwrap();
-        let direct = native["sprintResultProjections"].as_array().unwrap().iter().find(|projection| projection["resultId"] == "terminal-unsettled-result").unwrap();
+        fixture
+            .base
+            .runtime
+            .finish(&receiver, AgentInvocationTerminalStatus::Completed);
+        let reassessment = fixture
+            .base
+            .sessions
+            .load_session(&session)
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == receiver)
+            .unwrap()
+            .invocation;
+        fixture
+            .transition
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: session.clone(),
+                invocation: reassessment,
+            })
+            .unwrap();
+        let native = serde_json::to_value(
+            SqliteOrchestrationRepository::open(&fixture.base.database_path)
+                .unwrap()
+                .native_query()
+                .unwrap(),
+        )
+        .unwrap();
+        let direct = native["sprintResultProjections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|projection| projection["resultId"] == "terminal-unsettled-result")
+            .unwrap();
         assert_eq!(direct["realization"]["outcomeKind"], "retained_attention");
-        assert_eq!(direct["realization"]["retainedAttentionCode"], "nonconsecutive_plan_state");
+        assert_eq!(
+            direct["realization"]["retainedAttentionCode"],
+            "nonconsecutive_plan_state"
+        );
         assert!(direct["realization"]["retainedAttentionRecordedAt"].is_string());
         assert!(direct["receiver"]["reassessmentLifecycleObservedAt"].is_string());
         let serialized = serde_json::to_string(direct).unwrap();
-        for private in ["reassessmentInvocationId", "governingRunnerSessionId", "harnessKey", "harnessVersion", "route", "worktree"] {
-            assert!(!serialized.contains(private), "private retained-attention projection field leaked: {private}");
+        for private in [
+            "reassessmentInvocationId",
+            "governingRunnerSessionId",
+            "harnessKey",
+            "harnessVersion",
+            "route",
+            "worktree",
+        ] {
+            assert!(
+                !serialized.contains(private),
+                "private retained-attention projection field leaked: {private}"
+            );
         }
         Connection::open(&fixture.base.database_path).unwrap().execute("UPDATE epic_runner_sprint_result_retained_attentions SET recorded_at='1970-01-01T00:00:00Z' WHERE result_id='terminal-unsettled-result'", []).unwrap();
-        assert!(SqliteOrchestrationRepository::open(&fixture.base.database_path).unwrap().native_query().is_err());
+        assert!(
+            SqliteOrchestrationRepository::open(&fixture.base.database_path)
+                .unwrap()
+                .native_query()
+                .is_err()
+        );
     }
 
     #[test]
     fn direct_result_successor_rejects_a_foreign_reassessment_harness_without_a_transition() {
-        let fixture=ReportingFixture::new();let (source,epic,successor):(String,String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT current.id,current.epic_id,next.id FROM initiated_sprints current JOIN initiated_sprints next ON next.epic_id=current.epic_id AND next.ordinal=current.ordinal+1 ORDER BY current.ordinal LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();let session=AgentSessionId::new("foreign-result-epic-session").unwrap();fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Foreign result Epic Runner".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:harness.runtime_options()}}).unwrap();fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("foreign-result-origin").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"Origin.".into(),title:None,working_directory:None,requested_options:Some(harness.runtime_options())}},None).unwrap();fixture.base.runtime.finish("foreign-result-origin",AgentInvocationTerminalStatus::Completed);
-        let connection=Connection::open(&fixture.base.database_path).unwrap();connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'foreign-result-request',?3,'foreign-result-origin','epic_runner',3,'sprint_runner',2,'foreign-result-sprint-session','foreign-result-sprint-invocation','now','now')",params![source,epic,session.as_str()]).unwrap();connection.execute("INSERT INTO sprint_continuation_decisions VALUES('foreign-result-decision',?1,1,'settled','settled',0,'foreign-result-input','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'foreign-result-decision','settled','now')",[&source]).unwrap();connection.execute("INSERT INTO sprint_upward_results VALUES('foreign-result','foreign-result-decision',?1,'settled','foreign-result-chronology','now')",[&source]).unwrap();drop(connection);fixture.transition.reconcile_sprint_result_receivers_for_test().unwrap();let receiver:String=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='foreign-result'",[],|row|row.get(0)).unwrap();Connection::open(&fixture.base.database_path).unwrap().execute("UPDATE epic_runner_sprint_result_receivers SET harness_key='foreign_result_harness' WHERE result_id='foreign-result'",[]).unwrap();let disposition=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"advance_to_next_approved_sprint".into(),rationale:"only a valid reassessment binding can authorize movement".into(),considered_intent:Some("derive one approved successor".into()),downstream_request:None,human_external_attention:None};assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test(&receiver,disposition),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let connection=Connection::open(&fixture.base.database_path).unwrap();assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1",[&successor],|row|row.get(0)).unwrap(),0);assert_eq!(connection.query_row::<Option<String>,_,_>("SELECT successor_request_id FROM epic_runner_sprint_result_realizations WHERE result_id='foreign-result'",[],|row|row.get(0)).unwrap(),None);
+        let fixture = ReportingFixture::new();
+        let (source,epic,successor):(String,String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT current.id,current.epic_id,next.id FROM initiated_sprints current JOIN initiated_sprints next ON next.epic_id=current.epic_id AND next.ordinal=current.ordinal+1 ORDER BY current.ordinal LIMIT 1",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let session = AgentSessionId::new("foreign-result-epic-session").unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Foreign result Epic Runner".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("foreign-result-origin").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session.clone()),
+                        submitted_text: "Origin.".into(),
+                        title: None,
+                        working_directory: None,
+                        requested_options: Some(harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "foreign-result-origin",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'foreign-result-request',?3,'foreign-result-origin','epic_runner',3,'sprint_runner',2,'foreign-result-sprint-session','foreign-result-sprint-invocation','now','now')",params![source,epic,session.as_str()]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_decisions VALUES('foreign-result-decision',?1,1,'settled','settled',0,'foreign-result-input','now')",[&source]).unwrap();
+        connection.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'foreign-result-decision','settled','now')",[&source]).unwrap();
+        connection.execute("INSERT INTO sprint_upward_results VALUES('foreign-result','foreign-result-decision',?1,'settled','foreign-result-chronology','now')",[&source]).unwrap();
+        drop(connection);
+        fixture
+            .transition
+            .reconcile_sprint_result_receivers_for_test()
+            .unwrap();
+        let receiver:String=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT reassessment_invocation_id FROM epic_runner_sprint_result_receivers WHERE result_id='foreign-result'",[],|row|row.get(0)).unwrap();
+        Connection::open(&fixture.base.database_path).unwrap().execute("UPDATE epic_runner_sprint_result_receivers SET harness_key='foreign_result_harness' WHERE result_id='foreign-result'",[]).unwrap();
+        let disposition =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "advance_to_next_approved_sprint".into(),
+                rationale: "only a valid reassessment binding can authorize movement".into(),
+                considered_intent: Some("derive one approved successor".into()),
+                downstream_request: None,
+                human_external_attention: None,
+            };
+        assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test(&receiver,disposition),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_transitions WHERE sprint_id=?1",
+                    [&successor],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(connection.query_row::<Option<String>,_,_>("SELECT successor_request_id FROM epic_runner_sprint_result_realizations WHERE result_id='foreign-result'",[],|row|row.get(0)).unwrap(),None);
     }
 
     #[test]
     fn direct_sprint_result_rejects_foreign_correlations_without_receiver_effects() {
-        let fixture=ReportingFixture::new(); let (sprint,epic):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-        let session=AgentSessionId::new("direct-negative-epic-session").unwrap(); let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap(); fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:session.clone(),session:CreateAgentSessionCommand{title:Some("Negative Epic".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:harness.runtime_options()}}).unwrap(); fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("direct-negative-original").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"Original.".into(),title:None,working_directory:None,requested_options:Some(harness.runtime_options())}},None).unwrap();fixture.base.runtime.finish("direct-negative-original",AgentInvocationTerminalStatus::Completed);
-        let c=Connection::open(&fixture.base.database_path).unwrap(); c.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'negative-request',?3,'direct-negative-original','epic_runner',3,'sprint_runner',2,'negative-sprint-session','negative-sprint-invocation','now','now')",params![sprint,epic,session.as_str()]).unwrap(); c.execute("INSERT INTO sprint_continuation_decisions VALUES('negative-decision',?1,1,'attention','attention',0,'negative-input','now')",[&sprint]).unwrap();c.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'negative-decision','attention','now')",[&sprint]).unwrap();c.execute("INSERT INTO sprint_upward_results VALUES('negative-result','negative-decision',?1,'attention','negative-chronology','now')",[&sprint]).unwrap();
-        let before=fixture.base.runtime.requests().len(); for (result,decision,source_sprint,source_epic) in [("foreign-result","negative-decision",sprint.as_str(),epic.as_str()),("negative-result","foreign-decision",sprint.as_str(),epic.as_str()),("negative-result","negative-decision","foreign-sprint",epic.as_str()),("negative-result","negative-decision",sprint.as_str(),"foreign-epic")] { assert!(c.execute("INSERT INTO epic_runner_sprint_result_receivers (result_id,decision_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES (?1,?2,?3,?4,?5,'direct-negative-original','bad-invocation',?6,'now','epic_runner_sprint_result_reassessment',1,?7)",params![result,decision,source_sprint,source_epic,session.as_str(),format!("bad-delivery-{result}-{decision}-{source_sprint}-{source_epic}"),format!("bad-correlation-{result}-{decision}-{source_sprint}-{source_epic}")]).is_err()); } drop(c); assert_eq!(fixture.base.runtime.requests().len(),before); assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_sprint_result_receivers",[],|r|r.get(0)).unwrap(),0);
+        let fixture = ReportingFixture::new();
+        let (sprint, epic): (String, String) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let session = AgentSessionId::new("direct-negative-epic-session").unwrap();
+        let harness = conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Negative Epic".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("direct-negative-original").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(session.clone()),
+                        submitted_text: "Original.".into(),
+                        title: None,
+                        working_directory: None,
+                        requested_options: Some(harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "direct-negative-original",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let c = Connection::open(&fixture.base.database_path).unwrap();
+        c.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'negative-request',?3,'direct-negative-original','epic_runner',3,'sprint_runner',2,'negative-sprint-session','negative-sprint-invocation','now','now')",params![sprint,epic,session.as_str()]).unwrap();
+        c.execute("INSERT INTO sprint_continuation_decisions VALUES('negative-decision',?1,1,'attention','attention',0,'negative-input','now')",[&sprint]).unwrap();
+        c.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'negative-decision','attention','now')",[&sprint]).unwrap();
+        c.execute("INSERT INTO sprint_upward_results VALUES('negative-result','negative-decision',?1,'attention','negative-chronology','now')",[&sprint]).unwrap();
+        let before = fixture.base.runtime.requests().len();
+        for (result, decision, source_sprint, source_epic) in [
+            (
+                "foreign-result",
+                "negative-decision",
+                sprint.as_str(),
+                epic.as_str(),
+            ),
+            (
+                "negative-result",
+                "foreign-decision",
+                sprint.as_str(),
+                epic.as_str(),
+            ),
+            (
+                "negative-result",
+                "negative-decision",
+                "foreign-sprint",
+                epic.as_str(),
+            ),
+            (
+                "negative-result",
+                "negative-decision",
+                sprint.as_str(),
+                "foreign-epic",
+            ),
+        ] {
+            assert!(c.execute("INSERT INTO epic_runner_sprint_result_receivers (result_id,decision_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,harness_key,harness_version,correlation_fingerprint) VALUES (?1,?2,?3,?4,?5,'direct-negative-original','bad-invocation',?6,'now','epic_runner_sprint_result_reassessment',1,?7)",params![result,decision,source_sprint,source_epic,session.as_str(),format!("bad-delivery-{result}-{decision}-{source_sprint}-{source_epic}"),format!("bad-correlation-{result}-{decision}-{source_sprint}-{source_epic}")]).is_err());
+        }
+        drop(c);
+        assert_eq!(fixture.base.runtime.requests().len(), before);
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM epic_runner_sprint_result_receivers",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
     fn direct_sprint_result_preseeded_request_and_attention_conflicts_preserve_rows() {
-        let fixture=ReportingFixture::new(); let (sprint,epic):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap(); let c=Connection::open(&fixture.base.database_path).unwrap();
+        let fixture = ReportingFixture::new();
+        let (sprint, epic): (String, String) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id,epic_id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let c = Connection::open(&fixture.base.database_path).unwrap();
         c.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,?2,'conflict-request','conflict-session','conflict-original','epic_runner',3,'sprint_runner',2,'conflict-sprint-session','conflict-sprint-invocation','now','now')",params![sprint,epic]).unwrap();
-        c.pragma_update(None,"foreign_keys",false).unwrap();c.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'conflict-request-decision','attention','now')",[&sprint]).unwrap();c.pragma_update(None,"foreign_keys",true).unwrap();for (n,result,decision,invocation) in [(1,"conflict-request-result","conflict-request-decision","conflict-request-invocation"),(2,"conflict-attention-result","conflict-attention-decision","conflict-attention-invocation")] { c.execute("INSERT INTO sprint_continuation_decisions VALUES(?1,?2,?3,'attention','attention',0,?4,'now')",params![decision,sprint,n,format!("{decision}-input")]).unwrap();c.execute("UPDATE sprint_continuation_current_decisions SET decision_id=?2,updated_at='now' WHERE sprint_id=?1",params![sprint,decision]).unwrap();c.execute("INSERT INTO sprint_upward_results VALUES(?1,?2,?3,'attention',?4,'now')",params![result,decision,sprint,format!("{result}-chronology")]).unwrap();c.execute("INSERT INTO epic_runner_sprint_result_receivers (result_id,decision_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,delivery_persisted_at,harness_key,harness_version,harness_bound_at,launch_requested_at,launch_accepted_at,correlation_fingerprint) VALUES(?1,?2,?3,?4,'conflict-session','conflict-original',?5,?6,'now','now','epic_runner_sprint_result_reassessment',1,'now','now','now',?7)",params![result,decision,sprint,epic,invocation,format!("{result}-delivery"),format!("{result}-correlation")]).unwrap(); }
-        c.pragma_update(None,"foreign_keys",false).unwrap();c.execute("INSERT INTO epic_runner_sprint_result_downstream_requests VALUES('conflict-request-result','seed-request','sprint_runner','{\"seed\":true}','seed-request-fingerprint','seed-now')",[]).unwrap();c.execute("INSERT INTO epic_runner_sprint_result_attentions VALUES('conflict-attention-result','seed-attention','{\"seed\":true}','seed-attention-fingerprint','seed-now')",[]).unwrap();c.pragma_update(None,"foreign_keys",true).unwrap();drop(c);
-        let request=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"return_context_to_sprint_runner".into(),rationale:"retain the exact concern".into(),considered_intent:None,downstream_request:Some(crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamRequest{target:crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamTarget::SprintRunner,dependency:None,request:"request bounded reconsideration".into(),resumption_path:"reassess the same result".into()}),human_external_attention:None};assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test("conflict-request-invocation",request),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        let attention=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"human_or_external_attention".into(),rationale:"retain external attention".into(),considered_intent:None,downstream_request:None,human_external_attention:Some(crate::orchestration::sprint_runner_transition::EpicEscalationAttention{reason:"seeded conflict".into(),authority_needed:"authority".into(),evidence_context:"evidence".into(),resumption_path:"resume same result".into()})};assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test("conflict-attention-invocation",attention),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        let c=Connection::open(&fixture.base.database_path).unwrap();let request_row:(String,String,String,String,String)=c.query_row("SELECT request_id,request_kind,request_json,request_fingerprint,requested_at FROM epic_runner_sprint_result_downstream_requests WHERE result_id='conflict-request-result'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();assert_eq!(request_row,("seed-request".into(),"sprint_runner".into(),"{\"seed\":true}".into(),"seed-request-fingerprint".into(),"seed-now".into()));let attention_row:(String,String,String,String)=c.query_row("SELECT attention_id,attention_json,attention_fingerprint,requested_at FROM epic_runner_sprint_result_attentions WHERE result_id='conflict-attention-result'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();assert_eq!(attention_row,("seed-attention".into(),"{\"seed\":true}".into(),"seed-attention-fingerprint".into(),"seed-now".into()));for result in ["conflict-request-result","conflict-attention-result"]{assert_eq!(c.query_row::<(Option<String>,Option<String>),_,_>("SELECT semantic_reassessment_fact_id,semantic_reassessment_recorded_at FROM epic_runner_sprint_result_receivers WHERE result_id=?1",[result],|r|Ok((r.get(0)?,r.get(1)?))).unwrap(),(None,None));}
+        c.pragma_update(None, "foreign_keys", false).unwrap();
+        c.execute("INSERT INTO sprint_continuation_current_decisions VALUES(?1,'conflict-request-decision','attention','now')",[&sprint]).unwrap();
+        c.pragma_update(None, "foreign_keys", true).unwrap();
+        for (n, result, decision, invocation) in [
+            (
+                1,
+                "conflict-request-result",
+                "conflict-request-decision",
+                "conflict-request-invocation",
+            ),
+            (
+                2,
+                "conflict-attention-result",
+                "conflict-attention-decision",
+                "conflict-attention-invocation",
+            ),
+        ] {
+            c.execute("INSERT INTO sprint_continuation_decisions VALUES(?1,?2,?3,'attention','attention',0,?4,'now')",params![decision,sprint,n,format!("{decision}-input")]).unwrap();
+            c.execute("UPDATE sprint_continuation_current_decisions SET decision_id=?2,updated_at='now' WHERE sprint_id=?1",params![sprint,decision]).unwrap();
+            c.execute(
+                "INSERT INTO sprint_upward_results VALUES(?1,?2,?3,'attention',?4,'now')",
+                params![result, decision, sprint, format!("{result}-chronology")],
+            )
+            .unwrap();
+            c.execute("INSERT INTO epic_runner_sprint_result_receivers (result_id,decision_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,delivery_persisted_at,harness_key,harness_version,harness_bound_at,launch_requested_at,launch_accepted_at,correlation_fingerprint) VALUES(?1,?2,?3,?4,'conflict-session','conflict-original',?5,?6,'now','now','epic_runner_sprint_result_reassessment',1,'now','now','now',?7)",params![result,decision,sprint,epic,invocation,format!("{result}-delivery"),format!("{result}-correlation")]).unwrap();
+        }
+        c.pragma_update(None, "foreign_keys", false).unwrap();
+        c.execute("INSERT INTO epic_runner_sprint_result_downstream_requests VALUES('conflict-request-result','seed-request','sprint_runner','{\"seed\":true}','seed-request-fingerprint','seed-now')",[]).unwrap();
+        c.execute("INSERT INTO epic_runner_sprint_result_attentions VALUES('conflict-attention-result','seed-attention','{\"seed\":true}','seed-attention-fingerprint','seed-now')",[]).unwrap();
+        c.pragma_update(None, "foreign_keys", true).unwrap();
+        drop(c);
+        let request=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition{movement_kind:"return_context_to_sprint_runner".into(),rationale:"retain the exact concern".into(),considered_intent:None,downstream_request:Some(crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamRequest{target:crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamTarget::SprintRunner,dependency:None,request:"request bounded reconsideration".into(),resumption_path:"reassess the same result".into()}),human_external_attention:None};
+        assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test("conflict-request-invocation",request),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let attention =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "human_or_external_attention".into(),
+                rationale: "retain external attention".into(),
+                considered_intent: None,
+                downstream_request: None,
+                human_external_attention: Some(
+                    crate::orchestration::sprint_runner_transition::EpicEscalationAttention {
+                        reason: "seeded conflict".into(),
+                        authority_needed: "authority".into(),
+                        evidence_context: "evidence".into(),
+                        resumption_path: "resume same result".into(),
+                    },
+                ),
+            };
+        assert!(matches!(fixture.transition.record_sprint_result_disposition_for_test("conflict-attention-invocation",attention),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let c = Connection::open(&fixture.base.database_path).unwrap();
+        let request_row:(String,String,String,String,String)=c.query_row("SELECT request_id,request_kind,request_json,request_fingerprint,requested_at FROM epic_runner_sprint_result_downstream_requests WHERE result_id='conflict-request-result'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
+        assert_eq!(
+            request_row,
+            (
+                "seed-request".into(),
+                "sprint_runner".into(),
+                "{\"seed\":true}".into(),
+                "seed-request-fingerprint".into(),
+                "seed-now".into()
+            )
+        );
+        let attention_row:(String,String,String,String)=c.query_row("SELECT attention_id,attention_json,attention_fingerprint,requested_at FROM epic_runner_sprint_result_attentions WHERE result_id='conflict-attention-result'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+        assert_eq!(
+            attention_row,
+            (
+                "seed-attention".into(),
+                "{\"seed\":true}".into(),
+                "seed-attention-fingerprint".into(),
+                "seed-now".into()
+            )
+        );
+        for result in ["conflict-request-result", "conflict-attention-result"] {
+            assert_eq!(c.query_row::<(Option<String>,Option<String>),_,_>("SELECT semantic_reassessment_fact_id,semantic_reassessment_recorded_at FROM epic_runner_sprint_result_receivers WHERE result_id=?1",[result],|r|Ok((r.get(0)?,r.get(1)?))).unwrap(),(None,None));
+        }
     }
 
     #[test]
     fn no_progress_handback_replays_one_agent_dependency_without_higher_effects() {
-        let fixture = ReportingFixture::new(); let review = fixture.ready_review();
-        let sprint: String = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",[],|row|row.get(0)).unwrap();
-        let harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap(); let root = conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap(); let session = AgentSessionId::new("dependency-sprint-runner-session").unwrap();
-        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id:session.clone(), session:CreateAgentSessionCommand { title:Some("Dependency Sprint Runner".into()), working_directory:Some(root), requested_options:harness.runtime_options() }}).unwrap();
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); connection.execute("UPDATE work_unit_handler_activations SET sprint_id=?2 WHERE work_unit_id=?1",params![fixture.work_unit_id,sprint]).unwrap(); connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,'dependency-epic','dependency-request','dependency-epic-session','dependency-epic-invocation','epic_runner',3,'sprint_runner',2,?2,'dependency-original-runner','2026-08-04T00:00:00Z','2026-08-04T00:00:00Z')",params![sprint,session.as_str()]).unwrap(); drop(connection);
-        fixture.transition.record_handler_incomplete_disposition_for_test(&review,crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code:"dependency".into(), explanation:"the exact concern awaits an agent result".into(), classification:crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked, meaningful_progress:false }).unwrap(); fixture.base.runtime.finish(&review,AgentInvocationTerminalStatus::Completed); fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+        let fixture = ReportingFixture::new();
+        let review = fixture.ready_review();
+        let sprint: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let harness = conversation_harness::profile(
+            ConversationHarnessRole::SprintRunnerHandbackReassessment,
+        )
+        .unwrap();
+        let root = conversation_harness::role_discovery_root(
+            ConversationHarnessRole::SprintRunnerHandbackReassessment,
+        )
+        .unwrap();
+        let session = AgentSessionId::new("dependency-sprint-runner-session").unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Dependency Sprint Runner".into()),
+                    working_directory: Some(root),
+                    requested_options: harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection
+            .execute(
+                "UPDATE work_unit_handler_activations SET sprint_id=?2 WHERE work_unit_id=?1",
+                params![fixture.work_unit_id, sprint],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,'dependency-epic','dependency-request','dependency-epic-session','dependency-epic-invocation','epic_runner',3,'sprint_runner',2,?2,'dependency-original-runner','2026-08-04T00:00:00Z','2026-08-04T00:00:00Z')",params![sprint,session.as_str()]).unwrap();
+        drop(connection);
+        fixture.transition.record_handler_incomplete_disposition_for_test(&review,crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code:"dependency".into(), explanation:"the exact concern awaits an agent result".into(), classification:crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked, meaningful_progress:false }).unwrap();
+        fixture
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
         let (handback,invocation):(String,String)=Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT h.handback_id,d.reassessment_invocation_id FROM work_unit_no_progress_handbacks h JOIN sprint_runner_handback_deliveries d ON d.handback_id=h.handback_id WHERE h.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
         let wait=crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind:"wait_for_agent_dependency".into(), rationale:"the exact concern awaits its agent route".into(), eligible_work_summary:None, dependency_owner:Some("bounded Work Unit Handler".into()), dependency_owner_classification:Some(crate::orchestration::sprint_runner_transition::AgentAchievableDependencyOwner::WorkUnitHandler), enabling_result:Some("persisted Handler result".into()), resumption_path:Some("reconcile this Handback".into()), local_exhaustion_summary:None };
-        fixture.transition.record_handback_disposition_for_test(&invocation,wait.clone()).unwrap(); fixture.transition.record_handback_disposition_for_test(&invocation,wait).unwrap(); let reopened=fixture.reopened(); reopened.record_handback_disposition_for_test(&invocation,crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind:"wait_for_agent_dependency".into(), rationale:"the exact concern awaits its agent route".into(), eligible_work_summary:None, dependency_owner:Some("bounded Work Unit Handler".into()), dependency_owner_classification:Some(crate::orchestration::sprint_runner_transition::AgentAchievableDependencyOwner::WorkUnitHandler), enabling_result:Some("persisted Handler result".into()), resumption_path:Some("reconcile this Handback".into()), local_exhaustion_summary:None }).unwrap();
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); let details:String=connection.query_row("SELECT details_json FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap(); assert!(details.contains("work_unit_handler")&&details.contains("bounded Work Unit Handler")&&details.contains("persisted Handler result")&&details.contains("reconcile this Handback")); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0);
-        drop(connection); let invalid=crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind:"wait_for_agent_dependency".into(), rationale:"human gate".into(), eligible_work_summary:None, dependency_owner:Some("human approval".into()), dependency_owner_classification:None, enabling_result:Some("approval".into()), resumption_path:Some("resume".into()), local_exhaustion_summary:None }; assert!(matches!(reopened.record_handback_disposition_for_test(&invocation,invalid),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Invalid)));
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR sprint_start_persisted_at IS NOT NULL OR planning_control_invocation_id IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
+        fixture
+            .transition
+            .record_handback_disposition_for_test(&invocation, wait.clone())
+            .unwrap();
+        fixture
+            .transition
+            .record_handback_disposition_for_test(&invocation, wait)
+            .unwrap();
+        let reopened = fixture.reopened();
+        reopened.record_handback_disposition_for_test(&invocation,crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind:"wait_for_agent_dependency".into(), rationale:"the exact concern awaits its agent route".into(), eligible_work_summary:None, dependency_owner:Some("bounded Work Unit Handler".into()), dependency_owner_classification:Some(crate::orchestration::sprint_runner_transition::AgentAchievableDependencyOwner::WorkUnitHandler), enabling_result:Some("persisted Handler result".into()), resumption_path:Some("reconcile this Handback".into()), local_exhaustion_summary:None }).unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let details:String=connection.query_row("SELECT details_json FROM sprint_runner_handback_dispositions WHERE handback_id=?1 AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap();
+        assert!(
+            details.contains("work_unit_handler")
+                && details.contains("bounded Work Unit Handler")
+                && details.contains("persisted Handler result")
+                && details.contains("reconcile this Handback")
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        drop(connection);
+        let invalid = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition {
+            movement_kind: "wait_for_agent_dependency".into(),
+            rationale: "human gate".into(),
+            eligible_work_summary: None,
+            dependency_owner: Some("human approval".into()),
+            dependency_owner_classification: None,
+            enabling_result: Some("approval".into()),
+            resumption_path: Some("resume".into()),
+            local_exhaustion_summary: None,
+        };
+        assert!(matches!(reopened.record_handback_disposition_for_test(&invocation,invalid),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Invalid)));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR sprint_start_persisted_at IS NOT NULL OR planning_control_invocation_id IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
     }
 
     #[test]
     fn no_progress_handback_delivers_one_epic_receiver_without_higher_effects() {
         let fixture = ReportingFixture::new();
         let review = fixture.ready_review();
-        let sprint_id: String = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1", [], |row| row.get(0)).unwrap();
+        let sprint_id: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT id FROM initiated_sprints ORDER BY ordinal LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         let runner_session = AgentSessionId::new("handback-sprint-runner-session").unwrap();
-        let handback_harness = conversation_harness::profile(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
-        let handback_root = conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap();
-        fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand { session_id: runner_session.clone(), session: CreateAgentSessionCommand { title: Some("Handback Sprint Runner".into()), working_directory: Some(handback_root), requested_options: handback_harness.runtime_options() } }).unwrap();
-        let epic_harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();let epic_session=AgentSessionId::new("handback-epic-runner-session").unwrap();fixture.base.sessions.create_application_session(CreateApplicationAgentSessionCommand{session_id:epic_session.clone(),session:CreateAgentSessionCommand{title:Some("Handback Epic Runner".into()),working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:epic_harness.runtime_options()}}).unwrap();fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("handback-epic-invocation").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(epic_session.clone()),submitted_text:"Original Epic Runner work.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:Some(epic_harness.runtime_options())}},None).unwrap();fixture.base.runtime.finish("handback-epic-invocation",AgentInvocationTerminalStatus::Completed);
-        fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new("handback-active-runner").unwrap(), message: SendAgentSessionMessageCommand { session_id: Some(runner_session.clone()), submitted_text: "Current Sprint Runner work.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap()), requested_options: Some(handback_harness.runtime_options()) } }, None).unwrap();
+        let handback_harness = conversation_harness::profile(
+            ConversationHarnessRole::SprintRunnerHandbackReassessment,
+        )
+        .unwrap();
+        let handback_root = conversation_harness::role_discovery_root(
+            ConversationHarnessRole::SprintRunnerHandbackReassessment,
+        )
+        .unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: runner_session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Handback Sprint Runner".into()),
+                    working_directory: Some(handback_root),
+                    requested_options: handback_harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        let epic_harness =
+            conversation_harness::profile(ConversationHarnessRole::EpicRunner).unwrap();
+        let epic_session = AgentSessionId::new("handback-epic-runner-session").unwrap();
+        fixture
+            .base
+            .sessions
+            .create_application_session(CreateApplicationAgentSessionCommand {
+                session_id: epic_session.clone(),
+                session: CreateAgentSessionCommand {
+                    title: Some("Handback Epic Runner".into()),
+                    working_directory: Some(
+                        conversation_harness::role_discovery_root(
+                            ConversationHarnessRole::EpicRunner,
+                        )
+                        .unwrap(),
+                    ),
+                    requested_options: epic_harness.runtime_options(),
+                },
+            })
+            .unwrap();
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("handback-epic-invocation").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(epic_session.clone()),
+                        submitted_text: "Original Epic Runner work.".into(),
+                        title: None,
+                        working_directory: Some(
+                            conversation_harness::role_discovery_root(
+                                ConversationHarnessRole::EpicRunner,
+                            )
+                            .unwrap(),
+                        ),
+                        requested_options: Some(epic_harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        fixture.base.runtime.finish(
+            "handback-epic-invocation",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("handback-active-runner").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(runner_session.clone()),
+                        submitted_text: "Current Sprint Runner work.".into(),
+                        title: None,
+                        working_directory: Some(
+                            conversation_harness::role_discovery_root(
+                                ConversationHarnessRole::SprintRunnerHandbackReassessment,
+                            )
+                            .unwrap(),
+                        ),
+                        requested_options: Some(handback_harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
         let now = "2026-08-04T00:00:00Z";
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        connection.execute("UPDATE work_unit_handler_activations SET sprint_id=?2 WHERE work_unit_id=?1", params![fixture.work_unit_id,sprint_id]).unwrap();
+        connection
+            .execute(
+                "UPDATE work_unit_handler_activations SET sprint_id=?2 WHERE work_unit_id=?1",
+                params![fixture.work_unit_id, sprint_id],
+            )
+            .unwrap();
         connection.execute("INSERT INTO sprint_runner_transitions (sprint_id,epic_id,request_id,epic_runner_session_id,epic_runner_invocation_id,epic_runner_harness_key,epic_runner_harness_version,sprint_runner_harness_key,sprint_runner_harness_version,sprint_runner_session_id,sprint_runner_invocation_id,requested_at,authorized_at) VALUES (?1,'handback-epic','handback-request',?2,'handback-epic-invocation','epic_runner',3,'sprint_runner',2,?3,'handback-original-runner',?4,?4)",params![sprint_id,epic_session.as_str(),runner_session.as_str(),now]).unwrap();
         drop(connection);
         fixture.transition.record_handler_incomplete_disposition_for_test(&review, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "no_progress".into(), explanation: "the bounded concern did not progress".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied, meaningful_progress: false }).unwrap();
-        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
-        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+        fixture
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         let (handback, invocation, persisted): (String,String,Option<String>) = connection.query_row("SELECT h.handback_id,d.reassessment_invocation_id,d.delivery_persisted_at FROM work_unit_no_progress_handbacks h JOIN sprint_runner_handback_deliveries d ON d.handback_id=h.handback_id WHERE h.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
-        assert!(persisted.is_none(), "an active Runner leaves the exact delivery visibly pending");
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);
+        assert!(
+            persisted.is_none(),
+            "an active Runner leaves the exact delivery visibly pending"
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         for table in [
             "work_slice_execution_graph_completions",
             "work_slice_execution_settlements",
@@ -9292,90 +12719,355 @@ mod tests {
         ] {
             assert_eq!(
                 connection
-                    .query_row::<i64, _, _>(
-                        &format!("SELECT COUNT(*) FROM {table}"),
-                        [],
-                        |row| row.get(0),
-                    )
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row
+                        .get(0),)
                     .unwrap(),
                 0,
                 "{table}"
             );
         }
         drop(connection);
-        fixture.base.runtime.finish("handback-active-runner", AgentInvocationTerminalStatus::Completed);
+        fixture.base.runtime.finish(
+            "handback-active-runner",
+            AgentInvocationTerminalStatus::Completed,
+        );
         fixture.base.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new(invocation.clone()).unwrap(), message: SendAgentSessionMessageCommand { session_id: Some(runner_session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap()), requested_options: Some(handback_harness.runtime_options()) } }).unwrap();
         let reopened = fixture.reopened();
-        let concurrent = fixture.reopened(); let barrier = Arc::new(Barrier::new(2));
-        let calls = [reopened.clone(), concurrent].into_iter().map(|service| { let barrier = barrier.clone(); std::thread::spawn(move || { barrier.wait(); service.reconcile_no_progress_handbacks_for_test() }) }).collect::<Vec<_>>();
-        let results = calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+        let concurrent = fixture.reopened();
+        let barrier = Arc::new(Barrier::new(2));
+        let calls = [reopened.clone(), concurrent]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_no_progress_handbacks_for_test()
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
         assert!(results.iter().all(Result::is_ok), "{results:?}");
         let recovered: (Option<String>,Option<String>,Option<String>,i64) = Connection::open(&fixture.base.database_path).unwrap().query_row("SELECT d.harness_bound_at,d.launch_requested_at,d.launch_accepted_at,(SELECT COUNT(*) FROM sprint_runner_handback_deliveries WHERE handback_id=d.handback_id) FROM sprint_runner_handback_deliveries d WHERE d.handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
-        assert!(recovered.0.is_some() && recovered.1.is_some() && recovered.2.is_some() && recovered.3 == 1);
+        assert!(
+            recovered.0.is_some()
+                && recovered.1.is_some()
+                && recovered.2.is_some()
+                && recovered.3 == 1
+        );
         assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR epic_start_semantic_authorization_recorded_at IS NOT NULL OR sprint_start_persisted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
-        let exhaustion = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "local_exhaustion_escalate".into(), rationale: "the bounded Sprint route is locally exhausted".into(), eligible_work_summary: None, dependency_owner: None, dependency_owner_classification: None, enabling_result: None, resumption_path: None, local_exhaustion_summary: Some("no application-owned Sprint movement remains".into()) };
-        reopened.record_handback_disposition_for_test(&invocation, exhaustion.clone()).unwrap();
-        reopened.record_handback_disposition_for_test(&invocation, exhaustion).unwrap();
+        let exhaustion =
+            crate::orchestration::sprint_runner_transition::SprintHandbackDisposition {
+                movement_kind: "local_exhaustion_escalate".into(),
+                rationale: "the bounded Sprint route is locally exhausted".into(),
+                eligible_work_summary: None,
+                dependency_owner: None,
+                dependency_owner_classification: None,
+                enabling_result: None,
+                resumption_path: None,
+                local_exhaustion_summary: Some(
+                    "no application-owned Sprint movement remains".into(),
+                ),
+            };
+        reopened
+            .record_handback_disposition_for_test(&invocation, exhaustion.clone())
+            .unwrap();
+        reopened
+            .record_handback_disposition_for_test(&invocation, exhaustion)
+            .unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         let facts: (String,Option<String>,i64,i64) = connection.query_row("SELECT d.movement_kind,r.semantic_reassessment_fact_id,(SELECT COUNT(*) FROM sprint_runner_handback_escalations e WHERE e.handback_id=d.handback_id AND e.escalation_intent_id IS NOT NULL AND e.delivery_request_id IS NOT NULL),d.preserves_handback FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries r ON r.handback_id=d.handback_id WHERE d.handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
-        assert_eq!(facts.0,"local_exhaustion_escalate"); assert!(facts.1.is_some()); assert_eq!((facts.2,facts.3),(1,1));
-        let receiver:(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)=connection.query_row("SELECT governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_persisted_at,harness_bound_at,launch_accepted_at,provider_activation_observed_at,semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?))).unwrap();assert_eq!(receiver.0,epic_session.as_str());assert_eq!(receiver.1,"handback-epic-invocation");assert!(receiver.3.is_some()&&receiver.4.is_some()&&receiver.5.is_some());assert_eq!((receiver.6,receiver.7),(None,None));assert!(connection.query_row::<Option<String>,_,_>("SELECT delivery_persisted_at FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
-        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();drop(connection);let reopened_receiver=fixture.reopened();let concurrent_receiver=fixture.reopened();let barrier=Arc::new(Barrier::new(2));let results=[reopened_receiver.clone(),concurrent_receiver.clone()].into_iter().map(|service|{let barrier=barrier.clone();std::thread::spawn(move||{barrier.wait();service.reconcile_epic_escalation_receivers_for_test()})}).collect::<Vec<_>>().into_iter().map(|call|call.join().unwrap()).collect::<Vec<_>>();assert!(results.iter().all(Result::is_ok),"{results:?}");let connection=Connection::open(&fixture.base.database_path).unwrap();assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);assert!(connection.query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());connection.execute("UPDATE sprint_runner_transitions SET epic_runner_invocation_id='divergent-epic-runner' WHERE sprint_id=?1",[&sprint_id]).unwrap();connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();drop(connection);assert!(matches!(reopened_receiver.reconcile_epic_escalation_receivers_for_test(),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));let connection=Connection::open(&fixture.base.database_path).unwrap();connection.execute("UPDATE sprint_runner_transitions SET epic_runner_invocation_id='handback-epic-invocation' WHERE sprint_id=?1",[&sprint_id]).unwrap();connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=COALESCE(launch_accepted_at,'2026-08-05T00:00:00Z') WHERE handback_id=?1",[&handback]).unwrap();drop(connection);fixture.base.runtime.finish(&receiver.2,AgentInvocationTerminalStatus::Completed);reopened_receiver.on_epic_runner_terminal(&AgentInvocationId::new(receiver.2.clone()).unwrap());reopened_receiver.reconcile_epic_escalation_receivers_for_test().unwrap();let connection=Connection::open(&fixture.base.database_path).unwrap();let lifecycle:(Option<String>,Option<String>,Option<String>)=connection.query_row("SELECT provider_activation_observed_at,reassessment_lifecycle_observed_at,semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();assert!(lifecycle.0.is_some()&&lifecycle.1.is_some());assert_eq!(lifecycle.2,None);
-        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();drop(connection);fixture.base.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:AgentInvocationId::new("handback-epic-active").unwrap(),message:SendAgentSessionMessageCommand{session_id:Some(epic_session.clone()),submitted_text:"Other Epic Runner work.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).unwrap()),requested_options:Some(epic_harness.runtime_options())}},None).unwrap();reopened_receiver.reconcile_epic_escalation_receivers_for_test().unwrap();let pending=Connection::open(&fixture.base.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap();assert_eq!(pending,None);fixture.base.runtime.finish("handback-epic-active",AgentInvocationTerminalStatus::Completed);let active=fixture.base.sessions.load_session(&epic_session).unwrap().invocations.into_iter().find(|entry|entry.invocation.id.as_str()=="handback-epic-active").unwrap().invocation;reopened_receiver.on_agent_notification(&AgentSessionNotification::InvocationTerminal{session_id:epic_session.clone(),invocation:active}).unwrap();let connection=Connection::open(&fixture.base.database_path).unwrap();assert!(connection.query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
-        let before: i64 = connection.query_row("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap();
+        assert_eq!(facts.0, "local_exhaustion_escalate");
+        assert!(facts.1.is_some());
+        assert_eq!((facts.2, facts.3), (1, 1));
+        let receiver:(String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,Option<String>)=connection.query_row("SELECT governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_persisted_at,harness_bound_at,launch_accepted_at,provider_activation_observed_at,semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?))).unwrap();
+        assert_eq!(receiver.0, epic_session.as_str());
+        assert_eq!(receiver.1, "handback-epic-invocation");
+        assert!(receiver.3.is_some() && receiver.4.is_some() && receiver.5.is_some());
+        assert_eq!((receiver.6, receiver.7), (None, None));
+        assert!(connection.query_row::<Option<String>,_,_>("SELECT delivery_persisted_at FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
+        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();
         drop(connection);
-        let divergent = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition { movement_kind: "continue_eligible_work".into(), rationale: "different movement".into(), eligible_work_summary: Some("another unit".into()), dependency_owner: None, dependency_owner_classification: None, enabling_result: None, resumption_path: None, local_exhaustion_summary: None };
+        let reopened_receiver = fixture.reopened();
+        let concurrent_receiver = fixture.reopened();
+        let barrier = Arc::new(Barrier::new(2));
+        let results = [reopened_receiver.clone(), concurrent_receiver.clone()]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_epic_escalation_receivers_for_test()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(results.iter().all(Result::is_ok), "{results:?}");
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM epic_runner_escalation_receivers WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert!(connection.query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
+        connection.execute("UPDATE sprint_runner_transitions SET epic_runner_invocation_id='divergent-epic-runner' WHERE sprint_id=?1",[&sprint_id]).unwrap();
+        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();
+        drop(connection);
+        assert!(matches!(reopened_receiver.reconcile_epic_escalation_receivers_for_test(),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        connection.execute("UPDATE sprint_runner_transitions SET epic_runner_invocation_id='handback-epic-invocation' WHERE sprint_id=?1",[&sprint_id]).unwrap();
+        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=COALESCE(launch_accepted_at,'2026-08-05T00:00:00Z') WHERE handback_id=?1",[&handback]).unwrap();
+        drop(connection);
+        fixture
+            .base
+            .runtime
+            .finish(&receiver.2, AgentInvocationTerminalStatus::Completed);
+        reopened_receiver
+            .on_epic_runner_terminal(&AgentInvocationId::new(receiver.2.clone()).unwrap());
+        reopened_receiver
+            .reconcile_epic_escalation_receivers_for_test()
+            .unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let lifecycle:(Option<String>,Option<String>,Option<String>)=connection.query_row("SELECT provider_activation_observed_at,reassessment_lifecycle_observed_at,semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert!(lifecycle.0.is_some() && lifecycle.1.is_some());
+        assert_eq!(lifecycle.2, None);
+        connection.execute("UPDATE epic_runner_escalation_receivers SET launch_accepted_at=NULL WHERE handback_id=?1",[&handback]).unwrap();
+        drop(connection);
+        fixture
+            .base
+            .sessions
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: AgentInvocationId::new("handback-epic-active").unwrap(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: Some(epic_session.clone()),
+                        submitted_text: "Other Epic Runner work.".into(),
+                        title: None,
+                        working_directory: Some(
+                            conversation_harness::role_discovery_root(
+                                ConversationHarnessRole::EpicRunner,
+                            )
+                            .unwrap(),
+                        ),
+                        requested_options: Some(epic_harness.runtime_options()),
+                    },
+                },
+                None,
+            )
+            .unwrap();
+        reopened_receiver
+            .reconcile_epic_escalation_receivers_for_test()
+            .unwrap();
+        let pending=Connection::open(&fixture.base.database_path).unwrap().query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap();
+        assert_eq!(pending, None);
+        fixture.base.runtime.finish(
+            "handback-epic-active",
+            AgentInvocationTerminalStatus::Completed,
+        );
+        let active = fixture
+            .base
+            .sessions
+            .load_session(&epic_session)
+            .unwrap()
+            .invocations
+            .into_iter()
+            .find(|entry| entry.invocation.id.as_str() == "handback-epic-active")
+            .unwrap()
+            .invocation;
+        reopened_receiver
+            .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
+                session_id: epic_session.clone(),
+                invocation: active,
+            })
+            .unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        assert!(connection.query_row::<Option<String>,_,_>("SELECT launch_accepted_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
+        let before: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",
+                [&handback],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let divergent = crate::orchestration::sprint_runner_transition::SprintHandbackDisposition {
+            movement_kind: "continue_eligible_work".into(),
+            rationale: "different movement".into(),
+            eligible_work_summary: Some("another unit".into()),
+            dependency_owner: None,
+            dependency_owner_classification: None,
+            enabling_result: None,
+            resumption_path: None,
+            local_exhaustion_summary: None,
+        };
         assert!(matches!(reopened.record_handback_disposition_for_test(&invocation, divergent), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),before);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_dispositions WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            before
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM sprint_runner_handback_escalations WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR epic_start_semantic_authorization_recorded_at IS NOT NULL OR sprint_start_persisted_at IS NOT NULL OR sprint_continuation_invocation_id IS NOT NULL OR planning_control_invocation_id IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
         let settlement_before: (Option<String>,Option<String>) = connection.query_row("SELECT d.settlement_ready_at,m.settled_at FROM work_unit_handler_decisions d JOIN work_units u ON u.work_unit_id=d.work_unit_id LEFT JOIN work_unit_materializations m ON m.materialization_id=u.materialization_id WHERE d.work_unit_id=?1",[&fixture.work_unit_id],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
-        assert_eq!(settlement_before,(None,None));
+        assert_eq!(settlement_before, (None, None));
         // No Sprint/Epic final-blockage table exists in the authoritative schema or native DTO;
         // this route deliberately records no substitute final-state effect.
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sprint_final_blockages','epic_final_blockages','epic_runner_handback_receivers','sprint_epic_settlements')",[],|row|row.get(0)).unwrap(),0);
         drop(connection);
-        let semantic_context=reopened.epic_escalation_reassessment_context_for_test(&receiver.2).unwrap();
-        assert!(semantic_context.get("acceptedEpicPlan").is_some()&&semantic_context.get("currentSprintState").is_some());
-        assert!(!semantic_context.to_string().contains("handback-epic-runner-session"));
+        let semantic_context = reopened
+            .epic_escalation_reassessment_context_for_test(&receiver.2)
+            .unwrap();
+        assert!(
+            semantic_context.get("acceptedEpicPlan").is_some()
+                && semantic_context.get("currentSprintState").is_some()
+        );
+        assert!(!semantic_context
+            .to_string()
+            .contains("handback-epic-runner-session"));
         let return_context=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind:"return_context_to_sprint_runner".into(),rationale:"the unresolved concern needs an explicit bounded decision from the Sprint Runner".into(),considered_intent:None,downstream_request:Some(crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamRequest { target:crate::orchestration::sprint_runner_transition::EpicEscalationDownstreamTarget::SprintRunner,dependency:None,request:"return the missing dependency decision without clearing this concern".into(),resumption_path:"reassess this exact escalation after the Sprint Runner response".into() }),human_external_attention:None };
-        let barrier=Arc::new(Barrier::new(2)); let concurrent=[reopened.clone(),reopened_receiver.clone()].into_iter().map(|service|{let barrier=barrier.clone();let invocation=receiver.2.clone();let disposition=return_context.clone();std::thread::spawn(move||{barrier.wait();service.record_epic_escalation_disposition_for_test(&invocation,disposition)})}).collect::<Vec<_>>(); assert!(concurrent.into_iter().all(|call|call.join().unwrap().is_ok()));
-        reopened.record_epic_escalation_disposition_for_test(&receiver.2,return_context).unwrap();
-        let divergent=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind:"consider_other_epic_work".into(),rationale:"different disposition".into(),considered_intent:Some("consider a separate safe Epic work area only".into()),downstream_request:None,human_external_attention:None }; assert!(matches!(fixture.reopened().record_epic_escalation_disposition_for_test(&receiver.2,divergent),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        let connection=Connection::open(&fixture.base.database_path).unwrap();
+        let barrier = Arc::new(Barrier::new(2));
+        let concurrent = [reopened.clone(), reopened_receiver.clone()]
+            .into_iter()
+            .map(|service| {
+                let barrier = barrier.clone();
+                let invocation = receiver.2.clone();
+                let disposition = return_context.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.record_epic_escalation_disposition_for_test(&invocation, disposition)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(concurrent
+            .into_iter()
+            .all(|call| call.join().unwrap().is_ok()));
+        reopened
+            .record_epic_escalation_disposition_for_test(&receiver.2, return_context)
+            .unwrap();
+        let divergent =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "consider_other_epic_work".into(),
+                rationale: "different disposition".into(),
+                considered_intent: Some("consider a separate safe Epic work area only".into()),
+                downstream_request: None,
+                human_external_attention: None,
+            };
+        assert!(matches!(fixture.reopened().record_epic_escalation_disposition_for_test(&receiver.2,divergent),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_dispositions WHERE handback_id=?1 AND preserves_handback=1",[&handback],|row|row.get(0)).unwrap(),1);
         assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_downstream_requests WHERE handback_id=?1 AND request_kind='sprint_runner'",[&handback],|row|row.get(0)).unwrap(),1);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_attentions WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap(),0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM epic_runner_escalation_attentions WHERE handback_id=?1",
+                    [&handback],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert!(connection.query_row::<Option<String>,_,_>("SELECT semantic_reassessment_recorded_at FROM epic_runner_escalation_receivers WHERE handback_id=?1",[&handback],|row|row.get(0)).unwrap().is_some());
-        connection.execute_batch("PRAGMA foreign_keys=OFF").unwrap(); let attention_handback="attention-handback"; let attention_invocation="attention-reassessment"; let context_json=r#"{"classification":"blocked","reason":"external policy is missing","evidence":"bounded evidence"}"#; let details_json=r#"{"movementKind":"local_exhaustion_escalate","rationale":"local exhaustion","localExhaustionSummary":"no local route"}"#;
+        connection.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+        let attention_handback = "attention-handback";
+        let attention_invocation = "attention-reassessment";
+        let context_json = r#"{"classification":"blocked","reason":"external policy is missing","evidence":"bounded evidence"}"#;
+        let details_json = r#"{"movementKind":"local_exhaustion_escalate","rationale":"local exhaustion","localExhaustionSummary":"no local route"}"#;
         connection.execute("INSERT INTO work_unit_no_progress_handbacks (handback_id,work_unit_id,source_attempt_id,source_review_invocation_id,decision_fingerprint,classification,context_json,context_fingerprint,persisted_at,delivery_intended_at) VALUES (?1,?2,'attention-attempt','attention-review','attention-decision','blocked',?3,'attention-context','now','now')",params![attention_handback,&fixture.work_unit_id,context_json]).unwrap();
         connection.execute("INSERT INTO sprint_runner_handback_dispositions (handback_id,disposition_id,movement_kind,details_json,disposition_fingerprint,selected_at,preserves_handback) VALUES (?1,'attention-disposition','local_exhaustion_escalate',?2,'attention-fingerprint','now',1)",params![attention_handback,details_json]).unwrap();
         connection.execute("INSERT INTO sprint_runner_handback_escalations (handback_id,escalation_intent_id,delivery_request_id,requested_at,delivery_requested_at,delivery_persisted_at) VALUES (?1,'attention-intent','attention-delivery','now','now','now')",[attention_handback]).unwrap();
-        connection.execute("INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,delivery_persisted_at,harness_key,harness_version,harness_bound_at,launch_requested_at,launch_accepted_at,correlation_fingerprint) VALUES (?1,'attention-intent','attention-delivery',?2,'handback-epic','attention-session','attention-governing',?3,'attention-fact','now','now','epic_runner_escalation_reassessment',2,'now','now','now','attention-correlation')",params![attention_handback,&sprint_id,attention_invocation]).unwrap(); drop(connection);
-        let attention=crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition { movement_kind:"human_or_external_attention".into(),rationale:"the unresolved concern needs policy authority".into(),considered_intent:None,downstream_request:None,human_external_attention:Some(crate::orchestration::sprint_runner_transition::EpicEscalationAttention { reason:"external policy is missing".into(),authority_needed:"designated policy authority".into(),evidence_context:"bounded evidence".into(),resumption_path:"resume this exact reassessment after the policy decision".into() }) };
-        let attention_service=fixture.reopened(); attention_service.record_epic_escalation_disposition_for_test(attention_invocation,attention.clone()).unwrap(); attention_service.record_epic_escalation_disposition_for_test(attention_invocation,attention).unwrap();
-        let connection=Connection::open(&fixture.base.database_path).unwrap(); let attention_json:String=connection.query_row("SELECT attention_json FROM epic_runner_escalation_attentions WHERE handback_id=?1",[attention_handback],|row|row.get(0)).unwrap(); assert!(attention_json.contains("external policy is missing")&&attention_json.contains("designated policy authority")&&attention_json.contains("bounded evidence")&&attention_json.contains("resume this exact reassessment")); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_downstream_requests WHERE handback_id=?1",[attention_handback],|row|row.get(0)).unwrap(),0); assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR sprint_start_persisted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
-        reopened.shutdown(); reopened_receiver.shutdown(); concurrent_receiver.shutdown(); fixture.transition.shutdown();
+        connection.execute("INSERT INTO epic_runner_escalation_receivers (handback_id,escalation_intent_id,delivery_request_id,sprint_id,epic_id,governing_runner_session_id,governing_runner_invocation_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,delivery_persisted_at,harness_key,harness_version,harness_bound_at,launch_requested_at,launch_accepted_at,correlation_fingerprint) VALUES (?1,'attention-intent','attention-delivery',?2,'handback-epic','attention-session','attention-governing',?3,'attention-fact','now','now','epic_runner_escalation_reassessment',2,'now','now','now','attention-correlation')",params![attention_handback,&sprint_id,attention_invocation]).unwrap();
+        drop(connection);
+        let attention =
+            crate::orchestration::sprint_runner_transition::EpicEscalationReassessmentDisposition {
+                movement_kind: "human_or_external_attention".into(),
+                rationale: "the unresolved concern needs policy authority".into(),
+                considered_intent: None,
+                downstream_request: None,
+                human_external_attention: Some(
+                    crate::orchestration::sprint_runner_transition::EpicEscalationAttention {
+                        reason: "external policy is missing".into(),
+                        authority_needed: "designated policy authority".into(),
+                        evidence_context: "bounded evidence".into(),
+                        resumption_path: "resume this exact reassessment after the policy decision"
+                            .into(),
+                    },
+                ),
+            };
+        let attention_service = fixture.reopened();
+        attention_service
+            .record_epic_escalation_disposition_for_test(attention_invocation, attention.clone())
+            .unwrap();
+        attention_service
+            .record_epic_escalation_disposition_for_test(attention_invocation, attention)
+            .unwrap();
+        let connection = Connection::open(&fixture.base.database_path).unwrap();
+        let attention_json: String = connection
+            .query_row(
+                "SELECT attention_json FROM epic_runner_escalation_attentions WHERE handback_id=?1",
+                [attention_handback],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            attention_json.contains("external policy is missing")
+                && attention_json.contains("designated policy authority")
+                && attention_json.contains("bounded evidence")
+                && attention_json.contains("resume this exact reassessment")
+        );
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM epic_runner_escalation_downstream_requests WHERE handback_id=?1",[attention_handback],|row|row.get(0)).unwrap(),0);
+        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_runner_transitions WHERE epic_continuation_invocation_id IS NOT NULL OR sprint_start_persisted_at IS NOT NULL",[],|row|row.get(0)).unwrap(),0);
+        reopened.shutdown();
+        reopened_receiver.shutdown();
+        concurrent_receiver.shutdown();
+        fixture.transition.shutdown();
     }
 
     #[test]
     fn implementer_reporting_exact_retries_replay_without_replacement_and_divergence_conflicts() {
         let fixture = ReportingFixture::new();
         let barrier = Arc::new(Barrier::new(2));
-        let calls = (0..2).map(|_| {
-            let service = fixture.transition.clone();
-            let invocation = fixture.invocation();
-            let claims = fixture.claims();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.submit_implementation_outcome(&invocation, claims)
+        let calls = (0..2)
+            .map(|_| {
+                let service = fixture.transition.clone();
+                let invocation = fixture.invocation();
+                let claims = fixture.claims();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.submit_implementation_outcome(&invocation, claims)
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
         let recorded = fixture.facts();
-        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        fixture
+            .transition
+            .submit_implementation_outcome(&fixture.invocation(), fixture.claims())
+            .unwrap();
         assert_eq!(fixture.facts(), recorded);
         let mut divergent = fixture.claims();
         divergent.summary = "A different implementation claim.".into();
@@ -9385,15 +13077,27 @@ mod tests {
         ));
         assert_eq!(fixture.facts(), recorded);
         assert_eq!(fixture.identities(), fixture.expected_identities);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_implementer_outcomes", [], |row| row.get(0),
-        ).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
-    fn implementer_reporting_requires_pinned_file_evidence_then_completed_lifecycle_for_review_readiness() {
+    fn implementer_reporting_requires_pinned_file_evidence_then_completed_lifecycle_for_review_readiness(
+    ) {
         let fixture = ReportingFixture::new();
-        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        fixture
+            .transition
+            .submit_implementation_outcome(&fixture.invocation(), fixture.claims())
+            .unwrap();
         assert!(matches!(
             fixture.transition.complete_implementation_outcome(&fixture.invocation()),
             Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)
@@ -9405,32 +13109,52 @@ mod tests {
         fixture.write_evidence("implemented reporting boundary\n");
         fixture.assert_pinned_evidence_available();
         let barrier = Arc::new(Barrier::new(2));
-        let calls = (0..2).map(|_| {
-            let service = fixture.transition.clone();
-            let invocation = fixture.invocation();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.complete_implementation_outcome(&invocation)
+        let calls = (0..2)
+            .map(|_| {
+                let service = fixture.transition.clone();
+                let invocation = fixture.invocation();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.complete_implementation_outcome(&invocation)
+                })
             })
-        }).collect::<Vec<_>>();
-        let results = calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
         assert!(results.iter().any(Result::is_ok), "{results:?}");
-        fixture.transition.complete_implementation_outcome(&fixture.invocation()).unwrap();
+        fixture
+            .transition
+            .complete_implementation_outcome(&fixture.invocation())
+            .unwrap();
         let completed_semantic = fixture.facts();
-        assert!(completed_semantic.evidence_manifest.as_deref().is_some_and(|value| value.contains("README.md")));
+        assert!(completed_semantic
+            .evidence_manifest
+            .as_deref()
+            .is_some_and(|value| value.contains("README.md")));
         assert!(completed_semantic.comparison_fingerprint.is_some());
         assert!(completed_semantic.evidence_contents.is_some());
         assert!(completed_semantic.evidence_ready_at.is_some());
         assert!(completed_semantic.semantic_completed_at.is_some());
-        assert_eq!(completed_semantic.semantic_invocation.as_deref(), Some(fixture.reporting_invocation_id.as_str()));
+        assert_eq!(
+            completed_semantic.semantic_invocation.as_deref(),
+            Some(fixture.reporting_invocation_id.as_str())
+        );
         assert!(completed_semantic.application_accepted_at.is_none());
         assert!(completed_semantic.handler_review_ready_at.is_none());
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<String, _, _>(
-            "SELECT role_id FROM execution_support_grants WHERE attempt_id=?1",
-            [&fixture.attempt_id],
-            |row| row.get(0),
-        ).unwrap(), "work_unit_implementer");
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT role_id FROM execution_support_grants WHERE attempt_id=?1",
+                    [&fixture.attempt_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "work_unit_implementer"
+        );
 
         fixture.enable_notifications();
         fixture.finish(AgentInvocationTerminalStatus::Completed);
@@ -9442,7 +13166,8 @@ mod tests {
     }
 
     #[test]
-    fn implementer_reporting_rejects_wrong_foreign_stale_and_terminal_calls_without_semantic_facts() {
+    fn implementer_reporting_rejects_wrong_foreign_stale_and_terminal_calls_without_semantic_facts()
+    {
         let fixture = ReportingFixture::new();
         for invocation in [
             AgentInvocationId::new(fixture.implementer_invocation_id.clone()).unwrap(),
@@ -9488,11 +13213,20 @@ mod tests {
         ));
         terminal.assert_no_submission_evidence_or_completion();
 
-        for status in [AgentInvocationTerminalStatus::Failed, AgentInvocationTerminalStatus::Canceled] {
+        for status in [
+            AgentInvocationTerminalStatus::Failed,
+            AgentInvocationTerminalStatus::Canceled,
+        ] {
             let lifecycle = ReportingFixture::new();
-            lifecycle.transition.submit_implementation_outcome(&lifecycle.invocation(), lifecycle.claims()).unwrap();
+            lifecycle
+                .transition
+                .submit_implementation_outcome(&lifecycle.invocation(), lifecycle.claims())
+                .unwrap();
             lifecycle.write_evidence("non-completed lifecycle evidence\n");
-            lifecycle.transition.complete_implementation_outcome(&lifecycle.invocation()).unwrap();
+            lifecycle
+                .transition
+                .complete_implementation_outcome(&lifecycle.invocation())
+                .unwrap();
             lifecycle.enable_notifications();
             lifecycle.finish(status);
             let facts = lifecycle.facts();
@@ -9506,22 +13240,30 @@ mod tests {
     #[test]
     fn implementer_reporting_reopen_reconciles_exact_identities_and_drift_blocks_acceptance() {
         let fixture = ReportingFixture::new();
-        fixture.transition.submit_implementation_outcome(&fixture.invocation(), fixture.claims()).unwrap();
+        fixture
+            .transition
+            .submit_implementation_outcome(&fixture.invocation(), fixture.claims())
+            .unwrap();
         fixture.write_evidence("reopen evidence\n");
         fixture.assert_pinned_evidence_available();
-        fixture.transition.complete_implementation_outcome(&fixture.invocation()).unwrap();
+        fixture
+            .transition
+            .complete_implementation_outcome(&fixture.invocation())
+            .unwrap();
         fixture.finish(AgentInvocationTerminalStatus::Completed);
         assert!(fixture.facts().lifecycle_status.is_none());
         let reopened = fixture.reopened();
         let barrier = Arc::new(Barrier::new(2));
-        let calls = (0..2).map(|_| {
-            let service = reopened.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.reconcile_reporting_for_test()
+        let calls = (0..2)
+            .map(|_| {
+                let service = reopened.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.reconcile_reporting_for_test()
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
         let accepted = fixture.facts();
         assert_eq!(accepted.lifecycle_status.as_deref(), Some("completed"));
@@ -9530,9 +13272,15 @@ mod tests {
         assert_eq!(fixture.identities(), fixture.expected_identities);
 
         let evidence_drift = ReportingFixture::new();
-        evidence_drift.transition.submit_implementation_outcome(&evidence_drift.invocation(), evidence_drift.claims()).unwrap();
+        evidence_drift
+            .transition
+            .submit_implementation_outcome(&evidence_drift.invocation(), evidence_drift.claims())
+            .unwrap();
         evidence_drift.write_evidence("captured evidence\n");
-        evidence_drift.transition.complete_implementation_outcome(&evidence_drift.invocation()).unwrap();
+        evidence_drift
+            .transition
+            .complete_implementation_outcome(&evidence_drift.invocation())
+            .unwrap();
         evidence_drift.finish(AgentInvocationTerminalStatus::Completed);
         evidence_drift.write_evidence("changed after capture\n");
         assert!(matches!(
@@ -9544,9 +13292,15 @@ mod tests {
 
         for column in ["semantic_payload_json", "submission_fingerprint"] {
             let payload_drift = ReportingFixture::new();
-            payload_drift.transition.submit_implementation_outcome(&payload_drift.invocation(), payload_drift.claims()).unwrap();
+            payload_drift
+                .transition
+                .submit_implementation_outcome(&payload_drift.invocation(), payload_drift.claims())
+                .unwrap();
             payload_drift.write_evidence("payload evidence\n");
-            payload_drift.transition.complete_implementation_outcome(&payload_drift.invocation()).unwrap();
+            payload_drift
+                .transition
+                .complete_implementation_outcome(&payload_drift.invocation())
+                .unwrap();
             payload_drift.finish(AgentInvocationTerminalStatus::Completed);
             let value = if column == "semantic_payload_json" {
                 r#"{"summary":"Implemented the reporting boundary.","outcome":"review_pending","validationStatement":"Focused deterministic proof passed."}"#
@@ -9569,13 +13323,17 @@ mod tests {
     #[test]
     fn reserved_implementer_reporting_row_is_reopen_and_startup_safe() {
         let fixture = Fixture::unstarted();
-        let service = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        ).unwrap();
+        let service =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         drop(service);
         let connection = Connection::open(&fixture.database_path).unwrap();
-        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
         connection.execute(
             "INSERT INTO work_unit_implementer_outcomes (
                 work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,
@@ -9587,12 +13345,16 @@ mod tests {
                        '2026-08-04T00:00:00Z')",
             [],
         ).unwrap();
-        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
         drop(connection);
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.database_path,
-            fixture.sessions.clone(),
-        ).unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.database_path,
+                fixture.sessions.clone(),
+            )
+            .unwrap();
         assert_eq!(reopened.reconcile_startup().unwrap(), 0);
         assert_eq!(Connection::open(&fixture.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_implementer_outcomes
@@ -9612,21 +13374,66 @@ mod tests {
         ).unwrap();
         assert_eq!(review_facts.0, accepted.handler_session_id);
         assert_eq!(review_facts.1, review);
-        assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some());
-        let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
-        assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
-        assert!(pinned.profile.runtime_configuration_args().iter().any(|value| value == "approval_policy=\"never\""));
-        assert_eq!(pinned.profile.mcp.enabled_tools, ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"]);
-        let evidence: serde_json::Value = serde_json::from_str(&accepted.transition.handler_review_evidence_for_test(&review).unwrap()).unwrap();
+        assert!(
+            review_facts.5.is_some()
+                && review_facts.6.is_some()
+                && review_facts.7.is_some()
+                && review_facts.8.is_some()
+                && review_facts.9.is_some()
+        );
+        let pinned = accepted
+            .handler
+            .load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4)
+            .unwrap();
+        assert_eq!(
+            pinned.profile.runtime_options().sandbox,
+            Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
+        );
+        assert!(pinned
+            .profile
+            .runtime_configuration_args()
+            .iter()
+            .any(|value| value == "approval_policy=\"never\""));
+        assert_eq!(
+            pinned.profile.mcp.enabled_tools,
+            [
+                "read_handler_review_evidence",
+                "accept_implementation_outcome",
+                "return_implementation_outcome"
+            ]
+        );
+        let evidence: serde_json::Value = serde_json::from_str(
+            &accepted
+                .transition
+                .handler_review_evidence_for_test(&review)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(evidence["summary"], "Implemented the reporting boundary.");
-        assert!(!evidence["changedFiles"].is_null() && !evidence["evidenceContentFingerprints"].is_null());
+        assert!(
+            !evidence["changedFiles"].is_null()
+                && !evidence["evidenceContentFingerprints"].is_null()
+        );
         let launches_before_reopen = accepted.base.runtime.requests().len();
         Connection::open(&accepted.base.database_path).unwrap().execute("UPDATE work_unit_handler_reviews SET delivery_persisted_at=NULL,harness_bound_at=NULL,launch_requested_at=NULL,launch_accepted_at=NULL,review_ready_at=NULL WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
         let reopened = accepted.reopened();
         reopened.reconcile_handler_reviews_for_test().unwrap();
-        assert_eq!(accepted.base.runtime.requests().len(), launches_before_reopen);
+        assert_eq!(
+            accepted.base.runtime.requests().len(),
+            launches_before_reopen
+        );
         assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<String,_,_>("SELECT review_invocation_id FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), review);
-        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_reviews", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&accepted.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_reviews",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND delivery_persisted_at IS NOT NULL AND harness_bound_at IS NOT NULL AND launch_requested_at IS NOT NULL AND launch_accepted_at IS NOT NULL AND review_ready_at IS NOT NULL", [&accepted.work_unit_id], |row| row.get(0)).unwrap(), 1);
         let connection = Connection::open(&accepted.base.database_path).unwrap();
         let (delivered,delivery_fingerprint):(String,String) = connection.query_row("SELECT delivered_payload_json,delivered_payload_fingerprint FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
@@ -9640,32 +13447,91 @@ mod tests {
         connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint='drifted-delivery' WHERE work_unit_id=?1", [&accepted.work_unit_id]).unwrap();
         assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
         connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint=?1 WHERE work_unit_id=?2", params![delivery_fingerprint,accepted.work_unit_id]).unwrap();
-        for invocation in [&accepted.handler_invocation_id, &accepted.handler_action_invocation_id, &accepted.implementer_invocation_id, &accepted.reporting_invocation_id, "foreign-review"] {
+        for invocation in [
+            &accepted.handler_invocation_id,
+            &accepted.handler_action_invocation_id,
+            &accepted.implementer_invocation_id,
+            &accepted.reporting_invocation_id,
+            "foreign-review",
+        ] {
             assert!(matches!(reopened.handler_review_evidence_for_test(invocation), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
         }
-        reopened.record_handler_review_judgment_for_test(&review, "accept", None).unwrap();
-        reopened.record_handler_review_judgment_for_test(&review, "accept", None).unwrap();
-        assert_eq!(Connection::open(&accepted.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+        reopened
+            .record_handler_review_judgment_for_test(&review, "accept", None)
+            .unwrap();
+        reopened
+            .record_handler_review_judgment_for_test(&review, "accept", None)
+            .unwrap();
+        assert_eq!(
+            Connection::open(&accepted.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_decisions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert!(matches!(reopened.record_handler_review_judgment_for_test(&review, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() })), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        accepted.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        accepted
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
         let decision:(String,Option<String>) = Connection::open(&accepted.base.database_path).unwrap().query_row("SELECT decision_variant,settlement_ready_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&accepted.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
         assert_eq!(decision, ("accepted".into(), None));
         assert!(matches!(reopened.handler_review_evidence_for_test(&review), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
 
         let returned = ReportingFixture::new();
         let returned_review = returned.ready_review();
-        let reason = crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason { code: "review_failed".into(), explanation: "evidence requires correction".into() };
-        returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
-        returned.transition.record_handler_review_judgment_for_test(&returned_review, "return", Some(reason.clone())).unwrap();
+        let reason = crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+            code: "review_failed".into(),
+            explanation: "evidence requires correction".into(),
+        };
+        returned
+            .transition
+            .record_handler_review_judgment_for_test(
+                &returned_review,
+                "return",
+                Some(reason.clone()),
+            )
+            .unwrap();
+        returned
+            .transition
+            .record_handler_review_judgment_for_test(
+                &returned_review,
+                "return",
+                Some(reason.clone()),
+            )
+            .unwrap();
         assert!(matches!(returned.transition.record_handler_review_judgment_for_test(&returned_review, "accept", None), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        returned.base.runtime.finish(&returned_review, AgentInvocationTerminalStatus::Completed);
-        returned.transition.reconcile_handler_reviews_for_test().unwrap();
+        returned
+            .base
+            .runtime
+            .finish(&returned_review, AgentInvocationTerminalStatus::Completed);
+        returned
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
         let return_decision:(String,String,Option<String>,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row("SELECT decision_variant,return_reason_json,settlement_ready_at,retry_required_at FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&returned.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert_eq!(return_decision.0, "returned");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&return_decision.1).unwrap()["code"], "review_failed");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&return_decision.1).unwrap()["code"],
+            "review_failed"
+        );
         assert!(return_decision.2.is_none());
         assert!(return_decision.3.is_some());
-        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&returned.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_activations WHERE work_unit_id=?1",
+                    [&returned.work_unit_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         let retry: (i64,String,String,String,String,Option<String>,Option<String>,Option<String>,Option<String>,String) = Connection::open(&returned.base.database_path).unwrap().query_row(
             "SELECT ordinal,origin_attempt_id,retry_attempt_id,implementer_session_id,implementer_invocation_id,candidate_pinned_at,launch_accepted_at,retry_ready_at,failure_reason,handoff_json FROM work_unit_retry_attempts WHERE work_unit_id=?1",
             [&returned.work_unit_id],
@@ -9684,20 +13550,38 @@ mod tests {
         let launches_before_reopen = returned.base.runtime.requests().len();
         let reopened_retry = returned.reopened();
         reopened_retry.reconcile_handler_reviews_for_test().unwrap();
-        assert_eq!(returned.base.runtime.requests().len(), launches_before_reopen);
+        assert_eq!(
+            returned.base.runtime.requests().len(),
+            launches_before_reopen
+        );
         let retry_after_reopen: (String,String,String,String,String,String) = Connection::open(&returned.base.database_path).unwrap().query_row(
             "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,private_ref_name,candidate_commit_id,sprint_current_object_id FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
         ).unwrap();
-        assert_eq!((retry_after_reopen.0.clone(), retry_after_reopen.1.clone(), retry_after_reopen.2.clone()), retry_before_reopen);
+        assert_eq!(
+            (
+                retry_after_reopen.0.clone(),
+                retry_after_reopen.1.clone(),
+                retry_after_reopen.2.clone()
+            ),
+            retry_before_reopen
+        );
         Connection::open(&returned.base.database_path).unwrap().execute(
             "UPDATE work_unit_retry_attempts SET sprint_baseline_object_id='tampered-baseline' WHERE work_unit_id=?1",
             [&returned.work_unit_id],
         ).unwrap();
         assert!(matches!(reopened_retry.reconcile_handler_reviews_for_test(), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
-            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
-        ).unwrap(), "retry_immutable_lineage_mismatch");
+        assert_eq!(
+            Connection::open(&returned.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                    [&returned.work_unit_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "retry_immutable_lineage_mismatch"
+        );
         Connection::open(&returned.base.database_path).unwrap().execute(
             "UPDATE work_unit_retry_attempts SET sprint_baseline_object_id=(SELECT baseline_object_id FROM initiated_sprint_git_authorities WHERE authority_id=?2),failure_reason=NULL WHERE work_unit_id=?1",
             params![returned.work_unit_id, returned.authority_id],
@@ -9706,22 +13590,36 @@ mod tests {
         let authority_root: String = Connection::open(&returned.base.database_path).unwrap().query_row(
             "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1", [&returned.authority_id], |row| row.get(0),
         ).unwrap();
-        let retarget = std::process::Command::new("git").args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.5])
-            .current_dir(&authority_root).output().unwrap();
+        let retarget = std::process::Command::new("git")
+            .args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.5])
+            .current_dir(&authority_root)
+            .output()
+            .unwrap();
         assert!(retarget.status.success());
         assert!(matches!(reopened_retry.reconcile_handler_reviews_for_test(), Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict)));
-        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
-            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
-        ).unwrap(), "retry_private_ref_pin_failed");
-        let restore = std::process::Command::new("git").args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.4])
-            .current_dir(&authority_root).output().unwrap();
+        assert_eq!(
+            Connection::open(&returned.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                    [&returned.work_unit_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "retry_private_ref_pin_failed"
+        );
+        let restore = std::process::Command::new("git")
+            .args(["update-ref", &retry_after_reopen.3, &retry_after_reopen.4])
+            .current_dir(&authority_root)
+            .output()
+            .unwrap();
         assert!(restore.status.success());
         reopened_retry.reconcile_handler_reviews_for_test().unwrap();
         let recovered: (String,String,String,Option<String>,Option<String>) = Connection::open(&returned.base.database_path).unwrap().query_row(
             "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,failure_reason,retry_ready_at FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
         ).unwrap();
-        assert_eq!((recovered.0,recovered.1,recovered.2), retry_before_reopen);
+        assert_eq!((recovered.0, recovered.1, recovered.2), retry_before_reopen);
         assert!(recovered.3.is_none() && recovered.4.is_some());
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
             "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1", [&returned.work_unit_id], |row| row.get(0),
@@ -9732,9 +13630,17 @@ mod tests {
         let source_drift = returned.working_directory.join("retry-source-drift.txt");
         fs::write(&source_drift, "untracked retry source drift\n").unwrap();
         assert!(reopened_retry.reconcile_handler_reviews_for_test().is_err());
-        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>(
-            "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0),
-        ).unwrap(), "retry_evidence_revalidation_failed");
+        assert_eq!(
+            Connection::open(&returned.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                    [&returned.work_unit_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            "retry_evidence_revalidation_failed"
+        );
         fs::remove_file(source_drift).unwrap();
         reopened_retry.reconcile_handler_reviews_for_test().unwrap();
         assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<i64,_,_>(
@@ -9743,7 +13649,12 @@ mod tests {
         // Policy B: a runtime start error terminally fails this exact ordinal-1 invocation.  The
         // retry row remains factual and unready; reopen only observes it and never relaunches.
         let connection = Connection::open(&returned.base.database_path).unwrap();
-        connection.execute("DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&retry_before_reopen.2]).unwrap();
+        connection
+            .execute(
+                "DELETE FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1",
+                [&retry_before_reopen.2],
+            )
+            .unwrap();
         connection.execute("UPDATE agent_session_invocations SET status='pending',effective_options_json=NULL,started_at=NULL,completed_at=NULL,exit_code=NULL,signal=NULL,runtime_error_json=NULL WHERE id=?1", [&retry_before_reopen.2]).unwrap();
         connection.execute("UPDATE work_unit_retry_attempts SET launch_accepted_at=NULL,provider_activation_observed_at=NULL,retry_ready_at=NULL,failure_reason=NULL WHERE work_unit_id=?1", [&returned.work_unit_id]).unwrap();
         drop(connection);
@@ -9754,26 +13665,82 @@ mod tests {
             "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,failure_reason,launch_accepted_at,provider_activation_observed_at,retry_ready_at,(SELECT status FROM agent_session_invocations WHERE id=implementer_invocation_id) FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
         ).unwrap();
-        assert_eq!((terminal_failure.0.clone(),terminal_failure.1.clone(),terminal_failure.2.clone()), retry_before_reopen);
+        assert_eq!(
+            (
+                terminal_failure.0.clone(),
+                terminal_failure.1.clone(),
+                terminal_failure.2.clone()
+            ),
+            retry_before_reopen
+        );
         assert_eq!(terminal_failure.3, "retry_terminal_launch_failed");
-        assert!(terminal_failure.4.is_none() && terminal_failure.5.is_none() && terminal_failure.6.is_none());
+        assert!(
+            terminal_failure.4.is_none()
+                && terminal_failure.5.is_none()
+                && terminal_failure.6.is_none()
+        );
         assert_eq!(terminal_failure.7, "failed");
         let terminal_reopen = returned.reopened();
-        terminal_reopen.reconcile_handler_reviews_for_test().unwrap();
-        assert_eq!(returned.base.runtime.requests().len(), launches_before_terminal_failure + 1);
-        assert_eq!(Connection::open(&returned.base.database_path).unwrap().query_row::<String,_,_>("SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1", [&returned.work_unit_id], |row| row.get(0)).unwrap(), "retry_terminal_launch_failed");
+        terminal_reopen
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
+        assert_eq!(
+            returned.base.runtime.requests().len(),
+            launches_before_terminal_failure + 1
+        );
+        assert_eq!(
+            Connection::open(&returned.base.database_path)
+                .unwrap()
+                .query_row::<String, _, _>(
+                    "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                    [&returned.work_unit_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "retry_terminal_launch_failed"
+        );
 
         let without_judgment = ReportingFixture::new();
         let without_judgment_review = without_judgment.ready_review();
-        without_judgment.base.runtime.finish(&without_judgment_review, AgentInvocationTerminalStatus::Completed);
-        assert_eq!(Connection::open(&without_judgment.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+        without_judgment.base.runtime.finish(
+            &without_judgment_review,
+            AgentInvocationTerminalStatus::Completed,
+        );
+        assert_eq!(
+            Connection::open(&without_judgment.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_decisions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
 
-        for status in [AgentInvocationTerminalStatus::Failed, AgentInvocationTerminalStatus::Canceled, AgentInvocationTerminalStatus::Interrupted] {
+        for status in [
+            AgentInvocationTerminalStatus::Failed,
+            AgentInvocationTerminalStatus::Canceled,
+            AgentInvocationTerminalStatus::Interrupted,
+        ] {
             let terminal = ReportingFixture::new();
             let terminal_review = terminal.ready_review();
-            terminal.transition.record_handler_review_judgment_for_test(&terminal_review, "accept", None).unwrap();
+            terminal
+                .transition
+                .record_handler_review_judgment_for_test(&terminal_review, "accept", None)
+                .unwrap();
             terminal.base.runtime.finish(&terminal_review, status);
-            assert_eq!(Connection::open(&terminal.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_decisions", [], |row| row.get(0)).unwrap(), 0);
+            assert_eq!(
+                Connection::open(&terminal.base.database_path)
+                    .unwrap()
+                    .query_row::<i64, _, _>(
+                        "SELECT COUNT(*) FROM work_unit_handler_decisions",
+                        [],
+                        |row| row.get(0)
+                    )
+                    .unwrap(),
+                0
+            );
         }
     }
 
@@ -9804,23 +13771,64 @@ mod tests {
                 service.reconcile_handler_reviews_for_test()
             })
         });
-        assert!(drains.into_iter().all(|drain| drain.join().unwrap().is_ok()));
+        assert!(drains
+            .into_iter()
+            .all(|drain| drain.join().unwrap().is_ok()));
 
-        let (attempt, session, invocation, revision, private_ref, pinned, accepted, ready):
-            (String, String, String, String, String, Option<String>, Option<String>, Option<String>) =
-            Connection::open(&fixture.base.database_path).unwrap().query_row(
+        let (attempt, session, invocation, revision, private_ref, pinned, accepted, ready): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
                 "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,
                         implementer_harness_revision_id,private_ref_name,candidate_pinned_at,
                         launch_accepted_at,retry_ready_at
                  FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1",
                 [&fixture.work_unit_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?)),
-            ).unwrap();
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
         assert!(pinned.is_some() && accepted.is_some() && ready.is_some());
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         assert_eq!(fixture.retry_count(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1",
+                    [&attempt],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1 AND session_id=?2 AND input_provenance='application'", params![invocation, session], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE implementer_harness_revision_id=?1", [&revision], |row| row.get(0)).unwrap(), 1);
@@ -9831,19 +13839,47 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         let target = std::process::Command::new("git")
-            .args(["rev-parse", "--verify", &format!("{private_ref}^{{commit}}")])
+            .args([
+                "rev-parse",
+                "--verify",
+                &format!("{private_ref}^{{commit}}"),
+            ])
             .current_dir(authority_root)
-            .output().unwrap();
+            .output()
+            .unwrap();
         assert!(target.status.success());
-        assert_eq!(fixture.base.runtime.requests().iter().filter(|request| request.invocation_id.as_str() == invocation).count(), 1);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1",
-            [&fixture.work_unit_id], |row| row.get(0),
-        ).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
-            "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
-            [&fixture.work_unit_id], |row| row.get(0),
-        ).unwrap(), 1);
+        assert_eq!(
+            fixture
+                .base
+                .runtime
+                .requests()
+                .iter()
+                .filter(|request| request.invocation_id.as_str() == invocation)
+                .count(),
+            1
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1",
+                    [&fixture.work_unit_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
+                    [&fixture.work_unit_id],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -9862,19 +13898,39 @@ mod tests {
             "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
             params![first_review, "2026-08-04T00:00:01Z"],
         ).unwrap();
-        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+        fixture
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
 
         let (first_attempt, first_implementer, revision, digest, commit): (String, String, String, String, String) =
             Connection::open(&fixture.base.database_path).unwrap().query_row(
                 "SELECT retry_attempt_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=1",
                 [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             ).unwrap();
-        let pinned = fixture.handler.load_pinned_implementer_revision(&revision, &digest, &commit).unwrap();
-        let package = fixture.handler.construct_for_pinned_profile(&first_attempt, WorkUnitHarnessRole::Implementer, pinned.profile).unwrap();
+        let pinned = fixture
+            .handler
+            .load_pinned_implementer_revision(&revision, &digest, &commit)
+            .unwrap();
+        let package = fixture
+            .handler
+            .construct_for_pinned_profile(
+                &first_attempt,
+                WorkUnitHarnessRole::Implementer,
+                pinned.profile,
+            )
+            .unwrap();
         let workspace = PathBuf::from(package.working_directory());
         fs::write(workspace.join("README.md"), "ordinal-one evidence\n").unwrap();
-        for arguments in [["add", "README.md"].as_slice(), ["commit", "-m", "ordinal one evidence"].as_slice()] {
-            let output = std::process::Command::new("git").args(arguments).current_dir(&workspace).output().unwrap();
+        for arguments in [
+            ["add", "README.md"].as_slice(),
+            ["commit", "-m", "ordinal one evidence"].as_slice(),
+        ] {
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(&workspace)
+                .output()
+                .unwrap();
             assert!(output.status.success(), "{output:?}");
         }
         Connection::open(&fixture.base.database_path).unwrap().execute(
@@ -9885,14 +13941,23 @@ mod tests {
             "UPDATE work_unit_implementer_activations SET implementer_ready_at=NULL WHERE work_unit_id=?1",
             [&fixture.work_unit_id],
         ).unwrap();
-        fixture.transition.prepare_later_attempt_reporting_for_test().unwrap();
+        fixture
+            .transition
+            .prepare_later_attempt_reporting_for_test()
+            .unwrap();
 
         let reporting: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
             "SELECT reporting_invocation_id FROM work_unit_implementer_outcomes WHERE attempt_id=?1", [&first_attempt], |row| row.get(0),
         ).unwrap();
         let reporting = AgentInvocationId::new(reporting).unwrap();
-        fixture.transition.submit_implementation_outcome(&reporting, fixture.claims()).unwrap();
-        fixture.transition.complete_implementation_outcome(&reporting).unwrap();
+        fixture
+            .transition
+            .submit_implementation_outcome(&reporting, fixture.claims())
+            .unwrap();
+        fixture
+            .transition
+            .complete_implementation_outcome(&reporting)
+            .unwrap();
         Connection::open(&fixture.base.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
             params![reporting.as_str(), "2026-08-04T00:00:03Z"],
@@ -9901,11 +13966,19 @@ mod tests {
             "UPDATE work_unit_implementer_activations SET implementer_ready_at=?2 WHERE work_unit_id=?1",
             params![fixture.work_unit_id, "2026-08-04T00:00:00Z"],
         ).unwrap();
-        fixture.transition.reconcile_later_attempt_for_test().unwrap();
+        fixture
+            .transition
+            .reconcile_later_attempt_for_test()
+            .unwrap();
 
-        let second_review: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT review_invocation_id FROM work_unit_handler_reviews WHERE attempt_id=?1", [&first_attempt], |row| row.get(0),
-        ).unwrap();
+        let second_review: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT review_invocation_id FROM work_unit_handler_reviews WHERE attempt_id=?1",
+                [&first_attempt],
+                |row| row.get(0),
+            )
+            .unwrap();
         fixture.transition.record_handler_incomplete_disposition_for_test(
             &second_review,
             crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition {
@@ -9918,7 +13991,10 @@ mod tests {
             "UPDATE agent_session_invocations SET status='completed',completed_at=?2 WHERE id=?1",
             params![second_review, "2026-08-04T00:00:04Z"],
         ).unwrap();
-        fixture.transition.reconcile_handler_reviews_for_test().unwrap();
+        fixture
+            .transition
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
 
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         let second: (String, String, String, String, String, Option<String>, Option<String>) = connection.query_row(
@@ -9929,10 +14005,22 @@ mod tests {
         assert!(second.5.is_some() && second.6.is_some());
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE work_unit_id=?1 AND attempt_ordinal IN (0,1)", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 2);
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE work_unit_id=?1 AND meaningful_progress=1 AND next_attempt_authorized_at IS NOT NULL", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 2);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks WHERE work_unit_id=?1", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_no_progress_handbacks WHERE work_unit_id=?1",
+                    [&fixture.work_unit_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         drop(connection);
 
-        fixture.reopened().reconcile_handler_reviews_for_test().unwrap();
+        fixture
+            .reopened()
+            .reconcile_handler_reviews_for_test()
+            .unwrap();
         assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<(String, String, String, String, String), _, _>(
             "SELECT retry_attempt_id,implementer_session_id,implementer_invocation_id,origin_attempt_id,candidate_commit_id FROM work_unit_retry_attempts WHERE work_unit_id=?1 AND ordinal=2",
             [&fixture.work_unit_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
@@ -9943,7 +14031,9 @@ mod tests {
     fn populated_legacy_attempt_history_and_retry_migrate_without_overwriting_ordinal_zero() {
         let fixture = ReportingFixture::new();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        connection.pragma_update(None, "foreign_keys", false).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .unwrap();
         connection.execute_batch(r#"
 DROP TABLE work_unit_handler_decisions;
 DROP TABLE work_unit_handler_reviews;
@@ -9982,7 +14072,12 @@ CREATE TABLE work_unit_retry_attempts (
 );
 "#).unwrap();
         let time = "2026-08-04T00:00:00Z";
-        let outcome = ("legacy-attempt-0", "legacy-session-0", "legacy-original-0", "legacy-reporting-0");
+        let outcome = (
+            "legacy-attempt-0",
+            "legacy-session-0",
+            "legacy-original-0",
+            "legacy-reporting-0",
+        );
         connection.execute(
             "INSERT INTO work_unit_implementer_outcomes VALUES (?1,?2,0,?3,?4,?5,'reporting-revision','reporting-digest','reporting-commit',?6,?6,?6,?6,?6,?6,'legacy summary','review_pending','legacy validation','{}','submission',?6,?6,'valid','[]','comparison','[]',?6,?6,?5,?6,'completed',?6,?6,NULL)",
             params![fixture.work_unit_id, outcome.0, outcome.1, outcome.2, outcome.3, time],
@@ -9999,13 +14094,17 @@ CREATE TABLE work_unit_retry_attempts (
             "INSERT INTO work_unit_retry_attempts VALUES (?1,1,?2,'legacy-review','legacy-decision','legacy-authority','baseline','current','legacy-retry-1','legacy-retry-session','legacy-retry-invocation','retry-revision','retry-digest','retry-commit','capture','capture-fingerprint','{}','handoff-fingerprint','candidate','tree','refs/private',?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,?3,NULL)",
             params![fixture.work_unit_id, outcome.0, time],
         ).unwrap();
-        connection.pragma_update(None, "foreign_keys", true).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
         drop(connection);
 
-        let reopened = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.base.database_path,
-            fixture.base.sessions.clone(),
-        ).unwrap();
+        let reopened =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.base.database_path,
+                fixture.base.sessions.clone(),
+            )
+            .unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         assert_eq!(connection.query_row::<(String, i64, String, String), _, _>(
             "SELECT attempt_id,attempt_ordinal,submitted_summary,reporting_invocation_id FROM work_unit_implementer_outcomes WHERE work_unit_id=?1",
@@ -10031,10 +14130,12 @@ CREATE TABLE work_unit_retry_attempts (
         assert!(!retry_schema.contains("CHECK (ordinal=1)"));
         drop(connection);
         drop(reopened);
-        let reopened_again = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
-            &fixture.base.database_path,
-            fixture.base.sessions.clone(),
-        ).unwrap();
+        let reopened_again =
+            crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
+                &fixture.base.database_path,
+                fixture.base.sessions.clone(),
+            )
+            .unwrap();
         assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM work_unit_implementer_outcomes WHERE attempt_id='legacy-attempt-0'", [], |row| row.get(0),
         ).unwrap(), 1);
@@ -10062,23 +14163,76 @@ CREATE TABLE work_unit_retry_attempts (
             "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
             [&fixture.authority_id], |row| row.get(0),
         ).unwrap();
-        assert!(std::process::Command::new("git").args(["update-ref", "-d", &private_ref])
-            .current_dir(&authority_root).output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .args(["update-ref", "-d", &private_ref])
+            .current_dir(&authority_root)
+            .output()
+            .unwrap()
+            .status
+            .success());
         stage(&fixture, "candidate_pinned_at");
         stage(&fixture, "candidate_pinned_at");
-        stage(&fixture, "execution_support_granted_at,isolated_worktree_ready_at");
+        stage(
+            &fixture,
+            "execution_support_granted_at,isolated_worktree_ready_at",
+        );
         stage(&fixture, "implementer_session_created_at");
         stage(&fixture, "implementer_invocation_prepared_at");
         stage(&fixture, "implementer_harness_bound_at");
         stage(&fixture, "launch_accepted_at,retry_ready_at");
 
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1",
+                    [&attempt],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&invocation],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2", [], |row| row.get(0)).unwrap(), 0);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&fixture.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1",
+                    [&fixture.work_unit_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -10087,13 +14241,25 @@ CREATE TABLE work_unit_retry_attempts (
         let (attempt, session, invocation, private_ref) = fixture.return_one_retry();
         let launches = fixture.base.runtime.requests().len();
         let reopened = fixture.reopened();
-        let retry_identity = (attempt.clone(), session.clone(), invocation.clone(), private_ref.clone());
+        let retry_identity = (
+            attempt.clone(),
+            session.clone(),
+            invocation.clone(),
+            private_ref.clone(),
+        );
         let failure = |expected: &str| {
             assert!(reopened.reconcile_handler_reviews_for_test().is_err());
-            assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<String, _, _>(
-                "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
-                [&fixture.work_unit_id], |row| row.get(0),
-            ).unwrap(), expected);
+            assert_eq!(
+                Connection::open(&fixture.base.database_path)
+                    .unwrap()
+                    .query_row::<String, _, _>(
+                        "SELECT failure_reason FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                        [&fixture.work_unit_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap(),
+                expected
+            );
             assert_eq!(fixture.retry_count(), 1);
             assert_eq!(fixture.base.runtime.requests().len(), launches);
         };
@@ -10114,24 +14280,43 @@ CREATE TABLE work_unit_retry_attempts (
             "SELECT repository_root FROM initiated_sprint_git_authorities WHERE authority_id=?1",
             [&fixture.authority_id], |row| row.get(0),
         ).unwrap();
-        let seed: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT candidate_commit_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
-            [&fixture.work_unit_id], |row| row.get(0),
-        ).unwrap();
+        let seed: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT candidate_commit_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
+                [&fixture.work_unit_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         let foreign_target: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
             "SELECT sprint_current_object_id FROM work_unit_retry_attempts WHERE work_unit_id=?1",
             [&fixture.work_unit_id], |row| row.get(0),
         ).unwrap();
-        assert!(std::process::Command::new("git").args(["update-ref", &private_ref, &foreign_target])
-            .current_dir(&authority_root).output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .args(["update-ref", &private_ref, &foreign_target])
+            .current_dir(&authority_root)
+            .output()
+            .unwrap()
+            .status
+            .success());
         failure("retry_private_ref_pin_failed");
-        assert!(std::process::Command::new("git").args(["update-ref", &private_ref, &seed])
-            .current_dir(&authority_root).output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .args(["update-ref", &private_ref, &seed])
+            .current_dir(&authority_root)
+            .output()
+            .unwrap()
+            .status
+            .success());
         recover();
 
-        let retry_worktree: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT working_directory FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0),
-        ).unwrap();
+        let retry_worktree: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT working_directory FROM agent_sessions WHERE id=?1",
+                [&session],
+                |row| row.get(0),
+            )
+            .unwrap();
         let worktree_drift = PathBuf::from(&retry_worktree).join("retry-worktree-drift.txt");
         fs::write(&worktree_drift, "untracked divergence\n").unwrap();
         failure("retry_workspace_validation_failed");
@@ -10143,11 +14328,21 @@ CREATE TABLE work_unit_retry_attempts (
             [&fixture.work_unit_id], |row| row.get(0),
         ).unwrap();
         assert_ne!(baseline, seed);
-        assert!(std::process::Command::new("git").args(["checkout", "--detach", &baseline])
-            .current_dir(&retry_worktree).output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .args(["checkout", "--detach", &baseline])
+            .current_dir(&retry_worktree)
+            .output()
+            .unwrap()
+            .status
+            .success());
         failure("retry_workspace_validation_failed");
-        assert!(std::process::Command::new("git").args(["checkout", "--detach", &seed])
-            .current_dir(&retry_worktree).output().unwrap().status.success());
+        assert!(std::process::Command::new("git")
+            .args(["checkout", "--detach", &seed])
+            .current_dir(&retry_worktree)
+            .output()
+            .unwrap()
+            .status
+            .success());
         recover();
 
         let original_common: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
@@ -10180,33 +14375,53 @@ CREATE TABLE work_unit_retry_attempts (
         ).unwrap();
         recover();
 
-        let original_baseline: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT baseline_object_id FROM execution_support_attempt_authorizations
+        let original_baseline: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT baseline_object_id FROM execution_support_attempt_authorizations
              WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
-            [&attempt], |row| row.get(0),
-        ).unwrap();
+                [&attempt],
+                |row| row.get(0),
+            )
+            .unwrap();
         let foreign_baseline = String::from_utf8(
             std::process::Command::new("git")
-                .args(["commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "foreign retry baseline"])
+                .args([
+                    "commit-tree",
+                    "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+                    "-m",
+                    "foreign retry baseline",
+                ])
                 .current_dir(&authority_root)
                 .env("GIT_AUTHOR_NAME", "Codex test")
                 .env("GIT_AUTHOR_EMAIL", "codex-test@example.invalid")
                 .env("GIT_COMMITTER_NAME", "Codex test")
                 .env("GIT_COMMITTER_EMAIL", "codex-test@example.invalid")
-                .output().unwrap().stdout,
-        ).unwrap().trim().to_owned();
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
         assert_eq!(foreign_baseline.len(), 40);
-        Connection::open(&fixture.base.database_path).unwrap().execute(
-            "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
+        Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
              WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
-            params![attempt, foreign_baseline],
-        ).unwrap();
+                params![attempt, foreign_baseline],
+            )
+            .unwrap();
         failure("retry_execution_authorization_failed");
-        Connection::open(&fixture.base.database_path).unwrap().execute(
-            "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
+        Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE execution_support_attempt_authorizations SET baseline_object_id=?2
              WHERE attempt_id=?1 AND role_kind='work_unit_implementer'",
-            params![attempt, original_baseline],
-        ).unwrap();
+                params![attempt, original_baseline],
+            )
+            .unwrap();
         recover();
 
         let (manifest, comparison, contents): (String,String,String) = Connection::open(&fixture.base.database_path).unwrap().query_row(
@@ -10215,8 +14430,16 @@ CREATE TABLE work_unit_retry_attempts (
             [&fixture.work_unit_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
         ).unwrap();
         for (column, value, expected) in [
-            ("evidence_manifest_json", "[]", "retry_evidence_revalidation_failed"),
-            ("evidence_content_fingerprints_json", "[]", "retry_evidence_revalidation_failed"),
+            (
+                "evidence_manifest_json",
+                "[]",
+                "retry_evidence_revalidation_failed",
+            ),
+            (
+                "evidence_content_fingerprints_json",
+                "[]",
+                "retry_evidence_revalidation_failed",
+            ),
         ] {
             Connection::open(&fixture.base.database_path).unwrap().execute(
                 &format!("UPDATE work_unit_implementer_outcomes SET {column}=?1 WHERE work_unit_id=?2"),
@@ -10230,36 +14453,86 @@ CREATE TABLE work_unit_retry_attempts (
             recover();
         }
 
-        Connection::open(&fixture.base.database_path).unwrap().execute(
-            "UPDATE agent_sessions SET working_directory='divergent-session-route' WHERE id=?1",
-            [&session],
-        ).unwrap();
+        Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_sessions SET working_directory='divergent-session-route' WHERE id=?1",
+                [&session],
+            )
+            .unwrap();
         failure("retry_session_creation_failed");
-        Connection::open(&fixture.base.database_path).unwrap().execute(
-            "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
-            params![session, retry_worktree],
-        ).unwrap();
+        Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_sessions SET working_directory=?2 WHERE id=?1",
+                params![session, retry_worktree],
+            )
+            .unwrap();
         recover();
 
-        let submitted_text: String = Connection::open(&fixture.base.database_path).unwrap().query_row(
-            "SELECT submitted_text FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0),
-        ).unwrap();
+        let submitted_text: String = Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .query_row(
+                "SELECT submitted_text FROM agent_session_invocations WHERE id=?1",
+                [&invocation],
+                |row| row.get(0),
+            )
+            .unwrap();
         Connection::open(&fixture.base.database_path).unwrap().execute(
             "UPDATE agent_session_invocations SET submitted_text='divergent prepared invocation' WHERE id=?1",
             [&invocation],
         ).unwrap();
         failure("retry_invocation_preparation_failed");
-        Connection::open(&fixture.base.database_path).unwrap().execute(
-            "UPDATE agent_session_invocations SET submitted_text=?2 WHERE id=?1",
-            params![invocation, submitted_text],
-        ).unwrap();
+        Connection::open(&fixture.base.database_path)
+            .unwrap()
+            .execute(
+                "UPDATE agent_session_invocations SET submitted_text=?2 WHERE id=?1",
+                params![invocation, submitted_text],
+            )
+            .unwrap();
         recover();
 
         let connection = Connection::open(&fixture.base.database_path).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1", [&attempt], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_sessions WHERE id=?1", [&session], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1", [&invocation], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM execution_support_grants WHERE attempt_id=?1",
+                    [&attempt],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_sessions WHERE id=?1",
+                    [&session],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM agent_session_invocations WHERE id=?1",
+                    [&invocation],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_retry_attempts WHERE ordinal=2",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -10274,27 +14547,78 @@ CREATE TABLE work_unit_retry_attempts (
             meaningful_progress: false,
         };
         let barrier = Arc::new(Barrier::new(2));
-        let calls = [fixture.transition.clone(), reopened.clone()].into_iter().map(|service| {
-            let invocation = review.clone();
-            let disposition = disposition.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, disposition) })
-        }).collect::<Vec<_>>();
+        let calls = [fixture.transition.clone(), reopened.clone()]
+            .into_iter()
+            .map(|service| {
+                let invocation = review.clone();
+                let disposition = disposition.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.record_handler_incomplete_disposition_for_test(&invocation, disposition)
+                })
+            })
+            .collect::<Vec<_>>();
         assert!(calls.into_iter().all(|call| call.join().unwrap().is_ok()));
-        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
         reopened.reconcile_handler_reviews_for_test().unwrap();
-        let durable = |fixture: &ReportingFixture| Connection::open(&fixture.base.database_path).unwrap().query_row(
+        let durable = |fixture: &ReportingFixture| {
+            Connection::open(&fixture.base.database_path).unwrap().query_row(
             "SELECT d.decision_fingerprint,h.handback_id,h.context_fingerprint FROM work_unit_handler_incomplete_dispositions d JOIN work_unit_no_progress_handbacks h ON h.source_attempt_id=d.attempt_id WHERE d.work_unit_id=?1 AND d.classification='functional_objective_not_satisfied' AND d.meaningful_progress=0 AND d.next_attempt_authorized_at IS NULL AND h.source_review_invocation_id=d.review_invocation_id AND h.sprint_runner_receiver_activated_at IS NULL AND h.sprint_runner_receiver_decision_at IS NULL",
             [&fixture.work_unit_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        ).unwrap();
+        ).unwrap()
+        };
         let before = durable(&fixture);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 1);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), 0);
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_no_progress_handbacks",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_retry_attempts",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            0
+        );
         let reopened_again = fixture.reopened();
         reopened_again.reconcile_handler_reviews_for_test().unwrap();
         assert_eq!(durable(&fixture), before);
-        assert_eq!(Connection::open(&fixture.base.database_path).unwrap().query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_no_progress_handbacks", [], |row| row.get(0)).unwrap(), 1);
+        assert_eq!(
+            Connection::open(&fixture.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_no_progress_handbacks",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -10304,24 +14628,46 @@ CREATE TABLE work_unit_retry_attempts (
         let reopened = fixture.reopened();
         let barrier = Arc::new(Barrier::new(2));
         let functional = {
-            let service = fixture.transition.clone(); let invocation = review.clone(); let barrier = barrier.clone();
-            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "objective_not_satisfied".into(), explanation: "the functional objective remains unsatisfied".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied, meaningful_progress: true }) })
+            let service = fixture.transition.clone();
+            let invocation = review.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "objective_not_satisfied".into(), explanation: "the functional objective remains unsatisfied".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::FunctionalObjectiveNotSatisfied, meaningful_progress: true })
+            })
         };
         let blocked = {
-            let service = reopened.clone(); let invocation = review.clone(); let barrier = barrier.clone();
-            std::thread::spawn(move || { barrier.wait(); service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "blocked_input".into(), explanation: "a bounded input is unavailable".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked, meaningful_progress: false }) })
+            let service = reopened.clone();
+            let invocation = review.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                service.record_handler_incomplete_disposition_for_test(&invocation, crate::orchestration::sprint_runner_transition::HandlerReviewIncompleteDisposition { code: "blocked_input".into(), explanation: "a bounded input is unavailable".into(), classification: crate::orchestration::sprint_runner_transition::IncompleteAttemptClassification::Blocked, meaningful_progress: false })
+            })
         };
         let results = [functional.join().unwrap(), blocked.join().unwrap()];
         assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(results.iter().filter(|result| matches!(result, Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Conflict))).count(), 1);
-        fixture.base.runtime.finish(&review, AgentInvocationTerminalStatus::Completed);
+        fixture
+            .base
+            .runtime
+            .finish(&review, AgentInvocationTerminalStatus::Completed);
         reopened.reconcile_handler_reviews_for_test().unwrap();
         let connection = Connection::open(&fixture.base.database_path).unwrap();
         let facts: (i64,i64,i64,i64) = connection.query_row("SELECT (SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions), (SELECT COUNT(*) FROM work_unit_handler_incomplete_dispositions WHERE next_attempt_authorized_at IS NOT NULL), (SELECT COUNT(*) FROM work_unit_no_progress_handbacks), (SELECT COUNT(*) FROM work_unit_handler_reviews WHERE conflict_reason='divergent_review_judgment')", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
         assert_eq!(facts.0, 1);
         assert_eq!(facts.1 + facts.2, 1);
         assert_eq!(facts.3, 1);
-        assert_eq!(connection.query_row::<i64,_,_>("SELECT COUNT(*) FROM work_unit_retry_attempts", [], |row| row.get(0)).unwrap(), facts.1);
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_retry_attempts",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            facts.1
+        );
     }
 
     #[test]
@@ -10351,22 +14697,30 @@ CREATE TABLE work_unit_retry_attempts (
         let replay_review = replay.ready_review();
         let replay_effects = downstream_effects(&replay);
         let barrier = Arc::new(Barrier::new(2));
-        let calls = (0..2).map(|_| {
-            let service = replay.transition.clone();
-            let invocation = replay_review.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                service.record_handler_review_judgment_for_test(&invocation, "accept", None)
+        let calls = (0..2)
+            .map(|_| {
+                let service = replay.transition.clone();
+                let invocation = replay_review.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.record_handler_review_judgment_for_test(&invocation, "accept", None)
+                })
             })
-        }).collect::<Vec<_>>();
-        let results = calls.into_iter().map(|call| call.join().unwrap()).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
+        let results = calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<Vec<_>>();
         assert!(results.iter().all(Result::is_ok));
         let replay_connection = Connection::open(&replay.base.database_path).unwrap();
         assert_eq!(replay_connection.query_row::<String, _, _>("SELECT semantic_judgment_variant FROM work_unit_handler_reviews WHERE work_unit_id=?1", [&replay.work_unit_id], |row| row.get(0)).unwrap(), "accept");
         assert_eq!(replay_connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND conflict_at IS NOT NULL", [&replay.work_unit_id], |row| row.get(0)).unwrap(), 0);
         drop(replay_connection);
-        replay.base.runtime.finish(&replay_review, AgentInvocationTerminalStatus::Completed);
+        replay
+            .base
+            .runtime
+            .finish(&replay_review, AgentInvocationTerminalStatus::Completed);
         assert_eq!(Connection::open(&replay.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1 AND decision_variant='accepted'", [&replay.work_unit_id], |row| row.get(0)).unwrap(), 1);
         assert_eq!(downstream_effects(&replay), replay_effects);
 
@@ -10389,10 +14743,16 @@ CREATE TABLE work_unit_retry_attempts (
             let barrier = barrier.clone();
             std::thread::spawn(move || {
                 barrier.wait();
-                service.record_handler_review_judgment_for_test(&invocation, "return", Some(crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
-                    code: "review_failed".into(),
-                    explanation: "evidence requires correction".into(),
-                }))
+                service.record_handler_review_judgment_for_test(
+                    &invocation,
+                    "return",
+                    Some(
+                        crate::orchestration::sprint_runner_transition::HandlerReviewReturnReason {
+                            code: "review_failed".into(),
+                            explanation: "evidence requires correction".into(),
+                        },
+                    ),
+                )
             })
         };
         let results = [accept.join().unwrap(), returned.join().unwrap()];
@@ -10403,8 +14763,20 @@ CREATE TABLE work_unit_retry_attempts (
         assert!(judgment == "accept" || judgment == "return");
         assert_eq!(race_connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_reviews WHERE work_unit_id=?1 AND conflict_reason='divergent_review_judgment'", [&race.work_unit_id], |row| row.get(0)).unwrap(), 1);
         drop(race_connection);
-        race.base.runtime.finish(&race_review, AgentInvocationTerminalStatus::Completed);
-        assert_eq!(Connection::open(&race.base.database_path).unwrap().query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1", [&race.work_unit_id], |row| row.get(0)).unwrap(), 1);
+        race.base
+            .runtime
+            .finish(&race_review, AgentInvocationTerminalStatus::Completed);
+        assert_eq!(
+            Connection::open(&race.base.database_path)
+                .unwrap()
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_unit_handler_decisions WHERE work_unit_id=?1",
+                    [&race.work_unit_id],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            1
+        );
         assert_eq!(downstream_effects(&race), race_effects);
     }
 }

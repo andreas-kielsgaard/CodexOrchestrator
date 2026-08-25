@@ -811,7 +811,8 @@ impl AgentSessionApplication {
                 {
                     Some(AgentRuntimeFailure {
                         code: "runtime_startup_without_launch_acceptance".to_string(),
-                        message: "application restarted without durable launch acceptance".to_string(),
+                        message: "application restarted without durable launch acceptance"
+                            .to_string(),
                         details: None,
                     })
                 } else {

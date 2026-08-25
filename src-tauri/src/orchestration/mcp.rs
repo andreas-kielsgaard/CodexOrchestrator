@@ -109,7 +109,10 @@ impl CodexMcpInjection {
 
     pub(crate) fn is_exact_work_unit_implementer_reporting_transport(&self) -> bool {
         if self.configuration_args.len() != 18
-            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+            || self
+                .configuration_args
+                .chunks_exact(2)
+                .any(|pair| pair[0] != "-c")
         {
             return false;
         }
@@ -145,7 +148,9 @@ impl CodexMcpInjection {
             value
                 .strip_prefix(&expected[0])
                 .is_some_and(|variable| !variable.is_empty())
-        }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
+        }) && expected[1..]
+            .iter()
+            .all(|expected| values.contains(&expected.as_str()))
     }
 }
 
@@ -743,9 +748,10 @@ mod tests {
                 .count(),
             9
         );
-        assert!(injection.configuration_args.iter().any(|value| {
-            value == "sandbox_workspace_write.network_access=true"
-        }));
+        assert!(injection
+            .configuration_args
+            .iter()
+            .any(|value| { value == "sandbox_workspace_write.network_access=true" }));
         assert!(injection
             .configuration_args
             .iter()
@@ -755,7 +761,8 @@ mod tests {
             .iter()
             .find(|value| value.contains(".enabled_tools="))
             .expect("managed tool allow list");
-        assert!(tools.ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
+        assert!(tools
+            .ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
         assert!(injection
             .configuration_args
             .iter()

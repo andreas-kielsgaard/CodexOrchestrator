@@ -24,12 +24,57 @@ const ACTOR_ID: &str = "managed-plan-builder";
 #[test]
 fn handback_native_dto_exposes_only_factual_stages() {
     let dto = WorkUnitNoProgressHandbackDto {
-        handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
-        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("local_exhaustion_escalate".into()), selected_movement: None, escalation_intent_recorded_at: Some("escalation-intent".into()), escalation_delivery_requested_at: Some("escalation-requested".into()) }), epic_runner_receiver: None,
+        handback_id: "handback".into(),
+        source_attempt_id: "attempt".into(),
+        source_review_invocation_id: "review".into(),
+        context_fingerprint: "context".into(),
+        persisted_at: "persisted".into(),
+        delivery_intended_at: "intended".into(),
+        sprint_runner_receiver_activated_at: None,
+        sprint_runner_receiver_decision_at: None,
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto {
+            delivery_requested_at: "requested".into(),
+            delivery_persisted_at: Some("delivered".into()),
+            harness_bound_at: Some("bound".into()),
+            launch_requested_at: Some("launch-requested".into()),
+            launch_accepted_at: Some("launch-accepted".into()),
+            provider_activation_observed_at: None,
+            semantic_reassessment_recorded_at: Some("reassessed".into()),
+            selected_movement_kind: Some("local_exhaustion_escalate".into()),
+            selected_movement: None,
+            escalation_intent_recorded_at: Some("escalation-intent".into()),
+            escalation_delivery_requested_at: Some("escalation-requested".into()),
+        }),
+        epic_runner_receiver: None,
     };
     let value = serde_json::to_string(&dto).unwrap();
-    for public in ["deliveryIntendedAt","deliveryPersistedAt","harnessBoundAt","launchRequestedAt","launchAcceptedAt","semanticReassessmentRecordedAt","local_exhaustion_escalate","escalationIntentRecordedAt","escalationDeliveryRequestedAt"] { assert!(value.contains(public)); }
-    for private in ["receiverSessionId","reassessmentInvocationId","deliveryFactId","semanticReassessmentFactId","escalationIntentId","deliveryRequestId","harnessKey","harnessVersion","route","worktree"] { assert!(!value.contains(private)); }
+    for public in [
+        "deliveryIntendedAt",
+        "deliveryPersistedAt",
+        "harnessBoundAt",
+        "launchRequestedAt",
+        "launchAcceptedAt",
+        "semanticReassessmentRecordedAt",
+        "local_exhaustion_escalate",
+        "escalationIntentRecordedAt",
+        "escalationDeliveryRequestedAt",
+    ] {
+        assert!(value.contains(public));
+    }
+    for private in [
+        "receiverSessionId",
+        "reassessmentInvocationId",
+        "deliveryFactId",
+        "semanticReassessmentFactId",
+        "escalationIntentId",
+        "deliveryRequestId",
+        "harnessKey",
+        "harnessVersion",
+        "route",
+        "worktree",
+    ] {
+        assert!(!value.contains(private));
+    }
 }
 
 #[test]
@@ -57,21 +102,35 @@ fn sprint_result_native_projection_redacts_private_receiver_and_realization_iden
          INSERT INTO epic_runner_sprint_result_terminal_readiness VALUES('result','2026-08-05T00:00:10Z');",
     ).unwrap();
     let sprints = vec![InitiatedSprintDto {
-        sprint_id: "sprint".into(), epic_id: "epic".into(), ordinal: 0,
-        title: "Sprint".into(), intended_movement: "".into(), concern_summaries: vec![],
-        sprint_plan_id: "plan".into(), sprint_plan_revision_id: "revision".into(),
+        sprint_id: "sprint".into(),
+        epic_id: "epic".into(),
+        ordinal: 0,
+        title: "Sprint".into(),
+        intended_movement: "".into(),
+        concern_summaries: vec![],
+        sprint_plan_id: "plan".into(),
+        sprint_plan_revision_id: "revision".into(),
     }];
     let results = vec![SprintUpwardResultDto {
-        result_id: "result".into(), decision_id: "decision".into(), sprint_id: "sprint".into(),
-        result_kind: "settled".into(), recorded_at: "2026-08-05T00:00:00Z".into(),
+        result_id: "result".into(),
+        decision_id: "decision".into(),
+        sprint_id: "sprint".into(),
+        result_kind: "settled".into(),
+        recorded_at: "2026-08-05T00:00:00Z".into(),
     }];
-    let projection = sprint_result_projection(&connection, &sprints, &results).unwrap().unwrap();
+    let projection = sprint_result_projection(&connection, &sprints, &results)
+        .unwrap()
+        .unwrap();
     let value = serde_json::to_value(projection).unwrap();
     assert_eq!(value[0]["realization"]["outcomeKind"], "terminal_readiness");
     assert!(value[0]["receiver"].get("harnessKey").is_none());
     assert!(value[0]["receiver"].get("harnessVersion").is_none());
     assert!(value[0].get("correlationFingerprint").is_none());
-    assert!(value[0].get("realization").unwrap().get("realizationId").is_none());
+    assert!(value[0]
+        .get("realization")
+        .unwrap()
+        .get("realizationId")
+        .is_none());
     connection.execute("UPDATE epic_runner_sprint_result_terminal_readiness SET recorded_at='2026-08-05T00:00:12Z' WHERE result_id='result'", []).unwrap();
     assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
 }
@@ -102,33 +161,122 @@ fn sprint_result_native_projection_uses_exact_successor_transition_correlation()
          INSERT INTO sprint_runner_transitions VALUES('successor','epic','successor-request','2026-08-05T00:00:10Z','2026-08-05T00:00:11Z','2026-08-05T00:00:12Z','2026-08-05T00:00:13Z','2026-08-05T00:00:14Z','2026-08-05T00:00:15Z','2026-08-05T00:00:16Z','2026-08-05T00:00:17Z','2026-08-05T00:00:18Z','2026-08-05T00:00:19Z','2026-08-05T00:00:20Z','2026-08-05T00:00:21Z','2026-08-05T00:00:22Z','2026-08-05T00:00:23Z','2026-08-05T00:00:24Z','2026-08-05T00:00:25Z','2026-08-05T00:00:25Z');",
     ).unwrap();
     let sprints = vec![
-        InitiatedSprintDto { sprint_id: "source".into(), epic_id: "epic".into(), ordinal: 0, title: "Source".into(), intended_movement: "".into(), concern_summaries: vec![], sprint_plan_id: "plan".into(), sprint_plan_revision_id: "revision".into() },
-        InitiatedSprintDto { sprint_id: "successor".into(), epic_id: "epic".into(), ordinal: 1, title: "Successor".into(), intended_movement: "".into(), concern_summaries: vec![], sprint_plan_id: "plan-2".into(), sprint_plan_revision_id: "revision-2".into() },
+        InitiatedSprintDto {
+            sprint_id: "source".into(),
+            epic_id: "epic".into(),
+            ordinal: 0,
+            title: "Source".into(),
+            intended_movement: "".into(),
+            concern_summaries: vec![],
+            sprint_plan_id: "plan".into(),
+            sprint_plan_revision_id: "revision".into(),
+        },
+        InitiatedSprintDto {
+            sprint_id: "successor".into(),
+            epic_id: "epic".into(),
+            ordinal: 1,
+            title: "Successor".into(),
+            intended_movement: "".into(),
+            concern_summaries: vec![],
+            sprint_plan_id: "plan-2".into(),
+            sprint_plan_revision_id: "revision-2".into(),
+        },
     ];
-    let results = vec![SprintUpwardResultDto { result_id: "result".into(), decision_id: "decision".into(), sprint_id: "source".into(), result_kind: "settled".into(), recorded_at: "2026-08-05T00:00:00Z".into() }];
-    let projection = sprint_result_projection(&connection, &sprints, &results).unwrap().unwrap();
+    let results = vec![SprintUpwardResultDto {
+        result_id: "result".into(),
+        decision_id: "decision".into(),
+        sprint_id: "source".into(),
+        result_kind: "settled".into(),
+        recorded_at: "2026-08-05T00:00:00Z".into(),
+    }];
+    let projection = sprint_result_projection(&connection, &sprints, &results)
+        .unwrap()
+        .unwrap();
     let realization = projection[0].realization.as_ref().unwrap();
-    assert_eq!(realization.successor_transition.as_ref().unwrap().requested_at, "2026-08-05T00:00:10Z");
-    assert!(serde_json::to_string(&projection).unwrap().find("successor-request").is_none());
+    assert_eq!(
+        realization
+            .successor_transition
+            .as_ref()
+            .unwrap()
+            .requested_at,
+        "2026-08-05T00:00:10Z"
+    );
+    assert!(serde_json::to_string(&projection)
+        .unwrap()
+        .find("successor-request")
+        .is_none());
     connection.execute("UPDATE sprint_runner_transitions SET epic_id='foreign-epic' WHERE request_id='successor-request'", []).unwrap();
     assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
     connection.execute("UPDATE sprint_runner_transitions SET epic_id='epic' WHERE request_id='successor-request'", []).unwrap();
     connection.execute("UPDATE sprint_runner_transitions SET sprint_id='source' WHERE request_id='successor-request'", []).unwrap();
     assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
     connection.execute("UPDATE sprint_runner_transitions SET sprint_id='successor' WHERE request_id='successor-request'", []).unwrap();
-    connection.execute("DELETE FROM sprint_runner_transitions WHERE request_id='successor-request'", []).unwrap();
+    connection
+        .execute(
+            "DELETE FROM sprint_runner_transitions WHERE request_id='successor-request'",
+            [],
+        )
+        .unwrap();
     assert!(sprint_result_projection(&connection, &sprints, &results).is_err());
 }
 
 #[test]
 fn handback_native_dto_exposes_qualified_dependency_movement_without_private_identity() {
     let dto = WorkUnitNoProgressHandbackDto {
-        handback_id: "handback".into(), source_attempt_id: "attempt".into(), source_review_invocation_id: "review".into(), context_fingerprint: "context".into(), persisted_at: "persisted".into(), delivery_intended_at: "intended".into(), sprint_runner_receiver_activated_at: None, sprint_runner_receiver_decision_at: None,
-        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto { delivery_requested_at: "requested".into(), delivery_persisted_at: Some("delivered".into()), harness_bound_at: Some("bound".into()), launch_requested_at: Some("launch-requested".into()), launch_accepted_at: Some("launch-accepted".into()), provider_activation_observed_at: None, semantic_reassessment_recorded_at: Some("reassessed".into()), selected_movement_kind: Some("wait_for_agent_dependency".into()), selected_movement: Some(SprintRunnerHandbackMovementDto { movement_kind: "wait_for_agent_dependency".into(), rationale: "concern remains open".into(), eligible_work_summary: None, dependency_owner: Some("bounded Work Unit Handler".into()), dependency_owner_classification: Some("work_unit_handler".into()), enabling_result: Some("persisted result".into()), resumption_path: Some("reconcile exact Handback".into()), local_exhaustion_summary: None, bounded_details: None }), escalation_intent_recorded_at: None, escalation_delivery_requested_at: None }), epic_runner_receiver: None,
+        handback_id: "handback".into(),
+        source_attempt_id: "attempt".into(),
+        source_review_invocation_id: "review".into(),
+        context_fingerprint: "context".into(),
+        persisted_at: "persisted".into(),
+        delivery_intended_at: "intended".into(),
+        sprint_runner_receiver_activated_at: None,
+        sprint_runner_receiver_decision_at: None,
+        sprint_runner_delivery: Some(SprintRunnerHandbackDeliveryDto {
+            delivery_requested_at: "requested".into(),
+            delivery_persisted_at: Some("delivered".into()),
+            harness_bound_at: Some("bound".into()),
+            launch_requested_at: Some("launch-requested".into()),
+            launch_accepted_at: Some("launch-accepted".into()),
+            provider_activation_observed_at: None,
+            semantic_reassessment_recorded_at: Some("reassessed".into()),
+            selected_movement_kind: Some("wait_for_agent_dependency".into()),
+            selected_movement: Some(SprintRunnerHandbackMovementDto {
+                movement_kind: "wait_for_agent_dependency".into(),
+                rationale: "concern remains open".into(),
+                eligible_work_summary: None,
+                dependency_owner: Some("bounded Work Unit Handler".into()),
+                dependency_owner_classification: Some("work_unit_handler".into()),
+                enabling_result: Some("persisted result".into()),
+                resumption_path: Some("reconcile exact Handback".into()),
+                local_exhaustion_summary: None,
+                bounded_details: None,
+            }),
+            escalation_intent_recorded_at: None,
+            escalation_delivery_requested_at: None,
+        }),
+        epic_runner_receiver: None,
     };
     let value = serde_json::to_string(&dto).unwrap();
-    for public in ["selectedMovement", "dependencyOwner", "dependencyOwnerClassification", "enablingResult", "resumptionPath"] { assert!(value.contains(public)); }
-    for private in ["receiverSessionId", "reassessmentInvocationId", "deliveryFactId", "harnessKey", "route", "worktree", "dependencyOwnerId"] { assert!(!value.contains(private)); }
+    for public in [
+        "selectedMovement",
+        "dependencyOwner",
+        "dependencyOwnerClassification",
+        "enablingResult",
+        "resumptionPath",
+    ] {
+        assert!(value.contains(public));
+    }
+    for private in [
+        "receiverSessionId",
+        "reassessmentInvocationId",
+        "deliveryFactId",
+        "harnessKey",
+        "route",
+        "worktree",
+        "dependencyOwnerId",
+    ] {
+        assert!(!value.contains(private));
+    }
 }
 
 #[test]
@@ -1372,7 +1520,10 @@ fn execution_fixture_is_a_nontrivial_canonical_graph() {
     ))
     .expect("fixture");
     assert_eq!(fixture["workUnits"].as_array().unwrap().len(), 4);
-    assert_eq!(fixture["workUnitExecutionStates"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        fixture["workUnitExecutionStates"].as_array().unwrap().len(),
+        4
+    );
     assert_eq!(
         fixture["workUnitRelationships"]
             .as_array()
@@ -1382,9 +1533,27 @@ fn execution_fixture_is_a_nontrivial_canonical_graph() {
             .count(),
         2
     );
-    assert_eq!(fixture["workSliceExecutionGraphCompletions"].as_array().unwrap().len(), 1);
-    assert_eq!(fixture["workSliceExecutionSettlements"].as_array().unwrap().len(), 1);
-    assert_eq!(fixture["workSlicePlanningPointExecutionSettlements"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        fixture["workSliceExecutionGraphCompletions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fixture["workSliceExecutionSettlements"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        fixture["workSlicePlanningPointExecutionSettlements"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -1475,7 +1644,11 @@ fn repository_at(now: chrono::DateTime<Utc>) -> SqliteOrchestrationRepository {
 fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_order_facts() {
     let repository = repository_at(time());
     let saved = repository
-        .save_epic_plan_proposal(command(None, proposal("durable escalation evidence"), "durable-escalation-save"))
+        .save_epic_plan_proposal(command(
+            None,
+            proposal("durable escalation evidence"),
+            "durable-escalation-save",
+        ))
         .expect("proposal");
     repository
         .initiate_epic(super::super::domain::InitiateEpicCommand {
@@ -1516,18 +1689,50 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
     let durable_sql = durable_sql
         .replace("'sprint-1'", &format!("'{}'", sprint))
         .replace("'epic-1'", &format!("'{}'", epic))
-        .replace("'reporting-invocation-1'", &format!("'{}'", projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-1")))
-        .replace("'reporting-invocation-2'", &format!("'{}'", projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-2")))
-        .replace("'review-1'", &format!("'{}'", projection_stable_id("work-unit-handler-review-invocation", "attempt-1")))
-        .replace("'review-2'", &format!("'{}'", projection_stable_id("work-unit-handler-review-invocation", "attempt-2")));
+        .replace(
+            "'reporting-invocation-1'",
+            &format!(
+                "'{}'",
+                projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-1")
+            ),
+        )
+        .replace(
+            "'reporting-invocation-2'",
+            &format!(
+                "'{}'",
+                projection_stable_id("work-unit-implementer-reporting-invocation", "attempt-2")
+            ),
+        )
+        .replace(
+            "'review-1'",
+            &format!(
+                "'{}'",
+                projection_stable_id("work-unit-handler-review-invocation", "attempt-1")
+            ),
+        )
+        .replace(
+            "'review-2'",
+            &format!(
+                "'{}'",
+                projection_stable_id("work-unit-handler-review-invocation", "attempt-2")
+            ),
+        );
     for (index, statement) in durable_sql.split(';').enumerate() {
         if !statement.trim().is_empty() {
-            connection.execute_batch(statement).unwrap_or_else(|error| panic!("durable statement {index} failed: {error}"));
+            connection
+                .execute_batch(statement)
+                .unwrap_or_else(|error| panic!("durable statement {index} failed: {error}"));
         }
     }
-    let context_1 = projection_stable_id("work-unit-no-progress-handback-context", "{\"concern\":\"unresolved\"}");
+    let context_1 = projection_stable_id(
+        "work-unit-no-progress-handback-context",
+        "{\"concern\":\"unresolved\"}",
+    );
     connection.execute("UPDATE work_unit_no_progress_handbacks SET context_fingerprint=?1 WHERE handback_id='handback-1'", [&context_1]).unwrap();
-    let context_2 = projection_stable_id("work-unit-no-progress-handback-context", "{\"concern\":\"unresolved\",\"source\":\"attention\"}");
+    let context_2 = projection_stable_id(
+        "work-unit-no-progress-handback-context",
+        "{\"concern\":\"unresolved\",\"source\":\"attention\"}",
+    );
     connection.execute("UPDATE work_unit_no_progress_handbacks SET context_fingerprint=?1 WHERE handback_id='handback-2'", [&context_2]).unwrap();
     let receiver_sql = r###"
         INSERT INTO sprint_runner_handback_deliveries (handback_id,sprint_id,receiver_session_id,reassessment_invocation_id,delivery_fact_id,delivery_requested_at,delivery_persisted_at,harness_key,harness_version,harness_bound_at,launch_requested_at,launch_accepted_at,semantic_reassessment_fact_id,semantic_reassessment_recorded_at,context_fingerprint) VALUES ('handback-1','sprint-1','private-session-1','private-reassessment-1','private-delivery-1','2030-01-01T00:00:13Z','2030-01-01T00:00:14Z','sprint-harness',1,'2030-01-01T00:00:15Z','2030-01-01T00:00:16Z','2030-01-01T00:00:17Z','private-semantic-1','2030-01-01T00:00:18Z','sprint-context-1'),('handback-2','sprint-1','private-session-2','private-reassessment-2','private-delivery-2','2030-01-01T00:00:13Z','2030-01-01T00:00:14Z','sprint-harness',1,'2030-01-01T00:00:15Z','2030-01-01T00:00:16Z','2030-01-01T00:00:17Z','private-semantic-2','2030-01-01T00:00:18Z','sprint-context-2');
@@ -1540,12 +1745,24 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
         .replace("'sprint-1'", &format!("'{}'", sprint))
         .replace("'epic-1'", &format!("'{}'", epic));
     connection.execute_batch(&receiver_sql).unwrap();
-    let outcome_payload = r###"{"outcome":"review_pending","summary":"bounded","validationStatement":"checked"}"###;
+    let outcome_payload =
+        r###"{"outcome":"review_pending","summary":"bounded","validationStatement":"checked"}"###;
     let outcome_fingerprint = projection_stable_id("implementer-outcome", outcome_payload);
-    connection.execute("UPDATE work_unit_implementer_outcomes SET submission_fingerprint=?1", [&outcome_fingerprint]).unwrap();
+    connection
+        .execute(
+            "UPDATE work_unit_implementer_outcomes SET submission_fingerprint=?1",
+            [&outcome_fingerprint],
+        )
+        .unwrap();
     let review_payload = r###"{"summary":"bounded","validationStatement":"checked","changedFiles":[{"evidenceRef":"e1","displayName":"bounded.md","changeKind":"modified"}],"comparisonFingerprint":"comparison","evidenceContentFingerprints":[{"evidenceRef":"e1","contentFingerprint":"content"}]}"###;
-    let review_fingerprint = projection_stable_id("work-unit-handler-review-delivery", review_payload);
-    connection.execute("UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint=?1", [&review_fingerprint]).unwrap();
+    let review_fingerprint =
+        projection_stable_id("work-unit-handler-review-delivery", review_payload);
+    connection
+        .execute(
+            "UPDATE work_unit_handler_reviews SET delivered_payload_fingerprint=?1",
+            [&review_fingerprint],
+        )
+        .unwrap();
     drop(connection);
 
     let projected = repository.native_query().expect("durable projection");
@@ -1564,21 +1781,68 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
         super::WorkUnitInspectionFileEvidenceDto::Available { .. }
     ));
     assert!(inspection.test_evidence.reason.contains("test-detail"));
-    let first = &projected.work_units[0].attempt_history[0].incomplete_disposition.as_ref().unwrap().no_progress_handback.as_ref().unwrap().epic_runner_receiver.as_ref().unwrap();
+    let first = &projected.work_units[0].attempt_history[0]
+        .incomplete_disposition
+        .as_ref()
+        .unwrap()
+        .no_progress_handback
+        .as_ref()
+        .unwrap()
+        .epic_runner_receiver
+        .as_ref()
+        .unwrap();
     assert_eq!(first.sprint_id, sprint);
     assert_eq!(first.epic_id, epic);
-    assert_eq!(first.disposition.as_ref().unwrap().movement_kind, "await_existing_agent_dependency");
-    assert!(first.disposition.as_ref().unwrap().downstream_request.is_some());
-    assert!(serde_json::to_string(first).unwrap().find("private").is_none());
-    let second = &projected.work_units[1].attempt_history[0].incomplete_disposition.as_ref().unwrap().no_progress_handback.as_ref().unwrap().epic_runner_receiver.as_ref().unwrap();
-    assert!(second.disposition.as_ref().unwrap().human_external_attention.is_some());
-    assert!(projected.work_units.iter().all(|unit| unit.attempt_history[0].incomplete_disposition.as_ref().unwrap().no_progress_handback.is_some()));
+    assert_eq!(
+        first.disposition.as_ref().unwrap().movement_kind,
+        "await_existing_agent_dependency"
+    );
+    assert!(first
+        .disposition
+        .as_ref()
+        .unwrap()
+        .downstream_request
+        .is_some());
+    assert!(serde_json::to_string(first)
+        .unwrap()
+        .find("private")
+        .is_none());
+    let second = &projected.work_units[1].attempt_history[0]
+        .incomplete_disposition
+        .as_ref()
+        .unwrap()
+        .no_progress_handback
+        .as_ref()
+        .unwrap()
+        .epic_runner_receiver
+        .as_ref()
+        .unwrap();
+    assert!(second
+        .disposition
+        .as_ref()
+        .unwrap()
+        .human_external_attention
+        .is_some());
+    assert!(projected
+        .work_units
+        .iter()
+        .all(|unit| unit.attempt_history[0]
+            .incomplete_disposition
+            .as_ref()
+            .unwrap()
+            .no_progress_handback
+            .is_some()));
 
     connection_reopen_for_native_query_mutation(&repository, "UPDATE epic_runner_escalation_receivers SET epic_id='foreign-epic' WHERE handback_id='handback-1'");
     assert!(repository.native_query().is_err());
     connection_reopen_for_native_query_mutation(&repository, "UPDATE epic_runner_escalation_receivers SET epic_id=?1,launch_accepted_at='2030-01-01T00:00:24Z' WHERE handback_id='handback-1'");
     let connection = repository.connection.lock().unwrap();
-    connection.execute("UPDATE epic_runner_escalation_receivers SET epic_id=?1 WHERE handback_id='handback-1'", [&epic]).unwrap();
+    connection
+        .execute(
+            "UPDATE epic_runner_escalation_receivers SET epic_id=?1 WHERE handback_id='handback-1'",
+            [&epic],
+        )
+        .unwrap();
     drop(connection);
     assert!(repository.native_query().is_err());
 }
@@ -1609,7 +1873,10 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
 
     let projected = repository.native_query().expect("SCS projection");
     assert_eq!(projected.sprint_continuation_decisions.len(), 2);
-    assert_eq!(projected.sprint_continuation_current_decisions[0].decision_id, "decision-2");
+    assert_eq!(
+        projected.sprint_continuation_current_decisions[0].decision_id,
+        "decision-2"
+    );
     assert_eq!(projected.sprint_upward_results.len(), 2);
     let json = serde_json::to_string(&projected).unwrap();
     assert!(!json.contains("private-input"));
@@ -1631,7 +1898,11 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
 fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambiguous_sources() {
     let repository = repository_at(time());
     let saved = repository
-        .save_epic_plan_proposal(command(None, proposal("repeated attention"), "repeated-attention-save"))
+        .save_epic_plan_proposal(command(
+            None,
+            proposal("repeated attention"),
+            "repeated-attention-save",
+        ))
         .expect("proposal");
     repository
         .initiate_epic(super::super::domain::InitiateEpicCommand {
@@ -1658,7 +1929,9 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
         .unwrap();
     drop(connection);
 
-    let projected = repository.native_query().expect("repeated attention projection");
+    let projected = repository
+        .native_query()
+        .expect("repeated attention projection");
     assert_eq!(
         projected.sprint_continuation_decisions[0]
             .attention
@@ -1704,15 +1977,25 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
         )
         .unwrap();
     connection
-        .execute("DELETE FROM epic_runner_escalation_attentions WHERE handback_id='handback-2'", [])
+        .execute(
+            "DELETE FROM epic_runner_escalation_attentions WHERE handback_id='handback-2'",
+            [],
+        )
         .unwrap();
     drop(connection);
     assert!(repository.native_query().is_err());
 }
 
-fn connection_reopen_for_native_query_mutation(repository: &SqliteOrchestrationRepository, sql: &str) {
+fn connection_reopen_for_native_query_mutation(
+    repository: &SqliteOrchestrationRepository,
+    sql: &str,
+) {
     let connection = repository.connection.lock().unwrap();
-    if sql.contains("?1") { connection.execute(sql, ["epic-1"]).unwrap(); } else { connection.execute_batch(sql).unwrap(); }
+    if sql.contains("?1") {
+        connection.execute(sql, ["epic-1"]).unwrap();
+    } else {
+        connection.execute_batch(sql).unwrap();
+    }
 }
 
 struct RealGitRepository {
@@ -2061,8 +2344,16 @@ fn canonical_populated_query() -> NativeQueryV2 {
         work_units: vec![],
         work_unit_relationships: vec![],
         dependency_activation_intents: vec![],
-        work_unit_execution_states: vec![], work_slice_execution_graph_completions: vec![], work_slice_execution_settlements: vec![], work_slice_planning_point_execution_settlements: vec![], work_slice_execution_attentions: vec![],
-        sprint_continuation_decisions: vec![], sprint_continuation_current_decisions: vec![], sprint_upward_results: vec![], sprint_result_projections: None, epic_settlement_states: None,
+        work_unit_execution_states: vec![],
+        work_slice_execution_graph_completions: vec![],
+        work_slice_execution_settlements: vec![],
+        work_slice_planning_point_execution_settlements: vec![],
+        work_slice_execution_attentions: vec![],
+        sprint_continuation_decisions: vec![],
+        sprint_continuation_current_decisions: vec![],
+        sprint_upward_results: vec![],
+        sprint_result_projections: None,
+        epic_settlement_states: None,
         work_unit_inspections: vec![],
     }
 }
@@ -2089,8 +2380,30 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .as_object_mut()
         .unwrap()
         .insert("workUnitInspections".into(), serde_json::json!([]));
-    for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
-    for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
+    for field in [
+        "workUnitExecutionStates",
+        "workSliceExecutionGraphCompletions",
+        "workSliceExecutionSettlements",
+        "workSlicePlanningPointExecutionSettlements",
+        "workSliceExecutionAttentions",
+    ] {
+        fixture
+            .as_object_mut()
+            .unwrap()
+            .entry(field)
+            .or_insert(serde_json::json!([]));
+    }
+    for field in [
+        "sprintContinuationDecisions",
+        "sprintContinuationCurrentDecisions",
+        "sprintUpwardResults",
+    ] {
+        fixture
+            .as_object_mut()
+            .unwrap()
+            .entry(field)
+            .or_insert(serde_json::json!([]));
+    }
     Ok(fixture)
 }
 
@@ -2233,18 +2546,28 @@ fn implementer_activation_projection_serializes_public_facts_and_redacts_private
     assert_eq!(value["handlerActionInvocationId"], "handler-action");
     assert_eq!(value["implementerSessionId"], "implementer-session");
     assert_eq!(value["implementerInvocationId"], "implementer-invocation");
-    assert_eq!(value["implementerHarnessRevisionId"], "implementer-revision");
+    assert_eq!(
+        value["implementerHarnessRevisionId"],
+        "implementer-revision"
+    );
     assert!(value.get("implementerHarnessConfigurationDigest").is_none());
     assert!(value.get("implementerHarnessRepositoryCommitRef").is_none());
     for (key, expected) in [
-        ("requestedAt", "requested"), ("authorizedAt", "authorized"),
-        ("executionSupportGrantedAt", "support"), ("isolatedWorktreeReadyAt", "worktree"),
+        ("requestedAt", "requested"),
+        ("authorizedAt", "authorized"),
+        ("executionSupportGrantedAt", "support"),
+        ("isolatedWorktreeReadyAt", "worktree"),
         ("implementerSessionCreatedAt", "session-created"),
-        ("implementerInvocationPreparedAt", "prepared"), ("implementerHarnessBoundAt", "bound"),
-        ("launchRequestedAt", "launch-requested"), ("launchAcceptedAt", "launch-accepted"),
-        ("providerActivationObservedAt", "provider-observed"), ("implementerReadyAt", "ready"),
+        ("implementerInvocationPreparedAt", "prepared"),
+        ("implementerHarnessBoundAt", "bound"),
+        ("launchRequestedAt", "launch-requested"),
+        ("launchAcceptedAt", "launch-accepted"),
+        ("providerActivationObservedAt", "provider-observed"),
+        ("implementerReadyAt", "ready"),
         ("failureReason", "precise-failure"),
-    ] { assert_eq!(value[key], expected); }
+    ] {
+        assert_eq!(value[key], expected);
+    }
 }
 
 #[test]
@@ -2253,20 +2576,35 @@ fn work_unit_activation_projection_fails_closed_for_foreign_or_incoherent_state(
     assert!(validate_work_unit_activation_projection(&valid).is_ok());
 
     let mut foreign_original = valid_work_unit_activation_projection();
-    foreign_original.action_continuation.as_mut().unwrap().original_handler_invocation_id =
-        "foreign-original".into();
+    foreign_original
+        .action_continuation
+        .as_mut()
+        .unwrap()
+        .original_handler_invocation_id = "foreign-original".into();
     assert!(validate_work_unit_activation_projection(&foreign_original).is_err());
 
     let mut missing_prerequisite = valid_work_unit_activation_projection();
-    missing_prerequisite.handler_activation.as_mut().unwrap().isolated_worktree_ready_at = None;
+    missing_prerequisite
+        .handler_activation
+        .as_mut()
+        .unwrap()
+        .isolated_worktree_ready_at = None;
     assert!(validate_work_unit_activation_projection(&missing_prerequisite).is_err());
 
     let mut stale_block = valid_work_unit_activation_projection();
-    stale_block.action_continuation.as_mut().unwrap().blocked_reason = Some("stale".into());
+    stale_block
+        .action_continuation
+        .as_mut()
+        .unwrap()
+        .blocked_reason = Some("stale".into());
     assert!(validate_work_unit_activation_projection(&stale_block).is_err());
 
     let mut failed_and_ready = valid_work_unit_activation_projection();
-    failed_and_ready.implementer_activation.as_mut().unwrap().failure_reason = Some("failed".into());
+    failed_and_ready
+        .implementer_activation
+        .as_mut()
+        .unwrap()
+        .failure_reason = Some("failed".into());
     assert!(validate_work_unit_activation_projection(&failed_and_ready).is_err());
 
     let mut handler_grant_failed = valid_work_unit_activation_projection();
@@ -2285,7 +2623,11 @@ fn work_unit_activation_projection_fails_closed_for_foreign_or_incoherent_state(
     handler_grant_failed.implementer_activation = None;
     assert!(validate_work_unit_activation_projection(&handler_grant_failed).is_ok());
 
-    handler_grant_failed.handler_activation.as_mut().unwrap().failure_reason = Some(" ".into());
+    handler_grant_failed
+        .handler_activation
+        .as_mut()
+        .unwrap()
+        .failure_reason = Some(" ".into());
     assert!(validate_work_unit_activation_projection(&handler_grant_failed).is_err());
 }
 
@@ -2321,10 +2663,22 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
     let outcomes = implementer_outcome_rows(&connection).unwrap();
     let value = serde_json::to_value(&outcomes.get("unit").unwrap()[0].1).unwrap();
     assert_eq!(value["submittedOutcome"]["variant"], "review_pending");
-    assert_eq!(value["submittedOutcome"]["summaryClaim"], "Implemented the bounded change.");
-    assert_eq!(value["submittedOutcome"]["validationStatementClaim"], "Focused checks passed.");
-    assert_eq!(value["evidence"]["changedFiles"][0]["evidenceRef"], "evidence-1");
-    assert_eq!(value["evidence"]["changedFiles"][0]["contentFingerprint"], "content-fingerprint");
+    assert_eq!(
+        value["submittedOutcome"]["summaryClaim"],
+        "Implemented the bounded change."
+    );
+    assert_eq!(
+        value["submittedOutcome"]["validationStatementClaim"],
+        "Focused checks passed."
+    );
+    assert_eq!(
+        value["evidence"]["changedFiles"][0]["evidenceRef"],
+        "evidence-1"
+    );
+    assert_eq!(
+        value["evidence"]["changedFiles"][0]["contentFingerprint"],
+        "content-fingerprint"
+    );
     assert_eq!(value["terminalLifecycle"]["status"], "completed");
     assert_eq!(value["applicationAcceptedAt"], "2026-08-04T00:00:10Z");
     assert_eq!(value["handlerReviewReadyAt"], "2026-08-04T00:00:11Z");
@@ -2360,8 +2714,11 @@ fn implementer_outcome_projection_rejects_partial_bundles_and_incoherent_authori
     assert!(validate_work_unit_activation_projection(&reused_invocation).is_err());
 
     let mut accepted_failed = valid_work_unit_outcome_projection();
-    primary_outcome_mut(&mut accepted_failed).terminal_lifecycle.as_mut().unwrap().status =
-        WorkUnitImplementerLifecycleStatusDto::Failed;
+    primary_outcome_mut(&mut accepted_failed)
+        .terminal_lifecycle
+        .as_mut()
+        .unwrap()
+        .status = WorkUnitImplementerLifecycleStatusDto::Failed;
     assert!(validate_work_unit_activation_projection(&accepted_failed).is_err());
 
     let mut ready_without_acceptance = valid_work_unit_outcome_projection();
@@ -2460,11 +2817,17 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
     let mut work_unit = valid_work_unit_outcome_projection();
     work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
         attempt_id: "attempt".into(),
-        reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
+        reporting_invocation_id: projection_stable_id(
+            "work-unit-implementer-reporting-invocation",
+            "attempt",
+        ),
         handler_session_id: "handler-session".into(),
         original_handler_invocation_id: "handler-original".into(),
         action_handler_invocation_id: "handler-action".into(),
-        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        review_invocation_id: projection_stable_id(
+            "work-unit-handler-review-invocation",
+            "attempt",
+        ),
         review_harness_revision_id: "review-revision".into(),
         review_harness_configuration_digest: "review-digest".into(),
         review_harness_repository_commit_ref: "review-commit".into(),
@@ -2500,7 +2863,10 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
     });
     work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
         attempt_id: "attempt".into(),
-        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        review_invocation_id: projection_stable_id(
+            "work-unit-handler-review-invocation",
+            "attempt",
+        ),
         variant: WorkUnitHandlerDecisionVariantDto::Accepted,
         fingerprint: "decision-fingerprint".into(),
         return_reason: None,
@@ -2525,20 +2891,66 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
 fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering() {
     let mut work_unit = valid_work_unit_outcome_projection();
     work_unit.attempt_history[0].handler_review = Some(WorkUnitHandlerReviewDto {
-        attempt_id: "attempt".into(), reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
-        handler_session_id: "handler-session".into(), original_handler_invocation_id: "handler-original".into(), action_handler_invocation_id: "handler-action".into(),
-        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"), review_harness_revision_id: "review-revision".into(), review_harness_configuration_digest: "review-digest".into(), review_harness_repository_commit_ref: "review-commit".into(),
-        delivery_requested_at: "2026-08-04T00:00:00Z".into(), delivery_persisted_at: Some("2026-08-04T00:00:00Z".into()), harness_bound_at: Some("2026-08-04T00:00:00Z".into()), launch_requested_at: Some("2026-08-04T00:00:00Z".into()), launch_accepted_at: Some("2026-08-04T00:00:00Z".into()), review_ready_at: Some("2026-08-04T00:00:00Z".into()),
-        delivered: WorkUnitHandlerReviewEvidenceDto { summary_claim: "Implemented the bounded change.".into(), validation_statement_claim: "Focused checks passed.".into(), changed_files: vec![WorkUnitHandlerReviewEvidenceFileDto { evidence_ref: "evidence-1".into(), display_name: "src/lib.rs".into(), change_kind: ImplementationEvidenceChangeKindDto::Modified, content_fingerprint: "content-fingerprint".into() }], comparison_fingerprint: "comparison-fingerprint".into(), delivered_payload_fingerprint: "delivery-fingerprint".into() },
-        semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto { variant: WorkUnitHandlerReviewJudgmentVariantDto::Return, reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }), fingerprint: "judgment-fingerprint".into(), recorded_at: "2026-08-04T00:00:00Z".into() }),
-        lifecycle: Some(WorkUnitHandlerReviewLifecycleDto { status: WorkUnitHandlerReviewLifecycleStatusDto::Completed, observed_at: "2026-08-04T00:00:00Z".into() }), conflict: None,
+        attempt_id: "attempt".into(),
+        reporting_invocation_id: projection_stable_id(
+            "work-unit-implementer-reporting-invocation",
+            "attempt",
+        ),
+        handler_session_id: "handler-session".into(),
+        original_handler_invocation_id: "handler-original".into(),
+        action_handler_invocation_id: "handler-action".into(),
+        review_invocation_id: projection_stable_id(
+            "work-unit-handler-review-invocation",
+            "attempt",
+        ),
+        review_harness_revision_id: "review-revision".into(),
+        review_harness_configuration_digest: "review-digest".into(),
+        review_harness_repository_commit_ref: "review-commit".into(),
+        delivery_requested_at: "2026-08-04T00:00:00Z".into(),
+        delivery_persisted_at: Some("2026-08-04T00:00:00Z".into()),
+        harness_bound_at: Some("2026-08-04T00:00:00Z".into()),
+        launch_requested_at: Some("2026-08-04T00:00:00Z".into()),
+        launch_accepted_at: Some("2026-08-04T00:00:00Z".into()),
+        review_ready_at: Some("2026-08-04T00:00:00Z".into()),
+        delivered: WorkUnitHandlerReviewEvidenceDto {
+            summary_claim: "Implemented the bounded change.".into(),
+            validation_statement_claim: "Focused checks passed.".into(),
+            changed_files: vec![WorkUnitHandlerReviewEvidenceFileDto {
+                evidence_ref: "evidence-1".into(),
+                display_name: "src/lib.rs".into(),
+                change_kind: ImplementationEvidenceChangeKindDto::Modified,
+                content_fingerprint: "content-fingerprint".into(),
+            }],
+            comparison_fingerprint: "comparison-fingerprint".into(),
+            delivered_payload_fingerprint: "delivery-fingerprint".into(),
+        },
+        semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto {
+            variant: WorkUnitHandlerReviewJudgmentVariantDto::Return,
+            reason: Some(WorkUnitHandlerReviewReasonDto {
+                code: "review_failed".into(),
+                explanation: "correction required".into(),
+            }),
+            fingerprint: "judgment-fingerprint".into(),
+            recorded_at: "2026-08-04T00:00:00Z".into(),
+        }),
+        lifecycle: Some(WorkUnitHandlerReviewLifecycleDto {
+            status: WorkUnitHandlerReviewLifecycleStatusDto::Completed,
+            observed_at: "2026-08-04T00:00:00Z".into(),
+        }),
+        conflict: None,
     });
     work_unit.attempt_history[0].handler_decision = Some(WorkUnitHandlerDecisionDto {
         attempt_id: "attempt".into(),
-        review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"),
+        review_invocation_id: projection_stable_id(
+            "work-unit-handler-review-invocation",
+            "attempt",
+        ),
         variant: WorkUnitHandlerDecisionVariantDto::Returned,
         fingerprint: "returned-decision".into(),
-        return_reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }),
+        return_reason: Some(WorkUnitHandlerReviewReasonDto {
+            code: "review_failed".into(),
+            explanation: "correction required".into(),
+        }),
         recorded_at: "2026-08-04T00:00:00Z".into(),
         implementation_accepted_at: None,
         implementation_returned_at: Some("2026-08-04T00:00:00Z".into()),
@@ -2546,24 +2958,48 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         settlement_ready_at: None,
     });
     work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
-        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
-        implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
-        capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: Some("2026-08-04T00:00:02Z".into()),
-        authorized_at: Some("2026-08-04T00:00:03Z".into()), execution_support_granted_at: Some("2026-08-04T00:00:04Z".into()),
-        isolated_worktree_ready_at: Some("2026-08-04T00:00:05Z".into()), implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
-        implementer_invocation_prepared_at: Some("2026-08-04T00:00:07Z".into()), implementer_harness_bound_at: Some("2026-08-04T00:00:08Z".into()),
-        launch_requested_at: Some("2026-08-04T00:00:09Z".into()), launch_accepted_at: Some("2026-08-04T00:00:10Z".into()),
-        provider_activation_observed_at: Some("2026-08-04T00:00:11Z".into()), retry_ready_at: Some("2026-08-04T00:00:12Z".into()), failure_reason: None,
+        ordinal: 1,
+        origin_attempt_id: "attempt".into(),
+        retry_attempt_id: "retry-attempt".into(),
+        implementer_session_id: "retry-session".into(),
+        implementer_invocation_id: "retry-invocation".into(),
+        capture_requested_at: "2026-08-04T00:00:01Z".into(),
+        candidate_pinned_at: Some("2026-08-04T00:00:02Z".into()),
+        authorized_at: Some("2026-08-04T00:00:03Z".into()),
+        execution_support_granted_at: Some("2026-08-04T00:00:04Z".into()),
+        isolated_worktree_ready_at: Some("2026-08-04T00:00:05Z".into()),
+        implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
+        implementer_invocation_prepared_at: Some("2026-08-04T00:00:07Z".into()),
+        implementer_harness_bound_at: Some("2026-08-04T00:00:08Z".into()),
+        launch_requested_at: Some("2026-08-04T00:00:09Z".into()),
+        launch_accepted_at: Some("2026-08-04T00:00:10Z".into()),
+        provider_activation_observed_at: Some("2026-08-04T00:00:11Z".into()),
+        retry_ready_at: Some("2026-08-04T00:00:12Z".into()),
+        failure_reason: None,
     }];
     validate_work_unit_activation_projection(&work_unit).expect("truthful retry projection");
     let json = serde_json::to_string(&work_unit).expect("serialize projection");
-    assert!(json.contains("ordinal") && json.contains("candidatePinnedAt") && json.contains("retryReadyAt"));
+    assert!(
+        json.contains("ordinal")
+            && json.contains("candidatePinnedAt")
+            && json.contains("retryReadyAt")
+    );
     for forbidden in [
-        "privateRef", "privateRefName", "candidateCommit", "candidateCommitId", "candidateTreeId",
-        "sprintBaselineObjectId", "sprintCurrentObjectId", "repositoryRoot", "repositoryCommonDir",
+        "privateRef",
+        "privateRefName",
+        "candidateCommit",
+        "candidateCommitId",
+        "candidateTreeId",
+        "sprintBaselineObjectId",
+        "sprintCurrentObjectId",
+        "repositoryRoot",
+        "repositoryCommonDir",
         "worktreeRoot",
     ] {
-        assert!(!json.contains(forbidden), "retry projection leaked {forbidden}");
+        assert!(
+            !json.contains(forbidden),
+            "retry projection leaked {forbidden}"
+        );
     }
 
     let decision = work_unit.attempt_history[0].handler_decision.take();
@@ -2580,7 +3016,8 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
     assert!(validate_work_unit_activation_projection(&work_unit).is_ok());
     primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
     primary_retry_mut(&mut work_unit).launch_accepted_at = Some("2026-08-04T00:00:10Z".into());
-    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at =
+        Some("2026-08-04T00:00:11Z".into());
     primary_retry_mut(&mut work_unit).retry_ready_at = Some("2026-08-04T00:00:12Z".into());
     primary_retry_mut(&mut work_unit).failure_reason = None;
 
@@ -2590,7 +3027,8 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
 
     primary_retry_mut(&mut work_unit).launch_requested_at = None;
     primary_retry_mut(&mut work_unit).launch_accepted_at = None;
-    primary_retry_mut(&mut work_unit).provider_activation_observed_at = Some("2026-08-04T00:00:11Z".into());
+    primary_retry_mut(&mut work_unit).provider_activation_observed_at =
+        Some("2026-08-04T00:00:11Z".into());
     primary_retry_mut(&mut work_unit).retry_ready_at = None;
     assert!(validate_work_unit_activation_projection(&work_unit).is_err());
     primary_retry_mut(&mut work_unit).launch_requested_at = Some("2026-08-04T00:00:09Z".into());
@@ -2692,31 +3130,80 @@ fn valid_work_unit_activation_projection() -> WorkUnitDto {
 #[test]
 fn work_unit_inspection_requires_prepared_turns_and_projects_prepared_retry() {
     let mut work_unit = valid_work_unit_activation_projection();
-    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = None;
+    work_unit
+        .handler_activation
+        .as_mut()
+        .expect("handler activation")
+        .handler_invocation_prepared_at = None;
     work_unit.retry_attempts = vec![WorkUnitRetryAttemptDto {
-        ordinal: 1, origin_attempt_id: "attempt".into(), retry_attempt_id: "retry-attempt".into(),
-        implementer_session_id: "retry-session".into(), implementer_invocation_id: "retry-invocation".into(),
-        capture_requested_at: "2026-08-04T00:00:01Z".into(), candidate_pinned_at: None, authorized_at: None,
-        execution_support_granted_at: None, isolated_worktree_ready_at: None, implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
-        implementer_invocation_prepared_at: None, implementer_harness_bound_at: None, launch_requested_at: None,
-        launch_accepted_at: None, provider_activation_observed_at: None, retry_ready_at: None, failure_reason: None,
+        ordinal: 1,
+        origin_attempt_id: "attempt".into(),
+        retry_attempt_id: "retry-attempt".into(),
+        implementer_session_id: "retry-session".into(),
+        implementer_invocation_id: "retry-invocation".into(),
+        capture_requested_at: "2026-08-04T00:00:01Z".into(),
+        candidate_pinned_at: None,
+        authorized_at: None,
+        execution_support_granted_at: None,
+        isolated_worktree_ready_at: None,
+        implementer_session_created_at: Some("2026-08-04T00:00:06Z".into()),
+        implementer_invocation_prepared_at: None,
+        implementer_harness_bound_at: None,
+        launch_requested_at: None,
+        launch_accepted_at: None,
+        provider_activation_observed_at: None,
+        retry_ready_at: None,
+        failure_reason: None,
     }];
     let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
-    assert!(!inspection.activities.iter().any(|activity| matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation | WorkUnitInspectionStageDto::ImplementerRetry)));
+    assert!(!inspection.activities.iter().any(|activity| matches!(
+        activity.primary_stage,
+        WorkUnitInspectionStageDto::HandlerActivation
+            | WorkUnitInspectionStageDto::ImplementerRetry
+    )));
 
-    work_unit.handler_activation.as_mut().expect("handler activation").handler_invocation_prepared_at = Some("2026-08-04T00:00:07Z".into());
-    primary_retry_mut(&mut work_unit).implementer_invocation_prepared_at = Some("2026-08-04T00:00:08Z".into());
+    work_unit
+        .handler_activation
+        .as_mut()
+        .expect("handler activation")
+        .handler_invocation_prepared_at = Some("2026-08-04T00:00:07Z".into());
+    primary_retry_mut(&mut work_unit).implementer_invocation_prepared_at =
+        Some("2026-08-04T00:00:08Z".into());
     let inspection = work_unit_inspection_projection(&work_unit).expect("inspection projection");
-    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:attempt:handler-activation:handler-original" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::HandlerActivation)));
-    assert!(inspection.activities.iter().any(|activity| activity.activity_id == "work-unit-inspection:unit:retry-attempt:implementer-retry:retry-invocation" && activity.attempt_id == "retry-attempt" && activity.agent_session_id == "retry-session" && matches!(activity.primary_stage, WorkUnitInspectionStageDto::ImplementerRetry)));
+    assert!(inspection
+        .activities
+        .iter()
+        .any(|activity| activity.activity_id
+            == "work-unit-inspection:unit:attempt:handler-activation:handler-original"
+            && matches!(
+                activity.primary_stage,
+                WorkUnitInspectionStageDto::HandlerActivation
+            )));
+    assert!(inspection
+        .activities
+        .iter()
+        .any(|activity| activity.activity_id
+            == "work-unit-inspection:unit:retry-attempt:implementer-retry:retry-invocation"
+            && activity.attempt_id == "retry-attempt"
+            && activity.agent_session_id == "retry-session"
+            && matches!(
+                activity.primary_stage,
+                WorkUnitInspectionStageDto::ImplementerRetry
+            )));
 }
 
 fn primary_outcome_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitImplementerOutcomeDto {
-    work_unit.attempt_history[0].implementer_outcome.as_mut().expect("primary outcome")
+    work_unit.attempt_history[0]
+        .implementer_outcome
+        .as_mut()
+        .expect("primary outcome")
 }
 
 fn primary_review_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitHandlerReviewDto {
-    work_unit.attempt_history[0].handler_review.as_mut().expect("primary review")
+    work_unit.attempt_history[0]
+        .handler_review
+        .as_mut()
+        .expect("primary review")
 }
 
 fn primary_retry_mut(work_unit: &mut WorkUnitDto) -> &mut WorkUnitRetryAttemptDto {
