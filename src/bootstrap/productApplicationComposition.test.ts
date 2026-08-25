@@ -27,6 +27,13 @@ describe('product application composition', () => {
     ).resolves.toMatchObject({ status: 'unsupported' });
     expect(composition.contextualFileReviewClient).toBeDefined();
     expect(composition.productDecisionClient).toBeDefined();
+    expect(composition.worktreeReviewClient).toBeDefined();
+  });
+
+  it('omits the launcher only for a launched Worktree Review instance', () => {
+    expect(
+      createProductApplicationComposition({ includeWorktreeReview: false }).worktreeReviewClient,
+    ).toBeUndefined();
   });
 
   it('keeps product startup free of development fixture authority', () => {

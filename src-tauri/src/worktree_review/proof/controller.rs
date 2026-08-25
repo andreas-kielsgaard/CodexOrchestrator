@@ -1,12 +1,12 @@
-use super::{
+use super::super::{
     comparison::WorktreeComparisonView,
     detail::ReviewInstanceDetailView,
-    proof_evidence::ReviewBuildOperationEvidenceView,
-    service::{
-        AcceptedReviewOperationView, HumanReviewLauncherService, ReviewInstanceView,
-        ReviewOperationStatusView, ReviewSourceView,
-    },
+    service::{ReviewInstanceView, ReviewSourceView},
     worktree_build::WorktreeBuildContextView,
+};
+use super::{
+    evidence::ReviewBuildOperationEvidenceView, AcceptedReviewOperationView, ProofSupport,
+    ReviewOperationStatusView,
 };
 use axum::{
     extract::{rejection::JsonRejection, State},
@@ -100,7 +100,7 @@ struct ControllerDescriptor<'a> {
 }
 
 pub(crate) fn start_if_enabled(
-    service: Arc<HumanReviewLauncherService>,
+    proof: Arc<ProofSupport>,
     review_root: &Path,
 ) -> Result<Option<DebugReviewController>, String> {
     if !controller_enabled(
@@ -130,7 +130,7 @@ pub(crate) fn start_if_enabled(
     let descriptor_path = controller_root.join(format!("controller-{}.json", std::process::id()));
     write_descriptor(&descriptor_path, address, &capability)?;
     let state = Arc::new(ControllerState::new(
-        Arc::new(ServiceBackend { service }),
+        Arc::new(ProofBackend { proof }),
         capability,
     ));
     let (shutdown_send, shutdown_receive) = oneshot::channel();
@@ -681,17 +681,17 @@ trait ControllerBackend: Send + Sync {
     ) -> Result<ReviewBuildOperationEvidenceView, String>;
 }
 
-struct ServiceBackend {
-    service: Arc<HumanReviewLauncherService>,
+struct ProofBackend {
+    proof: Arc<ProofSupport>,
 }
 
-impl ControllerBackend for ServiceBackend {
+impl ControllerBackend for ProofBackend {
     fn sources(&self) -> Vec<ReviewSourceView> {
-        self.service.sources()
+        self.proof.service().sources()
     }
 
     fn instances(&self) -> Vec<ReviewInstanceView> {
-        self.service.instances()
+        self.proof.service().instances()
     }
 
     fn begin_prepare(
@@ -699,39 +699,39 @@ impl ControllerBackend for ServiceBackend {
         source_ref: String,
         name: String,
     ) -> Result<AcceptedReviewOperationView, String> {
-        self.service.begin_prepare(source_ref, name)
+        self.proof.begin_prepare(source_ref, name)
     }
 
     fn begin_build(&self, instance_ref: String) -> Result<AcceptedReviewOperationView, String> {
-        self.service.begin_build(instance_ref)
+        self.proof.begin_build(instance_ref)
     }
 
     fn begin_open(&self, instance_ref: String) -> Result<AcceptedReviewOperationView, String> {
-        self.service.begin_open(instance_ref, false)
+        self.proof.begin_open(instance_ref)
     }
 
     fn operation(&self, operation_ref: String) -> Result<ReviewOperationStatusView, String> {
-        self.service.operation_status(operation_ref)
+        self.proof.operation(operation_ref)
     }
 
     fn status(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        self.service.status(instance_ref)
+        self.proof.service().status(instance_ref)
     }
 
     fn stop(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        self.service.stop(instance_ref)
+        self.proof.service().stop(instance_ref)
     }
 
     fn recover(&self, instance_ref: String) -> Result<ReviewInstanceView, String> {
-        self.service.recover(instance_ref)
+        self.proof.service().recover(instance_ref)
     }
 
     fn navigate_launcher(&self) -> Result<(), String> {
-        self.service.proof_navigate_launcher()
+        self.proof.navigate_launcher()
     }
 
     fn navigate_launcher_detail(&self, instance_ref: String) -> Result<(), String> {
-        self.service.proof_navigate_launcher_detail(instance_ref)
+        self.proof.navigate_launcher_detail(instance_ref)
     }
 
     fn navigate_launcher_operation(
@@ -739,35 +739,35 @@ impl ControllerBackend for ServiceBackend {
         instance_ref: String,
         operation_ref: String,
     ) -> Result<(), String> {
-        self.service
-            .proof_navigate_launcher_operation(instance_ref, operation_ref)
+        self.proof
+            .navigate_launcher_operation(instance_ref, operation_ref)
     }
 
     fn select_launcher_source(&self, source_ref: String) -> Result<(), String> {
-        self.service.proof_select_launcher_source(source_ref)
+        self.proof.select_launcher_source(source_ref)
     }
 
     fn navigate(&self, instance_ref: String, route: ProofRoute) -> Result<(), String> {
-        self.service.proof_navigate(instance_ref, route.as_str())
+        self.proof.navigate_child(instance_ref, route.as_str())
     }
 
     fn context(&self, instance_ref: String) -> Result<WorktreeBuildContextView, String> {
-        self.service.context(instance_ref)
+        self.proof.service().context(instance_ref)
     }
 
     fn file_review(&self, instance_ref: String) -> Result<WorktreeComparisonView, String> {
-        self.service.comparison(instance_ref)
+        self.proof.service().comparison(instance_ref)
     }
 
     fn detail(&self, instance_ref: String) -> Result<ReviewInstanceDetailView, String> {
-        self.service.detail(instance_ref)
+        self.proof.service().detail(instance_ref)
     }
 
     fn build_evidence(
         &self,
         operation_ref: String,
     ) -> Result<ReviewBuildOperationEvidenceView, String> {
-        self.service.proof_build_operation_evidence(operation_ref)
+        self.proof.build_evidence(operation_ref)
     }
 }
 

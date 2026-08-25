@@ -4,7 +4,6 @@ import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
   HumanReviewOperationProgress,
-  HumanReviewProofPresentation,
   HumanReviewSource,
 } from '../../application/humanReviewLauncher';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
@@ -75,7 +74,9 @@ describe('HumanReviewLauncherView', () => {
 
   it('shows attachment on the branch line and requires a worktree before building', async () => {
     const client = new FakeClient();
-    client.listSources = async () => [source({ sourceRef: 'main-source', branch: 'main', isMain: true })];
+    client.listSources = async () => [
+      source({ sourceRef: 'main-source', branch: 'main', isMain: true }),
+    ];
     client.listRepositoryHistory = async () => [
       source({ sourceRef: 'main-source', branch: 'main', isMain: true }),
       source({
@@ -106,7 +107,9 @@ describe('HumanReviewLauncherView', () => {
 
     fireEvent.click(within(explorer).getByRole('button', { name: 'Create review worktree' }));
     await waitFor(() => expect(client.attachWorktree).toHaveBeenCalledWith('archive-source'));
-    expect((await within(explorer).findAllByText('Review worktree ready')).length).toBeGreaterThan(0);
+    expect((await within(explorer).findAllByText('Review worktree ready')).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByRole('button', { name: 'Create build', hidden: true })).toBeEnabled();
   });
 
@@ -327,7 +330,7 @@ describe('HumanReviewLauncherView', () => {
     expect(within(details).getByRole('button', { name: 'Launch' })).toBeEnabled();
   });
 
-  it('uses typed proof presentation for legacy selection and retained full-output drill-down', async () => {
+  it('keeps legacy selection safe and exposes retained full output through product controls', async () => {
     const client = new FakeClient();
     const legacy = {
       ...instance('Legacy build', 'prepared', 'not-built'),
@@ -354,35 +357,21 @@ describe('HumanReviewLauncherView', () => {
     ];
     client.listInstances = async () => [legacy];
     client.detail = async () => detail(legacy);
-    let presentation: HumanReviewProofPresentation = {
-      route: 'overview',
-      origin: 'selected-worktree',
-      sourceRef: 'legacy-source',
-      sequence: '0123456789abcdef0123456789abcdef',
-    };
-    client.proofPresentation = vi.fn(async () => presentation);
     render(<HumanReviewLauncherView client={client} />);
 
+    fireEvent.click(
+      (await screen.findByText('legacy branch', { selector: 'strong' })).closest('button')!,
+    );
     expect(await screen.findByText(/predates the Worktree Review child contract/)).toBeVisible();
     const card = (await screen.findByRole('heading', { name: 'Build needed' })).closest('article')!;
     expect(within(card).getByRole('button', { name: 'Build' })).toBeDisabled();
     expect(within(card).queryByRole('button', { name: 'Launch' })).toBeNull();
 
-    presentation = {
-      route: 'details',
-      origin: 'retained-operation-output',
-      instanceRef: legacy.instanceRef,
-      operationRef: 'operation-build-fixture',
-      sequence: '1123456789abcdef0123456789abcdef',
-    };
+    fireEvent.click(within(card).getByRole('button', { name: 'Build details' }));
     const detailView = await screen.findByRole('main', { name: 'Worktree build details' });
+    fireEvent.click(within(detailView).getByText(/build .* Finished .* succeeded/));
     expect(within(detailView).getByText(/24 safe lines/)).toBeVisible();
     expect(detailView).toHaveTextContent('safe output 24');
-    expect(
-      within(detailView)
-        .getByText(/build .* Finished .* succeeded/)
-        .closest('details'),
-    ).toHaveAttribute('open');
   });
 
   it('shows a main-rooted branch map and a selectable newest-first commit history', async () => {
@@ -427,10 +416,15 @@ describe('HumanReviewLauncherView', () => {
     await screen.findByRole('button', { name: /Main checkout/ });
     fireEvent.click(screen.getByRole('button', { name: 'Explore repository history' }));
     const explorer = await screen.findByRole('dialog', { name: 'Repository history' });
-    fireEvent.change(within(explorer).getByRole('combobox', { name: 'Choose repository version' }), {
-      target: { value: 'child-source' },
-    });
-    expect(within(explorer).getByRole('generic', { name: 'Focused lineage for codex/child' })).toBeVisible();
+    fireEvent.change(
+      within(explorer).getByRole('combobox', { name: 'Choose repository version' }),
+      {
+        target: { value: 'child-source' },
+      },
+    );
+    expect(
+      within(explorer).getByRole('generic', { name: 'Focused lineage for codex/child' }),
+    ).toBeVisible();
     expect(within(explorer).queryByText('Detached 55555555')).toBeNull();
     const historyTrigger = within(explorer).getByRole('button', { name: 'Compare with main' });
     fireEvent.click(historyTrigger);
@@ -585,9 +579,10 @@ describe('HumanReviewLauncherView', () => {
     sources = [main];
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: /Main checkout/ }),
-      ).toHaveAttribute('aria-pressed', 'true'),
+      expect(screen.getByRole('button', { name: /Main checkout/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
     );
     expect(screen.queryByRole('button', { name: /codex\/temporary/ })).toBeNull();
   });
@@ -644,7 +639,6 @@ class LongBuildClient implements HumanReviewLauncherClient {
 
 class FakeClient implements HumanReviewLauncherClient {
   private instance: HumanReviewInstance | undefined;
-  proofPresentation?: HumanReviewLauncherClient['proofPresentation'];
   listSources: HumanReviewLauncherClient['listSources'] = async () => [source()];
   sourceHistory: HumanReviewLauncherClient['sourceHistory'] = async () => history();
   listInstances = async () => (this.instance ? [this.instance] : []);

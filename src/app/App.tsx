@@ -56,7 +56,9 @@ import type {
 import { FileReviewScreen } from '../features/fileReview';
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
-import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileSettings';
+import type { WorktreeReviewClient } from '../application/worktreeReview';
+import { WorktreeReviewScreen } from '../features/humanReviewLauncher/WorktreeReviewScreen';
+import { TechnicalSettingsView } from '../features/technicalSettings/TechnicalSettingsView';
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 import { ProductCommandBar } from './ProductCommandBar';
@@ -131,11 +133,8 @@ export interface AppProps {
   readonly productDecisionClient?: ProductDecisionClient;
   /** Product-owned decision correction conversation boundary; it is never a general chat client. */
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
-  /** Present only in the injected development launcher composition. */
-  readonly humanReviewLauncherView?: ReactNode;
-  readonly humanReviewSettingsView?: ReactNode;
-  /** Enumerated proof navigation; it cannot activate or focus a native window. */
-  readonly humanReviewLauncherNavigation?: () => Promise<'worktree-review' | null>;
+  /** Product capability; omitted only from the child instance it launches. */
+  readonly worktreeReviewClient?: WorktreeReviewClient;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -171,15 +170,13 @@ export function App({
   epicProductDecisionSource,
   productDecisionClient,
   productDecisionCorrectionClient,
-  humanReviewLauncherView,
-  humanReviewSettingsView,
-  humanReviewLauncherNavigation,
+  worktreeReviewClient,
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
-    (initialSurface === 'worktree-review' && !humanReviewLauncherView)
+    (initialSurface === 'worktree-review' && !worktreeReviewClient)
       ? 'epics'
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
@@ -216,7 +213,7 @@ export function App({
         case 'harness_inspector':
           return Boolean(harnessManagementPreviewSurface);
         case 'worktree_review':
-          return Boolean(humanReviewLauncherView);
+          return Boolean(worktreeReviewClient);
         case 'product_decision_publish':
           return Boolean(productDecisionClient);
       }
@@ -224,7 +221,7 @@ export function App({
     [
       fileReviewSource,
       harnessManagementPreviewSurface,
-      humanReviewLauncherView,
+      worktreeReviewClient,
       productDecisionClient,
     ],
   );
@@ -336,30 +333,6 @@ export function App({
     }
   }, [currentProductDestination]);
 
-  useEffect(() => {
-    if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
-    let active = true;
-    const read = () =>
-      void humanReviewLauncherNavigation().then(
-        (route) => {
-          if (active && route === 'worktree-review') {
-            dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: { kind: 'worktree_review' },
-            });
-            setSurface(route);
-          }
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, 300);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [humanReviewLauncherNavigation, humanReviewLauncherView]);
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
   const [planningDrafts, setPlanningDrafts] = useState<readonly EpicPlanningDraftSummary[]>([]);
   const [initiationCapability, setInitiationCapability] = useState<EpicInitiationCapability>(
@@ -890,7 +863,7 @@ export function App({
               Harness Management
             </button>
           )}
-          {humanReviewLauncherView && (
+          {worktreeReviewClient && (
             <button
               className={surface === 'worktree-review' ? 'active' : undefined}
               type="button"
@@ -905,7 +878,7 @@ export function App({
                 setSurface('worktree-review');
               }}
             >
-              Worktree Review <small>Dev</small>
+              Worktree Review
             </button>
           )}
           {fileReviewSource ? (
@@ -927,7 +900,7 @@ export function App({
               Files &amp; diffs
             </button>
           ) : null}
-          {nativeProfileClient && (
+          {(nativeProfileClient || worktreeReviewClient) && (
             <button
               className={surface === 'native-settings' ? 'active' : undefined}
               type="button"
@@ -1037,8 +1010,8 @@ export function App({
               : undefined
           }
         />
-      ) : surface === 'worktree-review' && humanReviewLauncherView ? (
-        humanReviewLauncherView
+      ) : surface === 'worktree-review' && worktreeReviewClient ? (
+        <WorktreeReviewScreen client={worktreeReviewClient} />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}
@@ -1072,10 +1045,10 @@ export function App({
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
         />
-      ) : surface === 'native-settings' && nativeProfileClient ? (
-        <NativeProfileSettings
-          client={nativeProfileClient}
-          additionalSettings={humanReviewSettingsView}
+      ) : surface === 'native-settings' && (nativeProfileClient || worktreeReviewClient) ? (
+        <TechnicalSettingsView
+          nativeProfileClient={nativeProfileClient}
+          worktreeReviewClient={worktreeReviewClient}
         />
       ) : (
         harnessManagementPreviewSurface

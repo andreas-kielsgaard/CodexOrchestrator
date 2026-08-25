@@ -87,6 +87,15 @@
   cursor: not-allowed;
   opacity: 0.48;
 }
+.human-review__repository-selection {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.human-review__repository-selection label {
+  grid-column: 1 / -1;
+}
 .human-review__error {
   margin: 16px 0 0;
   border-left: 3px solid #b44;

@@ -1,6 +1,6 @@
-use crate::worktree_runtime::{
-    TestActionProgress, TestActionProgressSink, TestActionStage, TestStartProgress,
-    TestStartProgressSink, TestStartStage,
+use super::runtime_port::{
+    ReviewBuildProgress, ReviewBuildProgressSink, ReviewBuildStage, ReviewStartProgress,
+    ReviewStartProgressSink, ReviewStartStage,
 };
 use serde::Serialize;
 use std::{
@@ -222,61 +222,6 @@ impl ProgressRegistry {
                 output_complete: record.output_complete,
             })
             .collect()
-    }
-
-    pub(crate) fn history(
-        &self,
-        operation_ref: &str,
-    ) -> Result<(Option<String>, ReviewOperationHistoryView), String> {
-        let inner = self
-            .inner
-            .lock()
-            .map_err(|_| "Review progress is unavailable.".to_string())?;
-        let record = inner
-            .records
-            .get(operation_ref)
-            .ok_or_else(|| "Review operation evidence is unavailable.".to_string())?;
-        let instance_ref = record
-            .scope
-            .split_once(':')
-            .map(|(_, instance_ref)| instance_ref.to_owned());
-        Ok((
-            instance_ref,
-            ReviewOperationHistoryView {
-                operation_ref: record.operation_ref.clone(),
-                operation: record.operation.clone(),
-                state: state_name(record.state).into(),
-                stage_label: record.stage_label.clone(),
-                started_at_ms: record.started_at_ms,
-                updated_at_ms: record.updated_at_ms,
-                stage_history: record.stage_history.clone(),
-                output: record.full_output.iter().cloned().collect(),
-                output_complete: record.output_complete,
-            },
-        ))
-    }
-
-    pub(crate) fn fail_operation(&self, operation_ref: &str) {
-        let now = self.clock.now_ms();
-        let Ok(mut inner) = self.inner.lock() else {
-            return;
-        };
-        if let Some(record) = inner.records.get_mut(operation_ref) {
-            if record.state == OperationState::Pending {
-                record.state = OperationState::Failed;
-                record.stage = "failed".into();
-                record.stage_label = "Stopped with an error".into();
-                record.updated_at_ms = now;
-                record.stage_history.push(ReviewOperationStageView {
-                    stage: "failed".into(),
-                    stage_label: "Stopped with an error".into(),
-                    observed_at_ms: now,
-                });
-            }
-        }
-        inner
-            .active_by_scope
-            .retain(|_, active| active != operation_ref);
     }
 }
 
@@ -532,41 +477,43 @@ impl ProgressHandle {
     }
 }
 
-impl TestActionProgressSink for ProgressHandle {
-    fn progress(&self, progress: TestActionProgress<'_>) {
+impl ReviewBuildProgressSink for ProgressHandle {
+    fn progress(&self, progress: ReviewBuildProgress<'_>) {
         let (stage, label) = match progress.stage {
-            TestActionStage::SourceInspection => {
+            ReviewBuildStage::SourceInspection => {
                 ("preparation", "Checking source and build inputs")
             }
-            TestActionStage::Typecheck => ("typecheck", "Checking TypeScript"),
-            TestActionStage::FrontendBuild => {
+            ReviewBuildStage::Typecheck => ("typecheck", "Checking TypeScript"),
+            ReviewBuildStage::FrontendBuild => {
                 ("frontend-build", "Building the application interface")
             }
-            TestActionStage::TauriCompileLink => (
+            ReviewBuildStage::TauriCompileLink => (
                 "tauri-compile-link",
                 "Compiling and linking the Tauri application",
             ),
-            TestActionStage::BuildReuse => ("build-reuse", "Reusing the verified private build"),
-            TestActionStage::Finalizing => ("finalization", "Finalizing the isolated build"),
+            ReviewBuildStage::BuildReuse => ("build-reuse", "Reusing the verified private build"),
+            ReviewBuildStage::Finalizing => ("finalization", "Finalizing the isolated build"),
         };
         self.update(stage, label, progress.output);
     }
 }
 
-impl TestStartProgressSink for ProgressHandle {
-    fn progress(&self, progress: TestStartProgress<'_>) {
+impl ReviewStartProgressSink for ProgressHandle {
+    fn progress(&self, progress: ReviewStartProgress<'_>) {
         let (stage, label) = match progress.stage {
-            TestStartStage::Reservation => ("reservation", "Reserving the review instance"),
-            TestStartStage::SupportingServices => (
+            ReviewStartStage::Reservation => ("reservation", "Reserving the review instance"),
+            ReviewStartStage::SupportingServices => (
                 "supporting-services",
                 "Starting isolated supporting services",
             ),
-            TestStartStage::NativeStart => ("native-start", "Starting the verified worktree build"),
-            TestStartStage::WaitingForWindow => (
+            ReviewStartStage::NativeStart => {
+                ("native-start", "Starting the verified worktree build")
+            }
+            ReviewStartStage::WaitingForWindow => (
                 "waiting-for-window",
                 "Waiting for a usable worktree-build window",
             ),
-            TestStartStage::Ready => ("ready", "Worktree-build window ready"),
+            ReviewStartStage::Ready => ("ready", "Worktree-build window ready"),
         };
         self.update(stage, label, progress.output);
     }

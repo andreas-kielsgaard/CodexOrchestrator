@@ -17,5 +17,4 @@ export const tauriWorktreeBuild: WorktreeBuildClient = {
     },
   },
   markReady: () => invoke('mark_worktree_build_ready'),
-  proofNavigation: () => invoke('worktree_review_proof_navigation'),
 };

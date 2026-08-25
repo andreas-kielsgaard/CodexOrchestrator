@@ -1,4 +1,4 @@
-use super::progress::{ReviewOperationHistoryView, ReviewOperationStageView};
+use super::super::progress::{ReviewOperationHistoryView, ReviewOperationStageView};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

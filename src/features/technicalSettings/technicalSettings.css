@@ -1,0 +1,21 @@
+.technical-settings {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.technical-settings > header h1,
+.technical-settings > header p {
+  margin: 0;
+}
+
+.technical-settings > header .eyebrow {
+  margin-bottom: 4px;
+}
+
+.technical-settings > section {
+  border: 1px solid #d7ddd6;
+  border-radius: 10px;
+  padding: 20px;
+  background: #fff;
+}

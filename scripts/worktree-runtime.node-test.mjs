@@ -185,7 +185,7 @@ test('nested untracked file content changes invalidate the source fingerprint', 
 
 test('Batch 14 changed source text contains no mojibake markers', async () => {
   const base = '82d6a781cfe0d0184de99c247d07379361594a03';
-  const changed = spawnSync('git', ['diff', '--name-only', '--diff-filter=ACMR', base, 'HEAD', '--'], {
+  const changed = spawnSync('git', ['diff', '--name-only', '--diff-filter=ACMR', base, '--'], {
     encoding: 'utf8',
   });
   assert.equal(changed.status, 0, changed.stderr);

@@ -1,5 +1,5 @@
-use super::worktree_build::git_bytes;
-use super::{catalog::ReviewWorktreeCatalog, worktree_build::git_text};
+use super::catalog::ReviewWorktreeCatalog;
+use crate::repository_context::{ObjectId, RepositoryContext};
 use serde::Serialize;
 use std::collections::HashSet;
 
@@ -45,42 +45,49 @@ pub(crate) fn read(
     source_ref: &str,
 ) -> Result<ReviewSourceHistoryView, String> {
     let identity = catalog.source_history_identity(source_ref)?;
-    let range = format!(
-        "{}..{}",
-        identity.baseline_object_id, identity.selected_object_id
-    );
-    let commit_ids = git_text(
-        &identity.selected_root,
-        [
-            "rev-list",
-            "--topo-order",
-            &format!("--max-count={MAX_VISIBLE_COMMITS}"),
-            &range,
-        ],
-    )?;
-    let commit_count = git_text(&identity.selected_root, ["rev-list", "--count", &range])?
-        .parse::<usize>()
-        .map_err(|_| "Git returned an invalid branch commit count.".to_string())?;
-    let commits = commit_ids
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|commit_id| commit(&identity.selected_root, commit_id))
-        .collect::<Result<Vec<_>, _>>()?;
-    let fork_revision = git_text(
-        &identity.selected_root,
-        [
-            "merge-base",
+    let repository = RepositoryContext::discover_git().map_err(|error| error.to_string())?;
+    let commit_ids = repository
+        .revision_list(
+            &identity.selected_root,
             &identity.baseline_object_id,
             &identity.selected_object_id,
-        ],
-    )?;
-    let first_parent_commits = git_text(
-        &identity.selected_root,
-        ["rev-list", "--first-parent", &range],
-    )?
-    .lines()
-    .map(str::to_owned)
-    .collect::<HashSet<_>>();
+            false,
+            Some(MAX_VISIBLE_COMMITS),
+        )
+        .map_err(|error| error.to_string())?;
+    let commit_count = repository
+        .commit_count(
+            &identity.selected_root,
+            &identity.baseline_object_id,
+            &identity.selected_object_id,
+        )
+        .map_err(|error| error.to_string())?;
+    let commits = commit_ids
+        .iter()
+        .map(|commit_id| commit(&repository, &identity.selected_root, commit_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let divergence = repository
+        .divergence(
+            &identity.selected_root,
+            &identity.baseline_object_id,
+            &identity.selected_object_id,
+        )
+        .map_err(|error| error.to_string())?;
+    let fork_revision = divergence
+        .merge_base
+        .ok_or_else(|| "Commit history requires a common ancestor.".to_string())?;
+    let first_parent_commits = repository
+        .revision_list(
+            &identity.selected_root,
+            &identity.baseline_object_id,
+            &identity.selected_object_id,
+            true,
+            None,
+        )
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|value| value.as_str().to_owned())
+        .collect::<HashSet<_>>();
     let lineage_markers = identity
         .related_branch_tips
         .into_iter()
@@ -101,7 +108,7 @@ pub(crate) fn read(
         branch: identity.branch,
         source_label: identity.source_label,
         revision: abbreviated(&identity.selected_object_id),
-        fork_revision: abbreviated(&fork_revision),
+        fork_revision: abbreviated(fork_revision.as_str()),
         commit_count,
         truncated: commit_count > commits.len(),
         commits,
@@ -109,68 +116,28 @@ pub(crate) fn read(
     })
 }
 
-fn commit(path: &std::path::Path, commit_id: &str) -> Result<ReviewCommitView, String> {
-    let facts = git_text(
-        path,
-        [
-            "show",
-            "-s",
-            "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b",
-            commit_id,
-        ],
-    )?;
-    let mut fields = facts.splitn(6, '\u{1f}');
-    let id = fields
-        .next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Git returned an invalid commit identity.".to_string())?;
-    let abbreviated_id = fields
-        .next()
-        .ok_or_else(|| "Git returned an invalid abbreviated commit identity.".to_string())?;
-    let author = fields
-        .next()
-        .ok_or_else(|| "Git returned an invalid commit author.".to_string())?;
-    let committed_at = fields
-        .next()
-        .ok_or_else(|| "Git returned an invalid commit timestamp.".to_string())?;
-    let subject = fields
-        .next()
-        .ok_or_else(|| "Git returned an invalid commit subject.".to_string())?;
-    let description = fields.next().unwrap_or_default().trim().to_owned();
-    let first_parent = git_text(path, ["rev-parse", "--verify", &format!("{commit_id}^1")]).ok();
-    let stats = if let Some(parent) = first_parent {
-        git_bytes(
-            path,
-            [
-                "diff",
-                "--numstat",
-                "-z",
-                "--no-renames",
-                &parent,
-                commit_id,
-            ],
-        )?
-    } else {
-        git_bytes(
-            path,
-            [
-                "show",
-                "--format=",
-                "--numstat",
-                "-z",
-                "--no-renames",
-                commit_id,
-            ],
-        )?
-    };
+fn commit(
+    repository: &RepositoryContext,
+    path: &std::path::Path,
+    commit_id: &ObjectId,
+) -> Result<ReviewCommitView, String> {
+    let facts = repository
+        .commit_facts(path, commit_id.as_str())
+        .map_err(|error| error.to_string())?;
+    let first_parent = repository
+        .first_parent(path, commit_id)
+        .map_err(|error| error.to_string())?;
+    let stats = repository
+        .commit_numstat(path, commit_id, first_parent.as_ref())
+        .map_err(|error| error.to_string())?;
     let (files_changed, insertions, deletions) = parse_stats(&stats)?;
     Ok(ReviewCommitView {
-        id: id.into(),
-        abbreviated_id: abbreviated_id.into(),
-        subject: subject.into(),
-        description,
-        author: author.into(),
-        committed_at: committed_at.into(),
+        id: facts.id.as_str().to_owned(),
+        abbreviated_id: facts.abbreviated_id,
+        subject: facts.subject,
+        description: facts.body,
+        author: facts.author,
+        committed_at: facts.committed_at,
         files_changed,
         insertions,
         deletions,

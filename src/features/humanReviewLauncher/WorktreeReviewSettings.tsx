@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { HumanReviewLauncherClient } from '../../application/humanReviewLauncher';
+import type { WorktreeReviewClient } from '../../application/worktreeReview';
 
-export function WorktreeReviewSettings({ client }: { readonly client: HumanReviewLauncherClient }) {
+export function WorktreeReviewSettings({ client }: { readonly client: WorktreeReviewClient }) {
   const [enabled, setEnabled] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);

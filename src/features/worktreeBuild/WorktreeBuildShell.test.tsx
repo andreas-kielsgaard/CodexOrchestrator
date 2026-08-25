@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
-import type { WorktreeBuildClient, WorktreeProofNavigation } from '../../application/worktreeBuild';
+import type { WorktreeBuildClient } from '../../application/worktreeBuild';
 import { WorktreeBuildShell } from './WorktreeBuildShell';
 
 const fileReviewCss = readFileSync('src/features/fileReview/fileReview.css', 'utf8');
@@ -82,46 +82,6 @@ describe('WorktreeBuildShell', () => {
     );
     expect(client.markReady).toHaveBeenCalledOnce();
   });
-
-  it('applies only enumerated non-activating widget lifecycle and detail proof state', async () => {
-    const client = fakeClient();
-    let navigation: WorktreeProofNavigation = {
-      route: 'widget-expanded',
-      sequence: '0123456789abcdef0123456789abcdef',
-    };
-    client.proofNavigation = vi.fn(async () => navigation);
-    render(
-      <WorktreeBuildShell client={client}>
-        <main>Application surface</main>
-      </WorktreeBuildShell>,
-    );
-
-    expect(
-      await screen.findByRole('button', { name: 'Open Worktree build details for Alpha' }),
-    ).toBeVisible();
-    navigation = {
-      route: 'widget-minimized',
-      sequence: '1123456789abcdef0123456789abcdef',
-    };
-    expect(
-      await screen.findByRole('button', { name: 'Restore Worktree build widget' }),
-    ).toBeVisible();
-    navigation = {
-      route: 'widget-restored',
-      sequence: '2123456789abcdef0123456789abcdef',
-    };
-    expect(
-      await screen.findByRole('button', { name: 'Open Worktree build details for Alpha' }),
-    ).toBeVisible();
-    navigation = {
-      route: 'widget-build-details',
-      sequence: '3123456789abcdef0123456789abcdef',
-    };
-    expect(await screen.findByRole('main', { name: 'Worktree build details' })).toBeVisible();
-    expect(
-      screen.getByRole('button', { name: 'Open Worktree build details for Alpha' }),
-    ).toBeVisible();
-  });
 });
 
 function fakeClient(): WorktreeBuildClient & { markReady: ReturnType<typeof vi.fn> } {
@@ -167,7 +127,6 @@ function fakeClient(): WorktreeBuildClient & { markReady: ReturnType<typeof vi.f
   };
   return {
     markReady: vi.fn(async () => undefined),
-    proofNavigation: vi.fn(async () => null),
     context: async () => context,
     detail: async () => ({
       instanceRef: 'opaque-instance',

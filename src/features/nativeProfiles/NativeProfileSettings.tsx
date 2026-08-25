@@ -1,17 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   NativeProfile,
   NativeProfileClient,
 } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import './nativeProfileSettings.css';
 
-export function NativeProfileSettings({
-  client,
-  additionalSettings,
-}: {
-  readonly client: NativeProfileClient;
-  readonly additionalSettings?: ReactNode;
-}) {
+export function NativeProfileSettings({ client }: { readonly client: NativeProfileClient }) {
   const [profiles, setProfiles] = useState<readonly NativeProfile[]>([]);
   const [homePath, setHomePath] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -57,16 +51,18 @@ export function NativeProfileSettings({
     [busy],
   );
   return (
-    <main className="native-profile-settings" aria-label="Technical Codex settings" tabIndex={0}>
+    <section
+      className="native-profile-settings"
+      aria-labelledby="native-profile-settings-title"
+      tabIndex={0}
+    >
       <header>
-        <p className="eyebrow">Technical Settings</p>
-        <h1>Codex home profiles</h1>
+        <h2 id="native-profile-settings-title">Codex home profiles</h2>
         <p>
           Manage product-owned Codex homes and their observed setup state. Account identity and
           provider readiness are never inferred here.
         </p>
       </header>
-      {additionalSettings}
       <section aria-labelledby="profile-registration">
         <h2 id="profile-registration">Register or create a home</h2>
         <div className="native-profile-register">
@@ -146,7 +142,7 @@ export function NativeProfileSettings({
           />
         ))
       )}
-    </main>
+    </section>
   );
 }
 

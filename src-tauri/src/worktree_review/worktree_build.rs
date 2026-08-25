@@ -1,8 +1,6 @@
+use crate::repository_context::{RepositoryContext, WorktreeLocation};
 use serde::Serialize;
-use std::{
-    path::{Path, PathBuf},
-    process::{Command, Output},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,20 +83,16 @@ impl WorktreeScope {
             .ok_or_else(|| "Worktree identity is unavailable.".to_string())?
             .canonicalize()
             .map_err(|_| "The selected worktree is unavailable.".to_string())?;
-        let worktrees = git_text(&selected, ["worktree", "list", "--porcelain"])?;
-        let paths = worktrees
-            .split("\n\n")
-            .filter_map(|block| {
-                block
-                    .lines()
-                    .find_map(|line| line.strip_prefix("worktree "))
-                    .map(PathBuf::from)
+        let repository = RepositoryContext::discover_git().map_err(|error| error.to_string())?;
+        let paths = repository
+            .worktrees(&selected)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter_map(|record| match record.location {
+                WorktreeLocation::Available(root) => Some(root.path().to_path_buf()),
+                WorktreeLocation::Unavailable(_) => None,
             })
-            .map(|path| {
-                path.canonicalize()
-                    .map_err(|_| "A registered Git worktree is unavailable.".to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         if !paths.contains(&selected) {
             return Err("The selected worktree is no longer registered with Git.".into());
         }
@@ -114,42 +108,26 @@ impl WorktreeScope {
     }
 
     pub(crate) fn context(&self) -> Result<WorktreeBuildContextView, String> {
-        let head = commit(&self.selected, "HEAD")?;
-        let main_head = commit(&self.main, "HEAD")?;
-        let selected_branch = branch(&self.selected)?;
-        let main_branch = branch(&self.main)?;
-        let range = format!("{}...{}", main_head.id, head.id);
-        let counts = git_text(
-            &self.selected,
-            ["rev-list", "--left-right", "--count", &range],
-        )?;
-        let mut counts = counts.split_whitespace();
-        let behind = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0);
-        let ahead = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0);
-        let merge_base = git_text(&self.selected, ["merge-base", &main_head.id, &head.id])
-            .ok()
-            .filter(|value| !value.is_empty());
-        let history_range = format!("{}..{}", main_head.id, head.id);
-        let history = git_text(
-            &self.selected,
-            [
-                "log",
-                "-n",
-                "20",
-                "--format=%H%x1f%h%x1f%s%x1f%cI",
-                &history_range,
-            ],
-        )?
-        .lines()
-        .filter_map(parse_commit_line)
-        .collect();
+        let repository = RepositoryContext::discover_git().map_err(|error| error.to_string())?;
+        let head = commit(&repository, &self.selected, "HEAD")?;
+        let main_head = commit(&repository, &self.main, "HEAD")?;
+        let selected_branch = repository
+            .current_branch(&self.selected)
+            .map_err(|error| error.to_string())?;
+        let main_branch = repository
+            .current_branch(&self.main)
+            .map_err(|error| error.to_string())?;
+        let divergence = repository
+            .divergence(&self.selected, &main_head.id, &head.id)
+            .map_err(|error| error.to_string())?;
+        let history = repository
+            .revision_list(&self.selected, &main_head.id, &head.id, false, Some(20))
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|id| commit(&repository, &self.selected, id.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
         let related_branches = related_branches(
+            &repository,
             &self.selected,
             selected_branch.as_deref(),
             main_branch.as_deref(),
@@ -160,18 +138,21 @@ impl WorktreeScope {
             branch: selected_branch.clone(),
             detached: selected_branch.is_none(),
             head,
-            dirty: dirty(&self.selected)?,
+            dirty: dirty(&repository, &self.selected)?,
             main: MainCheckoutView {
                 branch: main_branch.clone(),
                 detached: main_branch.is_none(),
                 head: main_head,
-                dirty: dirty(&self.main)?,
+                dirty: dirty(&repository, &self.main)?,
             },
             relationship: RelationshipView {
-                ahead,
-                behind,
-                merge_base,
-                summary: format!("{ahead} ahead, {behind} behind machine main HEAD"),
+                ahead: divergence.ahead,
+                behind: divergence.behind,
+                merge_base: divergence.merge_base.map(|value| value.as_str().to_owned()),
+                summary: format!(
+                    "{} ahead, {} behind machine main HEAD",
+                    divergence.ahead, divergence.behind
+                ),
             },
             related_branches,
             history,
@@ -181,54 +162,40 @@ impl WorktreeScope {
 }
 
 fn related_branches(
+    repository: &RepositoryContext,
     path: &Path,
     selected: Option<&str>,
     main: Option<&str>,
     head: &str,
 ) -> Result<Vec<BranchRelationshipView>, String> {
-    let mut relationships = git_text(
-        path,
-        ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-    )?
-    .lines()
-    .filter(|branch| Some(*branch) != selected && Some(*branch) != main)
-    .filter_map(|branch| {
-        let range = format!("{branch}...{head}");
-        let counts = git_text(path, ["rev-list", "--left-right", "--count", &range]).ok()?;
-        let mut counts = counts.split_whitespace();
-        let behind = counts.next()?.parse().ok()?;
-        let ahead = counts.next()?.parse().ok()?;
-        let merge_base = git_text(path, ["merge-base", branch, head])
-            .ok()
-            .filter(|value| !value.is_empty());
-        Some(BranchRelationshipView {
-            name: branch.into(),
-            ahead,
-            behind,
-            merge_base,
-            summary: format!("{ahead} ahead, {behind} behind this local branch"),
+    let mut relationships = repository
+        .local_branches(path)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|(branch, _)| Some(branch.as_str()) != selected && Some(branch.as_str()) != main)
+        .filter_map(|(branch, _)| {
+            let divergence = repository.divergence(path, &branch, head).ok()?;
+            Some(BranchRelationshipView {
+                name: branch,
+                ahead: divergence.ahead,
+                behind: divergence.behind,
+                merge_base: divergence.merge_base.map(|value| value.as_str().to_owned()),
+                summary: format!(
+                    "{} ahead, {} behind this local branch",
+                    divergence.ahead, divergence.behind
+                ),
+            })
         })
-    })
-    .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
     relationships.sort_by_key(|relationship| relationship.ahead + relationship.behind);
     relationships.truncate(8);
     Ok(relationships)
 }
 
-pub(super) fn branch(path: &Path) -> Result<Option<String>, String> {
-    let output = git_output(path, ["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-    if output.status.success() {
-        text(output.stdout).map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
-pub(super) fn dirty(path: &Path) -> Result<DirtyView, String> {
-    let output = git_bytes(
-        path,
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    )?;
+pub(super) fn dirty(repository: &RepositoryContext, path: &Path) -> Result<DirtyView, String> {
+    let output = repository
+        .status_porcelain(path)
+        .map_err(|error| error.to_string())?;
     let mut staged = 0;
     let mut unstaged = 0;
     let mut untracked = 0;
@@ -254,65 +221,50 @@ pub(super) fn dirty(path: &Path) -> Result<DirtyView, String> {
     })
 }
 
-fn commit(path: &Path, revision: &str) -> Result<CommitView, String> {
-    let output = git_text(
-        path,
-        ["show", "-s", "--format=%H%x1f%h%x1f%s%x1f%cI", revision],
-    )?;
-    parse_commit_line(&output).ok_or_else(|| "Git returned invalid commit facts.".to_string())
-}
-
-fn parse_commit_line(line: &str) -> Option<CommitView> {
-    let mut fields = line.trim().split('\u{1f}');
-    Some(CommitView {
-        id: fields.next()?.into(),
-        abbreviated_id: fields.next()?.into(),
-        message: fields.next()?.into(),
-        committed_at: fields.next()?.into(),
+fn commit(
+    repository: &RepositoryContext,
+    path: &Path,
+    revision: &str,
+) -> Result<CommitView, String> {
+    let facts = repository
+        .commit_facts(path, revision)
+        .map_err(|error| error.to_string())?;
+    Ok(CommitView {
+        id: facts.id.as_str().to_owned(),
+        abbreviated_id: facts.abbreviated_id,
+        message: facts.subject,
+        committed_at: facts.committed_at,
     })
 }
 
+// Compatibility seam for the adjacent runtime-authority adapter. It intentionally recognizes
+// only the repository identity queries that adapter uses; it is not a generic Git escape hatch.
 pub(super) fn git_text<const N: usize>(path: &Path, args: [&str; N]) -> Result<String, String> {
-    let output = git_output(path, args)?;
-    if !output.status.success() {
-        return Err("Git could not inspect the scoped worktree.".into());
+    let repository = RepositoryContext::discover_git().map_err(|error| error.to_string())?;
+    match args.as_slice() {
+        ["rev-parse", "HEAD"] => repository
+            .resolve_commit(path, "HEAD")
+            .map(|value| value.as_str().to_owned())
+            .map_err(|error| error.to_string()),
+        ["rev-parse", "--git-common-dir"] => repository
+            .repository(path)
+            .map(|value| value.common_dir.path().to_string_lossy().into_owned())
+            .map_err(|error| error.to_string()),
+        ["rev-parse", "--verify", revision] => {
+            let revision = revision.strip_suffix("^{commit}").unwrap_or(revision);
+            repository
+                .resolve_commit(path, revision)
+                .map(|value| value.as_str().to_owned())
+                .map_err(|error| error.to_string())
+        }
+        _ => Err("That repository identity query is unavailable.".into()),
     }
-    text(output.stdout)
-}
-
-pub(super) fn git_bytes<const N: usize>(path: &Path, args: [&str; N]) -> Result<Vec<u8>, String> {
-    let output = git_output(path, args)?;
-    if !output.status.success() {
-        return Err("Git could not inspect the scoped worktree.".into());
-    }
-    Ok(output.stdout)
-}
-
-pub(super) fn git_status<const N: usize>(path: &Path, args: [&str; N]) -> bool {
-    git_output(path, args)
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-fn git_output<const N: usize>(path: &Path, args: [&str; N]) -> Result<Output, String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .map_err(|_| "Git is unavailable for worktree details.".to_string())
-}
-
-fn text(bytes: Vec<u8>) -> Result<String, String> {
-    String::from_utf8(bytes)
-        .map(|value| value.trim().to_owned())
-        .map_err(|_| "Git returned non-UTF-8 identity facts.".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn context_separates_branch_dirty_main_and_merge_base_relationship_facts() {

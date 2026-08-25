@@ -1,4 +1,5 @@
-use super::worktree_build::{git_bytes, git_status, git_text, WorktreeScope};
+use super::worktree_build::WorktreeScope;
+use crate::repository_context::{ObjectId, RepositoryContext};
 use serde::Serialize;
 use std::{
     collections::BTreeSet,
@@ -70,10 +71,15 @@ pub(crate) fn worktree_build_comparison() -> Result<WorktreeComparisonView, Stri
 }
 
 pub(super) fn comparison(scope: &WorktreeScope) -> Result<WorktreeComparisonView, String> {
-    let main_head = git_text(&scope.main, ["rev-parse", "HEAD"])?;
-    let selected_head = git_text(&scope.selected, ["rev-parse", "HEAD"])?;
-    let committed = changed_paths(&scope.selected, &main_head, &selected_head)?;
-    let uncommitted = uncommitted_paths(&scope.selected)?;
+    let repository = RepositoryContext::discover_git().map_err(|error| error.to_string())?;
+    let main_head = repository
+        .resolve_commit(&scope.main, "HEAD")
+        .map_err(|error| error.to_string())?;
+    let selected_head = repository
+        .resolve_commit(&scope.selected, "HEAD")
+        .map_err(|error| error.to_string())?;
+    let committed = changed_paths(&repository, &scope.selected, &main_head, &selected_head)?;
+    let uncommitted = uncommitted_paths(&repository, &scope.selected)?;
     let mut paths = committed.union(&uncommitted).cloned().collect::<Vec<_>>();
     paths.sort();
     let files = paths
@@ -81,6 +87,7 @@ pub(super) fn comparison(scope: &WorktreeScope) -> Result<WorktreeComparisonView
         .enumerate()
         .map(|(index, path)| {
             comparison_file(
+                &repository,
                 scope,
                 &main_head,
                 &path,
@@ -94,8 +101,9 @@ pub(super) fn comparison(scope: &WorktreeScope) -> Result<WorktreeComparisonView
 }
 
 fn comparison_file(
+    repository: &RepositoryContext,
     scope: &WorktreeScope,
-    main_head: &str,
+    main_head: &ObjectId,
     path: &str,
     index: usize,
     committed: bool,
@@ -104,8 +112,9 @@ fn comparison_file(
     validate_relative(path)?;
     let absolute = scope.selected.join(path);
     let exists = absolute.is_file();
-    let main_spec = format!("{main_head}:{path}");
-    let main_exists = git_status(&scope.selected, ["cat-file", "-e", &main_spec]);
+    let main_exists = repository
+        .path_exists_at(&scope.selected, main_head, path)
+        .map_err(|error| error.to_string())?;
     let change_kind = match (main_exists, exists) {
         (false, true) => "added",
         (true, false) => "deleted",
@@ -119,7 +128,9 @@ fn comparison_file(
     .flatten()
     .collect();
     if !exists {
-        let bytes = git_bytes(&scope.selected, ["show", &main_spec])?;
+        let bytes = repository
+            .file_at(&scope.selected, main_head, path)
+            .map_err(|error| error.to_string())?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Ok(unsupported(
                 index,
@@ -201,7 +212,9 @@ fn comparison_file(
         ));
     };
     let old = if main_exists {
-        let bytes = git_bytes(&scope.selected, ["show", &main_spec])?;
+        let bytes = repository
+            .file_at(&scope.selected, main_head, path)
+            .map_err(|error| error.to_string())?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Ok(unsupported(
                 index,
@@ -294,23 +307,33 @@ fn unsupported(
     }
 }
 
-fn changed_paths(path: &Path, left: &str, right: &str) -> Result<BTreeSet<String>, String> {
-    let range = format!("{left}..{right}");
-    nul_paths(git_bytes(
-        path,
-        ["diff", "--name-only", "-z", "--no-renames", &range, "--"],
-    )?)
+fn changed_paths(
+    repository: &RepositoryContext,
+    path: &Path,
+    left: &ObjectId,
+    right: &ObjectId,
+) -> Result<BTreeSet<String>, String> {
+    nul_paths(
+        repository
+            .changed_paths(path, left.as_str(), right.as_str())
+            .map_err(|error| error.to_string())?,
+    )
 }
 
-fn uncommitted_paths(path: &Path) -> Result<BTreeSet<String>, String> {
-    let tracked = nul_paths(git_bytes(
-        path,
-        ["diff", "--name-only", "-z", "--no-renames", "HEAD", "--"],
-    )?)?;
-    let untracked = nul_paths(git_bytes(
-        path,
-        ["ls-files", "--others", "--exclude-standard", "-z"],
-    )?)?;
+fn uncommitted_paths(
+    repository: &RepositoryContext,
+    path: &Path,
+) -> Result<BTreeSet<String>, String> {
+    let tracked = nul_paths(
+        repository
+            .tracked_changes(path)
+            .map_err(|error| error.to_string())?,
+    )?;
+    let untracked = nul_paths(
+        repository
+            .untracked_paths(path)
+            .map_err(|error| error.to_string())?,
+    )?;
     Ok(tracked.union(&untracked).cloned().collect())
 }
 

@@ -49,40 +49,6 @@ export function WorktreeBuildShell({
     };
   }, [client]);
 
-  useEffect(() => {
-    let active = true;
-    let lastSequence = '';
-    const read = () =>
-      void client.proofNavigation().then(
-        (navigation) => {
-          if (!active || !navigation || navigation.sequence === lastSequence) return;
-          lastSequence = navigation.sequence;
-          if (navigation.route === 'widget-minimized') setWidgetMinimized(true);
-          if (
-            navigation.route === 'widget-expanded' ||
-            navigation.route === 'widget-restored' ||
-            navigation.route === 'widget-build-details'
-          ) {
-            setWidgetMinimized(false);
-          }
-          setSurface(
-            navigation.route === 'worktree-details' || navigation.route === 'widget-build-details'
-              ? 'details'
-              : navigation.route === 'file-review'
-                ? 'files'
-                : 'application',
-          );
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, 300);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [client]);
-
   return (
     <div className="worktree-build-shell">
       <div

@@ -19,9 +19,9 @@ mod native_profiles;
 #[allow(dead_code)]
 mod orchestration;
 mod product_decisions;
+mod repository_context;
 mod runtime;
 mod storage;
-#[cfg(debug_assertions)]
 mod worktree_review;
 #[allow(dead_code)]
 mod worktree_runtime;

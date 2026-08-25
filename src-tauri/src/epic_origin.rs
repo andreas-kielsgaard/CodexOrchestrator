@@ -1,7 +1,8 @@
+use crate::repository_context::{FullRefName, RepositoryContext};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Command,
 };
 
 #[derive(Deserialize)]
@@ -70,11 +71,12 @@ fn inspect_project(project_path: &Path) -> Result<EpicOriginProjectView, String>
         .unwrap_or("Project")
         .to_owned();
     let path = project_path.to_string_lossy().into_owned();
-    let repository_root = match git_text(&project_path, &["rev-parse", "--show-toplevel"]) {
-        Ok(value) => {
-            let reported_root = PathBuf::from(value);
-            reported_root.canonicalize().unwrap_or(reported_root)
-        }
+    let repository = match RepositoryContext::discover_git().and_then(|context| {
+        context
+            .repository(&project_path)
+            .map(|repository| (context, repository))
+    }) {
+        Ok(value) => value,
         Err(_) => {
             return Ok(EpicOriginProjectView {
                 name,
@@ -85,17 +87,18 @@ fn inspect_project(project_path: &Path) -> Result<EpicOriginProjectView, String>
             });
         }
     };
-    let branches = local_branches(&repository_root)?;
-    let current = git_text(
-        &repository_root,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    )
-    .ok();
-    let baseline = baseline_branch(&repository_root, &branches, current.as_deref());
+    let (context, repository) = repository;
+    let repository_root = repository.top_level.path().to_path_buf();
+    let branches = local_branches(&context, &repository_root)?;
+    let current = context
+        .current_branch(&repository_root)
+        .map_err(|error| error.to_string())?;
+    let baseline = baseline_branch(&context, &repository_root, &branches, current.as_deref());
     let views = branches
         .iter()
         .map(|branch| {
             branch_view(
+                &context,
                 &repository_root,
                 branch,
                 &branches,
@@ -113,23 +116,17 @@ fn inspect_project(project_path: &Path) -> Result<EpicOriginProjectView, String>
     })
 }
 
-fn local_branches(repository_root: &Path) -> Result<Vec<LocalBranch>, String> {
-    let output = git_text(
-        repository_root,
-        &[
-            "for-each-ref",
-            "--format=%(refname:short)%09%(objectname)",
-            "refs/heads",
-        ],
-    )?;
-    let mut branches = output
-        .lines()
-        .filter_map(|line| {
-            let (name, revision) = line.split_once('\t')?;
-            Some(LocalBranch {
-                name: name.to_owned(),
-                revision: revision.to_owned(),
-            })
+fn local_branches(
+    context: &RepositoryContext,
+    repository_root: &Path,
+) -> Result<Vec<LocalBranch>, String> {
+    let mut branches = context
+        .local_branches(repository_root)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|(name, revision)| LocalBranch {
+            name,
+            revision: revision.as_str().to_owned(),
         })
         .collect::<Vec<_>>();
     branches.sort_by(|left, right| left.name.cmp(&right.name));
@@ -137,21 +134,20 @@ fn local_branches(repository_root: &Path) -> Result<Vec<LocalBranch>, String> {
 }
 
 fn baseline_branch(
+    context: &RepositoryContext,
     repository_root: &Path,
     branches: &[LocalBranch],
     current: Option<&str>,
 ) -> String {
-    let origin_head = git_text(
-        repository_root,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
-    )
-    .ok()
-    .and_then(|value| value.strip_prefix("origin/").map(str::to_owned));
+    let origin_head = FullRefName::parse("refs/remotes/origin/HEAD")
+        .ok()
+        .and_then(|reference| {
+            context
+                .symbolic_ref_short(repository_root, &reference)
+                .ok()
+                .flatten()
+        })
+        .and_then(|value| value.strip_prefix("origin/").map(str::to_owned));
     let baseline = [
         origin_head.as_deref(),
         Some("main"),
@@ -168,6 +164,7 @@ fn baseline_branch(
 }
 
 fn branch_view(
+    context: &RepositoryContext,
     repository_root: &Path,
     branch: &LocalBranch,
     branches: &[LocalBranch],
@@ -187,8 +184,10 @@ fn branch_view(
             is_baseline: true,
         });
     }
-    let merge_base = git_text(repository_root, &["merge-base", baseline, &branch.name]).ok();
-    let Some(fork_revision) = merge_base else {
+    let divergence = context
+        .divergence(repository_root, baseline, &branch.name)
+        .map_err(|error| error.to_string())?;
+    let Some(fork_revision) = divergence.merge_base else {
         return Ok(EpicOriginBranchView {
             name: branch.name.clone(),
             revision: abbreviate(&branch.revision),
@@ -201,21 +200,21 @@ fn branch_view(
             is_baseline: false,
         });
     };
-    let (behind, ahead) = ahead_behind(repository_root, baseline, &branch.name)?;
     Ok(EpicOriginBranchView {
         name: branch.name.clone(),
         revision: abbreviate(&branch.revision),
-        parent_name: nearest_parent(repository_root, branch, branches, baseline),
+        parent_name: nearest_parent(context, repository_root, branch, branches, baseline),
         relationship: "related",
-        ahead,
-        behind,
-        fork_revision: abbreviate(&fork_revision),
+        ahead: divergence.ahead,
+        behind: divergence.behind,
+        fork_revision: abbreviate(fork_revision.as_str()),
         is_current: current == Some(branch.name.as_str()),
         is_baseline: false,
     })
 }
 
 fn nearest_parent(
+    context: &RepositoryContext,
     repository_root: &Path,
     branch: &LocalBranch,
     branches: &[LocalBranch],
@@ -225,25 +224,15 @@ fn nearest_parent(
         .iter()
         .filter(|candidate| candidate.name != branch.name && candidate.revision != branch.revision)
         .filter_map(|candidate| {
-            let output = git_output(
-                repository_root,
-                &["merge-base", "--is-ancestor", &candidate.name, &branch.name],
-            )
-            .ok()?;
-            if !output.status.success() {
+            if !context
+                .is_ancestor(repository_root, &candidate.name, &branch.name)
+                .ok()?
+            {
                 return None;
             }
-            let distance = git_text(
-                repository_root,
-                &[
-                    "rev-list",
-                    "--count",
-                    &format!("{}..{}", candidate.name, branch.name),
-                ],
-            )
-            .ok()?
-            .parse::<usize>()
-            .ok()?;
+            let distance = context
+                .commit_count(repository_root, &candidate.name, &branch.name)
+                .ok()?;
             Some((distance, candidate.name.clone()))
         })
         .collect::<Vec<_>>();
@@ -252,47 +241,6 @@ fn nearest_parent(
         .first()
         .map(|(_, name)| name.clone())
         .or_else(|| (!baseline.is_empty()).then(|| baseline.to_owned()))
-}
-
-fn ahead_behind(
-    repository_root: &Path,
-    baseline: &str,
-    branch: &str,
-) -> Result<(usize, usize), String> {
-    let range = format!("{baseline}...{branch}");
-    let value = git_text(
-        repository_root,
-        &["rev-list", "--left-right", "--count", &range],
-    )?;
-    let mut parts = value.split_whitespace();
-    let behind = parts
-        .next()
-        .and_then(|part| part.parse::<usize>().ok())
-        .ok_or_else(|| "Git returned an invalid behind count.".to_owned())?;
-    let ahead = parts
-        .next()
-        .and_then(|part| part.parse::<usize>().ok())
-        .ok_or_else(|| "Git returned an invalid ahead count.".to_owned())?;
-    Ok((behind, ahead))
-}
-
-fn git_text(repository_root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git_output(repository_root, args)?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-    }
-    String::from_utf8(output.stdout)
-        .map(|value| value.trim().to_owned())
-        .map_err(|error| format!("Git returned invalid text: {error}"))
-}
-
-fn git_output(repository_root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(repository_root)
-        .args(args)
-        .output()
-        .map_err(|error| format!("Unable to run Git: {error}"))
 }
 
 fn abbreviate(revision: &str) -> String {
@@ -392,7 +340,12 @@ mod tests {
     }
 
     fn git_ok(repository: &Path, args: &[&str]) {
-        let output = git_output(repository, args).unwrap();
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(args)
+            .output()
+            .unwrap();
         assert!(
             output.status.success(),
             "{}",

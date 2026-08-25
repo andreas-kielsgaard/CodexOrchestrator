@@ -3,10 +3,11 @@ import { createProductApplicationComposition } from '../bootstrap/productApplica
 import { App, type AppProps } from './App';
 import type { WorktreeBuildClient } from '../application/worktreeBuild';
 
-/** The optional recorded review composition is development-only and never enters product boot. */
+/** Product boot. Recorded fixtures may replace product data only in development routes. */
 export function ApplicationRoot() {
+  const [worktreeReviewInstance] = useState(humanReviewInstance);
   const [composition, setComposition] = useState<AppProps>(() =>
-    createProductApplicationComposition(),
+    createProductApplicationComposition({ includeWorktreeReview: !worktreeReviewInstance }),
   );
   const [worktreeBuild, setWorktreeBuild] = useState<{
     client: WorktreeBuildClient;
@@ -18,7 +19,7 @@ export function ApplicationRoot() {
     const developmentRoute = new URLSearchParams(window.location.search);
     const harnessInspectorRequested = developmentRoute.has('harness-inspector');
     const workUnitReviewRequested = developmentRoute.has('recorded-work-unit-review');
-    if (humanReviewInstance()) {
+    if (worktreeReviewInstance) {
       void Promise.all([
         import('../infrastructure/tauriWorktreeBuild'),
         import('../features/worktreeBuild'),
@@ -35,9 +36,12 @@ export function ApplicationRoot() {
           const recorded = createRecordedFileReviewApplicationComposition(
             recordedFileReviewFixture(developmentRoute.get('file-review-fixture')),
           );
-          void loadDevelopmentReviewComposition(recorded).then((value) => {
-            if (active) setComposition(value);
-          });
+          if (active) {
+            setComposition({
+              ...recorded,
+              worktreeReviewClient: composition.worktreeReviewClient,
+            });
+          }
         },
       );
     } else if (
@@ -52,20 +56,19 @@ export function ApplicationRoot() {
             initialSurface: harnessInspectorRequested ? 'harness-inspector' : 'epics',
             includeWorkUnitReview: workUnitReviewRequested,
           });
-          void loadDevelopmentReviewComposition(recorded).then((value) => {
-            if (active) setComposition(value);
-          });
+          if (active) {
+            setComposition({
+              ...recorded,
+              worktreeReviewClient: composition.worktreeReviewClient,
+            });
+          }
         },
       );
-    } else if (viteDevelopmentMode()) {
-      void loadDevelopmentReviewComposition(composition).then((value) => {
-        if (active) setComposition(value);
-      });
     }
     return () => {
       active = false;
     };
-  }, []);
+  }, [composition.worktreeReviewClient, worktreeReviewInstance]);
 
   if (worktreeBuild) {
     const { client, Shell } = worktreeBuild;
@@ -76,21 +79,6 @@ export function ApplicationRoot() {
     );
   }
   return <App {...composition} />;
-}
-
-async function loadDevelopmentReviewComposition(composition: AppProps): Promise<AppProps> {
-  const [{ tauriHumanReviewLauncher }, { HumanReviewLauncherView }, { WorktreeReviewSettings }] =
-    await Promise.all([
-      import('../infrastructure/tauriHumanReviewLauncher'),
-      import('../features/humanReviewLauncher/HumanReviewLauncherView'),
-      import('../features/humanReviewLauncher/WorktreeReviewSettings'),
-    ]);
-  return {
-    ...composition,
-    humanReviewLauncherView: <HumanReviewLauncherView client={tauriHumanReviewLauncher} />,
-    humanReviewSettingsView: <WorktreeReviewSettings client={tauriHumanReviewLauncher} />,
-    humanReviewLauncherNavigation: () => tauriHumanReviewLauncher.proofNavigation!(),
-  };
 }
 
 function viteDevelopmentMode(): boolean {

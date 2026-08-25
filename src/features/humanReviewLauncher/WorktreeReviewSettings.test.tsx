@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
-import type { HumanReviewLauncherClient } from '../../application/humanReviewLauncher';
+import type { WorktreeReviewClient } from '../../application/worktreeReview';
 import { WorktreeReviewSettings } from './WorktreeReviewSettings';
 
 describe('WorktreeReviewSettings', () => {
@@ -9,7 +9,7 @@ describe('WorktreeReviewSettings', () => {
     const user = userEvent.setup();
     const settings = vi.fn(async () => ({ cleanupDetachedBuilds: false }));
     const updateSettings = vi.fn(async (value: { cleanupDetachedBuilds: boolean }) => value);
-    const client = { settings, updateSettings } as unknown as HumanReviewLauncherClient;
+    const client = { settings, updateSettings } as unknown as WorktreeReviewClient;
 
     render(<WorktreeReviewSettings client={client} />);
 

@@ -1,3 +1,6 @@
+#[cfg(test)]
+use crate::repository_context::parse_worktree_porcelain;
+use crate::repository_context::{RepositoryContext, WorktreeLocation, WorktreeRecord};
 use crate::worktree_runtime::{
     TestInstanceError, TestInstanceErrorKind, TestSourceRef, TestSourceResolver,
 };
@@ -79,6 +82,7 @@ pub(super) struct CatalogSourceFreshness {
 }
 
 impl ReviewWorktreeCatalog {
+    #[cfg(test)]
     pub(crate) fn discover(current_source: &Path, git: &Path) -> Result<Self, String> {
         Self::discover_with_comparison(current_source, git, None)
     }
@@ -91,19 +95,12 @@ impl ReviewWorktreeCatalog {
         let current_source = current_source
             .canonicalize()
             .map_err(|error| format!("resolve launcher source: {error}"))?;
-        let output = Command::new(git)
-            .arg("-C")
-            .arg(&current_source)
-            .args(["worktree", "list", "--porcelain"])
-            .output()
-            .map_err(|error| format!("discover Git worktrees: {error}"))?;
-        if !output.status.success() {
-            return Err("Git worktree discovery failed".into());
-        }
-        let text = String::from_utf8(output.stdout)
-            .map_err(|_| "Git worktree discovery was not UTF-8".to_string())?;
+        let repository = RepositoryContext::with_git(git).map_err(|error| error.to_string())?;
+        let worktrees = repository
+            .worktrees(&current_source)
+            .map_err(|error| error.to_string())?;
         let mut catalog = validate_catalog_identity(
-            Self::from_porcelain(&text, &current_source)?,
+            Self::from_worktree_records(worktrees, &current_source)?,
             &current_source,
             |path| git_common_dir(path, git),
         )?;
@@ -127,34 +124,40 @@ impl ReviewWorktreeCatalog {
         Ok(catalog)
     }
 
+    #[cfg(test)]
     fn from_porcelain(text: &str, current_source: &Path) -> Result<Self, String> {
+        let records =
+            parse_worktree_porcelain(text.as_bytes()).map_err(|error| error.to_string())?;
+        Self::from_worktree_records(records, current_source)
+    }
+
+    fn from_worktree_records(
+        records: Vec<WorktreeRecord>,
+        current_source: &Path,
+    ) -> Result<Self, String> {
         let mut options = Vec::new();
         let mut paths = HashMap::new();
         let mut main_path = None;
         let mut main_head = None;
-        for block in text.split("\n\n").filter(|block| !block.trim().is_empty()) {
-            let mut path = None;
-            let mut head = None;
-            let mut branch = None;
-            for line in block.lines() {
-                if let Some(value) = line.strip_prefix("worktree ") {
-                    path = Some(PathBuf::from(value));
-                } else if let Some(value) = line.strip_prefix("HEAD ") {
-                    head = Some(value.to_owned());
-                } else if let Some(value) = line.strip_prefix("branch refs/heads/") {
-                    branch = Some(value.to_owned());
+        for (index, record) in records.into_iter().enumerate() {
+            let path = match record.location {
+                WorktreeLocation::Available(path) => path.path().to_path_buf(),
+                WorktreeLocation::Unavailable(_) if index == 0 => {
+                    return Err("The main Git worktree is unavailable".into())
                 }
-            }
-            let path = path
-                .ok_or_else(|| "Git returned a worktree without a path".to_string())?
-                .canonicalize()
-                .map_err(|error| format!("resolve discovered worktree: {error}"))?;
+                WorktreeLocation::Unavailable(_) => continue,
+            };
             let is_main = main_path.is_none();
             if is_main {
                 main_path = Some(path.clone());
-                main_head = head.clone();
+                main_head = Some(record.head.as_str().to_owned());
             }
-            let head = head.ok_or_else(|| "Git returned a worktree without HEAD".to_string())?;
+            let head = record.head.as_str().to_owned();
+            let branch = record
+                .head_ref
+                .as_ref()
+                .and_then(|reference| reference.short_branch())
+                .map(str::to_owned);
             let digest = format!("{:x}", Sha256::digest(path.to_string_lossy().as_bytes()));
             let source_ref = format!("review-source-{}", &digest[..20]);
             let detached = branch.is_none();
@@ -417,6 +420,7 @@ impl ReviewWorktreeCatalog {
         Ok(snapshot)
     }
 
+    #[cfg(test)]
     fn populate_relationships(&mut self, git: &Path) -> Result<(), String> {
         let comparison_branch = self.comparison_branch.clone();
         let main_ref = self
@@ -538,51 +542,26 @@ impl ReviewWorktreeCatalog {
     }
 
     fn populate_durable_refs(&self, git: &Path) -> Result<(), String> {
-        let output = Command::new(git)
-            .arg("-C")
-            .arg(&self.main_path)
-            .args([
-                "for-each-ref",
-                "--format=%(refname)%00%(objectname)%00%(symref)",
-                "refs/heads",
-                "refs/remotes",
-                "refs/tags",
-            ])
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .output()
-            .map_err(|error| format!("discover durable Git references: {error}"))?;
-        if !output.status.success() {
-            return Err("Git durable-reference discovery failed".into());
-        }
-        let text = String::from_utf8(output.stdout)
-            .map_err(|_| "Git returned non-UTF-8 durable references".to_string())?;
+        let repository = RepositoryContext::with_git(git).map_err(|error| error.to_string())?;
+        let references = repository
+            .refs(&self.main_path)
+            .map_err(|error| error.to_string())?;
         let comparison_branch = self.comparison_branch.clone();
         let mut seen = HashSet::new();
         let mut durable_refs = Vec::new();
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            let mut fields = line.split('\0');
-            let Some(full_ref) = fields.next() else {
-                continue;
-            };
-            let Some(object_id) = fields.next() else {
-                continue;
-            };
-            let symref = fields.next().unwrap_or_default();
-            if !symref.is_empty() || object_id.is_empty() {
+        for reference in references {
+            if reference.symbolic_target.is_some() {
                 continue;
             }
+            let full_ref = reference.full_name.as_str();
             let Some((display, ref_kind)) = display_ref(full_ref) else {
                 continue;
             };
             if !seen.insert(display.clone()) {
                 continue;
             }
-            let selected_object = match git_text(
-                &self.main_path,
-                git,
-                &["rev-parse", "--verify", &format!("{full_ref}^{{commit}}")],
-            ) {
-                Ok(value) => value,
+            let selected_object = match repository.resolve_commit(&self.main_path, full_ref) {
+                Ok(value) => value.as_str().to_owned(),
                 Err(_) => continue,
             };
             let merge_base = git_text(
@@ -986,51 +965,76 @@ fn display_ref(full_ref: &str) -> Option<(String, &'static str)> {
 }
 
 fn equivalent_patch_count(path: &Path, git: &Path, baseline: &str, selected: &str) -> usize {
-    git_text(path, git, &["cherry", baseline, selected])
-        .map(|output| output.lines().filter(|line| line.starts_with('-')).count())
+    RepositoryContext::with_git(git)
+        .and_then(|repository| repository.equivalent_patch_count(path, baseline, selected))
         .unwrap_or(0)
 }
 
 fn git_text(path: &Path, git: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(git)
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .map_err(|error| format!("inspect Git worktree relationships: {error}"))?;
-    if !output.status.success() {
-        return Err("Git could not inspect worktree relationships".into());
+    let repository = RepositoryContext::with_git(git).map_err(|error| error.to_string())?;
+    match args {
+        ["rev-parse", "--verify", revision] => repository
+            .resolve_commit(path, revision.strip_suffix("^{commit}").unwrap_or(revision))
+            .map(|value| value.as_str().to_owned())
+            .map_err(|error| error.to_string()),
+        ["rev-list", "--left-right", "--count", range] => {
+            let (left, right) = range
+                .split_once("...")
+                .ok_or_else(|| "Git comparison range is invalid.".to_string())?;
+            repository
+                .divergence(path, left, right)
+                .map(|value| format!("{}\t{}", value.behind, value.ahead))
+                .map_err(|error| error.to_string())
+        }
+        ["merge-base", left, right] => repository
+            .divergence(path, left, right)
+            .map_err(|error| error.to_string())?
+            .merge_base
+            .map(|value| value.as_str().to_owned())
+            .ok_or_else(|| "The revisions do not have a common ancestor.".to_string()),
+        ["rev-list", "--first-parent", revision] => repository
+            .first_parent_history(path, revision)
+            .map(|values| {
+                values
+                    .into_iter()
+                    .map(|value| value.as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .map_err(|error| error.to_string()),
+        ["rev-list", "--count", range] => {
+            let (left, right) = range
+                .split_once("..")
+                .ok_or_else(|| "Git commit range is invalid.".to_string())?;
+            repository
+                .commit_count(path, left, right)
+                .map(|value| value.to_string())
+                .map_err(|error| error.to_string())
+        }
+        _ => Err("That repository relationship query is unavailable.".into()),
     }
-    String::from_utf8(output.stdout)
-        .map(|value| value.trim().to_owned())
-        .map_err(|_| "Git returned non-UTF-8 worktree relationships".to_string())
 }
 
 fn git_optional_text(path: &Path, git: &Path, args: &[&str]) -> Result<Option<String>, String> {
-    let output = Command::new(git)
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .map_err(|error| format!("inspect Git worktree identity: {error}"))?;
-    if !output.status.success() {
-        return Ok(None);
+    let repository = RepositoryContext::with_git(git).map_err(|error| error.to_string())?;
+    match args {
+        ["symbolic-ref", "--quiet", "--short", "HEAD"] => repository
+            .current_branch(path)
+            .map_err(|error| error.to_string()),
+        _ => Err("That repository identity query is unavailable.".into()),
     }
-    String::from_utf8(output.stdout)
-        .map(|value| Some(value.trim().to_owned()))
-        .map_err(|_| "Git returned non-UTF-8 worktree identity".to_string())
 }
 
 fn git_success(path: &Path, git: &Path, args: &[&str]) -> bool {
-    Command::new(git)
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    let Ok(repository) = RepositoryContext::with_git(git) else {
+        return false;
+    };
+    match args {
+        ["merge-base", "--is-ancestor", ancestor, descendant] => repository
+            .is_ancestor(path, ancestor, descendant)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn validate_catalog_identity(
@@ -1066,25 +1070,10 @@ fn validate_catalog_identity(
 }
 
 fn git_common_dir(root: &Path, git: &Path) -> Result<PathBuf, String> {
-    let output = Command::new(git)
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--git-common-dir"])
-        .output()
-        .map_err(|error| format!("resolve Git common directory: {error}"))?;
-    if !output.status.success() {
-        return Err("Git common-directory discovery failed".into());
-    }
-    let value = String::from_utf8(output.stdout)
-        .map_err(|_| "Git common-directory output was not UTF-8".to_string())?;
-    let path = PathBuf::from(value.trim());
-    let path = if path.is_absolute() {
-        path
-    } else {
-        root.join(path)
-    };
-    path.canonicalize()
-        .map_err(|error| format!("resolve canonical Git common directory: {error}"))
+    RepositoryContext::with_git(git)
+        .and_then(|repository| repository.repository(root))
+        .map(|repository| repository.common_dir.path().to_path_buf())
+        .map_err(|error| error.to_string())
 }
 
 fn compatibility(path: &Path) -> (String, String) {
@@ -1137,7 +1126,7 @@ mod tests {
         std::fs::create_dir_all(&current).expect("current");
         std::fs::create_dir_all(&other).expect("other");
         let text = format!(
-            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/codex/review\n\nworktree {}\nHEAD abcdef0123456789\ndetached\n",
+            "worktree {}\nHEAD 0123456789abcdef0123456789abcdef01234567\nbranch refs/heads/codex/review\n\nworktree {}\nHEAD abcdef0123456789abcdef0123456789abcdef01\ndetached\n",
             current.display(),
             other.display()
         );
@@ -1177,7 +1166,7 @@ mod tests {
         )
         .expect("marker");
         let text = format!(
-            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/codex/current\n\nworktree {}\nHEAD abcdef0123456789\nbranch refs/heads/codex/legacy\n",
+            "worktree {}\nHEAD 0123456789abcdef0123456789abcdef01234567\nbranch refs/heads/codex/current\n\nworktree {}\nHEAD abcdef0123456789abcdef0123456789abcdef01\nbranch refs/heads/codex/legacy\n",
             current.display(),
             legacy.display()
         );
@@ -1544,7 +1533,7 @@ mod tests {
         let current = current.canonicalize().expect("current canonical");
         let foreign = foreign.canonicalize().expect("foreign canonical");
         let text = format!(
-            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/current\n\nworktree {}\nHEAD abcdef0123456789\nbranch refs/heads/foreign\n",
+            "worktree {}\nHEAD 0123456789abcdef0123456789abcdef01234567\nbranch refs/heads/current\n\nworktree {}\nHEAD abcdef0123456789abcdef0123456789abcdef01\nbranch refs/heads/foreign\n",
             current.display(),
             foreign.display()
         );
@@ -1573,7 +1562,7 @@ mod tests {
         fs::create_dir_all(&launcher).expect("launcher");
         let launcher = launcher.canonicalize().expect("launcher canonical");
         let source_text = format!(
-            "worktree {}\nHEAD 0123456789abcdef\nbranch refs/heads/main\n\nworktree {}\nHEAD abcdef0123456789\nbranch refs/heads/launcher\n",
+            "worktree {}\nHEAD 0123456789abcdef0123456789abcdef01234567\nbranch refs/heads/main\n\nworktree {}\nHEAD abcdef0123456789abcdef0123456789abcdef01\nbranch refs/heads/launcher\n",
             current.display(),
             launcher.display()
         );

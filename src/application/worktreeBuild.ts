@@ -80,17 +80,4 @@ export interface WorktreeBuildClient {
   detail(): Promise<WorktreeBuildDetail>;
   comparison: FileReviewSource;
   markReady(): Promise<void>;
-  proofNavigation(): Promise<WorktreeProofNavigation | null>;
-}
-
-export interface WorktreeProofNavigation {
-  readonly route:
-    | 'application'
-    | 'widget-expanded'
-    | 'widget-minimized'
-    | 'widget-restored'
-    | 'widget-build-details'
-    | 'worktree-details'
-    | 'file-review';
-  readonly sequence: string;
 }

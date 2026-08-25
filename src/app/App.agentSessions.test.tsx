@@ -10,6 +10,7 @@ import type {
   ContextualFileReviewClient,
   ContextualFileReviewResult,
 } from '../application/contextualFileReview';
+import type { WorktreeReviewClient } from '../application/worktreeReview';
 import { App } from './App';
 import { createRecordedDevelopmentApplicationComposition } from '../dev/orchestrationSection/recordedOrchestrationClient';
 
@@ -70,7 +71,7 @@ describe('App application surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Files & diffs' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Worktree Review Dev' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Worktree Review' })).toBeNull();
   });
 
   it('adds the development-only file review tab only when its client is injected', async () => {
@@ -147,17 +148,17 @@ describe('App application surfaces', () => {
     ).toBeDisabled();
   });
 
-  it('adds Worktree Review only through the injected development composition', async () => {
+  it('adds Worktree Review through its typed product client', async () => {
     render(
       <App
         agentSessionClient={emptyAgentClient()}
         orchestrationClient={emptyOrchestrationClient()}
-        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
+        worktreeReviewClient={unreadyWorktreeReviewClient()}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
-    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review' }));
+    expect(await screen.findByRole('main', { name: 'Worktree review readiness' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
@@ -171,7 +172,7 @@ describe('App application surfaces', () => {
         harnessManagementPreviewSurface={
           <main aria-label="Harness Management preview">Harness</main>
         }
-        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
+        worktreeReviewClient={unreadyWorktreeReviewClient()}
       />,
     );
 
@@ -188,8 +189,8 @@ describe('App application surfaces', () => {
     fireEvent.click(back);
     expect(await screen.findByText('Start with a message')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
-    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review' }));
+    expect(await screen.findByRole('main', { name: 'Worktree review readiness' })).toBeVisible();
     fireEvent.click(
       within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
         name: 'Back',
@@ -731,4 +732,13 @@ function emptyAgentClient(): AgentSessionClient {
 
 function emptyOrchestrationClient(): OrchestrationApplicationClient {
   return { load: async () => ({ kind: 'empty', reason: 'No orchestration records.' }) };
+}
+
+function unreadyWorktreeReviewClient(): WorktreeReviewClient {
+  return {
+    readiness: async () => ({
+      status: 'needsRepository',
+      message: 'Choose a repository.',
+    }),
+  } as WorktreeReviewClient;
 }

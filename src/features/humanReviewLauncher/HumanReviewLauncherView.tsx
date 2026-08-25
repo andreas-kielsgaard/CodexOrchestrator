@@ -1,12 +1,14 @@
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  HumanReviewInstance,
-  HumanReviewLauncherClient,
-  HumanReviewOperationProgress,
-  HumanReviewSource,
-  HumanReviewSourceHistory,
-} from '../../application/humanReviewLauncher';
+import {
+  worktreeReviewErrorMessage,
+  type WorktreeReviewClient,
+  type WorktreeReviewInstance,
+  type WorktreeReviewOperationProgress,
+  type WorktreeReviewSource,
+  type WorktreeReviewSourceHistory,
+} from '../../application/worktreeReview';
+import type { HumanReviewLauncherClient } from '../../application/humanReviewLauncher';
 import type { WorktreeBuildDetail } from '../../application/worktreeBuild';
 import { FileReviewScreen } from '../fileReview';
 import { WorktreeBuildDetailScreen } from '../worktreeBuild';
@@ -15,25 +17,21 @@ import { RepositoryHistoryDialog } from './RepositoryHistoryDialog';
 import { WorktreeSourcePicker } from './WorktreeSourcePicker';
 import './humanReviewLauncher.css';
 
-export function HumanReviewLauncherView({
-  client,
-}: {
-  readonly client: HumanReviewLauncherClient;
-}) {
-  const [sources, setSources] = useState<readonly HumanReviewSource[]>([]);
-  const [instances, setInstances] = useState<readonly HumanReviewInstance[]>([]);
+export function WorktreeReviewLauncherView({ client }: { readonly client: WorktreeReviewClient }) {
+  const [sources, setSources] = useState<readonly WorktreeReviewSource[]>([]);
+  const [instances, setInstances] = useState<readonly WorktreeReviewInstance[]>([]);
   const [sourceRef, setSourceRef] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Record<string, HumanReviewOperationProgress>>({});
-  const [ownedProgress, setOwnedProgress] = useState<HumanReviewOperationProgress | null>(null);
+  const [progress, setProgress] = useState<Record<string, WorktreeReviewOperationProgress>>({});
+  const [ownedProgress, setOwnedProgress] = useState<WorktreeReviewOperationProgress | null>(null);
   const [detail, setDetail] = useState<WorktreeBuildDetail | null>(null);
   const [surface, setSurface] = useState<'overview' | 'details' | 'files'>('overview');
   const [expandedOperationRef, setExpandedOperationRef] = useState<string | undefined>();
-  const [history, setHistory] = useState<HumanReviewSourceHistory | null>(null);
+  const [history, setHistory] = useState<WorktreeReviewSourceHistory | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [selectedInstanceRef, setSelectedInstanceRef] = useState('');
-  const [repositorySources, setRepositorySources] = useState<readonly HumanReviewSource[]>([]);
+  const [repositorySources, setRepositorySources] = useState<readonly WorktreeReviewSource[]>([]);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [sourcesLoading, setSourcesLoading] = useState(true);
@@ -41,7 +39,7 @@ export function HumanReviewLauncherView({
   const historyRequest = useRef(0);
   const historyTrigger = useRef<HTMLElement | null>(null);
 
-  const applySources = useCallback((nextSources: readonly HumanReviewSource[]) => {
+  const applySources = useCallback((nextSources: readonly WorktreeReviewSource[]) => {
     const attachedSources = nextSources.filter((source) => source.attached && !source.detached);
     setSources(attachedSources);
     setSourceRef((current) =>
@@ -83,48 +81,6 @@ export function HumanReviewLauncherView({
   }, [loadInstances, loadSources]);
 
   useEffect(() => {
-    if (!client.proofPresentation) return;
-    let active = true;
-    let lastSequence = '';
-    const read = () =>
-      void client.proofPresentation!().then(
-        (presentation) => {
-          if (!active || !presentation || presentation.sequence === lastSequence) return;
-          lastSequence = presentation.sequence;
-          if (presentation.sourceRef) setSourceRef(presentation.sourceRef);
-          if (presentation.route === 'overview') {
-            setExpandedOperationRef(undefined);
-            setSurface('overview');
-            return;
-          }
-          if (!presentation.instanceRef) return;
-          setBusy(`detail:${presentation.instanceRef}`);
-          void client.detail(presentation.instanceRef).then(
-            (value) => {
-              if (!active) return;
-              setDetail(value);
-              setExpandedOperationRef(presentation.operationRef);
-              setSurface('details');
-              setBusy(null);
-            },
-            (cause) => {
-              if (!active) return;
-              setError(message(cause));
-              setBusy(null);
-            },
-          );
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, 300);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [client]);
-
-  useEffect(() => {
     void loadSources(false);
     void loadInstances();
   }, [loadInstances, loadSources]);
@@ -132,8 +88,7 @@ export function HumanReviewLauncherView({
   useEffect(() => {
     const enriching = sources.some(
       (source) =>
-        !source.detached &&
-        (source.detailsState === 'pending' || source.detailsState === 'cached'),
+        !source.detached && (source.detailsState === 'pending' || source.detailsState === 'cached'),
     );
     if (!enriching) return;
     let active = true;
@@ -182,41 +137,7 @@ export function HumanReviewLauncherView({
     };
   }, [client]);
 
-  useEffect(() => {
-    if (!client.proofDetailNavigation) return;
-    let active = true;
-    let lastSequence = '';
-    const read = () =>
-      void client.proofDetailNavigation!().then(
-        (navigation) => {
-          if (!active || !navigation || navigation.sequence === lastSequence) return;
-          lastSequence = navigation.sequence;
-          setBusy(`detail:${navigation.instanceRef}`);
-          void client.detail(navigation.instanceRef).then(
-            (value) => {
-              if (!active) return;
-              setDetail(value);
-              setSurface('details');
-              setBusy(null);
-            },
-            (cause) => {
-              if (!active) return;
-              setError(message(cause));
-              setBusy(null);
-            },
-          );
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, 300);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [client]);
-
-  const update = useCallback((instance: HumanReviewInstance) => {
+  const update = useCallback((instance: WorktreeReviewInstance) => {
     setInstances((current) => [
       instance,
       ...current.filter((item) => item.instanceRef !== instance.instanceRef),
@@ -237,7 +158,7 @@ export function HumanReviewLauncherView({
     }
   }
 
-  async function createOrUpdateBuild(existing?: HumanReviewInstance) {
+  async function createOrUpdateBuild(existing?: WorktreeReviewInstance) {
     const targetSourceRef = existing?.sourceRef ?? sourceRef;
     const progressKey = existing?.instanceRef ?? 'prepare';
     setBusy(existing ? `rebuild:${existing.instanceRef}` : 'prepare');
@@ -303,7 +224,7 @@ export function HumanReviewLauncherView({
         ...sources.filter((source) => source.sourceRef !== attached.sourceRef),
       ]);
       setRepositorySources((current) =>
-        current.map((source) => source.sourceRef === attached.sourceRef ? attached : source),
+        current.map((source) => (source.sourceRef === attached.sourceRef ? attached : source)),
       );
       setSourceRef(attached.sourceRef);
     } catch (cause) {
@@ -351,9 +272,9 @@ export function HumanReviewLauncherView({
   }
 
   async function act(
-    instance: HumanReviewInstance,
+    instance: WorktreeReviewInstance,
     label: string,
-    operation: (operationRef: string) => Promise<HumanReviewInstance>,
+    operation: (operationRef: string) => Promise<WorktreeReviewInstance>,
   ) {
     setBusy(`${label}:${instance.instanceRef}`);
     setError(null);
@@ -413,7 +334,7 @@ export function HumanReviewLauncherView({
     >
       <header className="human-review__header">
         <div>
-          <p className="eyebrow">Development tool</p>
+          <p className="eyebrow">Product capability</p>
           <h1>Worktree review</h1>
           <p>
             Open the real application from another worktree without closing this window or switching
@@ -434,8 +355,8 @@ export function HumanReviewLauncherView({
         <div className="human-review__prepare-intro">
           <h2 id="prepare-review-title">Choose a worktree</h2>
           <p>
-            Select an attached worktree to build from its current folder. Explore repository
-            history only when you need another branch or tag.
+            Select an attached worktree to build from its current folder. Explore repository history
+            only when you need another branch or tag.
           </p>
         </div>
         <WorktreeSourcePicker
@@ -547,14 +468,14 @@ export function HumanReviewLauncherView({
 }
 
 function preferredRetainedBuild(
-  instances: readonly HumanReviewInstance[],
-): HumanReviewInstance | undefined {
+  instances: readonly WorktreeReviewInstance[],
+): WorktreeReviewInstance | undefined {
   return [...instances].sort(
     (left, right) => retainedBuildPreference(right) - retainedBuildPreference(left),
   )[0];
 }
 
-function retainedBuildPreference(instance: HumanReviewInstance) {
+function retainedBuildPreference(instance: WorktreeReviewInstance) {
   if (instance.sourceState === 'current' && instance.build === 'passed') return 3;
   if (instance.sourceState === 'current') return 2;
   if (instance.build === 'passed') return 1;
@@ -572,9 +493,9 @@ function RetainedBuildDetails({
   onFocus,
   onStop,
 }: {
-  readonly instance: HumanReviewInstance;
+  readonly instance: WorktreeReviewInstance;
   readonly pending: boolean;
-  readonly progress?: HumanReviewOperationProgress;
+  readonly progress?: WorktreeReviewOperationProgress;
   readonly onOpenDetail: () => void;
   readonly onBuild: () => void;
   readonly onUpdate: () => void;
@@ -656,7 +577,7 @@ function RetainedBuildDetails({
   );
 }
 
-function buildFreshness(instance: HumanReviewInstance) {
+function buildFreshness(instance: WorktreeReviewInstance) {
   switch (instance.sourceState) {
     case 'current':
       return "Built from the worktree's current HEAD";
@@ -673,7 +594,7 @@ function buildFreshness(instance: HumanReviewInstance) {
   }
 }
 
-function OperationProgress({ progress }: { readonly progress: HumanReviewOperationProgress }) {
+function OperationProgress({ progress }: { readonly progress: WorktreeReviewOperationProgress }) {
   return (
     <section className="human-review__progress" aria-live="polite">
       <div>
@@ -720,9 +641,9 @@ function OperationProgress({ progress }: { readonly progress: HumanReviewOperati
 }
 
 function pollProgress(
-  client: HumanReviewLauncherClient,
+  client: WorktreeReviewClient,
   operationRef: string,
-  update: (progress: HumanReviewOperationProgress) => void,
+  update: (progress: WorktreeReviewOperationProgress) => void,
 ) {
   let active = true;
   const refresh = async () => {
@@ -749,6 +670,15 @@ function pollProgress(
   };
 }
 
+/** Compatibility entrypoint for the recorded development harness. */
+export function HumanReviewLauncherView({
+  client,
+}: {
+  readonly client: HumanReviewLauncherClient;
+}) {
+  return <WorktreeReviewLauncherView client={client as WorktreeReviewClient} />;
+}
+
 function operationId(label: string) {
   return `${label}-${crypto.randomUUID().replaceAll('-', '')}`;
 }
@@ -760,5 +690,5 @@ function duration(value: number) {
 }
 
 function message(cause: unknown) {
-  return cause instanceof Error ? cause.message : String(cause || 'The review action failed.');
+  return worktreeReviewErrorMessage(cause, 'The review action failed.');
 }
