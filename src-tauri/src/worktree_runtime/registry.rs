@@ -193,6 +193,12 @@ pub(crate) trait InstanceRegistry: Send + Sync {
         transition_kind: &str,
         observation: RuntimeObservation,
     ) -> Result<InstanceSnapshot, RegistryError>;
+
+    fn delete_authorized(
+        &self,
+        instance_id: &InstanceId,
+        authority_hash: &str,
+    ) -> Result<(), RegistryError>;
 }
 
 pub(crate) struct SqliteInstanceRegistry {
@@ -752,6 +758,53 @@ impl InstanceRegistry for SqliteInstanceRegistry {
             .commit()
             .map_err(sql_error("commit runtime observation"))?;
         Ok(snapshot)
+    }
+
+    fn delete_authorized(
+        &self,
+        instance_id: &InstanceId,
+        authority_hash: &str,
+    ) -> Result<(), RegistryError> {
+        let active_starts = self.lock_active_starts()?;
+        if active_starts.contains(instance_id.as_str()) {
+            return Err(RegistryError::new(
+                RegistryErrorKind::OperationInProgress,
+                "the instance start is still executing",
+            ));
+        }
+        let mut connection = self.lock()?;
+        let transaction = immediate(&mut connection, "delete retained instance")?;
+        let record = authorized_record(&transaction, instance_id, authority_hash)?;
+        if !matches!(
+            record.state,
+            InstanceState::Prepared | InstanceState::Stopped | InstanceState::Recovered
+        ) {
+            return Err(RegistryError::new(
+                RegistryErrorKind::InvalidState,
+                "a live or unresolved instance cannot be deleted",
+            ));
+        }
+        for table in [
+            "worktree_runtime_observations",
+            "worktree_runtime_commands",
+            "worktree_runtime_port_leases",
+        ] {
+            transaction
+                .execute(
+                    &format!("DELETE FROM {table} WHERE instance_id=?1"),
+                    [instance_id.as_str()],
+                )
+                .map_err(sql_error("delete retained instance history"))?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM worktree_runtime_instances WHERE instance_id=?1",
+                [instance_id.as_str()],
+            )
+            .map_err(sql_error("delete retained instance"))?;
+        transaction
+            .commit()
+            .map_err(sql_error("commit retained instance deletion"))
     }
 }
 

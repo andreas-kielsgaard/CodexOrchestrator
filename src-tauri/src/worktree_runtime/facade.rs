@@ -238,6 +238,7 @@ pub(crate) trait WorktreeTestInstances: Send + Sync {
         &self,
         handle: &TestInstanceHandle,
     ) -> Result<VerifiedTestSource, TestInstanceError>;
+    fn cleanup(&self, handle: &TestInstanceHandle) -> Result<(), TestInstanceError>;
 }
 
 pub(crate) struct WorktreeTestInstanceFacade {
@@ -617,6 +618,53 @@ impl WorktreeTestInstances for WorktreeTestInstanceFacade {
         Ok(RetainedTestSource {
             current_object_id: snapshot.projected.identity.git_commit,
         })
+    }
+
+    fn cleanup(&self, handle: &TestInstanceHandle) -> Result<(), TestInstanceError> {
+        let snapshot = self.snapshot(handle)?;
+        if !matches!(
+            snapshot.projected.state,
+            InstanceState::Prepared | InstanceState::Stopped | InstanceState::Recovered
+        ) {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::InvalidState,
+                "a running or unresolved review build cannot be cleaned",
+            ));
+        }
+        let expected_root = self.settings.instances_root.join(handle.opaque_ref());
+        if snapshot.projected.projection.paths.instance_root != expected_root {
+            return Err(TestInstanceError::new(
+                TestInstanceErrorKind::Unavailable,
+                "the retained instance root does not match its owned runtime identity",
+            ));
+        }
+        if expected_root.exists() {
+            let metadata = std::fs::symlink_metadata(&expected_root)
+                .map_err(|error| unavailable("inspect retained instance root", error))?;
+            if !metadata.file_type().is_dir() {
+                return Err(TestInstanceError::new(
+                    TestInstanceErrorKind::Unavailable,
+                    "the retained instance root is not an owned directory",
+                ));
+            }
+            let tombstone = self.settings.instances_root.join(format!(
+                ".cleanup-{}-{}",
+                handle.opaque_ref(),
+                Uuid::new_v4().simple()
+            ));
+            std::fs::rename(&expected_root, &tombstone)
+                .map_err(|error| unavailable("reserve retained instance cleanup", error))?;
+            if let Err(error) = std::fs::remove_dir_all(&tombstone) {
+                let _ = std::fs::rename(&tombstone, &expected_root);
+                return Err(unavailable("clean retained instance files", error));
+            }
+        }
+        self.runtime
+            .delete(ReadInstanceQuery {
+                authority: self.authority.clone(),
+                instance_id: handle.0.clone(),
+            })
+            .map_err(runtime_error)
     }
 }
 

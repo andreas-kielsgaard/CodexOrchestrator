@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import './nativeProfileSettings.css';
 
-export function NativeProfileSettings({ client }: { readonly client: NativeProfileClient }) {
+export function NativeProfileSettings({
+  client,
+  additionalSettings,
+}: {
+  readonly client: NativeProfileClient;
+  readonly additionalSettings?: ReactNode;
+}) {
   const [profiles, setProfiles] = useState<readonly NativeProfile[]>([]);
   const [homePath, setHomePath] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -41,6 +47,7 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
   return (
     <main className="native-profile-settings" aria-label="Technical Codex settings" tabIndex={0}>
       <header><p className="eyebrow">Technical Settings</p><h1>Codex home profiles</h1><p>Manage product-owned Codex homes and their observed setup state. Account identity and provider readiness are never inferred here.</p></header>
+      {additionalSettings}
       <section aria-labelledby="profile-registration"><h2 id="profile-registration">Register or create a home</h2>
         <div className="native-profile-register"><label>Existing Codex home path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="C:\\Users\\you\\.codex" /></label>
           <button type="button" disabled={!homePath.trim() || busy !== null} onClick={() => void run('register', async () => { const result = await client.registerExisting(homePath.trim()); setHomePath(''); return result; })}>Register existing</button>

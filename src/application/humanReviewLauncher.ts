@@ -12,8 +12,23 @@ export interface HumanReviewSource {
   readonly behind: number;
   readonly forkRevision: string;
   readonly revision: string;
-  readonly compatibility: 'compatible' | 'incompatible';
+  readonly compatibility: 'compatible' | 'incompatible' | 'unavailable';
   readonly compatibilityMessage: string;
+  readonly detailsState: 'pending' | 'cached' | 'ready' | 'failed';
+  readonly attached: boolean;
+  readonly refKind: 'local_branch' | 'remote_branch' | 'tag' | 'archive' | 'detached';
+  readonly mergedDirectly: boolean;
+  readonly equivalentPatches: number;
+  readonly comparisonBranch: string;
+}
+
+export interface HumanReviewSourceListOptions {
+  readonly includeDetached?: boolean;
+  readonly refresh?: boolean;
+}
+
+export interface HumanReviewSettings {
+  readonly cleanupDetachedBuilds: boolean;
 }
 
 export interface HumanReviewSourceHistory {
@@ -117,9 +132,13 @@ export interface HumanReviewRetention {
 }
 
 export interface HumanReviewLauncherClient {
-  listSources(): Promise<readonly HumanReviewSource[]>;
+  listSources(options?: HumanReviewSourceListOptions): Promise<readonly HumanReviewSource[]>;
+  listRepositoryHistory(): Promise<readonly HumanReviewSource[]>;
+  attachWorktree(sourceRef: string): Promise<HumanReviewSource>;
   sourceHistory(sourceRef: string): Promise<HumanReviewSourceHistory>;
   listInstances(): Promise<readonly HumanReviewInstance[]>;
+  settings(): Promise<HumanReviewSettings>;
+  updateSettings(settings: HumanReviewSettings): Promise<HumanReviewSettings>;
   prepare(operationRef: string, sourceRef: string, name: string): Promise<HumanReviewInstance>;
   build(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;
   start(operationRef: string, instanceRef: string): Promise<HumanReviewInstance>;

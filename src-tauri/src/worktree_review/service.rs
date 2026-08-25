@@ -16,18 +16,19 @@ use crate::worktree_runtime::{
     TestInstanceHandle, TestInstancePhase, TestInstanceStatus, TestSourceRef,
     WorktreeTestInstances,
 };
-use rusqlite::{params, Connection};
-use serde::Serialize;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    thread,
 };
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewSourceView {
     pub(crate) source_ref: String,
@@ -45,6 +46,18 @@ pub(crate) struct ReviewSourceView {
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+    pub(crate) details_state: String,
+    pub(crate) attached: bool,
+    pub(crate) ref_kind: String,
+    pub(crate) merged_directly: bool,
+    pub(crate) equivalent_patches: usize,
+    pub(crate) comparison_branch: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewSettingsView {
+    pub(crate) cleanup_detached_builds: bool,
 }
 
 impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
@@ -199,6 +212,12 @@ impl From<&ReviewWorktreeOption> for ReviewSourceView {
             revision: value.revision.clone(),
             compatibility: value.compatibility.clone(),
             compatibility_message: value.compatibility_message.clone(),
+            details_state: value.details_state.clone(),
+            attached: value.attached,
+            ref_kind: value.ref_kind.clone(),
+            merged_directly: value.merged_directly,
+            equivalent_patches: value.equivalent_patches,
+            comparison_branch: value.comparison_branch.clone(),
         }
     }
 }
@@ -274,6 +293,13 @@ struct ReviewBuildFreshness {
     outdated_by_commits: Option<usize>,
 }
 
+struct SourceCatalogState {
+    sources: Vec<ReviewSourceView>,
+    generation: u64,
+    refreshing: bool,
+    requested_include_detached: bool,
+}
+
 #[derive(Clone)]
 enum ReviewOperationResult {
     Pending,
@@ -287,12 +313,14 @@ pub(crate) struct HumanReviewLauncherService {
     instances: Mutex<HashMap<String, ReviewMetadata>>,
     built: Mutex<HashSet<String>>,
     store: Mutex<Connection>,
+    source_catalog: Mutex<SourceCatalogState>,
     progress: Arc<ProgressRegistry>,
     operation_results: Mutex<HashMap<String, ReviewOperationResult>>,
     launcher_proof_navigation: Mutex<Option<String>>,
     launcher_detail_navigation: Mutex<Option<LauncherDetailNavigationView>>,
     launcher_proof_presentation: Mutex<Option<LauncherProofPresentationView>>,
     instances_root: PathBuf,
+    attachments_root: PathBuf,
 }
 
 impl HumanReviewLauncherService {
@@ -321,7 +349,17 @@ impl HumanReviewLauncherService {
                 summary TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_review_history_instance
-                ON review_history(instance_ref, event_id);",
+                ON review_history(instance_ref, event_id);
+            CREATE TABLE IF NOT EXISTS review_source_cache (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                fingerprint TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS review_settings (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                cleanup_detached_builds INTEGER NOT NULL DEFAULT 0
+                    CHECK (cleanup_detached_builds IN (0, 1))
+            );",
             )
             .map_err(|error| format!("initialize review launcher state: {error}"))?;
         let has_source_ref = {
@@ -346,27 +384,60 @@ impl HumanReviewLauncherService {
                 .map_err(|error| format!("migrate review launcher state: {error}"))?;
         }
         let (instances, built) = load_sessions(&store)?;
+        let attachments_root = instances_root
+            .parent()
+            .unwrap_or(&instances_root)
+            .join("attached-worktrees");
+        let fingerprint = catalog.cache_fingerprint();
+        let sources = load_source_cache(&store, &fingerprint)?.unwrap_or_else(|| {
+            catalog
+                .options()
+                .iter()
+                .map(ReviewSourceView::from)
+                .collect()
+        });
         Ok(Self {
             runtime,
             catalog,
             instances: Mutex::new(instances),
             built: Mutex::new(built),
             store: Mutex::new(store),
+            source_catalog: Mutex::new(SourceCatalogState {
+                sources,
+                generation: 0,
+                refreshing: false,
+                requested_include_detached: false,
+            }),
             progress: Arc::new(ProgressRegistry::system()),
             operation_results: Mutex::new(HashMap::new()),
             launcher_proof_navigation: Mutex::new(None),
             launcher_detail_navigation: Mutex::new(None),
             launcher_proof_presentation: Mutex::new(None),
             instances_root,
+            attachments_root,
         })
     }
 
     pub(crate) fn sources(&self) -> Vec<ReviewSourceView> {
+        self.source_catalog
+            .lock()
+            .map(|catalog| catalog.sources.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn repository_sources(&self) -> Result<Vec<ReviewSourceView>, String> {
         self.catalog
-            .options()
-            .iter()
-            .map(ReviewSourceView::from)
-            .collect()
+            .repository_options()
+            .map(|options| options.iter().map(ReviewSourceView::from).collect())
+    }
+
+    pub(crate) fn source_snapshot(
+        self: &Arc<Self>,
+        include_detached: bool,
+        force_refresh: bool,
+    ) -> Vec<ReviewSourceView> {
+        self.request_source_refresh(include_detached, force_refresh);
+        self.sources()
     }
 
     pub(crate) fn source_history(
@@ -376,10 +447,310 @@ impl HumanReviewLauncherService {
         source_history::read(&self.catalog, &source_ref)
     }
 
-    pub(crate) fn live_sources(&self) -> Result<Vec<ReviewSourceView>, String> {
-        self.catalog
-            .live_options()
-            .map(|options| options.iter().map(ReviewSourceView::from).collect())
+    pub(crate) fn attach_review_worktree(
+        &self,
+        source_ref: String,
+    ) -> Result<ReviewSourceView, String> {
+        let option = self
+            .catalog
+            .attach_review_worktree(&source_ref, &self.attachments_root)?;
+        let view = ReviewSourceView::from(&option);
+        if let Ok(mut state) = self.source_catalog.lock() {
+            if let Some(current) = state
+                .sources
+                .iter_mut()
+                .find(|current| current.source_ref == source_ref)
+            {
+                *current = view.clone();
+            } else {
+                state.sources.push(view.clone());
+            }
+        }
+        Ok(view)
+    }
+
+    pub(crate) fn settings(&self) -> Result<ReviewSettingsView, String> {
+        self.store
+            .lock()
+            .map_err(|_| "Review settings are unavailable.".to_string())?
+            .query_row(
+                "SELECT cleanup_detached_builds FROM review_settings WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok(ReviewSettingsView {
+                        cleanup_detached_builds: row.get::<_, i64>(0)? != 0,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| "Review settings are unavailable.".to_string())
+            .map(|value| {
+                value.unwrap_or(ReviewSettingsView {
+                    cleanup_detached_builds: false,
+                })
+            })
+    }
+
+    pub(crate) fn update_settings(
+        &self,
+        settings: ReviewSettingsView,
+    ) -> Result<ReviewSettingsView, String> {
+        self.store
+            .lock()
+            .map_err(|_| "Review settings are unavailable.".to_string())?
+            .execute(
+                "INSERT INTO review_settings (singleton, cleanup_detached_builds) VALUES (1, ?1)
+                 ON CONFLICT(singleton) DO UPDATE SET
+                    cleanup_detached_builds = excluded.cleanup_detached_builds",
+                [i64::from(settings.cleanup_detached_builds)],
+            )
+            .map_err(|_| "Review settings could not be saved.".to_string())?;
+        Ok(settings)
+    }
+
+    fn request_source_refresh(self: &Arc<Self>, include_detached: bool, force_refresh: bool) {
+        let (generation, requested_include_detached) = {
+            let Ok(mut state) = self.source_catalog.lock() else {
+                return;
+            };
+            state.requested_include_detached |= include_detached;
+            if state.refreshing {
+                return;
+            }
+            let needs_refresh = force_refresh
+                || state.sources.iter().any(|source| {
+                    (!source.detached || include_detached)
+                        && matches!(source.details_state.as_str(), "pending" | "cached")
+                });
+            if !needs_refresh {
+                return;
+            }
+            if force_refresh {
+                for source in &mut state.sources {
+                    if (!source.detached || include_detached) && source.details_state == "failed" {
+                        source.details_state = "pending".into();
+                    }
+                }
+            }
+            state.generation = state.generation.saturating_add(1);
+            state.refreshing = true;
+            (state.generation, state.requested_include_detached)
+        };
+        let service = Arc::clone(self);
+        if thread::Builder::new()
+            .name("worktree-review-source-refresh".into())
+            .spawn(move || service.refresh_sources(generation))
+            .is_err()
+        {
+            self.fail_source_refresh(generation, requested_include_detached);
+        }
+    }
+
+    fn refresh_sources(self: &Arc<Self>, generation: u64) {
+        let include_detached = self
+            .source_catalog
+            .lock()
+            .map(|state| state.requested_include_detached)
+            .unwrap_or(false);
+        let result = self
+            .catalog
+            .live_options_progressive(include_detached, |option| {
+                self.publish_source(generation, option)
+            });
+        match result {
+            Ok(options) => {
+                let fingerprint = ReviewWorktreeCatalog::options_fingerprint(&options);
+                let completed = {
+                    let Ok(mut state) = self.source_catalog.lock() else {
+                        return;
+                    };
+                    if state.generation != generation {
+                        return;
+                    }
+                    let previous = state
+                        .sources
+                        .iter()
+                        .map(|source| (source.source_ref.clone(), source.clone()))
+                        .collect::<HashMap<_, _>>();
+                    state.sources = options
+                        .iter()
+                        .map(ReviewSourceView::from)
+                        .map(|source| {
+                            if source.details_state == "pending" {
+                                previous
+                                    .get(&source.source_ref)
+                                    .filter(|cached| cached.details_state != "pending")
+                                    .cloned()
+                                    .unwrap_or(source)
+                            } else {
+                                source
+                            }
+                        })
+                        .collect();
+                    state.refreshing = false;
+                    state.sources.clone()
+                };
+                let _ = self.persist_source_cache(&fingerprint, &completed);
+                self.cleanup_detached_sources(&options);
+                let queued_detached =
+                    self.source_catalog
+                        .lock()
+                        .map(|state| {
+                            state.requested_include_detached
+                                && state.sources.iter().any(|source| {
+                                    source.detached && source.details_state == "pending"
+                                })
+                        })
+                        .unwrap_or(false);
+                if queued_detached && !include_detached {
+                    self.request_source_refresh(true, false);
+                }
+            }
+            Err(_) => self.fail_source_refresh(generation, include_detached),
+        }
+    }
+
+    fn publish_source(&self, generation: u64, option: &ReviewWorktreeOption) {
+        let Ok(mut state) = self.source_catalog.lock() else {
+            return;
+        };
+        if state.generation != generation {
+            return;
+        }
+        let source = ReviewSourceView::from(option);
+        if let Some(current) = state
+            .sources
+            .iter_mut()
+            .find(|current| current.source_ref == source.source_ref)
+        {
+            *current = source;
+        } else {
+            state.sources.push(source);
+        }
+    }
+
+    fn fail_source_refresh(&self, generation: u64, include_detached: bool) {
+        let Ok(mut state) = self.source_catalog.lock() else {
+            return;
+        };
+        if state.generation != generation {
+            return;
+        }
+        state.refreshing = false;
+        for source in &mut state.sources {
+            if (!source.detached || include_detached)
+                && matches!(source.details_state.as_str(), "pending" | "cached")
+            {
+                source.details_state = "failed".into();
+            }
+        }
+    }
+
+    fn persist_source_cache(
+        &self,
+        fingerprint: &str,
+        sources: &[ReviewSourceView],
+    ) -> Result<(), String> {
+        let payload = serde_json::to_string(sources)
+            .map_err(|_| "Review source cache could not be encoded.".to_string())?;
+        self.store
+            .lock()
+            .map_err(|_| "Review source cache is unavailable.".to_string())?
+            .execute(
+                "INSERT INTO review_source_cache (singleton, fingerprint, payload)
+                 VALUES (1, ?1, ?2)
+                 ON CONFLICT(singleton) DO UPDATE SET
+                    fingerprint = excluded.fingerprint,
+                    payload = excluded.payload",
+                params![fingerprint, payload],
+            )
+            .map_err(|_| "Review source cache could not be saved.".to_string())?;
+        Ok(())
+    }
+
+    fn cleanup_detached_sources(&self, options: &[ReviewWorktreeOption]) {
+        if !self
+            .settings()
+            .map(|settings| settings.cleanup_detached_builds)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let detached = options
+            .iter()
+            .filter(|source| source.detached)
+            .map(|source| source.source_ref.as_str())
+            .collect::<HashSet<_>>();
+        let refs = self
+            .instances
+            .lock()
+            .map(|instances| {
+                instances
+                    .iter()
+                    .filter(|(_, metadata)| detached.contains(metadata.source_ref.as_str()))
+                    .map(|(instance_ref, _)| instance_ref.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for instance_ref in refs {
+            let _ = self.cleanup_instance(&instance_ref);
+        }
+    }
+
+    fn cleanup_other_source_instances(&self, source_ref: &str, keep: &str) {
+        let refs = self
+            .instances
+            .lock()
+            .map(|instances| {
+                instances
+                    .iter()
+                    .filter(|(instance_ref, metadata)| {
+                        instance_ref.as_str() != keep && metadata.source_ref == source_ref
+                    })
+                    .map(|(instance_ref, _)| instance_ref.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for instance_ref in refs {
+            let _ = self.cleanup_instance(&instance_ref);
+        }
+    }
+
+    fn cleanup_instance(&self, instance_ref: &str) -> Result<(), String> {
+        let handle =
+            TestInstanceHandle::from_opaque(instance_ref.to_owned()).map_err(safe_error)?;
+        self.runtime.cleanup(&handle).map_err(safe_error)?;
+        {
+            let mut store = self
+                .store
+                .lock()
+                .map_err(|_| "Review launcher state is unavailable.".to_string())?;
+            let transaction = store
+                .transaction()
+                .map_err(|_| "Review launcher cleanup could not begin.".to_string())?;
+            transaction
+                .execute(
+                    "DELETE FROM review_history WHERE instance_ref = ?1",
+                    [instance_ref],
+                )
+                .and_then(|_| {
+                    transaction.execute(
+                        "DELETE FROM review_sessions WHERE instance_ref = ?1",
+                        [instance_ref],
+                    )
+                })
+                .map_err(|_| "Review launcher cleanup could not be saved.".to_string())?;
+            transaction
+                .commit()
+                .map_err(|_| "Review launcher cleanup could not be saved.".to_string())?;
+        }
+        if let Ok(mut instances) = self.instances.lock() {
+            instances.remove(instance_ref);
+        }
+        if let Ok(mut built) = self.built.lock() {
+            built.remove(instance_ref);
+        }
+        Ok(())
     }
 
     fn build_freshness(
@@ -549,6 +920,7 @@ impl HumanReviewLauncherService {
                         &metadata.source_label,
                         true,
                     )?;
+                    self.cleanup_other_source_instances(&metadata.source_ref, &instance_ref);
                     "passed"
                 }
                 TestActionOutcome::Failed => "failed",
@@ -1183,6 +1555,35 @@ fn load_sessions(
     Ok((instances, built))
 }
 
+fn load_source_cache(
+    store: &Connection,
+    fingerprint: &str,
+) -> Result<Option<Vec<ReviewSourceView>>, String> {
+    let payload = store
+        .query_row(
+            "SELECT payload FROM review_source_cache WHERE singleton = 1 AND fingerprint = ?1",
+            [fingerprint],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("read review source cache: {error}"))?;
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    let Ok(mut sources) = serde_json::from_str::<Vec<ReviewSourceView>>(&payload) else {
+        return Ok(None);
+    };
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    for source in &mut sources {
+        if source.details_state != "pending" {
+            source.details_state = "cached".into();
+        }
+    }
+    Ok(Some(sources))
+}
+
 fn fresh_operation_ref() -> String {
     format!("review-operation-{}", Uuid::new_v4().simple())
 }
@@ -1382,6 +1783,62 @@ mod guidance_tests {
     }
 
     #[test]
+    fn matching_source_cache_is_reused_as_refreshable_presentation_data() {
+        let store = Connection::open_in_memory().unwrap();
+        store
+            .execute_batch(
+                "CREATE TABLE review_source_cache (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    fingerprint TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        let source = ReviewSourceView {
+            source_ref: "source-main".into(),
+            label: "main".into(),
+            branch: Some("main".into()),
+            detached: false,
+            is_main: true,
+            is_current: true,
+            parent_source_ref: None,
+            lineage_ambiguous: false,
+            relationship: "related".into(),
+            ahead: 0,
+            behind: 0,
+            fork_revision: "111111111111".into(),
+            revision: "111111111111".into(),
+            compatibility: "compatible".into(),
+            compatibility_message: "Compatible.".into(),
+            details_state: "ready".into(),
+            attached: true,
+            ref_kind: "local_branch".into(),
+            merged_directly: false,
+            equivalent_patches: 0,
+            comparison_branch: "main".into(),
+        };
+        store
+            .execute(
+                "INSERT INTO review_source_cache (singleton, fingerprint, payload) VALUES (1, ?1, ?2)",
+                params!["matching", serde_json::to_string(&[source]).unwrap()],
+            )
+            .unwrap();
+
+        let cached = load_source_cache(&store, "matching")
+            .unwrap()
+            .expect("matching cache");
+        assert_eq!(cached[0].details_state, "cached");
+        assert!(load_source_cache(&store, "different").unwrap().is_none());
+        store
+            .execute(
+                "UPDATE review_source_cache SET payload = 'not-json' WHERE singleton = 1",
+                [],
+            )
+            .unwrap();
+        assert!(load_source_cache(&store, "matching").unwrap().is_none());
+    }
+
+    #[test]
     fn prepared_runtime_source_yields_catalog_owned_immutable_comparison() {
         let directory = tempfile::tempdir().unwrap();
         let main = directory.path().join("main");
@@ -1419,6 +1876,26 @@ mod guidance_tests {
         let review = Arc::new(
             crate::worktree_review::compose(&main, &directory.path().join("runtime"))
                 .expect("compose runtime"),
+        );
+        assert!(
+            !review
+                .settings()
+                .expect("default settings")
+                .cleanup_detached_builds
+        );
+        assert!(
+            review
+                .update_settings(ReviewSettingsView {
+                    cleanup_detached_builds: true,
+                })
+                .expect("persist cleanup setting")
+                .cleanup_detached_builds
+        );
+        assert!(
+            review
+                .settings()
+                .expect("reloaded settings")
+                .cleanup_detached_builds
         );
         let source = review
             .sources()

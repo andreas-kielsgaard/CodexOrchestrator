@@ -29,6 +29,13 @@ impl RuntimeSettings {
     pub(crate) fn validate(&self) -> Result<(), PlanningError> {
         require_absolute(&self.instances_root, "instances root")?;
         require_absolute(&self.shared_cache_root, "shared cache root")?;
+        if cfg!(windows) && windows_path_len(&self.instances_root) > 96 {
+            return Err(PlanningError::new(format!(
+                "review runtime instances root is too long for reliable Windows native builds ({} characters; maximum 96): {}",
+                windows_path_len(&self.instances_root),
+                self.instances_root.display()
+            )));
+        }
         if self.port_start == 0 || self.port_end.saturating_sub(self.port_start) < 3 {
             return Err(PlanningError::new(
                 "runtime port range must contain at least four nonzero ports",
@@ -273,11 +280,19 @@ pub(crate) fn project_runtime(
             .map_err(|error| PlanningError::context("create isolated cache fallback", error))?;
         (node, CacheReuse::IsolatedFallback)
     };
-    // Shared Rust compilation remains unavailable until a measured compiler cache such as sccache
-    // is composed. CARGO_TARGET_DIR and this dependency home therefore remain instance-local.
-    let rust_cache_root = instance_root.join("cache/cargo-home");
-    fs::create_dir_all(rust_cache_root.join(&source.rust_cache_key))
-        .map_err(|error| PlanningError::context("create isolated Rust cache", error))?;
+    // Cargo verifies registry packages by checksum, so all review builds can reuse one dependency
+    // home. Compiled outputs remain private in CARGO_TARGET_DIR below the instance root.
+    let shared_rust = settings.shared_cache_root.join("cargo");
+    let rust_shared = fs::create_dir_all(&shared_rust).is_ok();
+    let (rust_cache_root, rust_reuse) = if rust_shared {
+        (shared_rust, CacheReuse::Shared)
+    } else {
+        let rust = instance_root.join("cargo-home");
+        fs::create_dir_all(&rust).map_err(|error| {
+            PlanningError::context("create isolated Rust cache fallback", error)
+        })?;
+        (rust, CacheReuse::IsolatedFallback)
+    };
     let projection = project_instance(ProjectionRequest {
         instance_id: identity.instance_id.clone(),
         instances_root: settings.instances_root.clone(),
@@ -286,7 +301,7 @@ pub(crate) fn project_runtime(
         node_cache_key: source.node_cache_key.clone(),
         rust_cache_key: source.rust_cache_key.clone(),
         node_cache_reuse: node_reuse,
-        rust_cache_reuse: CacheReuse::IsolatedFallback,
+        rust_cache_reuse: rust_reuse,
         ports,
     })
     .map_err(contract)?;
@@ -610,6 +625,7 @@ fn isolated_environment(
     .collect::<BTreeMap<_, _>>();
     let value = |path: &Path| path.to_string_lossy().into_owned();
     let cache_mode = match projection.caches.rust_reuse {
+        CacheReuse::Shared => "shared",
         CacheReuse::SharedKeyed => "shared_keyed",
         CacheReuse::IsolatedFallback => "isolated_fallback",
     };
@@ -804,6 +820,10 @@ fn require_absolute(path: &Path, label: &str) -> Result<(), PlanningError> {
         )));
     }
     Ok(())
+}
+
+fn windows_path_len(path: &Path) -> usize {
+    path.as_os_str().to_string_lossy().encode_utf16().count()
 }
 
 fn resolve_program(name: &str) -> Result<PathBuf, PlanningError> {

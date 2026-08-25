@@ -111,6 +111,7 @@ pub(crate) struct CacheProjection {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CacheReuse {
+    Shared,
     SharedKeyed,
     IsolatedFallback,
 }
@@ -193,12 +194,14 @@ impl InstanceProjection {
                         "{label} marked as isolated must remain below the instance root"
                     )));
                 }
-                CacheReuse::SharedKeyed if path.starts_with(&self.paths.instance_root) => {
+                CacheReuse::Shared | CacheReuse::SharedKeyed
+                    if path.starts_with(&self.paths.instance_root) =>
+                {
                     return Err(RuntimeContractError::new(format!(
                         "{label} marked as shared must remain outside the instance root"
                     )));
                 }
-                CacheReuse::SharedKeyed | CacheReuse::IsolatedFallback => {}
+                CacheReuse::Shared | CacheReuse::SharedKeyed | CacheReuse::IsolatedFallback => {}
             }
         }
         if self.ports.vite == self.ports.status {

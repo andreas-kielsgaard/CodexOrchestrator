@@ -79,13 +79,16 @@ export function ApplicationRoot() {
 }
 
 async function loadDevelopmentReviewComposition(composition: AppProps): Promise<AppProps> {
-  const [{ tauriHumanReviewLauncher }, { HumanReviewLauncherView }] = await Promise.all([
-    import('../infrastructure/tauriHumanReviewLauncher'),
-    import('../features/humanReviewLauncher/HumanReviewLauncherView'),
-  ]);
+  const [{ tauriHumanReviewLauncher }, { HumanReviewLauncherView }, { WorktreeReviewSettings }] =
+    await Promise.all([
+      import('../infrastructure/tauriHumanReviewLauncher'),
+      import('../features/humanReviewLauncher/HumanReviewLauncherView'),
+      import('../features/humanReviewLauncher/WorktreeReviewSettings'),
+    ]);
   return {
     ...composition,
     humanReviewLauncherView: <HumanReviewLauncherView client={tauriHumanReviewLauncher} />,
+    humanReviewSettingsView: <WorktreeReviewSettings client={tauriHumanReviewLauncher} />,
     humanReviewLauncherNavigation: () => tauriHumanReviewLauncher.proofNavigation!(),
   };
 }

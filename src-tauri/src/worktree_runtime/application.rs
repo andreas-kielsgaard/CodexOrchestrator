@@ -121,6 +121,8 @@ pub(crate) trait WorktreeRuntimeControl: Send + Sync {
         &self,
         command: RecoverInstanceCommand,
     ) -> Result<InstanceSnapshot, RuntimeApplicationError>;
+
+    fn delete(&self, query: ReadInstanceQuery) -> Result<(), RuntimeApplicationError>;
 }
 
 pub(crate) trait RuntimeClock: Send + Sync {
@@ -788,6 +790,12 @@ impl WorktreeRuntimeControl for WorktreeRuntimeApplication {
             CommandStart::Noop(snapshot) | CommandStart::Replay(snapshot) => Ok(snapshot),
             CommandStart::ReplayFailure(failure) => Err(stored_failure(failure)),
         }
+    }
+
+    fn delete(&self, query: ReadInstanceQuery) -> Result<(), RuntimeApplicationError> {
+        self.registry
+            .delete_authorized(&query.instance_id, &Self::authority_hash(&query.authority))
+            .map_err(registry_error)
     }
 }
 

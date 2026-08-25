@@ -23,7 +23,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::Connection;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex,
@@ -33,6 +33,40 @@ use std::{
 
 const AUTHORITY: &str = "test-authority-secret-0001";
 const CHILD_PORT_ENV: &str = "CODEX_WORKTREE_RUNTIME_CHILD_PORT";
+
+#[test]
+fn authorized_delete_releases_a_terminal_instance_and_its_port_leases() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let registry_path = directory.path().join("registry.sqlite");
+    let world = Arc::new(FakeWorld::default());
+    let application = test_application(
+        &registry_path,
+        Arc::new(FakeOwner(world.clone())),
+        Arc::new(FakeHealth(world)),
+    );
+    let first = fixture(directory.path(), "delete-first", 32091, 32092);
+    prepare(&application, &first, "prepare-delete-first");
+
+    application
+        .delete(ReadInstanceQuery {
+            authority: authority(),
+            instance_id: first.identity.instance_id.clone(),
+        })
+        .expect("delete prepared instance");
+    assert_eq!(
+        application
+            .read(ReadInstanceQuery {
+                authority: authority(),
+                instance_id: first.identity.instance_id.clone(),
+            })
+            .expect_err("deleted instance is absent")
+            .kind,
+        RuntimeApplicationErrorKind::NotFound
+    );
+
+    let second = fixture(directory.path(), "delete-second", 32091, 32092);
+    prepare(&application, &second, "prepare-delete-second");
+}
 
 #[test]
 fn registry_and_application_keep_two_instances_isolated_and_recover_stale_state() {
@@ -289,7 +323,7 @@ fn projection_keeps_shared_keyed_caches_separate_from_instance_paths() {
 }
 
 #[test]
-fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local() {
+fn planning_shares_cargo_downloads_but_keeps_rust_compilation_instance_local() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = fixture(directory.path(), "planned", 32311, 32312);
     let settings = RuntimeSettings {
@@ -314,7 +348,7 @@ fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local(
         git_commit: fixture.identity.git_commit.clone(),
         source_fingerprint: fixture.identity.source_fingerprint.clone(),
         node_cache_key: "planned-node-key".into(),
-        rust_cache_key: "planned-rust-key".into(),
+        rust_cache_key: "a".repeat(64),
         clean: true,
     };
     let projection = project_runtime(
@@ -328,12 +362,75 @@ fn planning_projects_keyed_node_reuse_but_keeps_rust_compilation_instance_local(
     )
     .expect("planned projection");
     assert_eq!(projection.caches.node_reuse, CacheReuse::SharedKeyed);
-    assert_eq!(projection.caches.rust_reuse, CacheReuse::IsolatedFallback);
-    assert!(projection
+    assert_eq!(projection.caches.rust_reuse, CacheReuse::Shared);
+    assert_eq!(
+        projection.caches.rust_path,
+        settings.shared_cache_root.join("cargo")
+    );
+    assert!(!projection
         .caches
         .rust_path
         .starts_with(&projection.paths.instance_root));
+    assert!(projection
+        .paths
+        .cargo_target
+        .starts_with(&projection.paths.instance_root));
     assert!(projection.paths.credentials_home.is_dir());
+}
+
+#[test]
+fn planning_falls_back_to_an_instance_cargo_home_when_the_shared_cache_is_unavailable() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = fixture(directory.path(), "fallback", 32311, 32312);
+    let shared_cache_root = directory.path().join("unavailable-shared-cache");
+    std::fs::write(&shared_cache_root, "not a directory").expect("blocked shared cache root");
+    let settings = RuntimeSettings {
+        instances_root: directory.path().join("fallback-instances"),
+        shared_cache_root,
+        port_start: 32310,
+        port_end: 32319,
+    };
+    let source = SourceSnapshot {
+        git_commit: fixture.identity.git_commit.clone(),
+        source_fingerprint: fixture.identity.source_fingerprint.clone(),
+        node_cache_key: "fallback-node-key".into(),
+        rust_cache_key: "b".repeat(64),
+        clean: true,
+    };
+
+    let projection = project_runtime(
+        &settings,
+        &fixture.identity,
+        &source,
+        PortProjection {
+            vite: 32311,
+            status: 32312,
+        },
+    )
+    .expect("isolated fallback projection");
+
+    assert_eq!(projection.caches.rust_reuse, CacheReuse::IsolatedFallback);
+    assert_eq!(
+        projection.caches.rust_path,
+        projection.paths.instance_root.join("cargo-home")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn planning_rejects_windows_runtime_roots_that_leave_no_native_build_path_budget() {
+    let settings = RuntimeSettings {
+        instances_root: PathBuf::from(format!(r"C:\{}", "review-root-".repeat(10))),
+        shared_cache_root: PathBuf::from(r"C:\short-cache"),
+        port_start: 32310,
+        port_end: 32319,
+    };
+
+    let error = settings.validate().expect_err("long path rejected");
+    assert!(error
+        .message
+        .contains("too long for reliable Windows native builds"));
+    assert!(error.message.contains("maximum 96"));
 }
 
 #[test]

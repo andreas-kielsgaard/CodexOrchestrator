@@ -3,6 +3,27 @@
 .native-profile-settings h1 { margin: 4px 0 10px; }
 .native-profile-settings h2 { margin: 0 0 8px; font-size: 1.05rem; }
 .native-profile-settings section { margin: 24px 0; }
+.native-profile-setting-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  max-width: 720px;
+  padding: 14px;
+  background: #f2f5ef;
+  border: 1px solid #cbd3cb;
+  border-radius: 7px;
+}
+.native-profile-setting-toggle input {
+  margin-top: 3px;
+}
+.native-profile-setting-toggle span {
+  display: grid;
+  gap: 4px;
+}
+.native-profile-setting-toggle small {
+  color: #5d685f;
+}
 .native-profile-register { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
 .native-profile-register label { display: grid; gap: 5px; min-width: min(100%, 420px); }
 .native-profile-settings input { padding: 9px; border: 1px solid #b9c2b9; border-radius: 5px; }
