@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function EpicInitiationConfirmationModal({
   confirmation,
@@ -8,13 +8,16 @@ export function EpicInitiationConfirmationModal({
   >;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const rootBranchRef = useRef<HTMLInputElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
   const current = confirmation.current;
   const requestId = current?.request.requestId;
+  const [rootBranch, setRootBranch] = useState('');
   useEffect(() => {
     if (!requestId) return;
+    setRootBranch('');
     priorFocus.current = document.activeElement as HTMLElement | null;
-    confirmRef.current?.focus();
+    rootBranchRef.current?.focus();
     return () => priorFocus.current?.focus();
   }, [requestId]);
   if (!current) return null;
@@ -37,7 +40,9 @@ export function EpicInitiationConfirmationModal({
           if (event.key === 'Escape' && !confirmation.resolving) reject();
           if (event.key !== 'Tab') return;
           const buttons = Array.from(
-            event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'input:not(:disabled), button:not(:disabled)',
+            ),
           );
           if (!buttons.length) return;
           const first = buttons[0];
@@ -80,6 +85,14 @@ export function EpicInitiationConfirmationModal({
             </dd>
           </div>
         </dl>
+        <label htmlFor="epic-confirmation-root-branch">Epic root branch</label>
+        <input
+          ref={rootBranchRef}
+          id="epic-confirmation-root-branch"
+          value={rootBranch}
+          onChange={(event) => setRootBranch(event.target.value)}
+          placeholder="codex/epic-workflow-ux-test"
+        />
         {confirmation.queuedCount > 0 && (
           <p role="status">
             {confirmation.queuedCount} other confirmation request
@@ -94,8 +107,8 @@ export function EpicInitiationConfirmationModal({
           <button
             ref={confirmRef}
             type="button"
-            disabled={confirmation.resolving}
-            onClick={() => void confirmation.resolve('confirmed')}
+            disabled={confirmation.resolving || !rootBranch.trim()}
+            onClick={() => void confirmation.resolve('confirmed', rootBranch)}
           >
             {confirmation.resolving ? 'Resolving…' : 'Confirm initiation'}
           </button>

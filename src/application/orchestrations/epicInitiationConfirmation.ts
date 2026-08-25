@@ -71,6 +71,7 @@ export interface EpicInitiationConfirmationClient {
   resolve(
     requestId: string,
     decision: 'confirmed' | 'rejected',
+    rootBranch?: string,
   ): Promise<EpicInitiationConfirmationResolution>;
   subscribe(
     listener: (event: EpicInitiationConfirmationEvent) => void,

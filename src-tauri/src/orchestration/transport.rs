@@ -5,7 +5,11 @@ use super::{
         FileReviewOriginatingEntryError, FileReviewOriginatingEntryService,
     },
     repository::NativeQueryV2,
-    sprint_runner_transition::{SprintRunnerTransitionQueryV1, SprintRunnerTransitionService},
+    sprint_runner_transition::{
+        RecoverSprintPlanningControlRequest, RecoverSprintPlanningControlResult,
+        RecoverWorkUnitHandlerActionRequest, RecoverWorkUnitHandlerActionResult,
+        SprintRunnerTransitionQueryV1, SprintRunnerTransitionService,
+    },
 };
 use crate::agent_sessions::{
     application::SendAgentSessionMessageResult,
@@ -190,6 +194,7 @@ pub(crate) enum ResolveInitiationDecisionInput {
 pub(crate) struct ResolveEpicInitiationConfirmationInput {
     request_id: String,
     decision: ResolveInitiationDecisionInput,
+    root_branch: Option<String>,
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -251,6 +256,7 @@ pub(crate) fn request_epic_initiation_confirmation(
                 expected_revision_token: input.expected_revision_token,
                 actor_id: "application-user".into(),
                 idempotency_key: input.idempotency_key,
+                root_branch: None,
             },
         )
         .map_err(InitiationConfirmationTransportError::from)
@@ -270,7 +276,13 @@ pub(crate) fn resolve_epic_initiation_confirmation(
             &input.request_id,
             match input.decision {
                 ResolveInitiationDecisionInput::Confirmed => {
-                    super::confirmation::UserInitiationDecision::Confirmed
+                    super::confirmation::UserInitiationDecision::ConfirmedWithRoot {
+                        root_branch: input.root_branch.ok_or(
+                            InitiationConfirmationTransportError {
+                                code: "unavailable",
+                            },
+                        )?,
+                    }
                 }
                 ResolveInitiationDecisionInput::Rejected => {
                     super::confirmation::UserInitiationDecision::Rejected
@@ -472,6 +484,28 @@ pub(crate) fn load_sprint_runner_transition_query(
     state: State<'_, SprintRunnerTransitionTauriState>,
 ) -> Result<SprintRunnerTransitionQueryV1, String> {
     state.service.query().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn recover_sprint_planning_control(
+    input: RecoverSprintPlanningControlRequest,
+    state: State<'_, SprintRunnerTransitionTauriState>,
+) -> Result<RecoverSprintPlanningControlResult, String> {
+    state
+        .service
+        .recover_planning_control(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn recover_work_unit_handler_action(
+    input: RecoverWorkUnitHandlerActionRequest,
+    state: State<'_, SprintRunnerTransitionTauriState>,
+) -> Result<RecoverWorkUnitHandlerActionResult, String> {
+    state
+        .service
+        .recover_work_unit_handler_action(input)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

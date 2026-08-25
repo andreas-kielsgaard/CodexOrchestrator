@@ -36,7 +36,7 @@ export interface EpicPlanBuilderProps {
   readonly initiationCapability?: EpicInitiationCapability;
   /** App-owned shared confirmation request; opening the popup is not confirmation. */
   onRequestInitiation?(
-    input: Extract<EpicInitiationCapability, { status: 'ready' }>['request'],
+    input: Extract<EpicInitiationCapability, { status: 'ready' }>['request'] & { rootBranch: string },
   ): Promise<void>;
   /** Reloads per-draft durable authority after a command failure so a retry is meaningful. */
   onInitiationFailure?(): Promise<void>;
@@ -81,6 +81,7 @@ export function EpicPlanBuilder({
   const [planRequestError, setPlanRequestError] = useState<string | null>(null);
   const [initiationError, setInitiationError] = useState<string | null>(null);
   const [initiatingEpic, setInitiatingEpic] = useState(false);
+  const [rootBranch, setRootBranch] = useState('');
   const alreadyInitiated = initiationCapability.status === 'already_initiated';
   const suggestedName = proposal.kind === 'available' ? proposal.suggestedEpicName : undefined;
   const displayedEpicName = epicName.trim() || 'Untitled Epic';
@@ -168,7 +169,7 @@ export function EpicPlanBuilder({
     setInitiationError(null);
     try {
       if (!onRequestInitiation) throw new Error('Confirmation is unavailable.');
-      await onRequestInitiation(initiationCapability.request);
+      await onRequestInitiation({ ...initiationCapability.request, rootBranch });
     } catch (error) {
       await proposalSource.refresh();
       await onInitiationFailure?.().catch(() => undefined);
@@ -293,7 +294,7 @@ export function EpicPlanBuilder({
               <button
                 className="epic-plan-builder__initiate-action"
                 type="button"
-                disabled={initiationCapability.status !== 'ready' || initiatingEpic}
+                disabled={initiationCapability.status !== 'ready' || initiatingEpic || !rootBranch.trim()}
                 aria-describedby={
                   initiationCapability.status !== 'ready'
                     ? 'epic-initiation-unavailable'
@@ -308,6 +309,13 @@ export function EpicPlanBuilder({
                     ? 'Epic already initiated'
                     : 'Initiate Epic'}
               </button>
+              <label htmlFor="epic-root-branch">Epic root branch</label>
+              <input
+                id="epic-root-branch"
+                value={rootBranch}
+                onChange={(event) => setRootBranch(event.target.value)}
+                placeholder="codex/epic-workflow-ux-test"
+              />
               {initiatingEpic && <p role="status">Opening Epic initiation confirmation…</p>}
               {initiationCapability.status !== 'ready' && (
                 <p id="epic-initiation-unavailable">{initiationCapability.reason}</p>

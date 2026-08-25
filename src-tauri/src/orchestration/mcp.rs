@@ -147,6 +147,57 @@ impl CodexMcpInjection {
                 .is_some_and(|variable| !variable.is_empty())
         }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
     }
+
+    pub(crate) fn work_unit_handler_review(server_url: &str, bearer: String) -> Self {
+        Self::new_named(
+            "work_unit_handler_review",
+            server_url,
+            bearer,
+            &[
+                "read_handler_review_evidence".to_string(),
+                "accept_implementation_outcome".to_string(),
+                "return_implementation_outcome".to_string(),
+            ],
+            true,
+        )
+    }
+
+    pub(crate) fn is_exact_work_unit_handler_review_transport(&self) -> bool {
+        if self.configuration_args.len() != 14
+            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+        {
+            return false;
+        }
+        let values = self
+            .configuration_args
+            .chunks_exact(2)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>();
+        let Some(name) = values.iter().find_map(|value| {
+            value
+                .strip_prefix("mcp_servers.")
+                .and_then(|value| value.split_once(".url="))
+                .and_then(|(name, url)| (!url.is_empty()).then_some(name))
+        }) else {
+            return false;
+        };
+        if !name.starts_with("work_unit_handler_review_") {
+            return false;
+        }
+        let expected = [
+            format!("mcp_servers.{name}.bearer_token_env_var="),
+            format!("mcp_servers.{name}.enabled_tools=[\"read_handler_review_evidence\",\"accept_implementation_outcome\",\"return_implementation_outcome\"]"),
+            format!("mcp_servers.{name}.required=true"),
+            format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
+            format!("mcp_servers.{name}.startup_timeout_sec=10"),
+            format!("mcp_servers.{name}.tool_timeout_sec=300"),
+        ];
+        values.iter().any(|value| {
+            value
+                .strip_prefix(&expected[0])
+                .is_some_and(|variable| !variable.is_empty())
+        }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
+    }
 }
 
 #[derive(Clone)]
@@ -305,6 +356,7 @@ impl PlanBuilderMcp {
             expected_revision_token,
             actor_id: "application-user".into(),
             idempotency_key: format!("managed-initiation-{:x}", digest.finalize()),
+            root_branch: None,
         };
         let request = match self.confirmations.request(
             InitiationRequestSource::Agent {
@@ -624,7 +676,8 @@ impl ManagedPlanBuilderInvocation {
 mod tests {
     use super::*;
     use crate::orchestration::repository::{
-        FILE_REVIEW_FACTS_SCHEMA, ORCHESTRATION_INITIATION_SCHEMA, ORCHESTRATION_SCHEMA,
+        EPIC_ROOT_BRANCH_SCHEMA, FILE_REVIEW_FACTS_SCHEMA, ORCHESTRATION_INITIATION_SCHEMA,
+        ORCHESTRATION_SCHEMA,
     };
     use chrono::{TimeZone, Utc};
     use rusqlite::{params, Connection};
@@ -881,8 +934,14 @@ mod tests {
     fn agent_initiation_waits_for_shared_confirmation_and_reports_rejection_or_projection() {
         for decision in [
             super::super::confirmation::UserInitiationDecision::Rejected,
-            super::super::confirmation::UserInitiationDecision::Confirmed,
+            super::super::confirmation::UserInitiationDecision::ConfirmedWithRoot {
+                root_branch: "codex/test-root".into(),
+            },
         ] {
+            let projects = matches!(
+                &decision,
+                super::super::confirmation::UserInitiationDecision::ConfirmedWithRoot { .. }
+            );
             let (application, _, invocation, repository) = test_application();
             let (confirmations, events) = channel_confirmations(application.clone());
             let mcp = PlanBuilderMcp::new(application, confirmations.clone(), invocation);
@@ -893,6 +952,7 @@ mod tests {
                 .unwrap()["isError"],
                 false
             );
+            let resolution_decision = decision.clone();
             let resolver = std::thread::spawn(move || {
                 let requested = events.recv().unwrap();
                 assert_eq!(
@@ -905,16 +965,9 @@ mod tests {
                 ));
                 let before = serde_json::to_value(repository.native_query().unwrap()).unwrap();
                 assert!(before["initiatedEpics"].as_array().unwrap().is_empty());
-                let resolved = confirmations.resolve(&requested.request.request_id, decision);
+                let resolved = confirmations.resolve(&requested.request.request_id, resolution_decision);
                 let mut states = vec![];
-                let count = if matches!(
-                    decision,
-                    super::super::confirmation::UserInitiationDecision::Confirmed
-                ) {
-                    4
-                } else {
-                    1
-                };
+                let count = if projects { 4 } else { 1 };
                 for _ in 0..count {
                     states.push(events.recv().unwrap().state);
                 }
@@ -1190,6 +1243,9 @@ mod tests {
         connection
             .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
             .expect("initiation schema");
+        connection
+            .execute_batch(EPIC_ROOT_BRANCH_SCHEMA)
+            .expect("Epic root branch schema");
         let now = Utc
             .with_ymd_and_hms(2026, 7, 15, 12, 0, 0)
             .single()

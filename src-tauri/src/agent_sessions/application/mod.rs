@@ -6,10 +6,10 @@ mod update_sink;
 
 pub(crate) use lifecycle::{
     AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
-    ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand, CreateAgentSessionCommand,
-    CreateApplicationAgentSessionCommand, NativeProfileLaunchAuthority, SendAgentSessionMessageCommand,
-    SendAgentSessionMessageResult, SendIdempotentApplicationAgentSessionMessageCommand,
-    SystemAgentSessionProviders,
+    ApplicationInvocationLaunchEvidence, ApplicationInvocationTransportLaunchEvidence,
+    CancelAgentInvocationCommand, CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
+    NativeProfileLaunchAuthority, SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
+    SendIdempotentApplicationAgentSessionMessageCommand, SystemAgentSessionProviders,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
 

@@ -1,9 +1,9 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 37;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 39;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v37 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v39 schema evolution: {error}"))?;
+        initialize_agent_session_transport_acceptance_schema(&transaction)?;
+        initialize_epic_root_branch_schema(&transaction)?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -47,10 +49,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to evolve Product Decision schema: {error}"))?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v37 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v39 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=36).contains(&current_version) {
+    if (1..=38).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -97,6 +99,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| {
                 format!("Unable to migrate Agent Session launch acceptance schema: {error}")
             })?;
+        initialize_agent_session_transport_acceptance_schema(&transaction)?;
         transaction
             .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
             .map_err(|error| format!("Unable to migrate File Review facts schema: {error}"))?;
@@ -125,6 +128,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| {
                 format!("Unable to migrate initiated Sprint Git authority schema: {error}")
             })?;
+        initialize_epic_root_branch_schema(&transaction)?;
         transaction
             .execute_batch(
                 crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
@@ -327,7 +331,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA)
         .map_err(|error| {
             format!("Unable to initialize orchestration initiation schema: {error}")
-        })?;
+            })?;
     transaction
         .execute_batch(crate::orchestration::bootstrap_transition::POST_CONFIRMATION_SCHEMA)
         .map_err(|error| format!("Unable to initialize post-confirmation schema: {error}"))?;
@@ -341,10 +345,11 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::orchestration::repository::FILE_REVIEW_FACTS_SCHEMA)
         .map_err(|error| format!("Unable to initialize File Review facts schema: {error}"))?;
     transaction
-        .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
+            .execute_batch(crate::orchestration::repository::INITIATED_SPRINT_GIT_AUTHORITY_SCHEMA)
         .map_err(|error| {
             format!("Unable to initialize initiated Sprint Git authority schema: {error}")
         })?;
+    initialize_epic_root_branch_schema(&transaction)?;
     transaction
         .execute_batch(
             crate::orchestration::conversation_harness_working_copy::HARNESS_WORKING_COPY_SCHEMA,
@@ -379,6 +384,23 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 }
 
 fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    let accepted_transport_fingerprint_is_present = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_invocation_transport_reservations')
+                 AND EXISTS(SELECT 1 FROM pragma_table_info('agent_session_invocation_transport_bindings') WHERE name='accepted_effective_extension_fingerprint')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|present| present != 0)
+        .map_err(|error| format!("Unable to inspect accepted transport fingerprint schema: {error}"))?;
+    let epic_root_branch_schema_is_present = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='epic_root_branches') AND EXISTS(SELECT 1 FROM pragma_table_info('initiated_sprint_git_authorities') WHERE name='root_branch')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|present| present != 0)
+        .map_err(|error| format!("Unable to inspect Epic root-branch schema: {error}"))?;
     let native_profile_schema_is_present = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
@@ -403,11 +425,55 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 8)
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
-    Ok(
-        native_profile_schema_is_present
-            && epic_settlement_schema_is_present
-            && product_decision_schema_is_present,
-    )
+    Ok(accepted_transport_fingerprint_is_present
+        && epic_root_branch_schema_is_present
+        && native_profile_schema_is_present
+        && epic_settlement_schema_is_present
+        && product_decision_schema_is_present)
+}
+
+fn initialize_agent_session_transport_acceptance_schema(
+    transaction: &Transaction<'_>,
+) -> Result<(), String> {
+    transaction
+        .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA)
+        .map_err(|error| {
+            format!("Unable to initialize Agent Session transport acceptance schema: {error}")
+        })?;
+    let has_accepted_fingerprint = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('agent_session_invocation_transport_bindings') WHERE name='accepted_effective_extension_fingerprint')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Unable to inspect accepted transport fingerprint: {error}"))?
+        != 0;
+    if !has_accepted_fingerprint {
+        transaction
+            .execute_batch("ALTER TABLE agent_session_invocation_transport_bindings ADD COLUMN accepted_effective_extension_fingerprint TEXT;")
+            .map_err(|error| format!("Unable to evolve accepted transport fingerprint: {error}"))?;
+    }
+    Ok(())
+}
+
+fn initialize_epic_root_branch_schema(transaction: &Transaction<'_>) -> Result<(), String> {
+    transaction
+        .execute_batch(crate::orchestration::repository::EPIC_ROOT_BRANCH_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Epic root-branch schema: {error}"))?;
+    let has_root_branch = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('initiated_sprint_git_authorities') WHERE name='root_branch')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Unable to inspect Sprint Git authority root branch: {error}"))?
+        != 0;
+    if !has_root_branch {
+        transaction
+            .execute_batch("ALTER TABLE initiated_sprint_git_authorities ADD COLUMN root_branch TEXT NOT NULL DEFAULT '';" )
+            .map_err(|error| format!("Unable to evolve Sprint Git authority root branch: {error}"))?;
+    }
+    Ok(())
 }
 use std::time::Duration;
 
@@ -498,6 +564,8 @@ mod tests {
                 "accepted_work_unit_integrations",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
+                "agent_session_invocation_transport_bindings",
+                "agent_session_invocation_transport_reservations",
                 "agent_session_invocations",
                 "agent_session_native_profile_bindings",
                 "agent_session_native_profile_launch_provenance",
@@ -520,6 +588,7 @@ mod tests {
                 "epic_initiation_results",
                 "epic_initiations",
                 "epic_planning_drafts",
+                "epic_root_branches",
                 "epic_settlement_authorizations",
                 "epic_settlement_current_states",
                 "epic_settlement_evidence",
@@ -593,6 +662,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("collect invocation schema");
         assert!(invocation_columns.contains(&"input_provenance".to_string()));
+        let transport_columns = connection
+            .prepare("PRAGMA table_info(agent_session_invocation_transport_bindings)")
+            .expect("prepare transport binding schema")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query transport binding schema")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect transport binding schema");
+        assert!(transport_columns.contains(&"accepted_effective_extension_fingerprint".to_string()));
         let context_columns = connection
             .prepare("PRAGMA table_info(plan_builder_context_deliveries)")
             .expect("prepare context schema")
@@ -711,6 +788,53 @@ mod tests {
                 )
                 .unwrap(),
             2
+        );
+    }
+
+    #[test]
+    fn migrates_v38_transport_bindings_without_inventing_accepted_fingerprints() {
+        let connection = Connection::open_in_memory().expect("database");
+        configure_sqlite_connection(&connection).expect("policy");
+        initialize_active_database(&connection).expect("initialize current schema");
+        connection
+            .execute_batch(
+                "DROP TABLE agent_session_invocation_transport_bindings;
+                 DROP TABLE agent_session_invocation_transport_reservations;
+                 CREATE TABLE agent_session_invocation_transport_bindings (
+                   invocation_id TEXT PRIMARY KEY,
+                   transport_kind TEXT NOT NULL,
+                   extension_fingerprint TEXT NOT NULL,
+                   bound_at TEXT NOT NULL,
+                   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
+                 );
+                 INSERT INTO agent_sessions
+                   (id,title,availability,requested_options_json,created_at,updated_at)
+                 VALUES ('transport-session','Transport','available','{}','t','t');
+                 INSERT INTO agent_session_invocations
+                   (id,session_id,submitted_text,input_provenance,status,requested_options_json,created_at,updated_at)
+                 VALUES ('transport-invocation','transport-session','report','application','pending','{}','t','t');
+                 INSERT INTO agent_session_invocation_transport_bindings
+                   (invocation_id,transport_kind,extension_fingerprint,bound_at)
+                 VALUES ('transport-invocation','work_unit_implementer_reporting','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','t');
+                 PRAGMA user_version=38;",
+            )
+            .expect("shape v38 transport schema");
+
+        initialize_active_database(&connection).expect("migrate v38 transport schema");
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT accepted_effective_extension_fingerprint FROM agent_session_invocation_transport_bindings WHERE invocation_id='transport-invocation'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .expect("preserved unaccepted transport binding"),
+            None
+        );
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
         );
     }
 

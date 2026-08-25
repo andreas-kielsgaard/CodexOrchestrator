@@ -61,7 +61,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 }
 
-async function assertOwnedDebugger({ executablePath, pid, debugPort }) {
+export async function assertOwnedDebugger({ executablePath, pid, debugPort }) {
   if (process.platform !== 'win32') {
     throw new Error('Owned WebView control currently supports Windows only.');
   }
@@ -110,7 +110,7 @@ export function parseOwnershipOutput(stdout) {
   return value;
 }
 
-async function resolveTarget(debugUrl, targetUrl) {
+export async function resolveTarget(debugUrl, targetUrl) {
   const response = await fetch(new URL('/json/list', debugUrl));
   if (!response.ok)
     throw new Error(`WebView debugger target discovery failed: HTTP ${response.status}.`);

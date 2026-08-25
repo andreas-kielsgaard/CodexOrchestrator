@@ -114,7 +114,8 @@ impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
             baseline_object_id,
             current_object_id,
             runtime_instance_ref: runtime_instance_ref.to_owned(),
-            runtime_source_ref: metadata.source_ref,
+            runtime_source_ref: metadata.source_ref.clone(),
+            root_branch: metadata.source_ref,
             source_fingerprint: verified.source_fingerprint.to_ascii_lowercase(),
         })
     }

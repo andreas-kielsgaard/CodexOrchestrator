@@ -337,6 +337,7 @@ export interface NativeInitiatedEpicV2 {
   readonly resultId: string;
   readonly eventId: string;
   readonly provenanceId: string;
+  readonly rootBranch?: string;
 }
 export interface NativeInitiatedSprintV2 {
   readonly sprintId: string;
@@ -604,10 +605,9 @@ export function decodeOrchestrationNativeQueryV2(value: unknown): OrchestrationN
     ...(root.epicSettlementStates === undefined
       ? {}
       : {
-          epicSettlementStates: array(
-            root.epicSettlementStates,
-            'epicSettlementStates',
-          ).map(epicSettlementProjection),
+          epicSettlementStates: array(root.epicSettlementStates, 'epicSettlementStates').map(
+            epicSettlementProjection,
+          ),
         }),
     workUnitInspections:
       root.workUnitInspections === undefined
@@ -1064,9 +1064,7 @@ export function nativeQueryProductCompositionInputV2(
     ...(query.sprintResultProjections
       ? { sprintResultProjections: query.sprintResultProjections }
       : {}),
-    ...(query.epicSettlementStates
-      ? { epicSettlementStates: query.epicSettlementStates }
-      : {}),
+    ...(query.epicSettlementStates ? { epicSettlementStates: query.epicSettlementStates } : {}),
     ...(transitionQuery
       ? {
           bootstrapTransition: {
@@ -1505,6 +1503,7 @@ const initiatedEpic = (value: unknown): NativeInitiatedEpicV2 => {
       'resultId',
       'eventId',
       'provenanceId',
+      'rootBranch',
     ],
     'initiated Epic',
   );
@@ -1519,6 +1518,9 @@ const initiatedEpic = (value: unknown): NativeInitiatedEpicV2 => {
     resultId: string(x.resultId, 'resultId'),
     eventId: string(x.eventId, 'eventId'),
     provenanceId: string(x.provenanceId, 'provenanceId'),
+    ...(x.rootBranch == null
+      ? {}
+      : { rootBranch: boundedString(x.rootBranch, 240, 'Epic root branch') }),
   };
 };
 const initiatedSprint = (value: unknown): NativeInitiatedSprintV2 => {
@@ -3210,6 +3212,7 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
       'reportingPreparedAt',
       'reportingHarnessBoundAt',
       'reportingLaunchRequestedAt',
+      'reportingActionExposedAt',
       'reportingLaunchAcceptedAt',
       'reportingReadyAt',
       'submittedOutcome',
@@ -3374,6 +3377,9 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
     ...(optionalTime('reportingLaunchRequestedAt')
       ? { reportingLaunchRequestedAt: optionalTime('reportingLaunchRequestedAt') }
       : {}),
+    ...(optionalTime('reportingActionExposedAt')
+      ? { reportingActionExposedAt: optionalTime('reportingActionExposedAt') }
+      : {}),
     ...(optionalTime('reportingLaunchAcceptedAt')
       ? { reportingLaunchAcceptedAt: optionalTime('reportingLaunchAcceptedAt') }
       : {}),
@@ -3401,11 +3407,19 @@ const workUnitImplementerOutcome = (value: unknown): NativeWorkUnitImplementerOu
       'reportingPreparedAt',
       'reportingHarnessBoundAt',
       'reportingLaunchRequestedAt',
+      'reportingActionExposedAt',
       'reportingLaunchAcceptedAt',
       'reportingReadyAt',
     ],
     'Implementer reporting',
   );
+  if (result.reportingLaunchAcceptedAt && !result.reportingActionExposedAt && !result.failureReason)
+    fail('Implementer reporting acceptance without action exposure requires durable attention');
+  if (
+    result.reportingReadyAt &&
+    (!result.reportingActionExposedAt || !result.reportingLaunchAcceptedAt || result.failureReason)
+  )
+    fail('Implementer reporting readiness requires exposed actions and accepted transport');
   if (result.submittedOutcome) {
     if (!result.reportingReadyAt)
       fail('Implementer outcome submission requires reporting readiness');
@@ -3503,6 +3517,7 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       'deliveryPersistedAt',
       'harnessBoundAt',
       'launchRequestedAt',
+      'actionExposedAt',
       'launchAcceptedAt',
       'reviewReadyAt',
       'delivered',
@@ -3643,6 +3658,9 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
     ...(optionalTime('launchRequestedAt')
       ? { launchRequestedAt: optionalTime('launchRequestedAt') }
       : {}),
+    ...(optionalTime('actionExposedAt')
+      ? { actionExposedAt: optionalTime('actionExposedAt') }
+      : {}),
     ...(optionalTime('launchAcceptedAt')
       ? { launchAcceptedAt: optionalTime('launchAcceptedAt') }
       : {}),
@@ -3681,11 +3699,25 @@ const workUnitHandlerReview = (value: unknown): NativeWorkUnitHandlerReviewV1 =>
       'deliveryPersistedAt',
       'harnessBoundAt',
       'launchRequestedAt',
+      'actionExposedAt',
       'launchAcceptedAt',
       'reviewReadyAt',
     ],
     'Handler review',
   );
+  if (
+    result.launchAcceptedAt &&
+    !result.actionExposedAt &&
+    result.conflict?.reason !== 'handler_review_accepted_without_action_exposure'
+  )
+    fail('Handler review acceptance without action exposure requires durable attention');
+  if (
+    result.reviewReadyAt &&
+    (!result.actionExposedAt ||
+      !result.launchAcceptedAt ||
+      result.conflict?.reason === 'handler_review_accepted_without_action_exposure')
+  )
+    fail('Handler review readiness requires exposed actions and accepted transport');
   if (result.semanticJudgment) {
     if (!result.reviewReadyAt) fail('Handler review judgment requires review readiness');
     timestampAtOrAfter(

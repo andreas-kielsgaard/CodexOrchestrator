@@ -156,6 +156,7 @@ fn file_review_store_replays_exact_facts_and_reauthorizes_on_load() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -210,6 +211,7 @@ fn git_capture_authorization_is_private_replay_safe_and_reauthorized() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -651,6 +653,7 @@ fn file_review_store_rejects_wrong_provenance_without_writing() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -699,6 +702,7 @@ fn scoped_file_review_distinguishes_unknown_invalid_and_broken_membership() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "status-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -748,6 +752,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
             expected_revision_token: first.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "one-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let draft = EpicPlanningDraftId::new("epic-planning-draft-2").unwrap();
@@ -783,6 +788,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
             expected_revision_token: second.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "two-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -844,6 +850,7 @@ fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
         expected_revision_token: token,
         actor_id: "application-user".into(),
         idempotency_key: key.into(),
+        root_branch: Some("codex/test-root".into()),
     };
     let result = repository
         .initiate_epic(initiate("init", saved.revision_token.clone()))
@@ -867,6 +874,7 @@ fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
     ));
     let query = repository.native_query().expect("query");
     assert_eq!(query.planning_drafts[0].status, "initiated");
+    assert_eq!(query.initiated_epics[0].root_branch.as_deref(), Some("codex/test-root"));
     let connection = repository.lock().unwrap();
     for table in [
         "epic_initiation_commands",
@@ -899,6 +907,7 @@ fn button_context_claim_keeps_stable_invocation_identity_until_explicit_reconcil
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "context-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     repository
@@ -989,6 +998,7 @@ fn initiated_draft_is_terminal_for_managed_draft_mutations() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "terminal-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let draft = EpicPlanningDraftId::new("epic-planning-draft-1").unwrap();
@@ -1022,6 +1032,7 @@ fn initiation_failure_matrix_leaves_no_false_initiation_root() {
             expected_revision_token: token,
             actor_id: actor.into(),
             idempotency_key: key.into(),
+            root_branch: Some("codex/test-root".into()),
         };
     let repository = repository_at(time());
     let mut missing_draft = initiate("missing".into(), "application-user", "missing-draft");
@@ -1041,6 +1052,13 @@ fn initiation_failure_matrix_leaves_no_false_initiation_root() {
     let saved = repository
         .save_epic_plan_proposal(command(None, proposal("first"), "first"))
         .unwrap();
+    let mut missing_root = initiate(saved.revision_token.clone(), "application-user", "missing-root");
+    missing_root.root_branch = None;
+    assert!(matches!(
+        repository.initiate_epic(missing_root),
+        Err(super::super::domain::InitiateEpicError::InvalidInput(_))
+    ));
+    assert!(repository.native_query().unwrap().initiated_epics.is_empty());
     assert!(matches!(
         repository.initiate_epic(initiate("stale".into(), "application-user", "stale")),
         Err(super::super::domain::InitiateEpicError::RevisionConflict)
@@ -1440,6 +1458,7 @@ fn restart_preserves_initiated_epic_and_ordered_preparatory_sprints() {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "restart-initiation".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiate");
     let before = repository.native_query_at(time()).expect("query");
@@ -1483,6 +1502,7 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "durable-escalation-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let baseline = repository.native_query().expect("baseline query");
@@ -1507,9 +1527,9 @@ fn native_query_projects_durable_epic_escalations_and_rejects_foreign_or_out_of_
          INSERT INTO work_unit_implementer_activations (work_unit_id,handler_attempt_id,handler_invocation_id,attempt_id,implementer_session_id,implementer_invocation_id,implementer_harness_revision_id,implementer_harness_configuration_digest,implementer_harness_repository_commit_ref,requested_at) VALUES ('unit-1','attempt-1','handler-action-1','attempt-1','implementer-session-1','implementer-invocation-1','implementer-revision','private-digest','private-commit','2030-01-01T00:00:08Z'),('unit-2','attempt-2','action-2','attempt-2','implementer-session-2','implementer-invocation-2','implementer-revision','private-digest','private-commit','2030-01-01T00:00:08Z');
          UPDATE work_unit_implementer_activations SET authorized_at='2030-01-01T00:00:08Z',execution_support_granted_at='2030-01-01T00:00:08Z',isolated_worktree_ready_at='2030-01-01T00:00:08Z',implementer_session_created_at='2030-01-01T00:00:08Z',implementer_invocation_prepared_at='2030-01-01T00:00:08Z',implementer_harness_bound_at='2030-01-01T00:00:08Z',launch_requested_at='2030-01-01T00:00:08Z',launch_accepted_at='2030-01-01T00:00:08Z',implementer_ready_at='2030-01-01T00:00:08Z';
          INSERT INTO work_unit_implementer_outcomes (work_unit_id,attempt_id,attempt_ordinal,implementer_session_id,implementer_invocation_id,reporting_invocation_id,reporting_harness_revision_id,reporting_harness_configuration_digest,reporting_harness_repository_commit_ref,reporting_requested_at) VALUES ('unit-1','attempt-1',0,'implementer-session-1','implementer-invocation-1','reporting-invocation-1','reporting-revision','reporting-digest','reporting-commit','2030-01-01T00:00:08Z'),('unit-2','attempt-2',0,'implementer-session-2','implementer-invocation-2','reporting-invocation-2','reporting-revision','reporting-digest','reporting-commit','2030-01-01T00:00:08Z');
-         UPDATE work_unit_implementer_outcomes SET reporting_prepared_at='2030-01-01T00:00:08Z',reporting_harness_bound_at='2030-01-01T00:00:08Z',reporting_launch_requested_at='2030-01-01T00:00:08Z',reporting_launch_accepted_at='2030-01-01T00:00:08Z',reporting_ready_at='2030-01-01T00:00:08Z',submitted_summary='bounded',outcome_variant='review_pending',submitted_validation_statement='checked',semantic_payload_json='{"outcome":"review_pending","summary":"bounded","validationStatement":"checked"}',submission_fingerprint='OUTCOME-1',submitted_at='2030-01-01T00:00:09Z',validation_at='2030-01-01T00:00:09Z',validation_result='valid',evidence_manifest_json='[{"evidenceRef":"e1","displayName":"bounded.md","changeKind":"modified"}]',comparison_fingerprint='comparison',evidence_content_fingerprints_json='[{"evidenceRef":"e1","contentFingerprint":"content"}]',evidence_ready_at='2030-01-01T00:00:09Z';
+         UPDATE work_unit_implementer_outcomes SET reporting_prepared_at='2030-01-01T00:00:08Z',reporting_harness_bound_at='2030-01-01T00:00:08Z',reporting_launch_requested_at='2030-01-01T00:00:08Z',reporting_action_exposed_at='2030-01-01T00:00:08Z',reporting_launch_accepted_at='2030-01-01T00:00:08Z',reporting_ready_at='2030-01-01T00:00:08Z',submitted_summary='bounded',outcome_variant='review_pending',submitted_validation_statement='checked',semantic_payload_json='{"outcome":"review_pending","summary":"bounded","validationStatement":"checked"}',submission_fingerprint='OUTCOME-1',submitted_at='2030-01-01T00:00:09Z',validation_at='2030-01-01T00:00:09Z',validation_result='valid',evidence_manifest_json='[{"evidenceRef":"e1","displayName":"bounded.md","changeKind":"modified"}]',comparison_fingerprint='comparison',evidence_content_fingerprints_json='[{"evidenceRef":"e1","contentFingerprint":"content"}]',evidence_ready_at='2030-01-01T00:00:09Z';
          INSERT INTO work_unit_handler_reviews (attempt_id,work_unit_id,reporting_invocation_id,handler_session_id,original_handler_invocation_id,action_handler_invocation_id,review_invocation_id,review_harness_revision_id,review_harness_configuration_digest,review_harness_repository_commit_ref,delivery_requested_at,delivered_payload_json,delivered_payload_fingerprint) VALUES ('attempt-1','unit-1','reporting-invocation-1','handler-session-1','handler-invocation-1','handler-action-1','review-1','review-revision','private-digest','private-commit','2030-01-01T00:00:09Z','{"summary":"bounded","validationStatement":"checked","changedFiles":[{"evidenceRef":"e1","displayName":"bounded.md","changeKind":"modified"}],"comparisonFingerprint":"comparison","evidenceContentFingerprints":[{"evidenceRef":"e1","contentFingerprint":"content"}]}','payload-1'),('attempt-2','unit-2','reporting-invocation-2','handler-session-2','handler-invocation-2','action-2','review-2','review-revision','private-digest','private-commit','2030-01-01T00:00:09Z','{"summary":"bounded","validationStatement":"checked","changedFiles":[{"evidenceRef":"e1","displayName":"bounded.md","changeKind":"modified"}],"comparisonFingerprint":"comparison","evidenceContentFingerprints":[{"evidenceRef":"e1","contentFingerprint":"content"}]}','payload-2');
-         UPDATE work_unit_handler_reviews SET delivery_persisted_at='2030-01-01T00:00:09Z',harness_bound_at='2030-01-01T00:00:09Z',launch_requested_at='2030-01-01T00:00:09Z',launch_accepted_at='2030-01-01T00:00:09Z',review_ready_at='2030-01-01T00:00:09Z',semantic_judgment_variant='return',semantic_return_reason_json='{"code":"blocked","explanation":"the concern remains unresolved"}',semantic_judgment_fingerprint='judgment-1',semantic_judgment_at='2030-01-01T00:00:10Z',lifecycle_status='completed',lifecycle_observed_at='2030-01-01T00:00:10Z';
+         UPDATE work_unit_handler_reviews SET delivery_persisted_at='2030-01-01T00:00:09Z',harness_bound_at='2030-01-01T00:00:09Z',launch_requested_at='2030-01-01T00:00:09Z',action_exposed_at='2030-01-01T00:00:09Z',launch_accepted_at='2030-01-01T00:00:09Z',review_ready_at='2030-01-01T00:00:09Z',semantic_judgment_variant='return',semantic_return_reason_json='{"code":"blocked","explanation":"the concern remains unresolved"}',semantic_judgment_fingerprint='judgment-1',semantic_judgment_at='2030-01-01T00:00:10Z',lifecycle_status='completed',lifecycle_observed_at='2030-01-01T00:00:10Z';
          INSERT INTO work_unit_handler_decisions (review_invocation_id,attempt_id,work_unit_id,decision_variant,decision_fingerprint,return_reason_json,decision_recorded_at,implementation_returned_at) VALUES ('review-1','attempt-1','unit-1','returned','decision-1','{"code":"blocked","explanation":"the concern remains unresolved"}','2030-01-01T00:00:10Z','2030-01-01T00:00:10Z'),('review-2','attempt-2','unit-2','returned','decision-2','{"code":"blocked","explanation":"the concern remains unresolved"}','2030-01-01T00:00:10Z','2030-01-01T00:00:10Z');
          INSERT INTO work_unit_handler_incomplete_dispositions (attempt_id,work_unit_id,review_invocation_id,decision_fingerprint,classification,meaningful_progress,recorded_at) VALUES ('attempt-1','unit-1','review-1','decision-1','blocked',0,'2030-01-01T00:00:10Z'),('attempt-2','unit-2','review-2','decision-2','blocked',0,'2030-01-01T00:00:10Z');
          INSERT INTO work_unit_no_progress_handbacks (handback_id,work_unit_id,source_attempt_id,source_review_invocation_id,decision_fingerprint,classification,context_json,context_fingerprint,persisted_at,delivery_intended_at) VALUES ('handback-1','unit-1','attempt-1','review-1','decision-1','blocked','{"concern":"unresolved"}','HAND-1','2030-01-01T00:00:11Z','2030-01-01T00:00:12Z'),('handback-2','unit-2','attempt-2','review-2','decision-2','blocked','{"concern":"unresolved","source":"attention"}','HAND-2','2030-01-01T00:00:11Z','2030-01-01T00:00:12Z');"###;
@@ -1595,6 +1615,7 @@ fn native_query_projects_ordered_sprint_decisions_current_result_and_privacy_bou
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "scs-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let sprint = repository.native_query().unwrap().initiated_sprints[0]
@@ -1639,6 +1660,7 @@ fn native_query_projects_repeated_structured_sprint_attention_and_rejects_ambigu
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "repeated-attention-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .expect("initiation");
     let sprint = repository.native_query().unwrap().initiated_sprints[0]
@@ -1766,6 +1788,7 @@ fn initiated_repository_with_capture(
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "git-review-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     let query = repository.native_query().unwrap();
@@ -1826,6 +1849,7 @@ fn initiate_second_epic(repository: &SqliteOrchestrationRepository) -> String {
             expected_revision_token: saved.revision_token,
             actor_id: "application-user".into(),
             idempotency_key: "git-other-init".into(),
+            root_branch: Some("codex/test-root".into()),
         })
         .unwrap();
     repository
@@ -1915,6 +1939,9 @@ fn initialize_connection(connection: &Connection) {
     connection
         .execute_batch(ORCHESTRATION_INITIATION_SCHEMA)
         .expect("initiation schema");
+    connection
+        .execute_batch(EPIC_ROOT_BRANCH_SCHEMA)
+        .expect("Epic root branch schema");
     connection
         .execute_batch(PLAN_BUILDER_CONTEXT_DELIVERY_SCHEMA)
         .expect("context delivery schema");
@@ -2091,6 +2118,11 @@ fn current_native_fixture(value: &str) -> Result<serde_json::Value, serde_json::
         .insert("workUnitInspections".into(), serde_json::json!([]));
     for field in ["workUnitExecutionStates", "workSliceExecutionGraphCompletions", "workSliceExecutionSettlements", "workSlicePlanningPointExecutionSettlements", "workSliceExecutionAttentions"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
     for field in ["sprintContinuationDecisions", "sprintContinuationCurrentDecisions", "sprintUpwardResults"] { fixture.as_object_mut().unwrap().entry(field).or_insert(serde_json::json!([])); }
+    if let Some(initiated_epics) = fixture.get_mut("initiatedEpics").and_then(serde_json::Value::as_array_mut) {
+        for epic in initiated_epics {
+            epic.as_object_mut().expect("initiated Epic fixture").entry("rootBranch").or_insert(serde_json::Value::Null);
+        }
+    }
     Ok(fixture)
 }
 
@@ -2152,6 +2184,7 @@ fn canonical_initiated_query() -> NativeQueryV2 {
         result_id: "init-result-fixture".into(),
         event_id: "init-event-fixture".into(),
         provenance_id: "init-provenance-fixture".into(),
+        root_branch: None,
     }];
     query.initiated_sprints = vec![
         InitiatedSprintDto {
@@ -2302,7 +2335,7 @@ fn implementer_outcome_projection_serializes_authoritative_claim_evidence_and_re
           'unit',?1,0,'implementer-session','implementer-invocation',?2,
           'reporting-revision','reporting-digest','reporting-commit',
           '2026-08-04T00:00:00Z','2026-08-04T00:00:01Z','2026-08-04T00:00:02Z',
-          '2026-08-04T00:00:03Z','2026-08-04T00:00:04Z','2026-08-04T00:00:05Z',
+          '2026-08-04T00:00:03Z','2026-08-04T00:00:03.500Z','2026-08-04T00:00:04Z','2026-08-04T00:00:05Z',
           'Implemented the bounded change.','review_pending','Focused checks passed.',?3,?4,
           '2026-08-04T00:00:06Z','2026-08-04T00:00:06Z','valid',?5,'comparison-fingerprint',?6,
           '2026-08-04T00:00:07Z','2026-08-04T00:00:08Z',?2,
@@ -2383,7 +2416,8 @@ fn create_implementer_outcome_projection_table(connection: &rusqlite::Connection
           reporting_harness_configuration_digest TEXT NOT NULL,
           reporting_harness_repository_commit_ref TEXT NOT NULL, reporting_requested_at TEXT NOT NULL,
           reporting_prepared_at TEXT, reporting_harness_bound_at TEXT,
-          reporting_launch_requested_at TEXT, reporting_launch_accepted_at TEXT, reporting_ready_at TEXT,
+          reporting_launch_requested_at TEXT, reporting_action_exposed_at TEXT,
+          reporting_launch_accepted_at TEXT, reporting_ready_at TEXT,
           submitted_summary TEXT, outcome_variant TEXT, submitted_validation_statement TEXT,
           semantic_payload_json TEXT, submission_fingerprint TEXT, submitted_at TEXT,
           validation_at TEXT, validation_result TEXT, evidence_manifest_json TEXT,
@@ -2411,6 +2445,7 @@ fn valid_work_unit_outcome_projection() -> WorkUnitDto {
         reporting_prepared_at: Some("2026-08-04T00:00:01Z".into()),
         reporting_harness_bound_at: Some("2026-08-04T00:00:02Z".into()),
         reporting_launch_requested_at: Some("2026-08-04T00:00:03Z".into()),
+        reporting_action_exposed_at: Some("2026-08-04T00:00:03.500Z".into()),
         reporting_launch_accepted_at: Some("2026-08-04T00:00:04Z".into()),
         reporting_ready_at: Some("2026-08-04T00:00:05Z".into()),
         submitted_outcome: Some(WorkUnitImplementerSubmissionDto {
@@ -2472,6 +2507,7 @@ fn handler_review_projection_preserves_judgment_decision_and_later_workflow_boun
         delivery_persisted_at: Some("2026-08-04T00:00:12Z".into()),
         harness_bound_at: Some("2026-08-04T00:00:13Z".into()),
         launch_requested_at: Some("2026-08-04T00:00:14Z".into()),
+        action_exposed_at: Some("2026-08-04T00:00:14.500Z".into()),
         launch_accepted_at: Some("2026-08-04T00:00:15Z".into()),
         review_ready_at: Some("2026-08-04T00:00:16Z".into()),
         delivered: WorkUnitHandlerReviewEvidenceDto {
@@ -2528,7 +2564,7 @@ fn retry_projection_exposes_only_semantic_stages_and_rejects_impossible_ordering
         attempt_id: "attempt".into(), reporting_invocation_id: projection_stable_id("work-unit-implementer-reporting-invocation", "attempt"),
         handler_session_id: "handler-session".into(), original_handler_invocation_id: "handler-original".into(), action_handler_invocation_id: "handler-action".into(),
         review_invocation_id: projection_stable_id("work-unit-handler-review-invocation", "attempt"), review_harness_revision_id: "review-revision".into(), review_harness_configuration_digest: "review-digest".into(), review_harness_repository_commit_ref: "review-commit".into(),
-        delivery_requested_at: "2026-08-04T00:00:00Z".into(), delivery_persisted_at: Some("2026-08-04T00:00:00Z".into()), harness_bound_at: Some("2026-08-04T00:00:00Z".into()), launch_requested_at: Some("2026-08-04T00:00:00Z".into()), launch_accepted_at: Some("2026-08-04T00:00:00Z".into()), review_ready_at: Some("2026-08-04T00:00:00Z".into()),
+        delivery_requested_at: "2026-08-04T00:00:00Z".into(), delivery_persisted_at: Some("2026-08-04T00:00:00Z".into()), harness_bound_at: Some("2026-08-04T00:00:00Z".into()), launch_requested_at: Some("2026-08-04T00:00:00Z".into()), action_exposed_at: Some("2026-08-04T00:00:00Z".into()), launch_accepted_at: Some("2026-08-04T00:00:00Z".into()), review_ready_at: Some("2026-08-04T00:00:00Z".into()),
         delivered: WorkUnitHandlerReviewEvidenceDto { summary_claim: "Implemented the bounded change.".into(), validation_statement_claim: "Focused checks passed.".into(), changed_files: vec![WorkUnitHandlerReviewEvidenceFileDto { evidence_ref: "evidence-1".into(), display_name: "src/lib.rs".into(), change_kind: ImplementationEvidenceChangeKindDto::Modified, content_fingerprint: "content-fingerprint".into() }], comparison_fingerprint: "comparison-fingerprint".into(), delivered_payload_fingerprint: "delivery-fingerprint".into() },
         semantic_judgment: Some(WorkUnitHandlerReviewJudgmentDto { variant: WorkUnitHandlerReviewJudgmentVariantDto::Return, reason: Some(WorkUnitHandlerReviewReasonDto { code: "review_failed".into(), explanation: "correction required".into() }), fingerprint: "judgment-fingerprint".into(), recorded_at: "2026-08-04T00:00:00Z".into() }),
         lifecycle: Some(WorkUnitHandlerReviewLifecycleDto { status: WorkUnitHandlerReviewLifecycleStatusDto::Completed, observed_at: "2026-08-04T00:00:00Z".into() }), conflict: None,

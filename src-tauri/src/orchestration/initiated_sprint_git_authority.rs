@@ -25,6 +25,7 @@ pub(crate) struct VerifiedRuntimeGitComparison {
     pub(crate) current_object_id: String,
     pub(crate) runtime_instance_ref: String,
     pub(crate) runtime_source_ref: String,
+    pub(crate) root_branch: String,
     pub(crate) source_fingerprint: String,
 }
 
@@ -33,6 +34,18 @@ pub(crate) trait WorktreeRuntimeGitComparison: Send + Sync {
         &self,
         runtime_instance_ref: &str,
     ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError>;
+
+    fn resolve_verified_comparison_for_accepted_root(
+        &self,
+        runtime_instance_ref: &str,
+        accepted_root_branch: &str,
+    ) -> Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError> {
+        let comparison = self.resolve_verified_comparison(runtime_instance_ref)?;
+        if comparison.root_branch != accepted_root_branch {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
+        Ok(comparison)
+    }
 }
 
 pub(crate) struct InitiatedSprintGitAuthorityService {
@@ -61,9 +74,19 @@ impl InitiatedSprintGitAuthorityService {
         {
             return Err(BindInitiatedSprintGitAuthorityError::InvalidRequest);
         }
+        let root_branch = self
+            .repository
+            .load_epic_root_branch_for_sprint(&request.sprint_id)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
         let comparison = self
             .runtime
-            .resolve_verified_comparison(&request.runtime_instance_ref)?;
+            .resolve_verified_comparison_for_accepted_root(
+                &request.runtime_instance_ref,
+                &root_branch,
+            )?;
+        if comparison.root_branch != root_branch {
+            return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible);
+        }
         if comparison.runtime_instance_ref != request.runtime_instance_ref {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
         }
@@ -80,6 +103,7 @@ impl InitiatedSprintGitAuthorityService {
                 current_object_id: comparison.current_object_id,
                 runtime_instance_ref: comparison.runtime_instance_ref,
                 runtime_source_ref: comparison.runtime_source_ref,
+                root_branch,
                 source_fingerprint: comparison.source_fingerprint,
             })
             .map(|result| match result {
@@ -113,7 +137,10 @@ impl InitiatedSprintGitAuthorityService {
             .ok_or(BindInitiatedSprintGitAuthorityError::SprintUnauthorized)?;
         let comparison = self
             .runtime
-            .resolve_verified_comparison(&authority.runtime_instance_ref)?;
+            .resolve_verified_comparison_for_accepted_root(
+                &authority.runtime_instance_ref,
+                &authority.root_branch,
+            )?;
         if comparison.repository_id != authority.repository_id
             || comparison.repository_root != authority.repository_root
             || comparison.repository_common_dir != authority.repository_common_dir
@@ -127,6 +154,7 @@ impl InitiatedSprintGitAuthorityService {
                 .eq_ignore_ascii_case(&authority.current_object_id)
             || comparison.runtime_instance_ref != authority.runtime_instance_ref
             || comparison.runtime_source_ref != authority.runtime_source_ref
+            || comparison.root_branch != authority.root_branch
             || comparison.source_fingerprint != authority.source_fingerprint
         {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeEvidenceMismatch);
@@ -230,6 +258,7 @@ mod tests {
             current_object_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
             runtime_instance_ref: "runtime-instance-1".into(),
             runtime_source_ref: "runtime-source-1".into(),
+            root_branch: "codex/test-root".into(),
             source_fingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .into(),
         }
@@ -250,7 +279,7 @@ mod tests {
         connection
             .pragma_update(None, "foreign_keys", false)
             .unwrap();
-        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-1','command-1','result-1','event-1','t'),('provenance-2','command-2','result-2','event-2','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-1','command-1','result-1','event-1','provenance-1','draft-1','revision-1','snapshot-1','epic-1','t'),('initiation-2','command-2','result-2','event-2','provenance-2','draft-2','revision-2','snapshot-2','epic-2','t'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-1','epic-1',0,'One','Move','[]','plan-1','plan-revision-1'),('sprint-2','epic-2',0,'Two','Move','[]','plan-2','plan-revision-2');").unwrap();
+        connection.execute_batch("INSERT INTO epic_initiation_provenance (id,command_id,result_id,event_id,recorded_at) VALUES ('provenance-1','command-1','result-1','event-1','t'),('provenance-2','command-2','result-2','event-2','t'); INSERT INTO epic_initiations (id,command_id,result_id,event_id,provenance_id,draft_id,proposal_revision_id,material_snapshot_id,epic_id,recorded_at) VALUES ('initiation-1','command-1','result-1','event-1','provenance-1','draft-1','revision-1','snapshot-1','epic-1','t'),('initiation-2','command-2','result-2','event-2','provenance-2','draft-2','revision-2','snapshot-2','epic-2','t'); INSERT INTO epic_root_branches (epic_id,root_branch) VALUES ('epic-1','codex/test-root'),('epic-2','codex/test-root'); INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES ('sprint-1','epic-1',0,'One','Move','[]','plan-1','plan-revision-1'),('sprint-2','epic-2',0,'Two','Move','[]','plan-2','plan-revision-2');").unwrap();
         connection
             .pragma_update(None, "foreign_keys", true)
             .unwrap();

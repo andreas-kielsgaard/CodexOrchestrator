@@ -4117,11 +4117,23 @@ fn load_sandbox_adoption_confirmation(
             confirmed_at: None,
         });
     };
-    let matches_observation = stored_identity == identity
+    let matches_current_observation = stored_identity == identity
         && adoption.disposition == "verified"
         && adoption.correlation_id.as_deref() == Some(adoption_correlation.as_str());
+    if adoption.disposition == "verified"
+        && stored_identity == identity
+        && adoption.correlation_id.as_deref() != Some(adoption_correlation.as_str())
+    {
+        // A fresh observation supersedes the prior confirmation. Its invalidated row remains
+        // durable history, but cannot invalidate or be inherited by the current adoption.
+        return Ok(NativeProfileSandboxAdoptionConfirmation {
+            disposition: "not_confirmed".into(),
+            correlation_id: None,
+            confirmed_at: None,
+        });
+    }
     let confirmation = NativeProfileSandboxAdoptionConfirmation {
-        disposition: if state == "confirmed" && matches_observation {
+        disposition: if state == "confirmed" && matches_current_observation {
             "confirmed".into()
         } else {
             "invalidated".into()
@@ -6176,7 +6188,29 @@ mod tests {
         assert_eq!(invalidated.readiness.workspace_write_canary, "blocked");
 
         service.select(&first.id).unwrap();
-        service.verify_preprovisioned_sandbox(&first.id).unwrap();
+        let reverified = service.verify_preprovisioned_sandbox(&first.id).unwrap();
+        assert_eq!(reverified.sandbox_adoption.disposition, "verified");
+        assert_eq!(
+            reverified.sandbox_adoption_confirmation.disposition,
+            "not_confirmed"
+        );
+        assert_eq!(
+            reverified.readiness.sandbox_initialization,
+            "attention_required"
+        );
+        assert_eq!(reverified.readiness.workspace_write_canary, "blocked");
+        let still_reverified = service
+            .query()
+            .unwrap()
+            .profiles
+            .into_iter()
+            .find(|profile| profile.id == first.id)
+            .unwrap();
+        assert_eq!(still_reverified.sandbox_adoption.disposition, "verified");
+        assert_eq!(
+            still_reverified.sandbox_adoption_confirmation.disposition,
+            "not_confirmed"
+        );
         service
             .confirm_preprovisioned_sandbox_adoption(&first.id)
             .unwrap();
@@ -6197,6 +6231,87 @@ mod tests {
             drifted.readiness.sandbox_initialization,
             "attention_required"
         );
+    }
+
+    #[test]
+    fn fresh_external_sandbox_reverification_requires_confirmation_for_the_new_adoption() {
+        let (_directory, mut service) = service();
+        let fake = Arc::new(FakeCli::succeeding());
+        service.cli = fake.clone();
+        let profile = service.create_dedicated().unwrap();
+        service.select(&profile.id).unwrap();
+        fs::write(
+            Path::new(&profile.home_path).join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
+
+        let first = service.verify_preprovisioned_sandbox(&profile.id).unwrap();
+        let first_adoption_correlation = first.sandbox_adoption.correlation_id.clone().unwrap();
+        service
+            .confirm_preprovisioned_sandbox_adoption(&profile.id)
+            .unwrap();
+
+        let second = service.verify_preprovisioned_sandbox(&profile.id).unwrap();
+        let second_adoption_correlation = second.sandbox_adoption.correlation_id.clone().unwrap();
+        assert_ne!(first_adoption_correlation, second_adoption_correlation);
+        assert_eq!(second.sandbox_adoption.disposition, "verified");
+        assert_eq!(
+            second.sandbox_adoption_confirmation.disposition,
+            "not_confirmed"
+        );
+        assert_eq!(
+            second.readiness.sandbox_initialization,
+            "attention_required"
+        );
+        assert_eq!(second.readiness.workspace_write_canary, "blocked");
+        assert_eq!(*fake.starts.lock().unwrap(), 0);
+
+        let connection = service.connection().unwrap();
+        let stored_adoption_correlation: String = connection
+            .query_row(
+                "SELECT correlation_id FROM native_codex_profile_sandbox_adoptions WHERE profile_id=?1",
+                params![profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_confirmation: (String, String) = connection
+            .query_row(
+                "SELECT adoption_correlation_id,state FROM native_codex_profile_sandbox_adoption_confirmations WHERE profile_id=?1",
+                params![profile.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored_adoption_correlation, second_adoption_correlation);
+        assert_eq!(stored_confirmation.0, first_adoption_correlation);
+        assert_eq!(stored_confirmation.1, "invalidated");
+        assert_eq!(
+            service
+                .run_workspace_write_canary(&profile.id)
+                .unwrap()
+                .readiness
+                .workspace_write_canary,
+            "blocked"
+        );
+
+        let confirmed = service
+            .confirm_preprovisioned_sandbox_adoption(&profile.id)
+            .unwrap();
+        assert_eq!(
+            confirmed.sandbox_adoption_confirmation.disposition,
+            "confirmed"
+        );
+        assert_eq!(confirmed.readiness.sandbox_initialization, "initialized");
+        let confirmed_adoption_correlation: String = service
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT adoption_correlation_id FROM native_codex_profile_sandbox_adoption_confirmations WHERE profile_id=?1",
+                params![profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(confirmed_adoption_correlation, second_adoption_correlation);
     }
 
     #[test]

@@ -364,6 +364,8 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             crate::orchestration::transport::load_sprint_runner_transition_query,
+            crate::orchestration::transport::recover_sprint_planning_control,
+            crate::orchestration::transport::recover_work_unit_handler_action,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_worktrees,
             #[cfg(debug_assertions)]
