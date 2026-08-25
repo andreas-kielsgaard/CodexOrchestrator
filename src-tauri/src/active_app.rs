@@ -265,12 +265,15 @@ pub(crate) fn run() {
                     .to_path_buf();
                 let review_root = std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR")
                     .map(PathBuf::from)
+                    .map(Ok)
                     .unwrap_or_else(|| {
-                        app_data_dir
-                            .parent()
-                            .unwrap_or(&app_data_dir)
-                            .join("dev.codex-orchestrator.human-review")
-                    });
+                        app.path()
+                            .local_data_dir()
+                            .map(|root| root.join("CodexOrchestrator").join("wr"))
+                            .map_err(|error| {
+                                format!("Unable to resolve local review runtime directory: {error}")
+                            })
+                    })?;
                 let review = Arc::new(crate::worktree_review::compose(&source, &review_root)?);
                 app.manage(
                     crate::orchestration::transport::ContextualFileReviewTauriState::available(
@@ -370,6 +373,10 @@ pub(crate) fn run() {
             crate::worktree_review::transport::list_human_review_worktrees,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::list_human_review_instances,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::human_review_settings,
+            #[cfg(debug_assertions)]
+            crate::worktree_review::transport::update_human_review_settings,
             #[cfg(debug_assertions)]
             crate::worktree_review::transport::human_review_source_history,
             crate::worktree_review::transport::attach_human_review_worktree,

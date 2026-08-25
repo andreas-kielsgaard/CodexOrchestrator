@@ -27,9 +27,10 @@ pub(crate) fn project_instance(
     let root = request.instances_root.join(request.instance_id.as_str());
     let rust_path = match request.rust_cache_reuse {
         CacheReuse::Shared => request.rust_cache_root.clone(),
-        CacheReuse::SharedKeyed | CacheReuse::IsolatedFallback => {
-            request.rust_cache_root.join(&request.rust_cache_key)
-        }
+        CacheReuse::SharedKeyed => request
+            .rust_cache_root
+            .join(cache_directory_key(&request.rust_cache_key)),
+        CacheReuse::IsolatedFallback => request.rust_cache_root.clone(),
     };
     let projection = InstanceProjection {
         caches: CacheProjection {
@@ -69,4 +70,8 @@ fn require_absolute(path: &Path, label: &str) -> Result<(), RuntimeContractError
         )));
     }
     Ok(())
+}
+
+pub(super) fn cache_directory_key(key: &str) -> String {
+    key.chars().take(20).collect()
 }

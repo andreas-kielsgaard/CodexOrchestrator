@@ -29,6 +29,13 @@ impl RuntimeSettings {
     pub(crate) fn validate(&self) -> Result<(), PlanningError> {
         require_absolute(&self.instances_root, "instances root")?;
         require_absolute(&self.shared_cache_root, "shared cache root")?;
+        if cfg!(windows) && windows_path_len(&self.instances_root) > 96 {
+            return Err(PlanningError::new(format!(
+                "review runtime instances root is too long for reliable Windows native builds ({} characters; maximum 96): {}",
+                windows_path_len(&self.instances_root),
+                self.instances_root.display()
+            )));
+        }
         if self.port_start == 0 || self.port_end.saturating_sub(self.port_start) < 3 {
             return Err(PlanningError::new(
                 "runtime port range must contain at least four nonzero ports",
@@ -280,8 +287,8 @@ pub(crate) fn project_runtime(
     let (rust_cache_root, rust_reuse) = if rust_shared {
         (shared_rust, CacheReuse::Shared)
     } else {
-        let rust = instance_root.join("cache/cargo-home");
-        fs::create_dir_all(rust.join(&source.rust_cache_key)).map_err(|error| {
+        let rust = instance_root.join("cargo-home");
+        fs::create_dir_all(&rust).map_err(|error| {
             PlanningError::context("create isolated Rust cache fallback", error)
         })?;
         (rust, CacheReuse::IsolatedFallback)
@@ -813,6 +820,10 @@ fn require_absolute(path: &Path, label: &str) -> Result<(), PlanningError> {
         )));
     }
     Ok(())
+}
+
+fn windows_path_len(path: &Path) -> usize {
+    path.as_os_str().to_string_lossy().encode_utf16().count()
 }
 
 fn resolve_program(name: &str) -> Result<PathBuf, PlanningError> {

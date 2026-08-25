@@ -27,6 +27,7 @@ pub(crate) struct ReviewWorktreeOption {
     pub(crate) revision: String,
     pub(crate) compatibility: String,
     pub(crate) compatibility_message: String,
+    pub(crate) details_state: String,
     pub(crate) attached: bool,
     pub(crate) ref_kind: String,
     pub(crate) merged_directly: bool,
@@ -125,6 +126,24 @@ impl ReviewWorktreeCatalog {
         }
         catalog.populate_relationships(git)?;
         catalog.populate_durable_refs(git)?;
+        let attached_branches = catalog
+            .options
+            .iter()
+            .filter_map(|option| option.branch.clone())
+            .collect::<HashSet<_>>();
+        catalog.options.extend(
+            catalog
+                .durable_refs
+                .iter()
+                .filter(|durable| {
+                    durable
+                        .option
+                        .branch
+                        .as_ref()
+                        .is_none_or(|branch| !attached_branches.contains(branch))
+                })
+                .map(|durable| durable.option.clone()),
+        );
         Ok(catalog)
     }
 
@@ -188,8 +207,9 @@ impl ReviewWorktreeCatalog {
                 revision: head[..head.len().min(12)].to_owned(),
                 compatibility,
                 compatibility_message,
+                details_state: "pending".into(),
                 attached: true,
-                ref_kind: if detached { "detached" } else { "branch" }.into(),
+                ref_kind: if detached { "detached" } else { "local_branch" }.into(),
                 merged_directly: false,
                 equivalent_patches: 0,
                 comparison_branch: "main".into(),
@@ -229,6 +249,10 @@ impl ReviewWorktreeCatalog {
     pub(crate) fn live_options(&self) -> Result<Vec<ReviewWorktreeOption>, String> {
         let snapshot = self.live_snapshot()?;
         let mut options = snapshot.options;
+        let attached_branches = options
+            .iter()
+            .filter_map(|option| option.branch.clone())
+            .collect::<HashSet<_>>();
         let attached = self
             .attached_paths
             .lock()
@@ -236,6 +260,13 @@ impl ReviewWorktreeCatalog {
             .unwrap_or_default();
         for durable in &self.durable_refs {
             let mut option = durable.option.clone();
+            if option
+                .branch
+                .as_ref()
+                .is_some_and(|branch| attached_branches.contains(branch))
+            {
+                continue;
+            }
             let path = attached
                 .get(&option.source_ref)
                 .cloned()
@@ -256,6 +287,28 @@ impl ReviewWorktreeCatalog {
                 .then_with(|| left.source_ref.cmp(&right.source_ref))
         });
         Ok(options)
+    }
+
+    pub(crate) fn live_options_progressive(
+        &self,
+        include_detached: bool,
+        mut publish: impl FnMut(&ReviewWorktreeOption),
+    ) -> Result<Vec<ReviewWorktreeOption>, String> {
+        let options = self.live_options()?;
+        for option in &options {
+            if include_detached || !option.detached {
+                publish(option);
+            }
+        }
+        Ok(options)
+    }
+
+    pub(crate) fn cache_fingerprint(&self) -> String {
+        cache_fingerprint(&self.options)
+    }
+
+    pub(crate) fn options_fingerprint(options: &[ReviewWorktreeOption]) -> String {
+        cache_fingerprint(options)
     }
 
     fn live_snapshot(&self) -> Result<Self, String> {
@@ -319,8 +372,9 @@ impl ReviewWorktreeCatalog {
                 revision: abbreviated(&object_id, 12),
                 compatibility,
                 compatibility_message,
+                details_state: "ready".into(),
                 attached: true,
-                ref_kind: if detached { "detached" } else { "branch" }.into(),
+                ref_kind: if detached { "detached" } else { "local_branch" }.into(),
                 merged_directly: false,
                 equivalent_patches: 0,
                 comparison_branch: original.comparison_branch.clone(),
@@ -487,11 +541,6 @@ impl ReviewWorktreeCatalog {
         }
         let text = String::from_utf8(output.stdout)
             .map_err(|_| "Git returned non-UTF-8 durable references".to_string())?;
-        let existing = self
-            .options
-            .iter()
-            .filter_map(|option| option.branch.clone())
-            .collect::<HashSet<_>>();
         let comparison_branch = self.comparison_branch.clone();
         let mut seen = HashSet::new();
         for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -509,7 +558,7 @@ impl ReviewWorktreeCatalog {
             let Some((display, ref_kind)) = display_ref(full_ref) else {
                 continue;
             };
-            if existing.contains(&display) || !seen.insert(display.clone()) {
+            if !seen.insert(display.clone()) {
                 continue;
             }
             let selected_object = match git_text(
@@ -573,6 +622,7 @@ impl ReviewWorktreeCatalog {
                 revision: abbreviated(&selected_object, 12),
                 compatibility: "unavailable".into(),
                 compatibility_message: "Attach a review worktree before preparing a build.".into(),
+                details_state: "ready".into(),
                 attached: false,
                 ref_kind: ref_kind.into(),
                 merged_directly,
@@ -853,6 +903,28 @@ impl ReviewWorktreeCatalog {
                 .then(|| path.clone())
         })
     }
+}
+
+fn cache_fingerprint(options: &[ReviewWorktreeOption]) -> String {
+    let mut identities = options
+        .iter()
+        .map(|option| {
+            format!(
+                "{}\0{}\0{}",
+                option.source_ref,
+                option.branch.as_deref().unwrap_or("detached"),
+                option.object_id
+            )
+        })
+        .collect::<Vec<_>>();
+    identities.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"review-source-cache-v1");
+    for identity in identities {
+        hash.update((identity.len() as u64).to_be_bytes());
+        hash.update(identity.as_bytes());
+    }
+    format!("{:x}", hash.finalize())
 }
 
 fn abbreviated(value: &str, length: usize) -> String {

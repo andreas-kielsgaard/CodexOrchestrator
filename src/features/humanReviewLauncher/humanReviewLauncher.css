@@ -126,51 +126,6 @@
   grid-column: 1 / -1;
   margin-bottom: 0;
 }
-.human-review__build-browser {
-  display: grid;
-  grid-template-columns: minmax(240px, 0.7fr) minmax(0, 1.3fr);
-  min-height: 420px;
-  margin-top: 16px;
-  overflow: hidden;
-  border: 1px solid #cfd6cf;
-  border-radius: 10px;
-  background: #fffdf8;
-}
-.human-review__build-list {
-  min-width: 0;
-  overflow-y: auto;
-  border-right: 1px solid #d8ddd5;
-  padding: 10px;
-  background: #f4f6f2;
-}
-.human-review__build-list > p {
-  margin: 8px;
-  color: #647068;
-}
-.human-review__build-list > button {
-  display: grid;
-  gap: 4px;
-  width: 100%;
-  margin: 2px 0;
-  border-color: transparent;
-  padding: 11px 12px;
-  text-align: left;
-}
-.human-review__build-list > button.is-selected {
-  border-color: #78897d;
-  background: #e8eee8;
-  box-shadow: inset 3px 0 #596d60;
-}
-.human-review__build-list > button span {
-  color: #435248;
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-.human-review__build-list > button small {
-  color: #718078;
-  font-size: 0.68rem;
-  text-transform: capitalize;
-}
 .human-review__build-detail {
   min-width: 0;
   padding: 22px;
@@ -1127,14 +1082,6 @@
   }
   .human-review__progress dl {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .human-review__build-browser {
-    grid-template-columns: 1fr;
-  }
-  .human-review__build-list {
-    max-height: 250px;
-    border-right: 0;
-    border-bottom: 1px solid #d8ddd5;
   }
 }
 @media (max-width: 560px) {

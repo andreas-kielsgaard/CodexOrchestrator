@@ -4,7 +4,7 @@ use super::{
     progress::ReviewOperationProgressView,
     service::{
         HumanReviewLauncherService, LauncherDetailNavigationView, LauncherProofPresentationView,
-        ReviewInstanceView, ReviewSourceView,
+        ReviewInstanceView, ReviewSettingsView, ReviewSourceView,
     },
     source_history::ReviewSourceHistoryView,
 };
@@ -40,6 +40,19 @@ pub(crate) struct ReviewSourceInput {
     source_ref: String,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewSourceListInput {
+    include_detached: bool,
+    refresh: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewSettingsInput {
+    cleanup_detached_builds: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewOperationInput {
@@ -56,8 +69,12 @@ pub(crate) struct ReviewInstanceOperationInput {
 #[tauri::command]
 pub(crate) fn list_human_review_worktrees(
     state: State<'_, HumanReviewLauncherTauriState>,
-) -> Result<Vec<ReviewSourceView>, String> {
-    state.0.live_sources()
+    input: Option<ReviewSourceListInput>,
+) -> Vec<ReviewSourceView> {
+    let input = input.unwrap_or_default();
+    state
+        .0
+        .source_snapshot(input.include_detached, input.refresh)
 }
 
 #[tauri::command]
@@ -65,6 +82,23 @@ pub(crate) fn list_human_review_instances(
     state: State<'_, HumanReviewLauncherTauriState>,
 ) -> Vec<ReviewInstanceView> {
     state.0.instances()
+}
+
+#[tauri::command]
+pub(crate) fn human_review_settings(
+    state: State<'_, HumanReviewLauncherTauriState>,
+) -> Result<ReviewSettingsView, String> {
+    state.0.settings()
+}
+
+#[tauri::command]
+pub(crate) fn update_human_review_settings(
+    state: State<'_, HumanReviewLauncherTauriState>,
+    input: ReviewSettingsInput,
+) -> Result<ReviewSettingsView, String> {
+    state.0.update_settings(ReviewSettingsView {
+        cleanup_detached_builds: input.cleanup_detached_builds,
+    })
 }
 
 #[tauri::command]

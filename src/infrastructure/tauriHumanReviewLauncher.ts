@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   HumanReviewInstance,
   HumanReviewLauncherClient,
+  HumanReviewSettings,
   HumanReviewSource,
   HumanReviewSourceHistory,
 } from '../application/humanReviewLauncher';
@@ -9,12 +10,15 @@ import { assertCompleteFileReviewFile, type FileReviewSnapshot } from '../applic
 import type { WorktreeBuildDetail } from '../application/worktreeBuild';
 
 export const tauriHumanReviewLauncher: HumanReviewLauncherClient = {
-  listSources: () => invoke<HumanReviewSource[]>('list_human_review_worktrees'),
+  listSources: (input = {}) =>
+    invoke<HumanReviewSource[]>('list_human_review_worktrees', { input }),
   sourceHistory: (sourceRef) =>
     invoke<HumanReviewSourceHistory>('human_review_source_history', { input: { sourceRef } }),
   attachWorktree: (sourceRef) =>
     invoke<HumanReviewSource>('attach_human_review_worktree', { input: { sourceRef } }),
   listInstances: () => invoke<HumanReviewInstance[]>('list_human_review_instances'),
+  settings: () => invoke<HumanReviewSettings>('human_review_settings'),
+  updateSettings: (input) => invoke<HumanReviewSettings>('update_human_review_settings', { input }),
   prepare: (operationRef, sourceRef, name) =>
     invoke('prepare_human_review_instance', { input: { operationRef, sourceRef, name } }),
   build: (operationRef, instanceRef) =>

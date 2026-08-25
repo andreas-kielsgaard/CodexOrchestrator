@@ -12,8 +12,8 @@ const sources: HumanReviewSource[] = [
     revision: '54bd91af30c2',
     equivalentPatches: 2,
   }),
-  source('main', 'branch', true, { isMain: true, isCurrent: true, ahead: 0, revision: '7c9a2fd3041b' }),
-  source('codex/current-work', 'branch', true, { ahead: 4, revision: 'c837eedb2109' }),
+  source('main', 'local_branch', true, { isMain: true, isCurrent: true, ahead: 0, revision: '7c9a2fd3041b' }),
+  source('codex/current-work', 'local_branch', true, { ahead: 4, revision: 'c837eedb2109' }),
   source('origin/review-launcher', 'remote_branch', false, { ahead: 3, revision: 'b821d4991e72' }),
 ];
 
@@ -63,6 +63,7 @@ function source(
     revision: '54bd91af30c2',
     compatibility: attached ? 'compatible' : 'unavailable',
     compatibilityMessage: attached ? 'Compatible.' : 'Create a review worktree first.',
+    detailsState: 'ready',
     attached,
     refKind,
     mergedDirectly: false,

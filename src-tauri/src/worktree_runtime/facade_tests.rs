@@ -135,6 +135,11 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
         second.projection.caches.node_path
     );
     assert_eq!(first.projection.caches.node_reuse, CacheReuse::SharedKeyed);
+    assert_eq!(
+        first.projection.caches.rust_path,
+        second.projection.caches.rust_path
+    );
+    assert_eq!(first.projection.caches.rust_reuse, CacheReuse::Shared);
     drop(prepared);
 
     let launches = runtime.launches.lock().expect("launches");
@@ -167,6 +172,58 @@ fn semantic_facade_projects_and_controls_two_isolated_instances() {
             Path::new(&tauri.environment["VITE_RUNTIME_DIST"])
         );
     }
+}
+
+#[test]
+fn cleanup_removes_only_a_terminal_instance_and_its_private_root() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source = fixture_worktree(directory.path(), "cleanup");
+    let runtime = Arc::new(FakeRuntime::default());
+    let facade = facade(
+        directory.path(),
+        runtime.clone(),
+        Arc::new(MapSources(HashMap::from([(
+            "repository/cleanup".into(),
+            source,
+        )]))),
+        Arc::new(FixedInspector),
+        Arc::new(RecordingExecutor::default()),
+        directory.path().join("shared-cache"),
+    );
+    let requested = facade
+        .request(
+            IsolatedTestRequest::new(
+                TestSourceRef::new("repository/cleanup").expect("source"),
+                "cleanup proof",
+            )
+            .expect("request"),
+        )
+        .expect("prepare instance");
+    let instance_root = runtime.prepared.lock().expect("prepared")[0]
+        .projection
+        .paths
+        .instance_root
+        .clone();
+    fs::write(instance_root.join("private-output.txt"), "private").expect("private output");
+
+    facade.build(&requested.handle).expect("build");
+    facade.start(&requested.handle).expect("start");
+    let running_error = facade
+        .cleanup(&requested.handle)
+        .expect_err("running instance cannot be cleaned");
+    assert_eq!(running_error.kind, TestInstanceErrorKind::InvalidState);
+    assert!(instance_root.exists());
+
+    facade.stop(&requested.handle).expect("stop");
+    facade.cleanup(&requested.handle).expect("cleanup");
+    assert!(!instance_root.exists());
+    assert_eq!(
+        facade
+            .status(&requested.handle)
+            .expect_err("registry record removed")
+            .kind,
+        TestInstanceErrorKind::NotFound
+    );
 }
 
 #[test]
@@ -1641,6 +1698,15 @@ impl WorktreeRuntimeControl for FakeRuntime {
         command: RecoverInstanceCommand,
     ) -> Result<InstanceSnapshot, RuntimeApplicationError> {
         self.transition(&command.instance_id, InstanceState::Recovered, false)
+    }
+
+    fn delete(&self, query: ReadInstanceQuery) -> Result<(), RuntimeApplicationError> {
+        self.snapshots
+            .lock()
+            .expect("snapshots")
+            .remove(&query.instance_id)
+            .ok_or_else(|| runtime_failure(RuntimeApplicationErrorKind::NotFound, "not found"))?;
+        Ok(())
     }
 }
 

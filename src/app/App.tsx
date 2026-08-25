@@ -133,6 +133,7 @@ export interface AppProps {
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   /** Present only in the injected development launcher composition. */
   readonly humanReviewLauncherView?: ReactNode;
+  readonly humanReviewSettingsView?: ReactNode;
   /** Enumerated proof navigation; it cannot activate or focus a native window. */
   readonly humanReviewLauncherNavigation?: () => Promise<'worktree-review' | null>;
   readonly initialSurface?: ApplicationSurface;
@@ -171,6 +172,7 @@ export function App({
   productDecisionClient,
   productDecisionCorrectionClient,
   humanReviewLauncherView,
+  humanReviewSettingsView,
   humanReviewLauncherNavigation,
   initialSurface = 'epics',
 }: AppProps) {
@@ -1071,7 +1073,10 @@ export function App({
           onNavigateToProduct={navigateToProductLocation}
         />
       ) : surface === 'native-settings' && nativeProfileClient ? (
-        <NativeProfileSettings client={nativeProfileClient} />
+        <NativeProfileSettings
+          client={nativeProfileClient}
+          additionalSettings={humanReviewSettingsView}
+        />
       ) : (
         harnessManagementPreviewSurface
       )}
