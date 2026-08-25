@@ -185,10 +185,10 @@ impl FullGatewayFixture {
                    (authority_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,
                     provenance_id,repository_id,repository_root,repository_common_dir,worktree_id,
                     worktree_root,baseline_object_id,current_object_id,runtime_instance_ref,
-                    runtime_source_ref,source_fingerprint,recorded_at)
+                    runtime_source_ref,root_branch,source_fingerprint,recorded_at)
                  VALUES('authority','authority-key','authority-fingerprint','epic','sprint',
                         'provenance','repository-id',?1,?2,'target-worktree',?1,?3,?3,
-                        'runtime-instance','refs/heads/main','source-fingerprint','t')",
+                        'runtime-instance','refs/heads/main','main','source-fingerprint','t')",
                 params![
                     repository.to_string_lossy(),
                     common.to_string_lossy(),

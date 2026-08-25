@@ -115,7 +115,7 @@ describe('EpicPlanBuilder', () => {
     expect(screen.getByRole('button', { name: 'Rebuild plan' })).toBeDisabled();
   });
 
-  it('enables Initiate only through an injected capability', async () => {
+  it('enables Initiate through an injected capability once a root branch is provided', async () => {
     const requestInitiation = vi.fn().mockResolvedValue(undefined);
     const source = createDurableProposalSource({ kind: 'unavailable' });
     const client = createPlanBuilderClient();
@@ -130,9 +130,15 @@ describe('EpicPlanBuilder', () => {
     );
 
     const button = screen.getByRole('button', { name: 'Initiate Epic' });
+    fireEvent.change(screen.getByLabelText('Epic root branch'), {
+      target: { value: 'codex/epic-plan' },
+    });
     expect(button).toBeEnabled();
     await act(async () => fireEvent.click(button));
-    expect(requestInitiation).toHaveBeenCalledWith(readyInitiation().request);
+    expect(requestInitiation).toHaveBeenCalledWith({
+      ...readyInitiation().request,
+      rootBranch: 'codex/epic-plan',
+    });
     expect(
       screen.queryByText(
         'Select an active Epic Planning Draft with a current proposal before initiation.',
@@ -205,6 +211,9 @@ describe('EpicPlanBuilder', () => {
       />,
     );
 
+    fireEvent.change(screen.getByLabelText('Epic root branch'), {
+      target: { value: 'codex/pending-epic' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Initiate Epic' }));
     expect(screen.getByRole('button', { name: 'Requesting confirmation…' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Requesting confirmation…' }));
@@ -285,6 +294,9 @@ describe('EpicPlanBuilder', () => {
       />,
     );
 
+    fireEvent.change(screen.getByLabelText('Epic root branch'), {
+      target: { value: 'codex/stale-proposal' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Initiate Epic' }));
     expect(await screen.findByText(/proposal changed.*try initiation again/i)).toBeVisible();
     expect(refreshAuthority).toHaveBeenCalledOnce();

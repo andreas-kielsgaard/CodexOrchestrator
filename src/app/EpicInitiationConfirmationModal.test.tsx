@@ -29,11 +29,7 @@ const agentRequest = {
 function fixture() {
   let listener: ((event: EpicInitiationConfirmationEvent) => void) | undefined;
   let malformed: (() => void) | undefined;
-  const resolve = vi.fn(async (
-    requestId: string,
-    decision: 'confirmed' | 'rejected',
-    _rootBranch?: string,
-  ) => {
+  const resolve = vi.fn(async (requestId: string, decision: 'confirmed' | 'rejected') => {
     if (decision === 'rejected') throw new EpicInitiationConfirmationError('rejected');
     return {
       requestId,

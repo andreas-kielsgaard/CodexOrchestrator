@@ -118,6 +118,9 @@ describe('App orchestration loading', () => {
     await waitFor(() => expect(requestPlan).toHaveBeenCalledOnce());
     expect(await screen.findByText('Reconciled Sprint')).toBeVisible();
     await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText('Epic root branch'), {
+      target: { value: 'codex/reconciled-epic' },
+    });
     expect(screen.getByRole('button', { name: 'Initiate Epic' })).toBeEnabled();
     expect(screen.getByRole('main', { name: 'Plan an Epic' })).toBeVisible();
     expect(list).toHaveBeenCalledOnce();
@@ -167,6 +170,9 @@ describe('App orchestration loading', () => {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /Capability race draft/ }));
+    fireEvent.change(await screen.findByLabelText('Epic root branch'), {
+      target: { value: 'codex/capability-race' },
+    });
     await waitFor(() => expect(initiationCapabilityForDraft).toHaveBeenCalledOnce());
     await act(async () => {
       proposal.setSnapshot({
@@ -268,10 +274,17 @@ describe('App orchestration loading', () => {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /Initiable draft/ }));
+    fireEvent.change(await screen.findByLabelText('Epic root branch'), {
+      target: { value: 'codex/initable-epic' },
+    });
     expect(await screen.findByRole('button', { name: 'Initiate Epic' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Initiate Epic' }));
-    expect(await screen.findByRole('dialog', { name: 'Initiate this Epic?' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm initiation' }));
+    const confirmationDialog = await screen.findByRole('dialog', { name: 'Initiate this Epic?' });
+    expect(confirmationDialog).toBeVisible();
+    fireEvent.change(within(confirmationDialog).getByLabelText('Epic root branch'), {
+      target: { value: 'codex/initable-epic' },
+    });
+    fireEvent.click(within(confirmationDialog).getByRole('button', { name: 'Confirm initiation' }));
 
     await waitFor(() => expect(requestConfirmation).toHaveBeenCalledOnce());
     await waitFor(() => expect(resolveConfirmation).toHaveBeenCalledOnce());
@@ -370,8 +383,15 @@ describe('App orchestration loading', () => {
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /Refresh failure draft/ }));
+    fireEvent.change(await screen.findByLabelText('Epic root branch'), {
+      target: { value: 'codex/refresh-failure-epic' },
+    });
     fireEvent.click(await screen.findByRole('button', { name: 'Initiate Epic' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm initiation' }));
+    const confirmationDialog = await screen.findByRole('dialog', { name: 'Initiate this Epic?' });
+    fireEvent.change(within(confirmationDialog).getByLabelText('Epic root branch'), {
+      target: { value: 'codex/refresh-failure-epic' },
+    });
+    fireEvent.click(within(confirmationDialog).getByRole('button', { name: 'Confirm initiation' }));
     expect(
       await screen.findByText(/initiation was confirmed.*could not be refreshed/i),
     ).toBeVisible();
