@@ -1273,19 +1273,22 @@ mod tests {
         InitiatedSprintGitAuthorityWrite, StoreInitiatedSprintGitAuthorityResult,
     };
     use super::*;
+    use crate::agent_sessions::{
+        domain::AgentInvocationId,
+        ports::{AgentRuntimeUpdateSink, RuntimeUpdate, RuntimeUpdateDeliveryFailure},
+    };
+    #[cfg(feature = "live-tests")]
     use crate::{
         agent_sessions::{
             domain::{
-                AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeOptions,
-                AgentSessionId, RuntimeSandboxMode,
+                AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId,
+                RuntimeSandboxMode,
             },
-            ports::{
-                AgentRuntime, AgentRuntimeUpdateSink, RuntimeInvocationRequest, RuntimeUpdate,
-                RuntimeUpdateDeliveryFailure,
-            },
+            ports::{AgentRuntime, RuntimeInvocationRequest},
         },
         runtime::codex::CodexCliRuntime,
     };
+    #[cfg(feature = "live-tests")]
     use std::time::{Duration, Instant};
 
     struct Fixture {
@@ -1652,6 +1655,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PIP01W_PRODUCT_LIVE=true and launches one real Codex invocation"]
     fn installed_cli_edits_the_product_created_implementer_workspace_before_application_sealing() {
         assert_eq!(

@@ -39,6 +39,7 @@ impl CodexCliCapabilityProbe {
         Self { program }
     }
 
+    #[cfg(all(test, feature = "live-tests"))]
     pub(crate) fn discover(&self) -> CodexCliCapabilities {
         self.discover_raw().0
     }

@@ -68,9 +68,6 @@ impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
         let (handle, metadata) = self
             .resolve(runtime_instance_ref)
             .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceUnavailable)?;
-        self.catalog
-            .ensure_compatible(&metadata.source_ref)
-            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible)?;
         let verified = self
             .runtime
             .verified_source(&handle)
@@ -83,6 +80,9 @@ impl WorktreeRuntimeGitComparison for HumanReviewLauncherService {
                 }
                 _ => BindInitiatedSprintGitAuthorityError::Unavailable,
             })?;
+        self.catalog
+            .ensure_compatible(&metadata.source_ref)
+            .map_err(|_| BindInitiatedSprintGitAuthorityError::RuntimeSourceIncompatible)?;
         if !verified.clean {
             return Err(BindInitiatedSprintGitAuthorityError::RuntimeSourceDirty);
         }

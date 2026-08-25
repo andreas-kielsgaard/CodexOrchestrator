@@ -9,6 +9,7 @@ import {
   isolatedEnvironment,
   keyedHash,
   portsForSlot,
+  runtimeRustTestArguments,
   sourceState,
   tauriOverride,
   validateInstanceId,
@@ -83,6 +84,19 @@ test('launch environment isolates instance state and removes ambient provider cr
   assert.equal(result.environment.VITE_RUNTIME_INSTANCE_ID, 'alpha');
   assert.equal(result.environment.VITE_RUNTIME_BUILD_OBSERVED, 'false');
   assert.deepEqual(result.scrubbed, ['GITHUB_TOKEN', 'OPENAI_API_KEY']);
+});
+
+test('worktree runtime runs only the reusable Rust runtime boundary', () => {
+  assert.deepEqual(runtimeRustTestArguments(), [
+    'test',
+    '--manifest-path',
+    'src-tauri/Cargo.toml',
+    '--lib',
+    'runtime::',
+    '--',
+    '--skip',
+    'worktree_runtime::',
+  ]);
 });
 
 test('allows re-prepare only after the recorded instance is cleanly stopped', () => {
@@ -171,7 +185,7 @@ test('nested untracked file content changes invalidate the source fingerprint', 
 
 test('Batch 14 changed source text contains no mojibake markers', async () => {
   const base = '82d6a781cfe0d0184de99c247d07379361594a03';
-  const changed = spawnSync('git', ['diff', '--name-only', base, 'HEAD', '--'], {
+  const changed = spawnSync('git', ['diff', '--name-only', '--diff-filter=ACMR', base, 'HEAD', '--'], {
     encoding: 'utf8',
   });
   assert.equal(changed.status, 0, changed.stderr);

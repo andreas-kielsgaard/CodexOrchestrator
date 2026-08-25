@@ -2053,14 +2053,16 @@ fn start_bootstrap_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "live-tests")]
+    use crate::agent_sessions::domain::{AgentInvocation, ToolActivityPhase};
     use crate::{
         agent_sessions::{
             application::{
                 AgentSessionApplication, AgentSessionNotifier, SystemAgentSessionProviders,
             },
             domain::{
-                AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus,
-                AgentRuntimeEventSource, AgentRuntimeOptions, AgentSessionId, ToolActivityPhase,
+                AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource,
+                AgentRuntimeOptions, AgentSessionId,
             },
             ports::{
                 AgentRuntime, AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimeInvocationMode,
@@ -2091,7 +2093,7 @@ mod tests {
         Barrier, Weak,
     };
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use std::{
         collections::BTreeMap,
         env,
@@ -2099,8 +2101,10 @@ mod tests {
         io::ErrorKind,
         net::TcpListener,
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::Command,
     };
+    #[cfg(feature = "live-tests")]
+    use std::{process::Stdio, time::Instant};
 
     struct PrivateCodexHome {
         directory: tempfile::TempDir,
@@ -2757,6 +2761,7 @@ mod tests {
     }
 
     #[derive(Default)]
+    #[cfg(feature = "live-tests")]
     struct LiveTransitionNotifier {
         service: Mutex<Option<Weak<PostConfirmationTransitionService>>>,
         sprint: Mutex<
@@ -2768,6 +2773,7 @@ mod tests {
         ready: std::sync::Condvar,
     }
 
+    #[cfg(feature = "live-tests")]
     impl LiveTransitionNotifier {
         fn set(&self, service: &Arc<PostConfirmationTransitionService>) {
             *self.service.lock().unwrap() = Some(Arc::downgrade(service));
@@ -2795,6 +2801,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "live-tests")]
     impl AgentSessionNotifier for LiveTransitionNotifier {
         fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
             let transition = {
@@ -5218,6 +5225,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PIP01D_RUNNER_LIVE=true and launches one Bootstrap plus one Runner"]
     fn installed_codex_bootstrap_and_runner_converge_without_starting_a_sprint() {
         assert_eq!(
@@ -11019,6 +11027,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PIP01W_PRIVATE_HOME_DOCTOR_LIVE=true and runs redacted codex doctor"]
     fn installed_cli_private_home_doctor_retains_only_allowlisted_bootstrap_evidence() {
         assert_eq!(
@@ -11074,6 +11083,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PIP01H_HANDLER_LIVE=true and launches one real Codex Handler invocation"]
     fn installed_codex_handler_reentrant_launch_preserves_the_initial_boundary() {
         assert_eq!(
@@ -11286,6 +11296,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-tests")]
     #[ignore = "requires CODEX_PIP01W_REPORTING_LIVE=true and launches real Codex start and resume invocations"]
     fn installed_cli_resumes_the_product_implementer_reporting_mcp() {
         assert_eq!(
