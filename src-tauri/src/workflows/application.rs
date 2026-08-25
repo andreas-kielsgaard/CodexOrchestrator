@@ -2,21 +2,23 @@ use super::domain::{
     PreparedWorkflowMcpHandoff, WorkflowCompletedTurnTrigger, WorkflowConnectionActivation,
     WorkflowConnectionActivationPreparation, WorkflowConnectionActivationRecord,
     WorkflowConnectionActivationStatus, WorkflowConnectionConfig, WorkflowDefinition,
-    WorkflowElementRef, WorkflowHarnessConfig, WorkflowInstance, WorkflowInstanceRecord,
-    WorkflowInstanceSession, WorkflowInstanceSummary, WorkflowInvocation,
-    WorkflowLaunchPreparation, WorkflowMcpActivationContext, WorkflowMcpComponent,
-    WorkflowMcpOutput, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole,
-    WorkflowSessionActivity, WorkflowTypeSummary,
+    WorkflowElementRef, WorkflowHarnessConfig, WorkflowInvocation, WorkflowMcpActivationContext,
+    WorkflowMcpComponent, WorkflowMcpOutput, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole,
+    WorkflowTypeSummary,
 };
+use super::instance_domain::{
+    CreateWorkflowInstancePreparation, ResolvedRepoBranchWorktreeTarget, WorkflowInstance,
+    WorkflowInstanceRecord, WorkflowInstanceSession, WorkflowInstanceSummary,
+    WorkflowSessionActivity,
+};
+use super::node_sessions::{WorkflowHumanMessage, WorkflowNodeSessions};
 use crate::agent_sessions::{
     application::{
-        AgentSessionApplication, AgentSessionNotification, CreateAgentSessionCommand,
-        CreateApplicationAgentSessionCommand, SendAgentSessionMessageCommand,
-        SendIdempotentApplicationAgentSessionMessageCommand,
+        AgentSessionApplication, AgentSessionNotification, SendAgentSessionMessageResult,
     },
     domain::{
-        AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentRuntimeOptions,
-        AgentSessionId, NormalizedRuntimeEventKind,
+        AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentSessionId,
+        NormalizedRuntimeEventKind,
     },
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
@@ -25,10 +27,9 @@ use globset::Glob;
 use regex::Regex;
 use std::{
     cmp::Reverse,
-    collections::HashMap,
     fs,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::SystemTime,
 };
 use uuid::Uuid;
@@ -93,35 +94,17 @@ pub(crate) trait WorkflowRepository: Send + Sync {
         elements: &[WorkflowElementRef],
     ) -> Result<WorkflowDefinition, String>;
     fn native_query(&self) -> Result<WorkflowNativeQuery, String>;
-    fn create_instance_launch(
+    fn create_instance(
         &self,
-        preparation: WorkflowLaunchPreparation,
+        preparation: CreateWorkflowInstancePreparation,
     ) -> Result<WorkflowInstanceRecord, String>;
     fn associate_instance_session(
         &self,
-        activation_id: &str,
         workflow_instance_id: &str,
         node_id: &str,
         session_id: &str,
         associated_at: &str,
     ) -> Result<WorkflowInstanceRecord, String>;
-    fn mark_instance_launch_requested(
-        &self,
-        activation_id: &str,
-        requested_at: &str,
-    ) -> Result<(), String>;
-    fn mark_instance_launch_accepted(
-        &self,
-        activation_id: &str,
-        accepted_at: &str,
-    ) -> Result<(), String>;
-    fn mark_instance_launch_failed(
-        &self,
-        activation_id: &str,
-        stage: &str,
-        reason: &str,
-        failed_at: &str,
-    ) -> Result<(), String>;
     fn list_workflow_instances(&self) -> Result<Vec<WorkflowInstanceRecord>, String>;
     fn load_workflow_instance(
         &self,
@@ -212,9 +195,7 @@ pub(crate) trait WorkflowSessionHarnessBinder: Send + Sync {
 pub(crate) struct WorkflowApplication {
     repository: Arc<dyn WorkflowRepository>,
     sessions: Arc<AgentSessionApplication>,
-    harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
-    instance_root: PathBuf,
-    receiver_lanes: Mutex<HashMap<(String, String), Arc<Mutex<()>>>>,
+    node_sessions: WorkflowNodeSessions,
 }
 
 impl WorkflowApplication {
@@ -222,14 +203,13 @@ impl WorkflowApplication {
         repository: Arc<dyn WorkflowRepository>,
         sessions: Arc<AgentSessionApplication>,
         harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
-        instance_root: PathBuf,
     ) -> Self {
+        let node_sessions =
+            WorkflowNodeSessions::new(repository.clone(), sessions.clone(), harnesses);
         Self {
             repository,
             sessions,
-            harnesses,
-            instance_root,
-            receiver_lanes: Mutex::new(HashMap::new()),
+            node_sessions,
         }
     }
 
@@ -345,19 +325,21 @@ impl WorkflowApplication {
         self.repository.native_query()
     }
 
-    pub(crate) fn launch_workflow_instance(
+    pub(crate) fn create_workflow_instance(
         &self,
         workflow_type_id: &str,
-        name: Option<&str>,
-        starting_prompt: &str,
+        name: &str,
+        target: ResolvedRepoBranchWorktreeTarget,
     ) -> Result<WorkflowInstance, String> {
-        if starting_prompt.trim().is_empty() {
-            return Err("A starting prompt is required.".to_string());
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("A Workflow instance name is required.".to_string());
         }
+        validate_target(&target)?;
         let definition = self.repository.load_workflow_type(workflow_type_id)?;
         let recipe = definition
             .active_recipe
-            .ok_or_else(|| "Activate the Workflow type before launching it.".to_string())?;
+            .ok_or_else(|| "Activate the Workflow type before creating an instance.".to_string())?;
         let starts = recipe
             .nodes
             .iter()
@@ -369,123 +351,34 @@ impl WorkflowApplication {
                 starts.len()
             ));
         }
-        let start = starts[0];
-        let launch_extension = launch_extension(&start.harness)?;
-        let requested_options = AgentRuntimeOptions {
-            model: nonempty(start.harness.default_model()),
-            sandbox: None,
-        };
         let instance_id = format!("workflow-instance-{}", Uuid::new_v4());
-        let session_id = format!("workflow-session-{}", Uuid::new_v4());
-        let invocation_id = format!("workflow-invocation-{}", Uuid::new_v4());
-        let activation_id = format!("workflow-activation-{}", Uuid::new_v4());
-        let instance_name = name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                crate::agent_sessions::application::title_from_message(starting_prompt)
-            });
-        let working_directory = self.instance_root.join(&instance_id);
-        fs::create_dir_all(&working_directory)
-            .map_err(|error| format!("Unable to create Workflow instance directory: {error}"))?;
-        let working_directory = working_directory.to_string_lossy().into_owned();
-        let requested_at = Utc::now().to_rfc3339();
-        let preparation = WorkflowLaunchPreparation {
+        let preparation = CreateWorkflowInstancePreparation {
             instance_id: instance_id.clone(),
             workflow_type_id: workflow_type_id.to_string(),
             recipe_id: recipe.id.clone(),
-            name: instance_name.clone(),
-            starting_prompt: starting_prompt.to_string(),
-            working_directory: working_directory.clone(),
-            activation_id: activation_id.clone(),
-            target_node_id: start.id.clone(),
-            target_session_id: session_id.clone(),
-            target_invocation_id: invocation_id.clone(),
-            requested_at,
+            name: name.to_string(),
+            target,
+            created_at: Utc::now().to_rfc3339(),
         };
-        self.repository.create_instance_launch(preparation)?;
-
-        let session = AgentSessionId::new(session_id.clone()).map_err(|error| error.to_string())?;
-        if let Err(error) =
-            self.sessions
-                .create_application_session(CreateApplicationAgentSessionCommand {
-                    session_id: session.clone(),
-                    session: CreateAgentSessionCommand {
-                        title: Some(instance_name),
-                        working_directory: Some(working_directory.clone()),
-                        requested_options: requested_options.clone(),
-                    },
-                })
-        {
-            self.record_failure(&activation_id, "session_creation", &error.to_string());
-            return self.load_workflow_instance(&instance_id);
-        }
-        let associated_at = Utc::now().to_rfc3339();
-        if let Err(error) = self.repository.associate_instance_session(
-            &activation_id,
-            &instance_id,
-            &start.id,
-            &session_id,
-            &associated_at,
-        ) {
-            self.record_failure(&activation_id, "session_association", &error);
-            return self.load_workflow_instance(&instance_id);
-        }
-        if let Err(error) = self
-            .harnesses
-            .bind_workflow_session(BindWorkflowSessionHarness {
-                session_id: session.clone(),
-                runtime_instance_id: invocation_id.clone(),
-                workflow_instance_id: instance_id.clone(),
-                recipe_id: recipe.id.clone(),
-                node_id: start.id.clone(),
-                harness: start.harness.clone(),
-            })
-        {
-            self.record_failure(&activation_id, "harness_binding", &error);
-            return self.load_workflow_instance(&instance_id);
-        }
-        if let Err(error) = self
-            .repository
-            .mark_instance_launch_requested(&activation_id, &Utc::now().to_rfc3339())
-        {
-            self.record_failure(&activation_id, "launch_request_recording", &error);
-            return self.load_workflow_instance(&instance_id);
-        }
-        let invocation =
-            AgentInvocationId::new(invocation_id).map_err(|error| error.to_string())?;
-        let launch = self
-            .sessions
-            .send_idempotent_user_message_with_launch_observation(
-                SendIdempotentApplicationAgentSessionMessageCommand {
-                    invocation_id: invocation,
-                    message: SendAgentSessionMessageCommand {
-                        session_id: Some(session),
-                        submitted_text: starting_prompt.to_string(),
-                        title: None,
-                        working_directory: Some(working_directory),
-                        requested_options: Some(requested_options),
-                    },
-                },
-                launch_extension,
-            );
-        match launch {
-            Ok(result) if result.launch_accepted => self
-                .repository
-                .mark_instance_launch_accepted(&activation_id, &Utc::now().to_rfc3339())?,
-            Ok(_) => {
-                self.record_failure(
-                    &activation_id,
-                    "runtime_launch",
-                    "The Agent Session launch was not accepted.",
-                );
-            }
-            Err(error) => {
-                self.record_failure(&activation_id, "runtime_launch", &error.to_string());
-            }
-        }
+        self.repository.create_instance(preparation)?;
         self.load_workflow_instance(&instance_id)
+    }
+
+    pub(crate) fn send_workflow_node_message(
+        &self,
+        workflow_instance_id: &str,
+        node_id: &str,
+        submitted_text: String,
+        title: Option<String>,
+    ) -> Result<SendAgentSessionMessageResult, String> {
+        self.node_sessions.send_human_message(
+            workflow_instance_id,
+            node_id,
+            WorkflowHumanMessage {
+                submitted_text,
+                title,
+            },
+        )
     }
 
     pub(crate) fn on_agent_notification(
@@ -663,7 +556,7 @@ impl WorkflowApplication {
             ));
         };
         let relative_file_path = resolve_expected_file(
-            Path::new(&trigger.working_directory),
+            Path::new(&trigger.worktree_root),
             file_selector,
             final_output,
         )
@@ -686,124 +579,12 @@ impl WorkflowApplication {
         receiver_node_id: &str,
         prompt: String,
     ) -> Result<(), (&'static str, String)> {
-        let receiver = trigger
-            .recipe
-            .nodes
-            .iter()
-            .find(|node| node.id == receiver_node_id)
-            .ok_or_else(|| {
-                (
-                    "receiver_resolution",
-                    "The receiver node is absent from the activated recipe.".to_string(),
-                )
-            })?;
-        let requested_options = AgentRuntimeOptions {
-            model: nonempty(receiver.harness.default_model()),
-            sandbox: None,
-        };
-        let launch_extension =
-            launch_extension(&receiver.harness).map_err(|reason| ("receiver_harness", reason))?;
-        let receiver_lane = self
-            .receiver_lane(&trigger.workflow_instance_id, receiver_node_id)
-            .map_err(|reason| ("receiver_session_resolution", reason))?;
-        let receiver_guard = receiver_lane.lock().map_err(|_| {
-            (
-                "receiver_session_resolution",
-                "The receiver Session lane is unavailable.".to_string(),
-            )
-        })?;
-        let existing = self
-            .most_recent_receiver_session(trigger, receiver_node_id)
-            .map_err(|reason| ("receiver_session_resolution", reason))?;
-        let (session, invocation, mode, create_association) = if let Some(session) = existing {
-            (
-                session,
-                self.sessions.allocate_application_invocation_id(),
-                "continued",
-                false,
-            )
-        } else {
-            let session = AgentSessionId::new(format!("workflow-session-{}", Uuid::new_v4()))
-                .map_err(|error| ("session_creation", error.to_string()))?;
-            let invocation = self.sessions.allocate_application_invocation_id();
-            (session, invocation, "fresh", true)
-        };
-        self.repository
-            .reserve_connection_activation_target(
-                activation_id,
-                &trigger.workflow_instance_id,
-                receiver_node_id,
-                session.as_str(),
-                invocation.as_str(),
-                mode,
-            )
-            .map_err(|reason| ("target_reservation", reason))?;
-        if create_association {
-            self.sessions
-                .create_application_session(CreateApplicationAgentSessionCommand {
-                    session_id: session.clone(),
-                    session: CreateAgentSessionCommand {
-                        title: Some(receiver.harness.name().to_string()),
-                        working_directory: Some(trigger.working_directory.clone()),
-                        requested_options: requested_options.clone(),
-                    },
-                })
-                .map_err(|error| ("session_creation", error.to_string()))?;
-            self.harnesses
-                .bind_workflow_session(BindWorkflowSessionHarness {
-                    session_id: session.clone(),
-                    runtime_instance_id: invocation.as_str().to_string(),
-                    workflow_instance_id: trigger.workflow_instance_id.clone(),
-                    recipe_id: trigger.recipe.id.clone(),
-                    node_id: receiver_node_id.to_string(),
-                    harness: receiver.harness.clone(),
-                })
-                .map_err(|reason| ("harness_binding", reason))?;
-        }
-        let associated_at = Utc::now().to_rfc3339();
-        self.repository
-            .associate_connection_activation_session(
-                activation_id,
-                &trigger.workflow_instance_id,
-                receiver_node_id,
-                session.as_str(),
-                &associated_at,
-                create_association,
-            )
-            .map_err(|reason| ("session_association", reason))?;
-        // The Session association is now unique and visible to competing edges. Do not retain the
-        // lane while entering the runtime because a synchronous terminal callback may cycle back
-        // to this receiver; the Agent Session repository rejects a second active invocation.
-        drop(receiver_guard);
-        self.repository
-            .mark_connection_activation_launch_requested(activation_id, &Utc::now().to_rfc3339())
-            .map_err(|reason| ("launch_request_recording", reason))?;
-        let launch = self
-            .sessions
-            .send_idempotent_application_message_with_launch_observation(
-                SendIdempotentApplicationAgentSessionMessageCommand {
-                    invocation_id: invocation,
-                    message: SendAgentSessionMessageCommand {
-                        session_id: Some(session),
-                        submitted_text: prompt,
-                        title: None,
-                        working_directory: Some(trigger.working_directory.clone()),
-                        requested_options: Some(requested_options),
-                    },
-                },
-                launch_extension,
-            )
-            .map_err(|error| ("runtime_launch", error.to_string()))?;
-        if !launch.launch_accepted {
-            return Err((
-                "runtime_launch",
-                "The Agent Session launch was not accepted.".to_string(),
-            ));
-        }
-        self.repository
-            .mark_connection_activation_launch_accepted(activation_id, &Utc::now().to_rfc3339())
-            .map_err(|reason| ("launch_acceptance_recording", reason))?;
-        Ok(())
+        self.node_sessions.deliver_connection_message(
+            activation_id,
+            trigger,
+            receiver_node_id,
+            prompt,
+        )
     }
 
     pub(crate) fn prepare_mcp_native_handoff(
@@ -970,66 +751,6 @@ impl WorkflowApplication {
         })
     }
 
-    fn receiver_lane(
-        &self,
-        workflow_instance_id: &str,
-        receiver_node_id: &str,
-    ) -> Result<Arc<Mutex<()>>, String> {
-        let mut lanes = self
-            .receiver_lanes
-            .lock()
-            .map_err(|_| "Workflow receiver Session lanes are unavailable.".to_string())?;
-        Ok(lanes
-            .entry((
-                workflow_instance_id.to_string(),
-                receiver_node_id.to_string(),
-            ))
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone())
-    }
-
-    fn most_recent_receiver_session(
-        &self,
-        trigger: &WorkflowCompletedTurnTrigger,
-        receiver_node_id: &str,
-    ) -> Result<Option<AgentSessionId>, String> {
-        let instance = self
-            .repository
-            .load_workflow_instance(&trigger.workflow_instance_id)?;
-        let mut candidates = Vec::new();
-        for association in instance
-            .session_associations
-            .iter()
-            .filter(|association| association.node_id == receiver_node_id)
-        {
-            let session_id = AgentSessionId::new(association.session_id.clone())
-                .map_err(|error| error.to_string())?;
-            let history = self
-                .sessions
-                .load_session(&session_id)
-                .map_err(|error| error.to_string())?;
-            let last_active_at = history
-                .invocations
-                .iter()
-                .map(|entry| entry.invocation.updated_at)
-                .max()
-                .unwrap_or(history.session.updated_at);
-            candidates.push((
-                last_active_at,
-                association.associated_at.clone(),
-                session_id,
-            ));
-        }
-        candidates.sort_by(|left, right| {
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| right.1.cmp(&left.1))
-                .then_with(|| left.2.as_str().cmp(right.2.as_str()))
-        });
-        Ok(candidates.into_iter().next().map(|(_, _, session)| session))
-    }
-
     pub(crate) fn list_workflow_instances(&self) -> Result<Vec<WorkflowInstanceSummary>, String> {
         self.repository
             .list_workflow_instances()?
@@ -1106,30 +827,18 @@ impl WorkflowApplication {
             session_count: sessions.len() as u32,
             active_session_count,
             idle_session_count: sessions.len() as u32 - active_session_count,
-            launch_status: record.launch_activation.status,
             created_at: record.created_at.clone(),
         };
         Ok(WorkflowInstance {
             summary,
-            starting_prompt: record.starting_prompt,
-            working_directory: record.working_directory,
+            target: record.target,
             recipe: record.recipe,
             sessions,
-            launch_activation: record.launch_activation,
             connection_activations: connection_activations
                 .into_iter()
                 .map(project_connection_activation)
                 .collect(),
         })
-    }
-
-    fn record_failure(&self, activation_id: &str, stage: &str, reason: &str) {
-        let _ = self.repository.mark_instance_launch_failed(
-            activation_id,
-            stage,
-            reason,
-            &Utc::now().to_rfc3339(),
-        );
     }
 }
 
@@ -1174,7 +883,7 @@ fn project_connection_activation(
     }
 }
 
-fn launch_extension(
+pub(super) fn launch_extension(
     harness: &WorkflowHarnessConfig,
 ) -> Result<Option<RuntimeLaunchExtension>, String> {
     if !harness.skills().is_empty() {
@@ -1205,6 +914,23 @@ fn launch_extension(
         });
     }
     Ok((extension != RuntimeLaunchExtension::default()).then_some(extension))
+}
+
+fn validate_target(target: &ResolvedRepoBranchWorktreeTarget) -> Result<(), String> {
+    for (value, label) in [
+        (&target.repository.id, "repository ID"),
+        (&target.repository.name, "repository name"),
+        (&target.repository.root_path, "repository root"),
+        (&target.branch.id, "branch ID"),
+        (&target.branch.name, "branch name"),
+        (&target.worktree.id, "worktree ID"),
+        (&target.worktree.path, "worktree path"),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("A Workflow instance target {label} is required."));
+        }
+    }
+    Ok(())
 }
 
 fn validate_runtime_literal(value: &str, label: &str) -> Result<(), String> {
@@ -1407,8 +1133,11 @@ mod tests {
         workflows::{
             domain::{
                 WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
-                WorkflowInitialCheck, WorkflowLaunchStatus, WorkflowMatchSelection,
-                WorkflowNodeHarness,
+                WorkflowInitialCheck, WorkflowMatchSelection, WorkflowNodeHarness,
+            },
+            instance_domain::{
+                ResolvedRepoBranchWorktreeTarget, WorkflowBranchTarget, WorkflowRepositoryTarget,
+                WorkflowWorktreeTarget,
             },
             repository::SqliteWorkflowRepository,
         },
@@ -1473,14 +1202,6 @@ mod tests {
         }
     }
 
-    struct FailingHarnessBinder;
-
-    impl WorkflowSessionHarnessBinder for FailingHarnessBinder {
-        fn bind_workflow_session(&self, _: BindWorkflowSessionHarness) -> Result<(), String> {
-            Err("managed upstream is unavailable".to_string())
-        }
-    }
-
     struct ReceiverFailingHarnessBinder;
 
     impl WorkflowSessionHarnessBinder for ReceiverFailingHarnessBinder {
@@ -1534,12 +1255,7 @@ mod tests {
             Some("codex-test".to_string()),
         ));
         let workflows = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
-        let application = WorkflowApplication::new(
-            workflows.clone(),
-            sessions,
-            harnesses,
-            directory.path().join("workflow-instances"),
-        );
+        let application = WorkflowApplication::new(workflows.clone(), sessions, harnesses);
         (directory, workflows, runtime, application)
     }
 
@@ -1580,254 +1296,106 @@ mod tests {
         workflow_type_id
     }
 
-    #[test]
-    fn launch_materializes_one_human_prompt_without_claiming_provider_activity() {
-        let (_directory, repository, runtime, application) = fixture();
-        let workflow_type_id = activate_start(
-            &repository,
-            WorkflowHarnessConfig::test_definition(
-                "Architecture reviewer",
-                "Reviewer",
-                "Review the architecture carefully.",
-                "gpt-5.6-sol",
-                "high",
-            ),
-        );
-        let prompt = "Inspect the proposed architecture and identify the main risk.";
-
-        let instance = application
-            .launch_workflow_instance(&workflow_type_id, None, prompt)
-            .unwrap();
-
-        assert_eq!(
-            instance.summary.launch_status,
-            WorkflowLaunchStatus::LaunchAccepted
-        );
-        assert_eq!(instance.summary.session_count, 1);
-        assert_eq!(instance.summary.active_session_count, 1);
-        assert_eq!(instance.summary.name, prompt);
-        assert_eq!(instance.starting_prompt, prompt);
-        assert_eq!(instance.launch_activation.source_kind, "human");
-        assert_eq!(
-            instance.launch_activation.delivery_kind,
-            "direct_prompt_runtime_v1"
-        );
-        assert_eq!(instance.launch_activation.session_mode, "fresh");
-        assert_eq!(instance.launch_activation.context_inheritance, "none");
-        assert_eq!(instance.launch_activation.compression, "none");
-        assert!(instance.launch_activation.associated_at.is_some());
-        assert!(instance.launch_activation.launch_requested_at.is_some());
-        assert!(instance.launch_activation.launch_accepted_at.is_some());
-        assert!(PathBuf::from(&instance.working_directory).is_dir());
-
-        let launches = runtime.launches.lock().unwrap();
-        assert_eq!(launches.len(), 1);
-        assert!(launches[0].submitted_text.contains(prompt));
-        assert!(launches[0]
-            .submitted_text
-            .contains("Review the architecture carefully."));
-        assert_eq!(launches[0].options.model.as_deref(), Some("gpt-5.6-sol"));
-        let extension = launches[0].launch_extension.as_ref().unwrap();
-        assert_eq!(
-            extension
-                .initial_prompt_prefix
-                .as_ref()
-                .map(|prefix| prefix.content.as_str()),
-            Some("Review the architecture carefully.")
-        );
-        assert_eq!(
-            extension.additional_args,
-            ["-c", "model_reasoning_effort=\"high\""]
-        );
-        drop(launches);
-
-        let loaded = application
-            .sessions
-            .load_session(&AgentSessionId::new(instance.sessions[0].session_id.clone()).unwrap())
-            .unwrap();
-        assert_eq!(loaded.invocations.len(), 1);
-        assert_eq!(loaded.invocations[0].invocation.submitted_text, prompt);
-        assert_eq!(
-            loaded.invocations[0].invocation.input_provenance,
-            crate::agent_sessions::domain::AgentInvocationInputProvenance::User
-        );
-        assert!(loaded.invocations[0].invocation.status.is_active());
-
-        let listed = application.list_workflow_instances().unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, instance.summary.id);
+    fn target(path: &Path) -> ResolvedRepoBranchWorktreeTarget {
+        ResolvedRepoBranchWorktreeTarget {
+            repository: WorkflowRepositoryTarget {
+                id: "repo-1".to_string(),
+                name: "Codex Orchestrator".to_string(),
+                root_path: path.to_string_lossy().into_owned(),
+            },
+            branch: WorkflowBranchTarget {
+                id: "branch-1".to_string(),
+                name: "codex/workflow-engine-v1".to_string(),
+            },
+            worktree: WorkflowWorktreeTarget {
+                id: "worktree-1".to_string(),
+                path: path.to_string_lossy().into_owned(),
+            },
+        }
     }
 
     #[test]
-    fn workflow_instance_projection_reopens_with_agent_session_history() {
+    fn instance_creation_registers_target_without_session_or_runtime_launch() {
+        let (directory, repository, runtime, application) = fixture();
+        let workflow_type_id = activate_start(
+            &repository,
+            WorkflowHarnessConfig::test_definition("Reviewer", "", "", "gpt-5.6-sol", "high"),
+        );
+        let selected_worktree = directory.path().join("selected-worktree");
+
+        let instance = application
+            .create_workflow_instance(
+                &workflow_type_id,
+                "Architecture review",
+                target(&selected_worktree),
+            )
+            .unwrap();
+
+        assert_eq!(instance.summary.name, "Architecture review");
+        assert_eq!(instance.summary.session_count, 0);
+        assert!(instance.sessions.is_empty());
+        assert_eq!(
+            instance.target.worktree.path,
+            selected_worktree.to_string_lossy()
+        );
+        assert!(!selected_worktree.exists());
+        assert!(runtime.launches.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn first_human_message_creates_bound_session_and_user_invocation() {
         let (directory, repository, runtime, application) = fixture();
         let workflow_type_id = activate_start(
             &repository,
             WorkflowHarnessConfig::test_definition(
                 "Architecture reviewer",
                 "",
-                "Review the architecture carefully.",
-                "gpt-5.6-terra",
-                "medium",
+                "Review carefully.",
+                "gpt-5.6-sol",
+                "high",
             ),
         );
-        let prompt = "Review this durable Workflow launch.";
-        let launched = application
-            .launch_workflow_instance(&workflow_type_id, Some("Durable review"), prompt)
+        let instance = application
+            .create_workflow_instance(
+                &workflow_type_id,
+                "Architecture review",
+                target(directory.path()),
+            )
             .unwrap();
-        let instance_id = launched.summary.id.clone();
-        let recipe_id = launched.recipe.id.clone();
-        let session_id = launched.sessions[0].session_id.clone();
+        let prompt = "Identify the main architectural risk.";
 
-        drop(application);
-        drop(repository);
-        drop(runtime);
+        let acknowledgement = application
+            .send_workflow_node_message(
+                &instance.summary.id,
+                "start",
+                prompt.to_string(),
+                Some("Architecture reviewer".to_string()),
+            )
+            .unwrap();
+        let loaded = application
+            .load_workflow_instance(&instance.summary.id)
+            .unwrap();
 
-        let database_path = directory.path().join("workflow-launch.sqlite");
-        let agent_connection = crate::storage::open_active_database(&database_path).unwrap();
-        let agent_repository =
-            Arc::new(SqliteAgentSessionRepository::new(agent_connection).unwrap());
-        let reopened_runtime = Arc::new(RecordingRuntime::default());
-        let providers = Arc::new(SystemAgentSessionProviders);
-        let sessions = Arc::new(AgentSessionApplication::new(
-            agent_repository,
-            reopened_runtime.clone(),
-            Arc::new(NoopNotifier),
-            providers.clone(),
-            providers,
-            Some("codex-test".to_string()),
-        ));
-        let workflows = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
-        let reopened = WorkflowApplication::new(
-            workflows,
-            sessions,
-            Arc::new(RecordingHarnessBinder),
-            directory.path().join("workflow-instances"),
-        );
-
-        let loaded = reopened.load_workflow_instance(&instance_id).unwrap();
-        assert_eq!(loaded.summary.name, "Durable review");
-        assert_eq!(
-            loaded.summary.launch_status,
-            WorkflowLaunchStatus::LaunchAccepted
-        );
-        assert_eq!(loaded.recipe.id, recipe_id);
-        assert_eq!(loaded.starting_prompt, prompt);
         assert_eq!(loaded.sessions.len(), 1);
-        assert_eq!(loaded.sessions[0].session_id, session_id);
         assert_eq!(
-            loaded.sessions[0].latest_turn_summary.as_deref(),
-            Some(prompt)
+            loaded.sessions[0].session_id,
+            acknowledgement.session_id.as_str()
         );
-        assert_eq!(reopened.list_workflow_instances().unwrap().len(), 1);
-        assert!(reopened_runtime.launches.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn unsupported_harness_capabilities_fail_before_instance_or_runtime_creation() {
-        let (_directory, repository, runtime, application) = fixture();
-        let mut harness = WorkflowHarnessConfig::test_definition("Reviewer", "", "", "", "");
-        harness.0.skills.items.push(
-            crate::orchestration::conversation_harness_working_copy::HarnessSkillConfiguration {
-                name: "security-review".to_string(),
-                path: "security-review".to_string(),
-                purpose: String::new(),
-                use_when: String::new(),
-                policy: crate::orchestration::conversation_harness_working_copy::HarnessSkillPolicy::Available,
-            },
-        );
-        let workflow_type_id = activate_start(&repository, harness);
-
-        let error = application
-            .launch_workflow_instance(&workflow_type_id, None, "Review this.")
-            .unwrap_err();
-
-        assert!(error.contains("does not support Harness skills yet"));
-        assert!(application.list_workflow_instances().unwrap().is_empty());
-        assert!(runtime.launches.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn unsupported_model_fails_before_instance_or_runtime_creation() {
-        let (_directory, repository, runtime, application) = fixture();
-        let workflow_type_id = activate_start(
-            &repository,
-            WorkflowHarnessConfig::test_definition(
-                "Reviewer",
-                "",
-                "",
-                "unverified-model",
-                "medium",
-            ),
-        );
-
-        let error = application
-            .launch_workflow_instance(&workflow_type_id, None, "Review this.")
-            .unwrap_err();
-
-        assert!(error.contains("Unsupported Codex model unverified-model"));
-        assert!(application.list_workflow_instances().unwrap().is_empty());
-        assert!(runtime.launches.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn runtime_rejection_retains_the_failed_instance_without_claiming_acceptance() {
-        let (_directory, repository, runtime, application) = fixture();
-        let workflow_type_id = activate_start(
-            &repository,
-            WorkflowHarnessConfig::test_definition("Reviewer", "", "", "gpt-5.6-sol", "medium"),
-        );
-        runtime.fail_preflight.store(true, Ordering::SeqCst);
-
-        let instance = application
-            .launch_workflow_instance(&workflow_type_id, Some("Rejected review"), "Review this.")
+        let history = application
+            .sessions
+            .load_session(&acknowledgement.session_id)
             .unwrap();
-
-        assert_eq!(instance.summary.launch_status, WorkflowLaunchStatus::Failed);
-        assert_eq!(instance.summary.name, "Rejected review");
-        assert!(instance.launch_activation.launch_requested_at.is_some());
-        assert!(instance.launch_activation.launch_accepted_at.is_none());
-        assert!(instance.launch_activation.failed_at.is_some());
+        assert_eq!(history.invocations.len(), 1);
         assert_eq!(
-            instance.launch_activation.failure_stage.as_deref(),
-            Some("runtime_launch")
+            history.invocations[0].invocation.id,
+            acknowledgement.invocation_id
         );
-        assert!(instance
-            .launch_activation
-            .failure_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("launch was not accepted")));
-        assert!(runtime.launches.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn harness_binding_failure_is_durable_and_prevents_runtime_launch() {
-        let (_directory, repository, runtime, application) =
-            fixture_with_binder(Arc::new(FailingHarnessBinder));
-        let mut harness = WorkflowHarnessConfig::test_definition("Reviewer", "", "", "", "");
-        harness.0.tools.mcp_servers = vec![crate::workflows::domain::WorkflowMcpServerExposure {
-            server_name: "plan_builder".to_string(),
-            access: crate::workflows::domain::WorkflowMcpServerAccess::EntireServer,
-        }];
-        let workflow_type_id = activate_start(&repository, harness);
-
-        let instance = application
-            .launch_workflow_instance(&workflow_type_id, None, "Review this.")
-            .unwrap();
-
-        assert_eq!(instance.summary.launch_status, WorkflowLaunchStatus::Failed);
+        assert_eq!(history.invocations[0].invocation.submitted_text, prompt);
         assert_eq!(
-            instance.launch_activation.failure_stage.as_deref(),
-            Some("harness_binding")
+            history.session.working_directory.as_deref(),
+            Some(directory.path().to_string_lossy().as_ref())
         );
-        assert!(instance
-            .launch_activation
-            .failure_reason
-            .as_deref()
-            .unwrap()
-            .contains("managed upstream"));
-        assert!(instance.launch_activation.launch_requested_at.is_none());
-        assert!(runtime.launches.lock().unwrap().is_empty());
+        assert_eq!(runtime.launches.lock().unwrap().len(), 1);
     }
 
     struct ExecutionFixture {
@@ -1976,12 +1544,8 @@ mod tests {
         workflow_repository
             .activate_changes(&workflow_type_id, &elements)
             .unwrap();
-        let application = WorkflowApplication::new(
-            workflow_repository.clone(),
-            sessions,
-            harnesses,
-            directory.path().join("workflow-instances"),
-        );
+        let application =
+            WorkflowApplication::new(workflow_repository.clone(), sessions, harnesses);
         ExecutionFixture {
             _directory: directory,
             agent_repository,
@@ -1992,15 +1556,83 @@ mod tests {
         }
     }
 
-    fn launch_execution_instance(fixture: &ExecutionFixture) -> WorkflowInstance {
+    fn create_started_execution_instance(fixture: &ExecutionFixture) -> WorkflowInstance {
+        let instance = fixture
+            .application
+            .create_workflow_instance(
+                &fixture.workflow_type_id,
+                "Execution instance",
+                target(fixture._directory.path()),
+            )
+            .unwrap();
+        let acknowledgement = fixture
+            .application
+            .send_workflow_node_message(
+                &instance.summary.id,
+                "sender",
+                "Produce the handoff.".to_string(),
+                Some("Execution instance".to_string()),
+            )
+            .unwrap();
+        let loaded = fixture
+            .application
+            .load_workflow_instance(&instance.summary.id)
+            .unwrap();
+        assert_eq!(
+            loaded.sessions[0].session_id,
+            acknowledgement.session_id.as_str()
+        );
+        loaded
+    }
+
+    #[test]
+    fn human_node_message_accepts_a_valid_non_start_node_at_the_application_boundary() {
+        let fixture = execution_fixture(vec![mcp_native_connection("edge", "receiver")]);
+        let instance = fixture
+            .application
+            .create_workflow_instance(
+                &fixture.workflow_type_id,
+                "Non-start delivery",
+                target(fixture._directory.path()),
+            )
+            .unwrap();
+
+        let acknowledgement = fixture
+            .application
+            .send_workflow_node_message(
+                &instance.summary.id,
+                "receiver",
+                "Begin directly here.".to_string(),
+                None,
+            )
+            .unwrap();
+        let loaded = fixture
+            .application
+            .load_workflow_instance(&instance.summary.id)
+            .unwrap();
+
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].node_id, "receiver");
+        assert_eq!(
+            loaded.sessions[0].session_id,
+            acknowledgement.session_id.as_str()
+        );
+    }
+
+    fn initial_invocation_id(
+        fixture: &ExecutionFixture,
+        instance: &WorkflowInstance,
+    ) -> AgentInvocationId {
+        let session_id = AgentSessionId::new(instance.sessions[0].session_id.clone()).unwrap();
         fixture
             .application
-            .launch_workflow_instance(
-                &fixture.workflow_type_id,
-                Some("Execution instance"),
-                "Produce the handoff.",
-            )
+            .sessions
+            .load_session(&session_id)
             .unwrap()
+            .invocations[0]
+            .invocation
+            .id
+            .clone()
     }
 
     fn complete_source_turn(
@@ -2009,9 +1641,7 @@ mod tests {
         final_output: &str,
     ) -> (AgentSessionId, AgentInvocation) {
         let session_id = AgentSessionId::new(instance.sessions[0].session_id.clone()).unwrap();
-        let invocation_id =
-            AgentInvocationId::new(instance.launch_activation.target_invocation_id.clone())
-                .unwrap();
+        let invocation_id = initial_invocation_id(fixture, instance);
         let now = Utc::now();
         fixture
             .agent_repository
@@ -2070,8 +1700,8 @@ mod tests {
             },
             "Review this handoff.",
         )]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("older.md"), "old").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -2110,9 +1740,9 @@ mod tests {
     #[test]
     fn mcp_native_handoff_resolves_current_recipe_and_preserves_interface_prompt_order() {
         let fixture = execution_fixture(vec![mcp_native_connection("edge", "receiver")]);
-        let instance = launch_execution_instance(&fixture);
+        let instance = create_started_execution_instance(&fixture);
         let source_session_id = instance.sessions[0].session_id.clone();
-        let source_invocation_id = instance.launch_activation.target_invocation_id.clone();
+        let source_invocation_id = initial_invocation_id(&fixture, &instance).to_string();
 
         let prepared = fixture
             .application
@@ -2175,14 +1805,15 @@ mod tests {
             },
             "Review.",
         )]);
-        let ordinary_instance = launch_execution_instance(&ordinary);
+        let ordinary_instance = create_started_execution_instance(&ordinary);
+        let ordinary_invocation_id = initial_invocation_id(&ordinary, &ordinary_instance);
         assert!(ordinary
             .application
             .prepare_mcp_native_handoff(
                 &ordinary_instance.summary.id,
                 "sender",
                 &ordinary_instance.sessions[0].session_id,
-                &ordinary_instance.launch_activation.target_invocation_id,
+                ordinary_invocation_id.as_str(),
                 super::super::mcp::SERVER_NAME,
                 super::super::mcp::TOOL_NAME,
             )
@@ -2195,14 +1826,15 @@ mod tests {
             .is_empty());
 
         let fixture = execution_fixture(vec![mcp_native_connection("edge", "receiver")]);
-        let instance = launch_execution_instance(&fixture);
+        let instance = create_started_execution_instance(&fixture);
+        let source_invocation_id = initial_invocation_id(&fixture, &instance);
         let prepared = fixture
             .application
             .prepare_mcp_native_handoff(
                 &instance.summary.id,
                 "sender",
                 &instance.sessions[0].session_id,
-                &instance.launch_activation.target_invocation_id,
+                source_invocation_id.as_str(),
                 super::super::mcp::SERVER_NAME,
                 super::super::mcp::TOOL_NAME,
             )
@@ -2248,7 +1880,7 @@ mod tests {
     fn mcp_native_prepare_uses_recipe_activated_after_session_creation() {
         let connection = mcp_native_connection("edge", "receiver");
         let fixture = execution_fixture(vec![connection.clone()]);
-        let instance = launch_execution_instance(&fixture);
+        let instance = create_started_execution_instance(&fixture);
         let mut updated_connection = connection;
         let Some(super::super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
             warning_text,
@@ -2276,13 +1908,14 @@ mod tests {
             .unwrap();
         assert_ne!(updated_recipe.id, instance.recipe.id);
 
+        let source_invocation_id = initial_invocation_id(&fixture, &instance);
         let prepared = fixture
             .application
             .prepare_mcp_native_handoff(
                 &instance.summary.id,
                 "sender",
                 &instance.sessions[0].session_id,
-                &instance.launch_activation.target_invocation_id,
+                source_invocation_id.as_str(),
                 super::super::mcp::SERVER_NAME,
                 super::super::mcp::TOOL_NAME,
             )
@@ -2303,8 +1936,8 @@ mod tests {
             },
             "Continue.",
         )]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("chosen.md"), "chosen").unwrap();
         fs::write(folder.join("ignored.md"), "ignored").unwrap();
@@ -2338,8 +1971,8 @@ mod tests {
             },
             "Continue.",
         )]);
-        let instance = launch_execution_instance(&fixture);
-        fs::create_dir_all(PathBuf::from(&instance.working_directory).join("handoffs")).unwrap();
+        let instance = create_started_execution_instance(&fixture);
+        fs::create_dir_all(PathBuf::from(&instance.target.worktree.path).join("handoffs")).unwrap();
         let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
         let mut failed = invocation.clone();
         failed.status = AgentInvocationStatus::Failed;
@@ -2390,8 +2023,8 @@ mod tests {
             },
             "Continue.",
         )]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("handoff.md"), "handoff").unwrap();
         let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
@@ -2447,7 +2080,7 @@ mod tests {
     }
 
     #[test]
-    fn trigger_uses_updated_activated_recipe_not_instance_launch_recipe() {
+    fn trigger_uses_updated_activated_recipe_not_instance_creation_recipe() {
         let mut connection = expected_file_connection(
             "edge",
             "receiver",
@@ -2458,8 +2091,8 @@ mod tests {
             "Old prompt.",
         );
         let fixture = execution_fixture(vec![connection.clone()]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("handoff.md"), "handoff").unwrap();
         let Some(super::super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile {
@@ -2526,8 +2159,8 @@ mod tests {
                 "Continue B.",
             ),
         ]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("present.md"), "present").unwrap();
         let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
@@ -2583,8 +2216,8 @@ mod tests {
                 "Continue B.",
             ),
         ]);
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("handoff.md"), "handoff").unwrap();
         let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
@@ -2635,8 +2268,8 @@ mod tests {
             )],
             Arc::new(ReceiverFailingHarnessBinder),
         );
-        let instance = launch_execution_instance(&fixture);
-        let folder = PathBuf::from(&instance.working_directory).join("handoffs");
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join("handoff.md"), "handoff").unwrap();
         let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
@@ -2678,7 +2311,7 @@ mod tests {
             },
             "Continue.",
         )]);
-        let instance = launch_execution_instance(&fixture);
+        let instance = create_started_execution_instance(&fixture);
         let preparation = |id: &str, source: &str, invocation: &str, requested_at: &str| {
             WorkflowConnectionActivationPreparation {
                 id: id.to_string(),

@@ -8,6 +8,10 @@ import type {
   WorkflowInstance,
   WorkflowNodeConfig,
 } from '../../application/workflows';
+import type {
+  RepoBranchWorktreeTargetSelectorProps,
+  ResolvedRepoBranchWorktreeTarget,
+} from '../../application/worktreeTargets';
 import {
   createRecordedAgentSessionClient,
   createRecordedAgentSessionStore,
@@ -21,7 +25,7 @@ describe('WorkflowScreen', () => {
     const onOpen = vi.fn();
     render(<WorkflowScreen client={client} workflowTypeId={null} onOpenWorkflowType={onOpen} />);
 
-    expect(await screen.findByText('No launched workflows')).toBeVisible();
+    expect(await screen.findByText('No Workflow instances')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'Workflow types' }));
     await waitFor(() => expect(client.listWorkflowTypes).toHaveBeenCalledOnce());
 
@@ -38,41 +42,61 @@ describe('WorkflowScreen', () => {
     expect(onOpen).toHaveBeenCalledWith('workflow-1');
   });
 
-  it('launches an activated type with the exact starting prompt and opens its instance', async () => {
+  it('derives Ready to begin for an instance without Sessions', async () => {
+    const client = workflowClient(definitionWithNodes());
+    const summary = workflowInstance().summary;
+    client.listWorkflowInstances = vi.fn(async () => [
+      { ...summary, sessionCount: 0, activeSessionCount: 0, idleSessionCount: 0 },
+    ]);
+
+    render(
+      <WorkflowScreen client={client} workflowTypeId={null} onOpenWorkflowType={() => undefined} />,
+    );
+
+    expect(await screen.findByText('Ready to begin')).toBeVisible();
+    expect(screen.queryByText('0 Sessions')).toBeNull();
+  });
+
+  it('creates a named instance for the exact selected target and opens it', async () => {
     const definition = definitionWithNodes();
     const instance = workflowInstance();
     const client: WorkflowApplicationClient = {
       ...workflowClient(definition),
-      launchWorkflowInstance: vi.fn(async () => instance),
+      createWorkflowInstance: vi.fn(async () => instance),
     };
     const onOpenInstance = vi.fn();
     render(
       <WorkflowScreen
         client={client}
         workflowTypeId="workflow-1"
+        targetSelector={TestTargetSelector}
         onOpenWorkflowType={() => undefined}
         onOpenWorkflowInstance={onOpenInstance}
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Start workflow' }));
-    const dialog = screen.getByRole('dialog', { name: 'Start Workflow type' });
-    fireEvent.change(within(dialog).getByLabelText('Starting prompt'), {
-      target: { value: 'Review the current architecture.' },
+    fireEvent.click(await screen.findByRole('button', { name: 'Create instance' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create Workflow instance' });
+    fireEvent.change(within(dialog).getByLabelText('Workflow type'), {
+      target: { value: 'workflow-1' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Start workflow' }));
+    fireEvent.change(within(dialog).getByLabelText('Instance name'), {
+      target: { value: '  Architecture review  ' },
+    });
+    fireEvent.click(within(dialog).getByLabelText('Repository and branch'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Workflow instance' }));
 
     await waitFor(() =>
-      expect(client.launchWorkflowInstance).toHaveBeenCalledWith({
+      expect(client.createWorkflowInstance).toHaveBeenCalledWith({
         workflowTypeId: 'workflow-1',
-        name: null,
-        startingPrompt: 'Review the current architecture.',
+        name: 'Architecture review',
+        target: workflowTarget,
       }),
     );
     expect(onOpenInstance).toHaveBeenCalledWith('instance-1');
   });
 
-  it('shows the immutable launch recipe, Session activity, and launch acceptance separately', async () => {
+  it('shows the immutable recipe, registered target, and Session activity separately', async () => {
     const instance = workflowInstance();
     const client: WorkflowApplicationClient = {
       ...workflowClient(definitionWithNodes()),
@@ -93,8 +117,80 @@ describe('WorkflowScreen', () => {
     expect(screen.getByLabelText('Workflow instance graph')).toBeVisible();
     expect(screen.getByText('Sender Harness')).toBeVisible();
     expect(screen.getByText('1 Session · 1 active · 0 idle')).toBeVisible();
-    expect(screen.getAllByText('Runtime launch accepted').length).toBeGreaterThan(0);
-    expect(screen.getByText('Fresh · no inheritance · no compression')).toBeVisible();
+    expect(screen.getByText('Review repo')).toBeVisible();
+    expect(screen.getByText('C:\\worktrees\\review')).toBeVisible();
+  });
+
+  it('opens the start node before a Session exists and sends the first message through its Workflow binding', async () => {
+    const recordedDetails = recordedAgentSessionDetails[0]!;
+    const base = workflowInstance();
+    const emptyInstance: WorkflowInstance = {
+      ...base,
+      summary: {
+        ...base.summary,
+        sessionCount: 0,
+        activeSessionCount: 0,
+        idleSessionCount: 0,
+      },
+      sessions: [],
+    };
+    const associatedInstance: WorkflowInstance = {
+      ...emptyInstance,
+      summary: { ...emptyInstance.summary, sessionCount: 1, activeSessionCount: 1 },
+      sessions: [
+        {
+          nodeId: 'sender',
+          sessionId: recordedDetails.session.id,
+          title: recordedDetails.session.title,
+          activity: 'active',
+          latestTurnSummary: null,
+          associatedAt: '2026-08-25T12:00:00.000Z',
+        },
+      ],
+    };
+    const firstInvocation = recordedDetails.invocations[0]!.invocation;
+    const client: WorkflowApplicationClient = {
+      ...workflowClient(definitionWithNodes()),
+      loadWorkflowInstance: vi
+        .fn()
+        .mockResolvedValueOnce(emptyInstance)
+        .mockResolvedValue(associatedInstance),
+      sendWorkflowNodeMessage: vi.fn(async () => ({
+        sessionId: recordedDetails.session.id,
+        invocationId: firstInvocation.id,
+      })),
+    };
+    const agentSessionClient = createRecordedAgentSessionClient({
+      store: createRecordedAgentSessionStore([recordedDetails]),
+    });
+    const ordinarySend = vi.spyOn(agentSessionClient, 'sendMessage');
+    render(
+      <WorkflowScreen
+        client={client}
+        agentSessionClient={agentSessionClient}
+        workflowTypeId={null}
+        workflowInstanceId="instance-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText('Ready to begin')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Sender Harness node Sender' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
+    fireEvent.change(await screen.findByLabelText('Initial message'), {
+      target: { value: 'Review the selected worktree.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(client.sendWorkflowNodeMessage).toHaveBeenCalledWith({
+        workflowInstanceId: 'instance-1',
+        nodeId: 'sender',
+        submittedText: 'Review the selected worktree.',
+      }),
+    );
+    expect(ordinarySend).not.toHaveBeenCalled();
+    await waitFor(() => expect(client.loadWorkflowInstance).toHaveBeenCalledTimes(2));
   });
 
   it('keeps node configuration and newest-first Agent Sessions inside a dismissible popup', async () => {
@@ -1100,7 +1196,10 @@ function workflowClient(initial: WorkflowDefinition): WorkflowApplicationClient 
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
     listWorkflowInstances: vi.fn(async () => []),
     listWorkflowMcpComponents: vi.fn(async () => []),
-    launchWorkflowInstance: vi.fn(async () => {
+    createWorkflowInstance: vi.fn(async () => {
+      throw new Error('not configured');
+    }),
+    sendWorkflowNodeMessage: vi.fn(async () => {
       throw new Error('not configured');
     }),
     loadWorkflowInstance: vi.fn(async () => {
@@ -1379,11 +1478,9 @@ function workflowInstance(): WorkflowInstance {
       sessionCount: 1,
       activeSessionCount: 1,
       idleSessionCount: 0,
-      launchStatus: 'launch_accepted',
       createdAt: '2026-08-09T01:00:00.000Z',
     },
-    startingPrompt: 'Review the current architecture.',
-    workingDirectory: 'C:\\workflow-instances\\instance-1',
+    target: workflowTarget,
     recipe: {
       ...definition.activeRecipe!,
       connections: [connection('launch-edge')],
@@ -1398,28 +1495,32 @@ function workflowInstance(): WorkflowInstance {
         associatedAt: '2026-08-09T01:00:01.000Z',
       },
     ],
-    launchActivation: {
-      id: 'activation-1',
-      sourceKind: 'human',
-      targetNodeId: 'sender',
-      targetSessionId: 'session-1',
-      targetInvocationId: 'invocation-1',
-      deliveryKind: 'direct_prompt_runtime_v1',
-      sessionMode: 'fresh',
-      contextInheritance: 'none',
-      compression: 'none',
-      status: 'launch_accepted',
-      requestedAt: '2026-08-09T01:00:00.000Z',
-      associatedAt: '2026-08-09T01:00:01.000Z',
-      launchRequestedAt: '2026-08-09T01:00:02.000Z',
-      launchAcceptedAt: '2026-08-09T01:00:03.000Z',
-      failedAt: null,
-      failureStage: null,
-      failureReason: null,
-    },
     connectionActivations: [],
   };
 }
+
+function TestTargetSelector({
+  id,
+  value,
+  disabled,
+  onChange,
+}: RepoBranchWorktreeTargetSelectorProps) {
+  return (
+    <button type="button" id={id} disabled={disabled} onClick={() => onChange(workflowTarget)}>
+      {value ? 'Review repo · feature/workflow' : 'Choose review target'}
+    </button>
+  );
+}
+
+const workflowTarget: ResolvedRepoBranchWorktreeTarget = {
+  repository: {
+    id: 'repo-1',
+    name: 'Review repo',
+    rootPath: 'C:\\repos\\review',
+  },
+  branch: { id: 'branch-1', name: 'feature/workflow' },
+  worktree: { id: 'worktree-1', path: 'C:\\worktrees\\review' },
+};
 
 function connection(id: string): WorkflowConnectionConfig {
   return {

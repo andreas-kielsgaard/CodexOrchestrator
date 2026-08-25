@@ -175,13 +175,15 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
+            app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
+                app_data_dir.join("codex-orchestrator.sqlite"),
+            ));
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
                 Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
                     &database_path,
                 )?),
                 application.clone(),
                 harness_engine.clone(),
-                app_data_dir.join("workflow-instances"),
             ));
             let (workflow_mcp, workflow_mcp_owner) =
                 crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;
@@ -389,9 +391,11 @@ pub(crate) fn run() {
             crate::workflows::transport::delete_workflow_connection_draft,
             crate::workflows::transport::activate_workflow_changes,
             crate::workflows::transport::load_workflow_native_query,
-            crate::workflows::transport::launch_workflow_instance,
+            crate::workflows::transport::create_workflow_instance,
+            crate::workflows::transport::send_workflow_node_message,
             crate::workflows::transport::list_workflow_instances,
             crate::workflows::transport::load_workflow_instance,
+            crate::worktree_targets_temp::list_discovered_worktree_targets,
             crate::native_profiles::load_native_profile_query,
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,

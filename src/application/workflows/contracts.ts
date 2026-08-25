@@ -2,6 +2,22 @@ import type {
   HarnessEffectiveConfiguration,
   HarnessMcpServerExposure,
 } from '../conversationHarnesses';
+import type {
+  PartialAgentRuntimeOptionsDto,
+  SendAgentSessionMessageResultDto,
+} from '../agentSessions';
+import type {
+  CreateWorkflowInstanceInput,
+  WorkflowInstance,
+  WorkflowInstanceSummary,
+} from './instanceContracts';
+
+export type {
+  CreateWorkflowInstanceInput,
+  WorkflowInstance,
+  WorkflowInstanceSession,
+  WorkflowInstanceSummary,
+} from './instanceContracts';
 
 export interface WorkflowTypeSummary {
   readonly id: string;
@@ -171,61 +187,6 @@ export interface WorkflowDefinition {
   readonly activeRecipe: EffectiveWorkflowRecipe | null;
 }
 
-export type WorkflowLaunchStatus =
-  'requested' | 'associated' | 'launch_requested' | 'launch_accepted' | 'failed';
-
-export interface WorkflowInstanceSummary {
-  readonly id: string;
-  readonly workflowTypeId: string;
-  readonly workflowTypeName: string;
-  readonly recipeId: string;
-  readonly name: string;
-  readonly sessionCount: number;
-  readonly activeSessionCount: number;
-  readonly idleSessionCount: number;
-  readonly launchStatus: WorkflowLaunchStatus;
-  readonly createdAt: string;
-}
-
-export interface WorkflowInstanceSession {
-  readonly nodeId: string;
-  readonly sessionId: string;
-  readonly title: string;
-  readonly activity: 'active' | 'idle';
-  readonly latestTurnSummary: string | null;
-  readonly associatedAt: string;
-}
-
-export interface WorkflowActivation {
-  readonly id: string;
-  readonly sourceKind: 'human';
-  readonly targetNodeId: string;
-  readonly targetSessionId: string;
-  readonly targetInvocationId: string;
-  readonly deliveryKind: 'direct_prompt_runtime_v1';
-  readonly sessionMode: 'fresh';
-  readonly contextInheritance: 'none';
-  readonly compression: 'none';
-  readonly status: WorkflowLaunchStatus;
-  readonly requestedAt: string;
-  readonly associatedAt: string | null;
-  readonly launchRequestedAt: string | null;
-  readonly launchAcceptedAt: string | null;
-  readonly failedAt: string | null;
-  readonly failureStage: string | null;
-  readonly failureReason: string | null;
-}
-
-export interface WorkflowInstance {
-  readonly summary: WorkflowInstanceSummary;
-  readonly startingPrompt: string;
-  readonly workingDirectory: string;
-  readonly recipe: EffectiveWorkflowRecipe;
-  readonly sessions: readonly WorkflowInstanceSession[];
-  readonly launchActivation: WorkflowActivation;
-  readonly connectionActivations: readonly WorkflowConnectionActivation[];
-}
-
 export type WorkflowConnectionActivationStatus =
   'requested' | 'resolved' | 'associated' | 'launch_requested' | 'launch_accepted' | 'failed';
 
@@ -262,11 +223,14 @@ export interface WorkflowApplicationClient {
   listWorkflowTypes(): Promise<readonly WorkflowTypeSummary[]>;
   listWorkflowInstances(): Promise<readonly WorkflowInstanceSummary[]>;
   listWorkflowMcpComponents(): Promise<readonly WorkflowMcpComponent[]>;
-  launchWorkflowInstance(input: {
-    readonly workflowTypeId: string;
-    readonly name?: string | null;
-    readonly startingPrompt: string;
-  }): Promise<WorkflowInstance>;
+  createWorkflowInstance(input: CreateWorkflowInstanceInput): Promise<WorkflowInstance>;
+  sendWorkflowNodeMessage(input: {
+    readonly workflowInstanceId: string;
+    readonly nodeId: string;
+    readonly submittedText: string;
+    readonly title?: string;
+    readonly requestedOptions?: PartialAgentRuntimeOptionsDto;
+  }): Promise<SendAgentSessionMessageResultDto>;
   loadWorkflowInstance(workflowInstanceId: string): Promise<WorkflowInstance>;
   listRoles(): Promise<readonly WorkflowRole[]>;
   createRole(input: {

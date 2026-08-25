@@ -1192,7 +1192,7 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) fn title_from_message(message: &str) -> String {
+fn title_from_message(message: &str) -> String {
     let title = message.split_whitespace().collect::<Vec<_>>().join(" ");
     if title.chars().count() <= 80 {
         title

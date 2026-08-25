@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  ArrowUpRight,
   Cable,
   ChevronLeft,
   ChevronRight,
@@ -15,8 +14,10 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type ComponentType,
   type KeyboardEvent,
   type MouseEvent,
 } from 'react';
@@ -40,9 +41,14 @@ import type {
   WorkflowRole,
   WorkflowTypeSummary,
 } from '../../application/workflows';
-import { workflowPersistenceCoordinator } from '../../application/workflows';
+import {
+  createWorkflowAgentSessionClient,
+  workflowPersistenceCoordinator,
+} from '../../application/workflows';
+import type { RepoBranchWorktreeTargetSelectorProps } from '../../application/worktreeTargets';
 import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
-import { AgentSessionHeaderActionsProvider } from '../agentSessions/AgentSessionWorkspace';
+import { WorkflowAgentSessionPane } from './WorkflowAgentSessionPane';
+import { WorkflowInstanceCreationDialog } from './WorkflowInstanceCreationDialog';
 import {
   HarnessDefinitionEditor,
   SearchableSingleSelect,
@@ -53,6 +59,7 @@ import './workflow.css';
 export interface WorkflowScreenProps {
   readonly client: WorkflowApplicationClient;
   readonly agentSessionClient?: AgentSessionClient;
+  readonly targetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
   readonly workflowTypeId: string | null;
   readonly workflowInstanceId?: string | null;
   onOpenWorkflowType(workflowTypeId: string): void;
@@ -96,6 +103,7 @@ interface InstanceConnectionListState {
 export function WorkflowScreen({
   client,
   agentSessionClient,
+  targetSelector,
   workflowTypeId,
   workflowInstanceId,
   onOpenWorkflowType,
@@ -113,31 +121,34 @@ export function WorkflowScreen({
       client={persistentClient}
       workflowTypeId={workflowTypeId}
       onOpenWorkflowInstance={onOpenWorkflowInstance ?? (() => undefined)}
+      targetSelector={targetSelector}
     />
   ) : (
     <WorkflowLanding
       client={persistentClient}
       onOpenWorkflowType={onOpenWorkflowType}
       onOpenWorkflowInstance={onOpenWorkflowInstance ?? (() => undefined)}
+      targetSelector={targetSelector}
     />
   );
 }
 
 function WorkflowLanding({
   client,
+  targetSelector,
   onOpenWorkflowType,
   onOpenWorkflowInstance,
-}: Pick<WorkflowScreenProps, 'client' | 'onOpenWorkflowType'> & {
+}: Pick<WorkflowScreenProps, 'client' | 'targetSelector' | 'onOpenWorkflowType'> & {
   readonly onOpenWorkflowInstance: (workflowInstanceId: string) => void;
 }) {
-  const [tab, setTab] = useState<'launched' | 'types'>('launched');
+  const [tab, setTab] = useState<'instances' | 'types'>('instances');
   const [types, setTypes] = useState<LoadState<readonly WorkflowTypeSummary[]>>({
     kind: 'loading',
   });
   const [instances, setInstances] = useState<LoadState<readonly WorkflowInstanceSummary[]>>({
     kind: 'loading',
   });
-  const [launchType, setLaunchType] = useState<WorkflowTypeSummary | null>(null);
+  const [creationOpen, setCreationOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -179,17 +190,26 @@ function WorkflowLanding({
           <h1>Agent workflows</h1>
           <p>Compose reusable agent roles into a visual workflow.</p>
         </div>
+        <button
+          className="workflow-primary-button"
+          type="button"
+          disabled={!targetSelector}
+          onClick={() => setCreationOpen(true)}
+        >
+          <Plus size={16} aria-hidden="true" />
+          Create Workflow instance
+        </button>
       </header>
 
       <div className="workflow-tabs" role="tablist" aria-label="Workflow lists">
         <button
           type="button"
           role="tab"
-          aria-selected={tab === 'launched'}
-          className={tab === 'launched' ? 'active' : undefined}
-          onClick={() => setTab('launched')}
+          aria-selected={tab === 'instances'}
+          className={tab === 'instances' ? 'active' : undefined}
+          onClick={() => setTab('instances')}
         >
-          Launched workflows
+          Workflow instances
         </button>
         <button
           type="button"
@@ -202,10 +222,10 @@ function WorkflowLanding({
         </button>
       </div>
 
-      {tab === 'launched' ? (
+      {tab === 'instances' ? (
         <section className="workflow-type-list" role="tabpanel">
           {instances.kind === 'loading' ? (
-            <p className="workflow-status">Loading launched workflows…</p>
+            <p className="workflow-status">Loading Workflow instances…</p>
           ) : instances.kind === 'failed' ? (
             <p className="workflow-error" role="alert">
               {instances.message}
@@ -213,22 +233,22 @@ function WorkflowLanding({
           ) : instances.value.length === 0 ? (
             <div className="workflow-empty">
               <GitBranch aria-hidden="true" />
-              <h2>No launched workflows</h2>
-              <p>Start one from an activated Workflow type.</p>
+              <h2>No Workflow instances</h2>
+              <p>Create one from an activated Workflow type.</p>
             </div>
           ) : (
-            <ul className="workflow-type-cards" aria-label="Launched workflows">
+            <ul className="workflow-type-cards" aria-label="Workflow instances">
               {instances.value.map((instance) => (
                 <li key={instance.id}>
                   <button type="button" onClick={() => onOpenWorkflowInstance(instance.id)}>
                     <span>
                       <strong>{instance.name}</strong>
-                      <small>
-                        {instance.workflowTypeName} · {launchStatusLabel(instance.launchStatus)}
-                      </small>
+                      <small>{instance.workflowTypeName}</small>
                     </span>
                     <span className="workflow-draft-badge">
-                      {instance.sessionCount} {instance.sessionCount === 1 ? 'Session' : 'Sessions'}
+                      {instance.sessionCount === 0
+                        ? 'Ready to begin'
+                        : `${instance.sessionCount} ${instance.sessionCount === 1 ? 'Session' : 'Sessions'}`}
                     </span>
                   </button>
                 </li>
@@ -294,26 +314,22 @@ function WorkflowLanding({
                       </span>
                     ) : null}
                   </button>
-                  <button
-                    type="button"
-                    className="workflow-card-launch"
-                    disabled={!workflowType.activeRecipeId}
-                    onClick={() => setLaunchType(workflowType)}
-                  >
-                    Start new
-                  </button>
                 </li>
               ))}
             </ul>
           )}
         </section>
       )}
-      {launchType ? (
-        <LaunchWorkflowDialog
-          workflowType={launchType}
-          client={client}
-          onClose={() => setLaunchType(null)}
-          onLaunched={(instance) => onOpenWorkflowInstance(instance.summary.id)}
+      {creationOpen && targetSelector ? (
+        <WorkflowInstanceCreationDialog
+          workflowTypes={types.kind === 'ready' ? types.value : []}
+          TargetSelector={targetSelector}
+          onClose={() => setCreationOpen(false)}
+          onSubmit={async (input) => {
+            const instance = await client.createWorkflowInstance(input);
+            setCreationOpen(false);
+            onOpenWorkflowInstance(instance.summary.id);
+          }}
         />
       ) : null}
     </main>
@@ -322,9 +338,10 @@ function WorkflowLanding({
 
 function WorkflowTypeEditor({
   client,
+  targetSelector,
   workflowTypeId,
   onOpenWorkflowInstance,
-}: Pick<WorkflowScreenProps, 'client'> & {
+}: Pick<WorkflowScreenProps, 'client' | 'targetSelector'> & {
   readonly workflowTypeId: string;
   readonly onOpenWorkflowInstance: (workflowInstanceId: string) => void;
 }) {
@@ -364,7 +381,7 @@ function WorkflowTypeEditor({
   const mountedRef = useRef(true);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [launchOpen, setLaunchOpen] = useState(false);
+  const [creationOpen, setCreationOpen] = useState(false);
 
   const replaceWorkingNodes = useCallback((next: ReadonlyMap<string, WorkflowNodeConfig>) => {
     workingNodesRef.current = next;
@@ -785,10 +802,10 @@ function WorkflowTypeEditor({
         <button
           type="button"
           className="workflow-primary-button"
-          disabled={!definition.activeRecipe || saving}
-          onClick={() => setLaunchOpen(true)}
+          disabled={!definition.activeRecipe || saving || !targetSelector}
+          onClick={() => setCreationOpen(true)}
         >
-          Start workflow
+          Create instance
         </button>
       </header>
 
@@ -1201,116 +1218,19 @@ function WorkflowTypeEditor({
           </p>
         ) : null}
       </div>
-      {launchOpen ? (
-        <LaunchWorkflowDialog
-          workflowType={definition.workflowType}
-          client={client}
-          onClose={() => setLaunchOpen(false)}
-          onLaunched={(instance) => onOpenWorkflowInstance(instance.summary.id)}
+      {creationOpen && targetSelector ? (
+        <WorkflowInstanceCreationDialog
+          workflowTypes={[definition.workflowType]}
+          TargetSelector={targetSelector}
+          onClose={() => setCreationOpen(false)}
+          onSubmit={async (input) => {
+            const instance = await client.createWorkflowInstance(input);
+            setCreationOpen(false);
+            onOpenWorkflowInstance(instance.summary.id);
+          }}
         />
       ) : null}
     </main>
-  );
-}
-
-function LaunchWorkflowDialog({
-  workflowType,
-  client,
-  onClose,
-  onLaunched,
-}: {
-  readonly workflowType: WorkflowTypeSummary;
-  readonly client: WorkflowApplicationClient;
-  onClose(): void;
-  onLaunched(instance: WorkflowInstance): void;
-}) {
-  const [name, setName] = useState('');
-  const [startingPrompt, setStartingPrompt] = useState('');
-  const [launching, setLaunching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const launch = async () => {
-    if (launching || !startingPrompt.trim()) return;
-    setLaunching(true);
-    setError(null);
-    try {
-      const instance = await client.launchWorkflowInstance({
-        workflowTypeId: workflowType.id,
-        name: name.trim() || null,
-        startingPrompt,
-      });
-      onLaunched(instance);
-    } catch (cause) {
-      setError(errorMessage(cause));
-      setLaunching(false);
-    }
-  };
-  return (
-    <div className="workflow-dialog-backdrop" onClick={onClose}>
-      <form
-        className="workflow-launch-dialog"
-        role="dialog"
-        aria-label={`Start ${workflowType.name}`}
-        onClick={(event) => event.stopPropagation()}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void launch();
-        }}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">New Workflow instance</p>
-            <h2>Start {workflowType.name}</h2>
-          </div>
-          <button
-            type="button"
-            aria-label="Close Workflow launch"
-            onClick={onClose}
-            disabled={launching}
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </header>
-        <label>
-          Name <small>Optional</small>
-          <input
-            value={name}
-            disabled={launching}
-            placeholder="Generated from the starting prompt"
-            onChange={(event) => setName(event.currentTarget.value)}
-          />
-        </label>
-        <label>
-          Starting prompt
-          <textarea
-            autoFocus
-            required
-            value={startingPrompt}
-            disabled={launching}
-            onChange={(event) => setStartingPrompt(event.currentTarget.value)}
-          />
-        </label>
-        <p className="workflow-draft-note">
-          Starts one fresh Agent Session without inherited or compressed context.
-        </p>
-        {error ? (
-          <p className="workflow-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <footer>
-          <button type="button" onClick={onClose} disabled={launching}>
-            Cancel
-          </button>
-          <button
-            className="workflow-primary-button"
-            type="submit"
-            disabled={launching || !startingPrompt.trim()}
-          >
-            {launching ? 'Starting…' : 'Start workflow'}
-          </button>
-        </footer>
-      </form>
-    </div>
   );
 }
 
@@ -1330,6 +1250,14 @@ function WorkflowInstanceView({
   const [hoveredConnectionId, setHoveredConnectionId] = useState<string | null>(null);
   const nodeTriggers = useRef(new Map<string, HTMLButtonElement>());
   const connectionTriggers = useRef(new Map<string, SVGGElement>());
+  const reloadInstance = useCallback(async () => {
+    try {
+      const value = await client.loadWorkflowInstance(workflowInstanceId);
+      setLoad({ kind: 'ready', value });
+    } catch (error) {
+      setLoad({ kind: 'failed', message: errorMessage(error) });
+    }
+  }, [client, workflowInstanceId]);
   useEffect(() => {
     let current = true;
     void client.loadWorkflowInstance(workflowInstanceId).then(
@@ -1340,6 +1268,22 @@ function WorkflowInstanceView({
       current = false;
     };
   }, [client, workflowInstanceId]);
+
+  const loadedInstance = load.kind === 'ready' ? load.value : null;
+  const selectedNode = selectedNodeId
+    ? (loadedInstance?.recipe.nodes.find((node) => node.id === selectedNodeId) ?? null)
+    : null;
+  const selectedNodeIdForClient = selectedNode?.id ?? null;
+  const workflowBoundAgentSessionClient = useMemo(
+    () =>
+      selectedNodeIdForClient && agentSessionClient
+        ? createWorkflowAgentSessionClient(agentSessionClient, client, {
+            workflowInstanceId,
+            nodeId: selectedNodeIdForClient,
+          })
+        : null,
+    [agentSessionClient, client, selectedNodeIdForClient, workflowInstanceId],
+  );
 
   if (load.kind === 'loading')
     return (
@@ -1355,9 +1299,6 @@ function WorkflowInstanceView({
     );
 
   const instance = load.value;
-  const selectedNode = selectedNodeId
-    ? (instance.recipe.nodes.find((node) => node.id === selectedNodeId) ?? null)
-    : null;
   const connectionGroups = groupRecipeConnections(instance.recipe.connections);
   const selectedConnection = selectedConnectionId
     ? (instance.recipe.connections.find((connection) => connection.id === selectedConnectionId) ??
@@ -1400,35 +1341,30 @@ function WorkflowInstanceView({
           <h1>{instance.summary.name}</h1>
         </div>
         <div className="workflow-editor__summary" aria-label="Workflow instance summary">
-          <span>{launchStatusLabel(instance.launchActivation.status)}</span>
+          <span>{instance.sessions.length === 0 ? 'Ready to begin' : 'In progress'}</span>
           <span>{instance.summary.activeSessionCount} active</span>
           <span>{instance.summary.idleSessionCount} idle</span>
         </div>
       </header>
-      <section className="workflow-instance__activation" aria-label="Starting activation">
+      <section className="workflow-instance__target" aria-label="Workflow target">
         <div>
-          <strong>Human launch</strong>
-          <span>{instance.startingPrompt}</span>
+          <strong>{instance.target.repository.name}</strong>
+          <span>{instance.target.branch.name}</span>
         </div>
         <dl>
           <div>
-            <dt>Delivery</dt>
-            <dd>Direct prompt</dd>
+            <dt>Repository</dt>
+            <dd>{instance.target.repository.rootPath}</dd>
           </div>
           <div>
-            <dt>Context</dt>
-            <dd>Fresh · no inheritance · no compression</dd>
+            <dt>Branch</dt>
+            <dd>{instance.target.branch.name}</dd>
           </div>
           <div>
-            <dt>Runtime</dt>
-            <dd>{launchStatusLabel(instance.launchActivation.status)}</dd>
+            <dt>Worktree</dt>
+            <dd>{instance.target.worktree.path}</dd>
           </div>
         </dl>
-        {instance.launchActivation.failureReason ? (
-          <p className="workflow-error" role="alert">
-            {instance.launchActivation.failureReason}
-          </p>
-        ) : null}
       </section>
       <div
         className="workflow-canvas workflow-instance__canvas"
@@ -1553,7 +1489,9 @@ function WorkflowInstanceView({
             key={selectedNode.id}
             node={selectedNode}
             sessions={instance.sessions.filter((session) => session.nodeId === selectedNode.id)}
-            agentSessionClient={agentSessionClient}
+            agentSessionClient={workflowBoundAgentSessionClient ?? undefined}
+            allowEmptySession={selectedNode.isStartingPoint && instance.sessions.length === 0}
+            onSessionCreated={() => reloadInstance()}
             onClose={closeSelectedNode}
           />
         ) : null}
@@ -1600,11 +1538,15 @@ function WorkflowInstanceNodePopup({
   node,
   sessions,
   agentSessionClient,
+  allowEmptySession,
+  onSessionCreated,
   onClose,
 }: {
   readonly node: WorkflowInstance['recipe']['nodes'][number];
   readonly sessions: WorkflowInstance['sessions'];
   readonly agentSessionClient?: AgentSessionClient;
+  readonly allowEmptySession: boolean;
+  readonly onSessionCreated: (sessionId: string) => void | Promise<void>;
   readonly onClose: () => void;
 }) {
   const [view, setView] = useState<'configuration' | 'sessions'>('configuration');
@@ -1673,7 +1615,7 @@ function WorkflowInstanceNodePopup({
             <button
               className="workflow-primary-button"
               type="button"
-              disabled={!agentSessionClient}
+              disabled={!agentSessionClient || (sessions.length === 0 && !allowEmptySession)}
               onClick={() => setView('sessions')}
             >
               Agent Sessions
@@ -1681,11 +1623,16 @@ function WorkflowInstanceNodePopup({
           </footer>
         </>
       ) : agentSessionClient ? (
-        <WorkflowInstanceNodeSessions
-          nodeName={node.name}
-          harnessName={node.harness.identity.name || 'Harness'}
+        <WorkflowAgentSessionPane
+          node={{
+            id: node.id,
+            name: node.name,
+            harnessName: node.harness.identity.name || 'Harness',
+          }}
           sessions={orderedSessions}
           client={agentSessionClient}
+          allowEmptySession={allowEmptySession}
+          onSessionCreated={onSessionCreated}
           onReturn={() => setView('configuration')}
           onClose={onClose}
         />
@@ -2014,114 +1961,6 @@ function WorkflowConnectionTurnInspection({
   );
 }
 
-function WorkflowInstanceNodeSessions({
-  nodeName,
-  harnessName,
-  sessions,
-  client,
-  onReturn,
-  onClose,
-}: {
-  readonly nodeName: string;
-  readonly harnessName: string;
-  readonly sessions: WorkflowInstance['sessions'];
-  readonly client: AgentSessionClient;
-  readonly onReturn: () => void;
-  readonly onClose: () => void;
-}) {
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    sessions[0]?.sessionId ?? null,
-  );
-  const [fullSession, setFullSession] = useState(false);
-  const controller = useAgentSession(client, { selectedSessionId });
-  const selectedSession = sessions.find((session) => session.sessionId === selectedSessionId);
-
-  if (fullSession) {
-    return (
-      <div className="workflow-instance-node-popup__full-session">
-        <header className="workflow-instance-node-popup__session-toolbar">
-          <button type="button" autoFocus onClick={() => setFullSession(false)}>
-            <ArrowLeft size={15} aria-hidden="true" />
-            Return to Session list
-          </button>
-          <button type="button" aria-label="Close node details" onClick={onClose}>
-            <X size={16} aria-hidden="true" />
-          </button>
-        </header>
-        <AgentSessionWorkspace controller={controller} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="workflow-instance-node-popup__sessions">
-      <header className="workflow-instance-node-popup__session-toolbar">
-        <button type="button" autoFocus onClick={onReturn}>
-          <ArrowLeft size={15} aria-hidden="true" />
-          Return to node
-        </button>
-        <div>
-          <strong>{harnessName}</strong>
-          <span>{nodeName}</span>
-        </div>
-        <button type="button" aria-label="Close node details" onClick={onClose}>
-          <X size={16} aria-hidden="true" />
-        </button>
-      </header>
-      <div className="workflow-instance-node-popup__session-split">
-        <nav aria-label={`${nodeName} Agent Sessions`}>
-          <p className="eyebrow">Agent Sessions</p>
-          {sessions.length === 0 ? (
-            <p className="workflow-instance-node-popup__empty">
-              No Agent Sessions belong to this node.
-            </p>
-          ) : null}
-          {sessions.map((session) => (
-            <button
-              type="button"
-              key={session.sessionId}
-              className={session.sessionId === selectedSessionId ? 'is-selected' : ''}
-              aria-pressed={session.sessionId === selectedSessionId}
-              onClick={() => setSelectedSessionId(session.sessionId)}
-            >
-              <span>
-                <strong>{session.title}</strong>
-                <small>{session.activity}</small>
-              </span>
-              <time dateTime={session.associatedAt}>
-                {new Date(session.associatedAt).toLocaleString()}
-              </time>
-            </button>
-          ))}
-        </nav>
-        <section
-          className="workflow-instance-node-popup__session-preview"
-          aria-label="Selected Agent Session"
-        >
-          {selectedSession ? (
-            <AgentSessionHeaderActionsProvider
-              actions={
-                <button
-                  className="workflow-instance-node-popup__view-action"
-                  type="button"
-                  onClick={() => setFullSession(true)}
-                >
-                  View Agent Session
-                  <ArrowUpRight size={15} aria-hidden="true" />
-                </button>
-              }
-            >
-              <AgentSessionWorkspace controller={controller} />
-            </AgentSessionHeaderActionsProvider>
-          ) : (
-            <p className="workflow-instance-node-popup__empty">Select an Agent Session.</p>
-          )}
-        </section>
-      </div>
-    </div>
-  );
-}
-
 function containWorkflowPopupFocus(
   event: KeyboardEvent<HTMLElement>,
   popup: HTMLElement | null,
@@ -2160,21 +1999,6 @@ const workflowPopupFocusableSelector = [
   'textarea:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
-
-function launchStatusLabel(status: WorkflowInstanceSummary['launchStatus']): string {
-  switch (status) {
-    case 'requested':
-      return 'Launch requested';
-    case 'associated':
-      return 'Session associated';
-    case 'launch_requested':
-      return 'Runtime launch requested';
-    case 'launch_accepted':
-      return 'Runtime launch accepted';
-    case 'failed':
-      return 'Launch failed';
-  }
-}
 
 function NodeConfiguration({
   node,

@@ -5,7 +5,7 @@ pub(crate) mod observation;
 mod update_sink;
 
 pub(crate) use lifecycle::{
-    title_from_message, AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
+    AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
     ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand, CreateAgentSessionCommand,
     CreateApplicationAgentSessionCommand, NativeProfileLaunchAuthority,
     SessionHarnessLaunchAuthority,

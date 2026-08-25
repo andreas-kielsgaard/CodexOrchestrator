@@ -24,7 +24,7 @@ describe('App Workflow navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
 
     expect(await screen.findByRole('main', { name: 'Workflows' })).toBeVisible();
-    expect(screen.getByRole('tab', { name: 'Launched workflows' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Workflow instances' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
@@ -85,7 +85,10 @@ function mutableWorkflowClient(initial: WorkflowDefinition): ControlledWorkflowC
     listWorkflowTypes: vi.fn(async () => [definition.workflowType]),
     listWorkflowInstances: vi.fn(async () => []),
     listWorkflowMcpComponents: vi.fn(async () => []),
-    launchWorkflowInstance: vi.fn(async () => {
+    createWorkflowInstance: vi.fn(async () => {
+      throw new Error('not configured');
+    }),
+    sendWorkflowNodeMessage: vi.fn(async () => {
       throw new Error('not configured');
     }),
     loadWorkflowInstance: vi.fn(async () => {

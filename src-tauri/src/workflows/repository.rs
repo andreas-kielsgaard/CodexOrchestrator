@@ -5,18 +5,20 @@ use super::{
         WorkflowConnectionActivationPreparation, WorkflowConnectionActivationRecord,
         WorkflowConnectionConfig, WorkflowConnectionElement, WorkflowConnectionMechanism,
         WorkflowDefinition, WorkflowElementKind, WorkflowElementRef, WorkflowExpectedFileSelector,
-        WorkflowHarnessConfig, WorkflowHarnessOverrides, WorkflowInstanceRecord,
-        WorkflowLaunchPreparation, WorkflowLaunchStatus, WorkflowNativeQuery, WorkflowNodeConfig,
-        WorkflowNodeElement, WorkflowNodeHarness, WorkflowRole, WorkflowSessionAssociationRecord,
-        WorkflowTypeSummary,
+        WorkflowHarnessConfig, WorkflowHarnessOverrides, WorkflowNativeQuery, WorkflowNodeConfig,
+        WorkflowNodeElement, WorkflowNodeHarness, WorkflowRole, WorkflowTypeSummary,
     },
+    instance_domain::{CreateWorkflowInstancePreparation, WorkflowInstanceRecord},
     mcp::{SERVER_NAME as WORKFLOW_MCP_SERVER, TOOL_NAME as WORKFLOW_MCP_TOOL},
 };
+
+mod instances;
 use crate::orchestration::conversation_harness_working_copy::{
     HarnessHookConfiguration, HarnessHookStatus, HarnessModelConstraint, HarnessReasoningLevel,
     HarnessSkillConfiguration, HarnessSkillPolicy,
 };
 use chrono::Utc;
+pub(crate) use instances::WORKFLOW_INSTANCE_SCHEMA;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -72,96 +74,6 @@ CREATE TABLE IF NOT EXISTS workflow_effective_recipes (
 
 CREATE INDEX IF NOT EXISTS workflow_effective_recipes_by_type
 ON workflow_effective_recipes(workflow_type_id, ordinal);
-"#;
-
-pub(crate) const WORKFLOW_INSTANCE_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS workflow_instances (
-    id TEXT PRIMARY KEY,
-    workflow_type_id TEXT NOT NULL,
-    recipe_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    starting_prompt TEXT NOT NULL,
-    working_directory TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (workflow_type_id) REFERENCES workflow_types(id),
-    FOREIGN KEY (recipe_id) REFERENCES workflow_effective_recipes(id)
-);
-
-CREATE INDEX IF NOT EXISTS workflow_instances_newest
-ON workflow_instances(created_at DESC, id DESC);
-
-CREATE TABLE IF NOT EXISTS workflow_instance_sessions (
-    workflow_instance_id TEXT NOT NULL,
-    node_id TEXT NOT NULL,
-    session_id TEXT NOT NULL UNIQUE,
-    associated_at TEXT NOT NULL,
-    PRIMARY KEY (workflow_instance_id, session_id),
-    FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS workflow_instance_sessions_by_node
-ON workflow_instance_sessions(workflow_instance_id, node_id, associated_at DESC);
-
-CREATE TABLE IF NOT EXISTS workflow_activations (
-    id TEXT PRIMARY KEY,
-    workflow_instance_id TEXT NOT NULL,
-    source_kind TEXT NOT NULL CHECK (source_kind='human'),
-    target_node_id TEXT NOT NULL,
-    target_session_id TEXT NOT NULL,
-    target_invocation_id TEXT NOT NULL,
-    delivery_kind TEXT NOT NULL CHECK (delivery_kind='direct_prompt_runtime_v1'),
-    session_mode TEXT NOT NULL CHECK (session_mode='fresh'),
-    context_inheritance TEXT NOT NULL CHECK (context_inheritance='none'),
-    compression TEXT NOT NULL CHECK (compression='none'),
-    requested_at TEXT NOT NULL,
-    associated_at TEXT,
-    launch_requested_at TEXT,
-    launch_accepted_at TEXT,
-    failed_at TEXT,
-    failure_stage TEXT,
-    failure_reason TEXT,
-    UNIQUE (workflow_instance_id, target_invocation_id),
-    FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
-    CHECK ((failed_at IS NULL AND failure_stage IS NULL AND failure_reason IS NULL)
-        OR (failed_at IS NOT NULL AND failure_stage IS NOT NULL AND failure_reason IS NOT NULL))
-);
-
-CREATE INDEX IF NOT EXISTS workflow_activations_by_instance
-ON workflow_activations(workflow_instance_id, requested_at, id);
-
-CREATE TABLE IF NOT EXISTS workflow_connection_activations (
-    id TEXT PRIMARY KEY,
-    workflow_instance_id TEXT NOT NULL,
-    recipe_id TEXT NOT NULL,
-    connection_id TEXT NOT NULL,
-    sender_node_id TEXT NOT NULL,
-    receiver_node_id TEXT NOT NULL,
-    source_session_id TEXT NOT NULL,
-    source_invocation_id TEXT NOT NULL,
-    target_session_id TEXT,
-    target_invocation_id TEXT,
-    delivery_kind TEXT NOT NULL CHECK (delivery_kind='direct_prompt_runtime_v1'),
-    session_mode TEXT CHECK (session_mode IN ('fresh','continued')),
-    context_inheritance TEXT NOT NULL CHECK (context_inheritance='none'),
-    compression TEXT NOT NULL CHECK (compression='none'),
-    resolved_file_path TEXT,
-    resolved_output_json TEXT,
-    requested_at TEXT NOT NULL,
-    resolved_at TEXT,
-    associated_at TEXT,
-    launch_requested_at TEXT,
-    launch_accepted_at TEXT,
-    failed_at TEXT,
-    failure_stage TEXT,
-    failure_reason TEXT,
-    FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE,
-    FOREIGN KEY (recipe_id) REFERENCES workflow_effective_recipes(id),
-    CHECK ((failed_at IS NULL AND failure_stage IS NULL AND failure_reason IS NULL)
-        OR (failed_at IS NOT NULL AND failure_stage IS NOT NULL AND failure_reason IS NOT NULL))
-);
-
-CREATE INDEX IF NOT EXISTS workflow_connection_activations_by_instance
-ON workflow_connection_activations(workflow_instance_id, requested_at, id);
 "#;
 
 pub(crate) struct SqliteWorkflowRepository {
@@ -717,179 +629,34 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         })
     }
 
-    fn create_instance_launch(
+    fn create_instance(
         &self,
-        preparation: WorkflowLaunchPreparation,
+        preparation: CreateWorkflowInstancePreparation,
     ) -> Result<WorkflowInstanceRecord, String> {
         let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow instance launch"))?;
-        let active_recipe_id = transaction
-            .query_row(
-                "SELECT active_recipe_id FROM workflow_types WHERE id=?1",
-                [&preparation.workflow_type_id],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()
-            .map_err(storage_error("read active Workflow recipe"))?
-            .flatten()
-            .ok_or_else(|| "Activate the Workflow type before launching it.".to_string())?;
-        if active_recipe_id != preparation.recipe_id {
-            return Err("The active Workflow recipe changed before launch. Try again.".to_string());
-        }
-        transaction
-            .execute(
-                "INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,starting_prompt,working_directory,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    preparation.instance_id,
-                    preparation.workflow_type_id,
-                    preparation.recipe_id,
-                    preparation.name,
-                    preparation.starting_prompt,
-                    preparation.working_directory,
-                    preparation.requested_at
-                ],
-            )
-            .map_err(storage_error("create Workflow instance"))?;
-        transaction
-            .execute(
-                "INSERT INTO workflow_activations(id,workflow_instance_id,source_kind,target_node_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,requested_at) VALUES(?1,?2,'human',?3,?4,?5,'direct_prompt_runtime_v1','fresh','none','none',?6)",
-                params![
-                    preparation.activation_id,
-                    preparation.instance_id,
-                    preparation.target_node_id,
-                    preparation.target_session_id,
-                    preparation.target_invocation_id,
-                    preparation.requested_at
-                ],
-            )
-            .map_err(storage_error("record Workflow launch activation"))?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow instance launch"))?;
-        load_workflow_instance_record(&connection, &preparation.instance_id)
+        instances::create_instance(&connection, preparation)
     }
 
     fn associate_instance_session(
         &self,
-        activation_id: &str,
         workflow_instance_id: &str,
         node_id: &str,
         session_id: &str,
         associated_at: &str,
     ) -> Result<WorkflowInstanceRecord, String> {
         let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow Session association"))?;
-        let matches = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM workflow_activations WHERE id=?1 AND workflow_instance_id=?2 AND target_node_id=?3 AND target_session_id=?4)",
-                params![activation_id, workflow_instance_id, node_id, session_id],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(storage_error("verify Workflow Session association"))?;
-        if !matches {
-            return Err(
-                "Workflow Session association does not match its launch activation.".to_string(),
-            );
-        }
-        transaction
-            .execute(
-                "INSERT INTO workflow_instance_sessions(workflow_instance_id,node_id,session_id,associated_at) VALUES(?1,?2,?3,?4)",
-                params![workflow_instance_id, node_id, session_id, associated_at],
-            )
-            .map_err(|error| {
-                if error.to_string().contains("workflow_instance_sessions.session_id") {
-                    "An Agent Session can belong to at most one Workflow instance.".to_string()
-                } else {
-                    format!("Unable to associate Workflow Session: {error}")
-                }
-            })?;
-        transaction
-            .execute(
-                "UPDATE workflow_activations SET associated_at=?2 WHERE id=?1 AND associated_at IS NULL",
-                params![activation_id, associated_at],
-            )
-            .map_err(storage_error("record Workflow Session association stage"))?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow Session association"))?;
-        load_workflow_instance_record(&connection, workflow_instance_id)
-    }
-
-    fn mark_instance_launch_requested(
-        &self,
-        activation_id: &str,
-        requested_at: &str,
-    ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
-                "UPDATE workflow_activations SET launch_requested_at=COALESCE(launch_requested_at,?2) WHERE id=?1 AND associated_at IS NOT NULL AND failed_at IS NULL",
-                params![activation_id, requested_at],
-            )
-            .map_err(storage_error("record Workflow runtime launch request"))?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err("Workflow launch activation is not ready to request runtime launch.".to_string())
-        }
-    }
-
-    fn mark_instance_launch_accepted(
-        &self,
-        activation_id: &str,
-        accepted_at: &str,
-    ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
-                "UPDATE workflow_activations SET launch_accepted_at=COALESCE(launch_accepted_at,?2) WHERE id=?1 AND launch_requested_at IS NOT NULL AND failed_at IS NULL",
-                params![activation_id, accepted_at],
-            )
-            .map_err(storage_error("record Workflow runtime launch acceptance"))?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err("Workflow launch acceptance requires a requested, non-failed launch.".to_string())
-        }
-    }
-
-    fn mark_instance_launch_failed(
-        &self,
-        activation_id: &str,
-        stage: &str,
-        reason: &str,
-        failed_at: &str,
-    ) -> Result<(), String> {
-        let stage = required(stage, "Workflow launch failure stage")?;
-        let reason = required(reason, "Workflow launch failure reason")?;
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "UPDATE workflow_activations SET failed_at=COALESCE(failed_at,?2),failure_stage=COALESCE(failure_stage,?3),failure_reason=COALESCE(failure_reason,?4) WHERE id=?1 AND launch_accepted_at IS NULL",
-                params![activation_id, failed_at, stage, reason],
-            )
-            .map_err(storage_error("record Workflow launch failure"))?;
-        Ok(())
+        instances::associate_session(
+            &connection,
+            workflow_instance_id,
+            node_id,
+            session_id,
+            associated_at,
+        )
     }
 
     fn list_workflow_instances(&self) -> Result<Vec<WorkflowInstanceRecord>, String> {
         let connection = self.lock()?;
-        let mut statement = connection
-            .prepare("SELECT id FROM workflow_instances ORDER BY created_at DESC,id DESC")
-            .map_err(storage_error("prepare Workflow instance list"))?;
-        let ids = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(storage_error("query Workflow instances"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(storage_error("read Workflow instances"))?;
-        drop(statement);
-        ids.into_iter()
-            .map(|id| load_workflow_instance_record(&connection, &id))
-            .collect()
+        instances::list_instances(&connection)
     }
 
     fn load_workflow_instance(
@@ -897,7 +664,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         workflow_instance_id: &str,
     ) -> Result<WorkflowInstanceRecord, String> {
         let connection = self.lock()?;
-        load_workflow_instance_record(&connection, workflow_instance_id)
+        instances::load_instance(&connection, workflow_instance_id)
     }
 
     fn load_completed_turn_trigger(
@@ -905,39 +672,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         source_session_id: &str,
     ) -> Result<Option<WorkflowCompletedTurnTrigger>, String> {
         let connection = self.lock()?;
-        let trigger = connection
-            .query_row(
-                "SELECT association.workflow_instance_id,instance.working_directory,association.node_id,type.active_recipe_id
-                 FROM workflow_instance_sessions association
-                 JOIN workflow_instances instance ON instance.id=association.workflow_instance_id
-                 JOIN workflow_types type ON type.id=instance.workflow_type_id
-                 WHERE association.session_id=?1",
-                [source_session_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(storage_error("load completed-turn Workflow association"))?;
-        let Some((workflow_instance_id, working_directory, sender_node_id, recipe_id)) = trigger
-        else {
-            return Ok(None);
-        };
-        let recipe_id = recipe_id.ok_or_else(|| {
-            "The Workflow type has no current activated recipe for this trigger.".to_string()
-        })?;
-        let recipe = load_recipe(&connection, &recipe_id)?;
-        Ok(Some(WorkflowCompletedTurnTrigger {
-            workflow_instance_id,
-            working_directory,
-            sender_node_id,
-            recipe,
-        }))
+        instances::load_completed_turn_trigger(&connection, source_session_id)
     }
 
     fn load_mcp_prepared_trigger(
@@ -948,30 +683,13 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         source_session_id: &str,
     ) -> Result<WorkflowCompletedTurnTrigger, String> {
         let connection = self.lock()?;
-        let (working_directory, workflow_type_id) = connection
-            .query_row(
-                "SELECT instance.working_directory,instance.workflow_type_id
-                 FROM workflow_instances instance
-                 JOIN workflow_instance_sessions association ON association.workflow_instance_id=instance.id
-                 WHERE instance.id=?1 AND association.session_id=?2 AND association.node_id=?3",
-                params![workflow_instance_id, source_session_id, sender_node_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(storage_error("load prepared Workflow MCP association"))?
-            .ok_or_else(|| {
-                "The prepared Workflow MCP Session association is unavailable.".to_string()
-            })?;
-        let recipe = load_recipe(&connection, recipe_id)?;
-        if recipe.workflow_type_id != workflow_type_id {
-            return Err("The prepared Workflow MCP recipe belongs to another type.".to_string());
-        }
-        Ok(WorkflowCompletedTurnTrigger {
-            workflow_instance_id: workflow_instance_id.to_string(),
-            working_directory,
-            sender_node_id: sender_node_id.to_string(),
-            recipe,
-        })
+        instances::load_mcp_prepared_trigger(
+            &connection,
+            workflow_instance_id,
+            recipe_id,
+            sender_node_id,
+            source_session_id,
+        )
     }
 
     fn create_connection_activation(
@@ -1206,79 +924,6 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             .map_err(storage_error("read Workflow connection activations"))?;
         Ok(activations)
     }
-}
-
-fn load_workflow_instance_record(
-    connection: &Connection,
-    workflow_instance_id: &str,
-) -> Result<WorkflowInstanceRecord, String> {
-    let (id, workflow_type_id, workflow_type_name, recipe_id, name, starting_prompt, working_directory, created_at) = connection
-        .query_row(
-            "SELECT instance.id,instance.workflow_type_id,type.name,instance.recipe_id,instance.name,instance.starting_prompt,instance.working_directory,instance.created_at FROM workflow_instances instance JOIN workflow_types type ON type.id=instance.workflow_type_id WHERE instance.id=?1",
-            [workflow_instance_id],
-            |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?,row.get::<_, String>(3)?,row.get::<_, String>(4)?,row.get::<_, String>(5)?,row.get::<_, String>(6)?,row.get::<_, String>(7)?)),
-        )
-        .optional()
-        .map_err(storage_error("load Workflow instance"))?
-        .ok_or_else(|| format!("Workflow instance {workflow_instance_id} does not exist."))?;
-    let mut statement = connection
-        .prepare("SELECT node_id,session_id,associated_at FROM workflow_instance_sessions WHERE workflow_instance_id=?1 ORDER BY associated_at,session_id")
-        .map_err(storage_error("prepare Workflow Session associations"))?;
-    let session_associations = statement
-        .query_map([workflow_instance_id], |row| {
-            Ok(WorkflowSessionAssociationRecord {
-                node_id: row.get(0)?,
-                session_id: row.get(1)?,
-                associated_at: row.get(2)?,
-            })
-        })
-        .map_err(storage_error("query Workflow Session associations"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(storage_error("read Workflow Session associations"))?;
-    drop(statement);
-    let launch_activation = connection
-        .query_row(
-            "SELECT id,source_kind,target_node_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,requested_at,associated_at,launch_requested_at,launch_accepted_at,failed_at,failure_stage,failure_reason FROM workflow_activations WHERE workflow_instance_id=?1 ORDER BY requested_at,id LIMIT 1",
-            [workflow_instance_id],
-            |row| {
-                let launch_accepted_at = row.get::<_, Option<String>>(12)?;
-                let failed_at = row.get::<_, Option<String>>(13)?;
-                let launch_requested_at = row.get::<_, Option<String>>(11)?;
-                let associated_at = row.get::<_, Option<String>>(10)?;
-                let status = if launch_accepted_at.is_some() {
-                    WorkflowLaunchStatus::LaunchAccepted
-                } else if failed_at.is_some() {
-                    WorkflowLaunchStatus::Failed
-                } else if launch_requested_at.is_some() {
-                    WorkflowLaunchStatus::LaunchRequested
-                } else if associated_at.is_some() {
-                    WorkflowLaunchStatus::Associated
-                } else {
-                    WorkflowLaunchStatus::Requested
-                };
-                Ok(super::domain::WorkflowActivation {
-                    id: row.get(0)?, source_kind: row.get(1)?, target_node_id: row.get(2)?,
-                    target_session_id: row.get(3)?, target_invocation_id: row.get(4)?,
-                    delivery_kind: row.get(5)?, session_mode: row.get(6)?,
-                    context_inheritance: row.get(7)?, compression: row.get(8)?, status,
-                    requested_at: row.get(9)?, associated_at, launch_requested_at,
-                    launch_accepted_at, failed_at, failure_stage: row.get(14)?, failure_reason: row.get(15)?,
-                })
-            },
-        )
-        .map_err(storage_error("load Workflow launch activation"))?;
-    Ok(WorkflowInstanceRecord {
-        id,
-        workflow_type_id,
-        workflow_type_name,
-        recipe: load_recipe(connection, &recipe_id)?,
-        name,
-        starting_prompt,
-        working_directory,
-        created_at,
-        session_associations,
-        launch_activation,
-    })
 }
 
 fn validate_candidate(
@@ -2109,7 +1754,31 @@ fn storage_error(action: &'static str) -> impl FnOnce(rusqlite::Error) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflows::application::WorkflowRepository;
+    use crate::workflows::{
+        application::WorkflowRepository,
+        instance_domain::{
+            ResolvedRepoBranchWorktreeTarget, WorkflowBranchTarget, WorkflowRepositoryTarget,
+            WorkflowWorktreeTarget,
+        },
+    };
+
+    fn instance_target(path: &str) -> ResolvedRepoBranchWorktreeTarget {
+        ResolvedRepoBranchWorktreeTarget {
+            repository: WorkflowRepositoryTarget {
+                id: "repo-1".to_string(),
+                name: "Codex Orchestrator".to_string(),
+                root_path: "C:/Repos/Codex Orchestrator".to_string(),
+            },
+            branch: WorkflowBranchTarget {
+                id: "branch-1".to_string(),
+                name: "codex/workflow-engine-v1".to_string(),
+            },
+            worktree: WorkflowWorktreeTarget {
+                id: "worktree-1".to_string(),
+                path: path.to_string(),
+            },
+        }
+    }
 
     fn node(id: &str, start: bool) -> WorkflowNodeConfig {
         WorkflowNodeConfig {
@@ -2621,7 +2290,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_instance_and_activation_facts_reopen_against_the_launch_recipe() {
+    fn workflow_instance_target_and_direct_session_association_reopen_against_creation_recipe() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("workflow-instance.sqlite");
         let workflow_type_id;
@@ -2643,34 +2312,22 @@ mod tests {
                 .unwrap()
                 .id;
             repository
-                .create_instance_launch(WorkflowLaunchPreparation {
+                .create_instance(CreateWorkflowInstancePreparation {
                     instance_id: "instance-1".to_string(),
                     workflow_type_id: workflow_type_id.clone(),
                     recipe_id: recipe_id.clone(),
                     name: "First review".to_string(),
-                    starting_prompt: "Review this.".to_string(),
-                    working_directory: "C:\\workflow-instances\\instance-1".to_string(),
-                    activation_id: "activation-1".to_string(),
-                    target_node_id: "start".to_string(),
-                    target_session_id: "session-1".to_string(),
-                    target_invocation_id: "invocation-1".to_string(),
-                    requested_at: "2026-08-09T01:00:00Z".to_string(),
+                    target: instance_target("C:/Worktrees/workflow-engine-v1"),
+                    created_at: "2026-08-09T01:00:00Z".to_string(),
                 })
                 .unwrap();
             repository
                 .associate_instance_session(
-                    "activation-1",
                     "instance-1",
                     "start",
                     "session-1",
                     "2026-08-09T01:00:01Z",
                 )
-                .unwrap();
-            repository
-                .mark_instance_launch_requested("activation-1", "2026-08-09T01:00:02Z")
-                .unwrap();
-            repository
-                .mark_instance_launch_accepted("activation-1", "2026-08-09T01:00:03Z")
                 .unwrap();
         }
 
@@ -2680,11 +2337,13 @@ mod tests {
         assert_eq!(instance.recipe.nodes[0].id, "start");
         assert_eq!(instance.session_associations[0].session_id, "session-1");
         assert_eq!(
-            instance.launch_activation.status,
-            WorkflowLaunchStatus::LaunchAccepted
+            instance.target,
+            instance_target("C:/Worktrees/workflow-engine-v1")
         );
-        assert_eq!(instance.launch_activation.source_kind, "human");
-        assert_eq!(instance.launch_activation.session_mode, "fresh");
+        assert!(reopened
+            .list_connection_activations("instance-1")
+            .unwrap()
+            .is_empty());
         assert_eq!(reopened.list_workflow_instances().unwrap().len(), 1);
     }
 

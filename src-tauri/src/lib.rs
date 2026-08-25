@@ -26,6 +26,7 @@ mod workflows;
 mod worktree_review;
 #[allow(dead_code)]
 mod worktree_runtime;
+mod worktree_targets_temp;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 

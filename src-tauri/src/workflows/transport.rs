@@ -2,11 +2,14 @@ use super::{
     application::WorkflowApplication,
     domain::{
         WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementRef, WorkflowHarnessConfig,
-        WorkflowInstance, WorkflowInstanceSummary, WorkflowMcpComponent, WorkflowNativeQuery,
-        WorkflowNodeConfig, WorkflowRole, WorkflowTypeSummary,
+        WorkflowMcpComponent, WorkflowNativeQuery, WorkflowNodeConfig, WorkflowRole,
+        WorkflowTypeSummary,
+    },
+    instance_domain::{
+        ResolvedRepoBranchWorktreeTarget, WorkflowInstance, WorkflowInstanceSummary,
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 
@@ -106,10 +109,26 @@ pub(crate) struct ActivateWorkflowChangesInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LaunchWorkflowInstanceInput {
+pub(crate) struct CreateWorkflowInstanceInput {
     workflow_type_id: String,
-    name: Option<String>,
-    starting_prompt: String,
+    name: String,
+    target: ResolvedRepoBranchWorktreeTarget,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SendWorkflowNodeMessageInput {
+    workflow_instance_id: String,
+    node_id: String,
+    submitted_text: String,
+    title: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SendWorkflowNodeMessageResult {
+    session_id: String,
+    invocation_id: String,
 }
 
 #[derive(Deserialize)]
@@ -263,15 +282,32 @@ pub(crate) fn load_workflow_native_query(
 }
 
 #[tauri::command]
-pub(crate) fn launch_workflow_instance(
+pub(crate) fn create_workflow_instance(
     state: State<'_, WorkflowTauriState>,
-    input: LaunchWorkflowInstanceInput,
+    input: CreateWorkflowInstanceInput,
 ) -> Result<WorkflowInstance, String> {
-    state.application.launch_workflow_instance(
-        &input.workflow_type_id,
-        input.name.as_deref(),
-        &input.starting_prompt,
-    )
+    state
+        .application
+        .create_workflow_instance(&input.workflow_type_id, &input.name, input.target)
+}
+
+#[tauri::command]
+pub(crate) fn send_workflow_node_message(
+    state: State<'_, WorkflowTauriState>,
+    input: SendWorkflowNodeMessageInput,
+) -> Result<SendWorkflowNodeMessageResult, String> {
+    state
+        .application
+        .send_workflow_node_message(
+            &input.workflow_instance_id,
+            &input.node_id,
+            input.submitted_text,
+            input.title,
+        )
+        .map(|result| SendWorkflowNodeMessageResult {
+            session_id: result.session_id.as_str().to_string(),
+            invocation_id: result.invocation_id.as_str().to_string(),
+        })
 }
 
 #[tauri::command]

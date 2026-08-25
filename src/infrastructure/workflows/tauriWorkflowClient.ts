@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { SendAgentSessionMessageResultDto } from '../../application/agentSessions';
 import type {
   WorkflowApplicationClient,
   WorkflowConnectionConfig,
@@ -23,8 +24,10 @@ export function createTauriWorkflowClient(
       invokeCommand<WorkflowInstanceSummary[]>('list_workflow_instances'),
     listWorkflowMcpComponents: () =>
       invokeCommand<WorkflowMcpComponent[]>('list_workflow_mcp_components'),
-    launchWorkflowInstance: (input) =>
-      invokeCommand<WorkflowInstance>('launch_workflow_instance', { input }),
+    createWorkflowInstance: (input) =>
+      invokeCommand<WorkflowInstance>('create_workflow_instance', { input }),
+    sendWorkflowNodeMessage: (input) =>
+      invokeCommand<SendAgentSessionMessageResultDto>('send_workflow_node_message', { input }),
     loadWorkflowInstance: (workflowInstanceId) =>
       invokeCommand<WorkflowInstance>('load_workflow_instance', {
         query: { workflowInstanceId },

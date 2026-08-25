@@ -26,6 +26,15 @@ describe('Tauri Workflow client', () => {
       receiverNodeId: 'node-2',
       mechanism: null,
     };
+    const target = {
+      repository: {
+        id: 'repo-1',
+        name: 'Review repo',
+        rootPath: 'C:\\repos\\review',
+      },
+      branch: { id: 'branch-1', name: 'feature/workflow' },
+      worktree: { id: 'worktree-1', path: 'C:\\worktrees\\review' },
+    };
     const harness = {
       identity: {
         name: 'Architecture reviewer',
@@ -63,10 +72,15 @@ describe('Tauri Workflow client', () => {
     await client.listWorkflowTypes();
     await client.listWorkflowInstances();
     await client.listWorkflowMcpComponents();
-    await client.launchWorkflowInstance({
+    await client.createWorkflowInstance({
       workflowTypeId: 'workflow-1',
-      name: null,
-      startingPrompt: 'Start the review.',
+      name: 'Architecture review',
+      target,
+    });
+    await client.sendWorkflowNodeMessage({
+      workflowInstanceId: 'instance-1',
+      nodeId: 'node-1',
+      submittedText: 'Start the review.',
     });
     await client.loadWorkflowInstance('instance-1');
     await client.listRoles();
@@ -87,12 +101,22 @@ describe('Tauri Workflow client', () => {
       ['list_workflow_instances'],
       ['list_workflow_mcp_components'],
       [
-        'launch_workflow_instance',
+        'create_workflow_instance',
         {
           input: {
             workflowTypeId: 'workflow-1',
-            name: null,
-            startingPrompt: 'Start the review.',
+            name: 'Architecture review',
+            target,
+          },
+        },
+      ],
+      [
+        'send_workflow_node_message',
+        {
+          input: {
+            workflowInstanceId: 'instance-1',
+            nodeId: 'node-1',
+            submittedText: 'Start the review.',
           },
         },
       ],

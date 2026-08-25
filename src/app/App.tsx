@@ -33,6 +33,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentType,
   type ReactNode,
 } from 'react';
 import {
@@ -81,6 +82,7 @@ import type {
   ProductDecisionPublishTarget,
 } from '../application/productDecisions';
 import type { WorkflowApplicationClient } from '../application/workflows';
+import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
 import { WorkflowScreen } from '../features/workflows';
 
 export type ApplicationSurface =
@@ -101,6 +103,7 @@ export interface AppProps {
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly workflowClient?: WorkflowApplicationClient;
+  readonly workflowTargetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly artifactAccessController?: ArtifactAccessController;
@@ -151,6 +154,7 @@ export function App({
   managedPlanBuilderAgentIdentity,
   orchestrationClient,
   workflowClient,
+  workflowTargetSelector,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
   artifactAccessController = unsupportedArtifactAccessController,
@@ -1058,6 +1062,7 @@ export function App({
         <WorkflowScreen
           client={workflowClient}
           agentSessionClient={agentSessionClient}
+          targetSelector={workflowTargetSelector}
           workflowTypeId={currentProductDestination.workflowTypeId}
           workflowInstanceId={currentProductDestination.workflowInstanceId}
           onOpenWorkflowType={(workflowTypeId) => {

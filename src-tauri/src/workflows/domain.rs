@@ -582,56 +582,6 @@ pub(crate) struct WorkflowDefinition {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowSessionActivity {
-    Active,
-    Idle,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowInstanceSession {
-    pub(crate) node_id: String,
-    pub(crate) session_id: String,
-    pub(crate) title: String,
-    pub(crate) activity: WorkflowSessionActivity,
-    pub(crate) latest_turn_summary: Option<String>,
-    pub(crate) associated_at: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowLaunchStatus {
-    Requested,
-    Associated,
-    LaunchRequested,
-    LaunchAccepted,
-    Failed,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowActivation {
-    pub(crate) id: String,
-    pub(crate) source_kind: String,
-    pub(crate) target_node_id: String,
-    pub(crate) target_session_id: String,
-    pub(crate) target_invocation_id: String,
-    pub(crate) delivery_kind: String,
-    pub(crate) session_mode: String,
-    pub(crate) context_inheritance: String,
-    pub(crate) compression: String,
-    pub(crate) status: WorkflowLaunchStatus,
-    pub(crate) requested_at: String,
-    pub(crate) associated_at: Option<String>,
-    pub(crate) launch_requested_at: Option<String>,
-    pub(crate) launch_accepted_at: Option<String>,
-    pub(crate) failed_at: Option<String>,
-    pub(crate) failure_stage: Option<String>,
-    pub(crate) failure_reason: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum WorkflowConnectionActivationStatus {
     Requested,
     Resolved,
@@ -667,58 +617,10 @@ pub(crate) struct WorkflowConnectionActivation {
     pub(crate) failed_at: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowInstanceSummary {
-    pub(crate) id: String,
-    pub(crate) workflow_type_id: String,
-    pub(crate) workflow_type_name: String,
-    pub(crate) recipe_id: String,
-    pub(crate) name: String,
-    pub(crate) session_count: u32,
-    pub(crate) active_session_count: u32,
-    pub(crate) idle_session_count: u32,
-    pub(crate) launch_status: WorkflowLaunchStatus,
-    pub(crate) created_at: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowInstance {
-    pub(crate) summary: WorkflowInstanceSummary,
-    pub(crate) starting_prompt: String,
-    pub(crate) working_directory: String,
-    pub(crate) recipe: EffectiveRecipe,
-    pub(crate) sessions: Vec<WorkflowInstanceSession>,
-    pub(crate) launch_activation: WorkflowActivation,
-    pub(crate) connection_activations: Vec<WorkflowConnectionActivation>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct WorkflowInstanceRecord {
-    pub(crate) id: String,
-    pub(crate) workflow_type_id: String,
-    pub(crate) workflow_type_name: String,
-    pub(crate) recipe: EffectiveRecipe,
-    pub(crate) name: String,
-    pub(crate) starting_prompt: String,
-    pub(crate) working_directory: String,
-    pub(crate) created_at: String,
-    pub(crate) session_associations: Vec<WorkflowSessionAssociationRecord>,
-    pub(crate) launch_activation: WorkflowActivation,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct WorkflowSessionAssociationRecord {
-    pub(crate) node_id: String,
-    pub(crate) session_id: String,
-    pub(crate) associated_at: String,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct WorkflowCompletedTurnTrigger {
     pub(crate) workflow_instance_id: String,
-    pub(crate) working_directory: String,
+    pub(crate) worktree_root: String,
     pub(crate) sender_node_id: String,
     pub(crate) recipe: EffectiveRecipe,
 }
@@ -762,21 +664,6 @@ pub(crate) struct WorkflowConnectionActivationRecord {
     pub(crate) failed_at: Option<String>,
     pub(crate) failure_stage: Option<String>,
     pub(crate) failure_reason: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct WorkflowLaunchPreparation {
-    pub(crate) instance_id: String,
-    pub(crate) workflow_type_id: String,
-    pub(crate) recipe_id: String,
-    pub(crate) name: String,
-    pub(crate) starting_prompt: String,
-    pub(crate) working_directory: String,
-    pub(crate) activation_id: String,
-    pub(crate) target_node_id: String,
-    pub(crate) target_session_id: String,
-    pub(crate) target_invocation_id: String,
-    pub(crate) requested_at: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq)]
