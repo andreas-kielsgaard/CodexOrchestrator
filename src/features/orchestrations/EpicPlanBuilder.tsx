@@ -140,6 +140,14 @@ export function EpicPlanBuilder({
         !planRequestPending &&
         !session.sending &&
         !session.transcript?.activeInvocationId,
+      disabledReason:
+        userTurns.length === 0
+          ? 'Add a planning message before asking Plan Builder to form a proposal.'
+          : !hasConversationAfterProposal
+            ? 'Add a new planning message after the current proposal before rebuilding it.'
+            : planRequestPending || session.sending || session.transcript?.activeInvocationId
+              ? 'Wait for the current planning request to finish before starting another one.'
+              : undefined,
     };
   }, [planRequestPending, proposal, session.sending, session.transcript, userTurns]);
 
@@ -286,6 +294,9 @@ export function EpicPlanBuilder({
                 className="epic-plan-builder__plan-action"
                 type="button"
                 disabled={!planAction.enabled}
+                aria-describedby={
+                  !planAction.enabled ? 'epic-plan-builder-plan-unavailable' : undefined
+                }
                 onClick={() => void requestPlan()}
               >
                 <Sparkles size={16} aria-hidden="true" />
@@ -314,11 +325,14 @@ export function EpicPlanBuilder({
                 id="epic-root-branch"
                 value={rootBranch}
                 onChange={(event) => setRootBranch(event.target.value)}
-                placeholder="codex/epic-workflow-ux-test"
+                placeholder="codex/my-epic"
               />
               {initiatingEpic && <p role="status">Opening Epic initiation confirmation…</p>}
               {initiationCapability.status !== 'ready' && (
                 <p id="epic-initiation-unavailable">{initiationCapability.reason}</p>
+              )}
+              {!planAction.enabled && planAction.disabledReason && (
+                <p id="epic-plan-builder-plan-unavailable">{planAction.disabledReason}</p>
               )}
               {planRequestError && <p role="alert">{planRequestError}</p>}
               {initiationError && <p role="alert">{initiationError}</p>}

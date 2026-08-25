@@ -243,53 +243,55 @@ function SessionTreeSection({
               Boolean(selectedNodeId) &&
               nodeContains([section], node.id, selectedNodeId!);
             return (
-              <button
-                ref={(element) => {
-                  if (element) itemRefs.current?.set(node.id, element);
-                  else itemRefs.current?.delete(node.id);
-                }}
-                className={`session-tree-item session-tree-item--${node.kind}${selected ? ' is-selected' : ''}${containsSelected ? ' has-selected-descendant' : ''}`}
-                style={{ '--tree-level': level } as CSSProperties}
-                role="treeitem"
-                type="button"
-                key={node.id}
-                tabIndex={focusedId === node.id ? 0 : -1}
-                aria-level={level}
-                aria-expanded={folder ? expandedNodeIds.has(node.id) : undefined}
-                aria-selected={folder ? undefined : selected}
-                onFocus={() => onFocus(node.id)}
-                onClick={() => {
-                  if (node.kind === 'folder') onToggle(node.id);
-                  else onSelect(node.summary.id);
-                }}
-              >
-                {node.kind === 'folder' ? (
-                  <>
-                    {expandedNodeIds.has(node.id) ? (
-                      <ChevronDown
-                        className="session-tree-item__chevron"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <ChevronRight
-                        className="session-tree-item__chevron"
-                        size={14}
-                        aria-hidden="true"
-                      />
-                    )}
-                    <Folder className="session-tree-item__folder" size={15} aria-hidden="true" />
-                    <span className="session-tree-item__folder-label">{node.label}</span>
-                    {containsSelected ? (
-                      <span className="session-tree-item__selected-descendant">
-                        Contains selected Session
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  <SessionTreeLabel session={node} />
-                )}
-              </button>
+              <div className="session-tree-row" key={node.id}>
+                <button
+                  ref={(element) => {
+                    if (element) itemRefs.current?.set(node.id, element);
+                    else itemRefs.current?.delete(node.id);
+                  }}
+                  className={`session-tree-item session-tree-item--${node.kind}${selected ? ' is-selected' : ''}${containsSelected ? ' has-selected-descendant' : ''}`}
+                  style={{ '--tree-level': level } as CSSProperties}
+                  role="treeitem"
+                  type="button"
+                  tabIndex={focusedId === node.id ? 0 : -1}
+                  aria-level={level}
+                  aria-expanded={folder ? expandedNodeIds.has(node.id) : undefined}
+                  aria-selected={folder ? undefined : selected}
+                  onFocus={() => onFocus(node.id)}
+                  onClick={() => {
+                    if (node.kind === 'folder') onToggle(node.id);
+                    else onSelect(node.summary.id);
+                  }}
+                >
+                  {node.kind === 'folder' ? (
+                    <>
+                      {expandedNodeIds.has(node.id) ? (
+                        <ChevronDown
+                          className="session-tree-item__chevron"
+                          size={14}
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <ChevronRight
+                          className="session-tree-item__chevron"
+                          size={14}
+                          aria-hidden="true"
+                        />
+                      )}
+                      <Folder className="session-tree-item__folder" size={15} aria-hidden="true" />
+                      <span className="session-tree-item__folder-label">{node.label}</span>
+                      {containsSelected ? (
+                        <span className="session-tree-item__selected-descendant">
+                          Contains selected Session
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <SessionTreeLabel session={node} />
+                  )}
+                </button>
+                {node.kind === 'session' ? <SessionTechnicalDetails session={node} /> : null}
+              </div>
             );
           })
         )}
@@ -320,7 +322,7 @@ function SessionTreeLabel({ session }: { readonly session: AgentSessionNavigatio
         )}
       </span>
       <span className="session-tree-item__copy">
-        <strong>
+        <strong title={session.summary.title}>
           {session.identity
             ? `${session.identity.agentName}: ${session.summary.title}`
             : session.summary.title}
@@ -331,23 +333,54 @@ function SessionTreeLabel({ session }: { readonly session: AgentSessionNavigatio
             : role || 'Independent Agent Session'}
         </small>
       </span>
-      <span className={`session-tree-item__status session-tree-item__status--${status.kind}`}>
-        <span aria-hidden="true" />
-        {status.label}
+      <span className="session-tree-item__status-stack">
+        <span
+          className={`session-tree-item__status session-tree-item__status--${session.semanticPresentation?.kind === 'attention' ? 'attention' : status.kind}`}
+        >
+          <span aria-hidden="true" />
+          {session.semanticPresentation?.kind === 'attention'
+            ? session.semanticPresentation.label
+            : status.label}
+        </span>
+        {session.semanticPresentation ? (
+          <small className="session-tree-item__semantic-status">
+            {session.semanticPresentation.kind === 'attention'
+              ? status.label.replace('Process ', 'Process: ')
+              : session.semanticPresentation.label}
+          </small>
+        ) : null}
       </span>
     </>
   );
 }
 
+function SessionTechnicalDetails({ session }: { readonly session: AgentSessionNavigationSession }) {
+  const details = [
+    `Session ID: ${session.summary.id}`,
+    `Invocation status: ${session.summary.latestInvocationStatus ?? 'none'}`,
+    ...(session.semanticPresentation?.technicalDetails ?? []),
+  ];
+  return (
+    <details className="session-tree-item__technical-details">
+      <summary>Technical details</summary>
+      <ul>
+        {details.map((detail) => (
+          <li key={detail}>{detail}</li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function sessionStatus(session: AgentSessionNavigationSession) {
   const status = session.summary.latestInvocationStatus;
-  if (status === 'pending') return { kind: 'active', label: 'Starting' };
+  if (status === 'pending') return { kind: 'active', label: 'Process starting' };
   if (status === 'running' || session.summary.hasActiveInvocation)
-    return { kind: 'active', label: 'Processing' };
-  if (status === 'completed') return { kind: 'completed', label: 'Completed' };
-  if (status === 'failed') return { kind: 'attention', label: 'Failed' };
-  if (status === 'canceled') return { kind: 'quiet', label: 'Canceled' };
-  if (status === 'interrupted') return { kind: 'attention', label: 'Interrupted' };
+    return { kind: 'active', label: 'Process running' };
+  if (status === 'completed') return { kind: 'completed', label: 'Process completed' };
+  if (status === 'failed') return { kind: 'attention', label: 'Process failed' };
+  if (status === 'canceled') return { kind: 'quiet', label: 'Process canceled' };
+  if (status === 'interrupted') return { kind: 'attention', label: 'Process interrupted' };
   return { kind: 'quiet', label: formatDate(session.summary.updatedAt) };
 }
 

@@ -141,6 +141,40 @@ describe('Agent Session product navigation projection', () => {
     ]);
     expect(navigation.sessions.get('provider-neutral')?.productLocations).toEqual([]);
   });
+
+  it('projects linked Work Unit attention separately from a completed Session process', () => {
+    const read = structuredClone(
+      composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
+    ) as Mutable<ProductReadModelsV1>;
+    const units = read.epics
+      .flatMap((epic) => epic.sprints)
+      .flatMap((sprint) => sprint.revisionViews)
+      .flatMap((view) => view.workUnits)
+      .filter(({ workUnitId }) => workUnitId === 'WU-ECS2E');
+    if (units.length === 0) throw new Error('Missing recorded WU-ECS2E Work Unit');
+    units.forEach((unit) => {
+      unit.executionState = { state: 'attention', recordedAt: '2026-08-08T19:30:00.000Z' };
+    });
+
+    const navigation = buildAgentSessionNavigation({
+      orchestrations: read,
+      summaries: [summary('recorded-session-WU-ECS2E')],
+    });
+
+    expect(navigation.sessions.get('recorded-session-WU-ECS2E')).toEqual(
+      expect.objectContaining({
+        summary: expect.objectContaining({ latestInvocationStatus: 'completed' }),
+        semanticPresentation: {
+          kind: 'attention',
+          label: 'Work Unit needs attention',
+          technicalDetails: expect.arrayContaining([
+            'Target: work_unit_execution',
+            'Work Unit state: attention',
+          ]),
+        },
+      }),
+    );
+  });
 });
 
 type Mutable<T> = {

@@ -381,6 +381,7 @@ describe('App orchestration loading', () => {
     expect(screen.getByText(/initiation state is unavailable/i)).toBeVisible();
     expect(screen.queryByText('Stale Sprint')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Back to orchestration overview' }));
+    fireEvent.click(await screen.findByText('Technical details'));
     expect(await screen.findByText('Orchestration data could not be loaded.')).toBeVisible();
     expect(resolveConfirmation).toHaveBeenCalledOnce();
   });
@@ -966,9 +967,13 @@ describe('App orchestration loading', () => {
     render(
       <App agentSessionClient={agentClient()} orchestrationClient={{ load: async () => result }} />,
     );
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'reason' in result ? result.reason : result.message,
+    expect(await screen.findByRole(result.kind === 'empty' ? 'status' : 'alert')).toHaveTextContent(
+      result.kind === 'empty'
+        ? 'No orchestration records are available.'
+        : 'status is unknown until Retry succeeds',
     );
+    fireEvent.click(screen.getByText('Technical details'));
+    expect(screen.getByText('reason' in result ? result.reason : result.message)).toBeVisible();
     expect(screen.queryByRole('button', { name: /Open Codex Epic Runner/ })).toBeNull();
   });
 

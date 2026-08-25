@@ -68,8 +68,8 @@ describe('SessionSelector hierarchy', () => {
   it('shows identity, role, status, and responsive navigation controls', () => {
     render(<Harness selectedSessionId="session-plan-builder" />);
     expect(screen.getByText('Ada: Epic Plan Builder')).toBeVisible();
-    expect(screen.getAllByText('Completed')).toHaveLength(2);
-    expect(screen.getByText('Processing')).toBeVisible();
+    expect(screen.getAllByText('Process completed')).toHaveLength(1);
+    expect(screen.getByText('Process running')).toBeVisible();
 
     const toggle = screen.getByRole('button', { name: 'Hide sessions' });
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -78,6 +78,18 @@ describe('SessionSelector hierarchy', () => {
       'aria-expanded',
       'false',
     );
+  });
+
+  it('keeps a typed attention outcome more prominent than a completed process and discloses raw values', () => {
+    render(<Harness selectedSessionId="session-plan-builder" />);
+
+    expect(screen.getByText('Work returned for changes')).toBeVisible();
+    expect(screen.getByText('Process: completed')).toBeVisible();
+    expect(screen.getByText('Target: work_unit_execution')).not.toBeVisible();
+
+    fireEvent.click(screen.getAllByText('Technical details')[1]!);
+    expect(screen.getByText('Target: work_unit_execution')).toBeVisible();
+    expect(screen.getByText('Handler decision: returned')).toBeVisible();
   });
 });
 
@@ -105,12 +117,22 @@ function Harness({
 
 function model(): AgentSessionNavigationModel {
   const epicRunner = session('session-epic-runner', 'Epic Runner Session', 'completed');
-  const planBuilder = session('session-plan-builder', 'Plan Builder Session', 'completed', {
-    sessionId: 'session-plan-builder',
-    agentName: 'Ada',
-    harnessRole: 'Epic Plan Builder',
-    visualIdentity: { token: 'leaf', accentColor: '#33664f' },
-  });
+  const planBuilder = session(
+    'session-plan-builder',
+    'Plan Builder Session',
+    'completed',
+    {
+      sessionId: 'session-plan-builder',
+      agentName: 'Ada',
+      harnessRole: 'Epic Plan Builder',
+      visualIdentity: { token: 'leaf', accentColor: '#33664f' },
+    },
+    {
+      kind: 'attention',
+      label: 'Work returned for changes',
+      technicalDetails: ['Target: work_unit_execution', 'Handler decision: returned'],
+    },
+  );
   const independent = session('session-independent', 'Research Session', 'running');
   const planningStep: AgentSessionNavigationFolder = {
     kind: 'folder',
@@ -147,6 +169,7 @@ function session(
   title: string,
   status: 'completed' | 'running',
   identity?: AgentSessionNavigationSession['identity'],
+  semanticPresentation?: AgentSessionNavigationSession['semanticPresentation'],
 ): AgentSessionNavigationSession {
   return {
     kind: 'session',
@@ -162,6 +185,7 @@ function session(
     },
     relationshipRoles: identity ? [] : ['Independent'],
     productLocations: [],
+    ...(semanticPresentation ? { semanticPresentation } : {}),
     ...(identity ? { identity } : {}),
   };
 }

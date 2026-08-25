@@ -104,12 +104,16 @@
   --tree-level: 1;
   display: flex;
   width: 100%;
-  min-height: 34px;
+  min-height: 44px;
   align-items: center;
   gap: 6px;
   padding: 5px 8px 5px calc(7px + (var(--tree-level) - 1) * 15px);
   background: transparent;
   text-align: left;
+}
+
+.session-tree-row {
+  min-width: 0;
 }
 
 .session-tree-item:hover,
@@ -138,6 +142,7 @@
 }
 
 .session-tree-item__folder-label {
+  min-width: 0;
   overflow: hidden;
   font-size: 0.78rem;
   font-weight: 760;
@@ -206,6 +211,26 @@
   color: #6f7b74;
   font-size: 0.62rem;
   font-weight: 720;
+  text-align: right;
+}
+
+.session-tree-item__status-stack {
+  display: grid;
+  min-width: 0;
+  flex: 0 1 120px;
+  gap: 2px;
+  justify-items: end;
+}
+
+.session-tree-item__semantic-status {
+  overflow: hidden;
+  max-width: 120px;
+  color: #6b756e;
+  font-size: 0.59rem;
+  font-weight: 680;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-tree-item__status > span {
@@ -234,6 +259,38 @@
 
 .session-tree-item__status--attention > span {
   background: #bd5c43;
+}
+
+.session-tree-item__technical-details {
+  margin: -1px 8px 7px;
+  padding: 5px 8px;
+  border: 1px solid #d9dfd7;
+  border-radius: 6px;
+  background: #f7f8f5;
+  color: #56635b;
+  font-size: 0.65rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.session-tree-item__technical-details summary {
+  width: fit-content;
+  min-height: 28px;
+  cursor: pointer;
+  color: #415349;
+  font-weight: 750;
+}
+
+.session-tree-item__technical-details summary:focus-visible {
+  outline: 2px solid #34755b;
+  outline-offset: 2px;
+}
+
+.session-tree-item__technical-details ul {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 0;
+  padding-left: 16px;
 }
 
 .session-refresh-button {
@@ -1049,6 +1106,18 @@
   .session-tree-section + .session-tree-section {
     margin-top: 10px;
     padding-top: 8px;
+  }
+
+  .session-tree-item {
+    align-items: flex-start;
+  }
+
+  .session-tree-item__status-stack {
+    flex-basis: 96px;
+  }
+
+  .session-tree-item__semantic-status {
+    max-width: 96px;
   }
 
   .agent-session-content {

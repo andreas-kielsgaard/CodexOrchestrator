@@ -44,3 +44,15 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+@media (max-width: 720px) {
+  .product-view-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .product-view-header__actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

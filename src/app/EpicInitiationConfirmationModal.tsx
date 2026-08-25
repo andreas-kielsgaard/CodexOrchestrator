@@ -22,6 +22,9 @@ export function EpicInitiationConfirmationModal({
   }, [requestId]);
   if (!current) return null;
   const reject = () => void confirmation.resolve('rejected');
+  const resolutionDescription = confirmation.resolving
+    ? 'epic-initiation-confirmation-description epic-initiation-resolution-pending'
+    : 'epic-initiation-confirmation-description';
   return (
     <div
       className="epic-initiation-confirmation"
@@ -35,7 +38,7 @@ export function EpicInitiationConfirmationModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="epic-initiation-confirmation-title"
-        aria-describedby="epic-initiation-confirmation-description"
+        aria-describedby={resolutionDescription}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !confirmation.resolving) reject();
           if (event.key !== 'Tab') return;
@@ -91,7 +94,7 @@ export function EpicInitiationConfirmationModal({
           id="epic-confirmation-root-branch"
           value={rootBranch}
           onChange={(event) => setRootBranch(event.target.value)}
-          placeholder="codex/epic-workflow-ux-test"
+          placeholder="codex/my-epic"
         />
         {confirmation.queuedCount > 0 && (
           <p role="status">
@@ -100,14 +103,29 @@ export function EpicInitiationConfirmationModal({
           </p>
         )}
         {confirmation.error && <p role="alert">{confirmation.error}</p>}
+        {confirmation.resolving && (
+          <p id="epic-initiation-resolution-pending" role="status">
+            Confirmation is being resolved. Its outcome is not yet known.
+          </p>
+        )}
         <div className="epic-initiation-confirmation__actions">
-          <button type="button" disabled={confirmation.resolving} onClick={reject}>
+          <button
+            type="button"
+            disabled={confirmation.resolving}
+            aria-describedby={
+              confirmation.resolving ? 'epic-initiation-resolution-pending' : undefined
+            }
+            onClick={reject}
+          >
             Cancel
           </button>
           <button
             ref={confirmRef}
             type="button"
             disabled={confirmation.resolving || !rootBranch.trim()}
+            aria-describedby={
+              confirmation.resolving ? 'epic-initiation-resolution-pending' : undefined
+            }
             onClick={() => void confirmation.resolve('confirmed', rootBranch)}
           >
             {confirmation.resolving ? 'Resolving…' : 'Confirm initiation'}
