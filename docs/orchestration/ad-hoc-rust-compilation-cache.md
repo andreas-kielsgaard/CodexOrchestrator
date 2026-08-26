@@ -34,7 +34,7 @@ From any Codex Orchestrator worktree:
 
 ```powershell
 .\scripts\cargo-sccache.ps1 check --locked --timings
-.\scripts\cargo-sccache.ps1 test worktree_runtime -- --nocapture
+.\scripts\cargo-sccache.ps1 test worktree_application -- --nocapture
 ```
 
 The default target remains that worktree's `src-tauri\target`. For an already-isolated runtime

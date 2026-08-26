@@ -79,6 +79,10 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
     }
 }
 
+fn worktree_review_root(app_data_dir: &std::path::Path) -> PathBuf {
+    app_data_dir.join("worktree-review")
+}
+
 pub(crate) fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
@@ -210,6 +214,7 @@ pub(crate) fn run() {
                 application.clone(),
             )
             .map_err(|error| error.to_string())?;
+            let git_comparison = sprint_runners.git_comparison_port();
             sprint_runners
                 .attach_work_unit_handler_activation(work_unit_handler)
                 .map_err(|error| error.to_string())?;
@@ -256,59 +261,24 @@ pub(crate) fn run() {
                     ),
                 ),
             );
-            let review_root = std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| app_data_dir.join("worktree-review"));
-            let review = crate::worktree_review::WorktreeReviewState::open(review_root.clone());
-            if let Some(repository_root) =
-                std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_REPOSITORY").map(PathBuf::from)
-            {
-                review.select_repository(repository_root);
-            }
+            let review_root = worktree_review_root(&app_data_dir);
+            let review = Arc::new(crate::worktree_review::WorktreeReviewApplication::open(
+                review_root.clone(),
+            ));
             app.manage(
                 crate::orchestration::transport::ContextualFileReviewTauriState::available(
                     orchestration.clone(),
                     Arc::new(
                         crate::orchestration::file_review_originating_entry::FileReviewOriginatingEntryService::new(
                             orchestration_repository.clone(),
-                            Arc::new(review.clone()),
+                            git_comparison,
                         ),
                     ),
                 ),
             );
-            #[cfg(debug_assertions)]
-            {
-                if std::env::var("CODEX_ORCHESTRATOR_REVIEW_CONTROLLER").ok().as_deref()
-                    == Some("enabled")
-                {
-                    if let Ok(service) = review.service() {
-                        let proof = Arc::new(
-                            crate::worktree_review::proof::ProofSupport::new(
-                                service,
-                                review_root.clone(),
-                            ),
-                        );
-                        app.manage(crate::worktree_review::proof::ProofTauriState::new(
-                            proof.clone(),
-                        ));
-                        if let Some(controller) =
-                            crate::worktree_review::proof::controller::start_if_enabled(
-                                proof,
-                                &review_root,
-                            )?
-                        {
-                            app.manage(controller);
-                        }
-                    }
-                }
-                if std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR").is_some() {
-                    app.get_webview_window("main")
-                        .ok_or("Unable to identify the isolated review launcher window")?
-                        .set_title("Codex Orchestrator - Worktree Review Launcher")
-                        .map_err(|_| "Unable to identify the isolated review launcher window")?;
-                }
-            }
-            app.manage(review);
+            app.manage(
+                crate::worktree_review::transport::WorktreeReviewTauriState::new(review),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -366,38 +336,15 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             crate::orchestration::transport::load_sprint_runner_transition_query,
-            crate::worktree_review::transport::worktree_review_readiness,
+            crate::worktree_review::transport::worktree_review_overview,
             crate::worktree_review::transport::select_worktree_review_repository,
-            crate::worktree_review::transport::list_human_review_worktrees,
-            crate::worktree_review::transport::list_human_review_repository_history,
-            crate::worktree_review::transport::list_human_review_instances,
-            crate::worktree_review::transport::human_review_settings,
-            crate::worktree_review::transport::update_human_review_settings,
-            crate::worktree_review::transport::human_review_source_history,
-            crate::worktree_review::transport::attach_human_review_worktree,
-            crate::worktree_review::transport::prepare_human_review_instance,
-            crate::worktree_review::transport::human_review_operation_progress,
-            crate::worktree_review::transport::list_human_review_operation_progress,
-            crate::worktree_review::transport::human_review_instance_detail,
-            crate::worktree_review::transport::human_review_instance_comparison,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::proof::transport::human_review_launcher_proof_navigation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::proof::transport::human_review_launcher_detail_navigation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::proof::transport::human_review_launcher_proof_presentation,
-            crate::worktree_review::transport::mark_worktree_build_ready,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::proof::controller::worktree_review_proof_navigation,
-            crate::worktree_review::worktree_build::worktree_build_context,
-            crate::worktree_review::detail::worktree_build_detail,
-            crate::worktree_review::comparison::worktree_build_comparison,
-            crate::worktree_review::transport::build_human_review_instance,
-            crate::worktree_review::transport::start_human_review_instance,
-            crate::worktree_review::transport::status_human_review_instance,
-            crate::worktree_review::transport::focus_human_review_instance,
-            crate::worktree_review::transport::stop_human_review_instance,
-            crate::worktree_review::transport::recover_human_review_instance
+            crate::worktree_review::transport::connect_worktree_review_repository,
+            crate::worktree_review::transport::worktree_review_branch_detail,
+            crate::worktree_review::transport::worktree_review_branch_history,
+            crate::worktree_review::transport::associate_worktree_review_worktree,
+            crate::worktree_review::transport::create_worktree_review_worktree,
+            crate::worktree_review::transport::create_worktree_review_build,
+            crate::worktree_review::transport::worktree_review_open_build
         ])
         .build(tauri::generate_context!())
         .expect("error while building Codex Orchestrator");
@@ -429,4 +376,18 @@ pub(crate) fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_review_root;
+
+    #[test]
+    fn review_storage_is_app_owned_and_override_must_be_absolute() {
+        let app_data = std::env::temp_dir().join("codex-orchestrator-app-data");
+        assert_eq!(
+            worktree_review_root(&app_data),
+            app_data.join("worktree-review")
+        );
+    }
 }

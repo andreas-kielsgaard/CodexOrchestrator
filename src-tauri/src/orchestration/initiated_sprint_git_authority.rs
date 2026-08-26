@@ -13,7 +13,7 @@ pub(crate) struct BindInitiatedSprintGitAuthorityRequest {
     pub(crate) idempotency_key: String,
 }
 
-/// Private verified evidence returned by the Worktree Runtime boundary.
+/// Private verified evidence returned by the application Git comparison boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedRuntimeGitComparison {
     pub(crate) repository_id: String,
@@ -28,7 +28,7 @@ pub(crate) struct VerifiedRuntimeGitComparison {
     pub(crate) source_fingerprint: String,
 }
 
-pub(crate) trait WorktreeRuntimeGitComparison: Send + Sync {
+pub(crate) trait SprintGitComparisonPort: Send + Sync {
     fn resolve_verified_comparison(
         &self,
         runtime_instance_ref: &str,
@@ -37,18 +37,22 @@ pub(crate) trait WorktreeRuntimeGitComparison: Send + Sync {
 
 pub(crate) struct InitiatedSprintGitAuthorityService {
     repository: Arc<SqliteOrchestrationRepository>,
-    runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+    runtime: Arc<dyn SprintGitComparisonPort>,
 }
 
 impl InitiatedSprintGitAuthorityService {
     pub(crate) fn new(
         repository: Arc<SqliteOrchestrationRepository>,
-        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+        runtime: Arc<dyn SprintGitComparisonPort>,
     ) -> Self {
         Self {
             repository,
             runtime,
         }
+    }
+
+    pub(crate) fn comparison_port(&self) -> Arc<dyn SprintGitComparisonPort> {
+        self.runtime.clone()
     }
 
     pub(crate) fn bind(
@@ -206,7 +210,7 @@ mod tests {
         Mutex<Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError>>,
     );
 
-    impl WorktreeRuntimeGitComparison for RuntimeFixture {
+    impl SprintGitComparisonPort for RuntimeFixture {
         fn resolve_verified_comparison(
             &self,
             _runtime_instance_ref: &str,

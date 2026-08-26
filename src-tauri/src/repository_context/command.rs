@@ -1,7 +1,8 @@
-use super::{GitExecutable, RepositoryContextError, RepositoryContextErrorKind};
+use super::{RepositoryContextError, RepositoryContextErrorKind};
 use std::{
     env,
     ffi::{OsStr, OsString},
+    fs,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -10,8 +11,49 @@ use std::{
 pub(super) const SMALL_OUTPUT_LIMIT: usize = 256 * 1024;
 pub(super) const LARGE_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GitExecutable(PathBuf);
+
+impl GitExecutable {
+    pub(crate) fn discover() -> Result<Self, RepositoryContextError> {
+        let path = env::var_os("PATH").ok_or_else(missing_git)?;
+        #[cfg(windows)]
+        let names = ["git.exe", "git"];
+        #[cfg(not(windows))]
+        let names = ["git"];
+        for directory in env::split_paths(&path) {
+            for name in names {
+                let candidate = directory.join(name);
+                if candidate.is_file() {
+                    return Self::canonical(candidate);
+                }
+            }
+        }
+        Err(missing_git())
+    }
+
+    pub(crate) fn resolve(path: &Path) -> Result<Self, RepositoryContextError> {
+        if path.is_absolute() && path.is_file() {
+            return Self::canonical(path.to_path_buf());
+        }
+        if matches!(path.to_str(), Some("git" | "git.exe")) {
+            return Self::discover();
+        }
+        Err(missing_git())
+    }
+
+    fn canonical(path: PathBuf) -> Result<Self, RepositoryContextError> {
+        fs::canonicalize(path).map(Self).map_err(|_| missing_git())
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
 pub(super) struct GitOutcome {
     pub(super) success: bool,
+    pub(super) exit_code: Option<i32>,
     pub(super) stdout: Vec<u8>,
 }
 
@@ -24,7 +66,43 @@ impl HardenedGitRunner {
         Self { executable }
     }
 
-    pub(super) fn run<I, S>(
+    pub(super) fn required<I, S>(
+        &self,
+        root: &Path,
+        arguments: I,
+        output_limit: usize,
+    ) -> Result<Vec<u8>, RepositoryContextError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let outcome = self.run(root, arguments, output_limit)?;
+        if outcome.success {
+            Ok(outcome.stdout)
+        } else {
+            Err(repository_unavailable())
+        }
+    }
+
+    pub(super) fn optional<I, S>(
+        &self,
+        root: &Path,
+        arguments: I,
+        output_limit: usize,
+    ) -> Result<Option<Vec<u8>>, RepositoryContextError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let outcome = self.run(root, arguments, output_limit)?;
+        match (outcome.success, outcome.exit_code) {
+            (true, _) => Ok(Some(outcome.stdout)),
+            (false, Some(1)) => Ok(None),
+            (false, _) => Err(repository_unavailable()),
+        }
+    }
+
+    fn run<I, S>(
         &self,
         root: &Path,
         arguments: I,
@@ -34,12 +112,7 @@ impl HardenedGitRunner {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let executable_directory = self.executable.path().parent().ok_or_else(|| {
-            RepositoryContextError::new(
-                RepositoryContextErrorKind::MissingGit,
-                "Git has an invalid executable location.",
-            )
-        })?;
+        let executable_directory = self.executable.path().parent().ok_or_else(missing_git)?;
         let mut command = Command::new(self.executable.path());
         command
             .env_clear()
@@ -52,14 +125,13 @@ impl HardenedGitRunner {
             .args([
                 "--no-pager",
                 "--no-replace-objects",
+                "--literal-pathspecs",
                 "-c",
                 "core.fsmonitor=false",
                 "-c",
                 "credential.interactive=false",
                 "-c",
                 "diff.external=",
-                "-c",
-                platform_line_endings(),
             ])
             .arg("-c")
             .arg(format!("core.hooksPath={}", null_device()))
@@ -69,12 +141,7 @@ impl HardenedGitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         add_platform_environment(&mut command);
-        let mut child = command.spawn().map_err(|_| {
-            RepositoryContextError::new(
-                RepositoryContextErrorKind::MissingGit,
-                "Git could not be started.",
-            )
-        })?;
+        let mut child = command.spawn().map_err(|_| repository_unavailable())?;
         let mut stdout = Vec::new();
         child
             .stdout
@@ -94,6 +161,7 @@ impl HardenedGitRunner {
         let status = child.wait().map_err(|_| repository_unavailable())?;
         Ok(GitOutcome {
             success: status.success(),
+            exit_code: status.code(),
             stdout,
         })
     }
@@ -124,17 +192,6 @@ fn add_platform_environment(command: &mut Command) {
 fn add_platform_environment(_command: &mut Command) {}
 
 #[cfg(windows)]
-fn platform_line_endings() -> &'static str {
-    // Keep Windows checkout normalization deterministic without restoring ambient Git config.
-    "core.autocrlf=true"
-}
-
-#[cfg(not(windows))]
-fn platform_line_endings() -> &'static str {
-    "core.autocrlf=false"
-}
-
-#[cfg(windows)]
 fn null_device() -> &'static str {
     "NUL"
 }
@@ -142,6 +199,13 @@ fn null_device() -> &'static str {
 #[cfg(not(windows))]
 fn null_device() -> &'static str {
     "/dev/null"
+}
+
+fn missing_git() -> RepositoryContextError {
+    RepositoryContextError::new(
+        RepositoryContextErrorKind::MissingGit,
+        "Git is unavailable.",
+    )
 }
 
 fn repository_unavailable() -> RepositoryContextError {

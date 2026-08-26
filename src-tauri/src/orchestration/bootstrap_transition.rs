@@ -2079,8 +2079,8 @@ mod tests {
             domain::{InitiateEpicCommand, ProposedSprint, SaveEpicPlanProposalCommand},
             execution_support::ProductExecutionSupportState,
             initiated_sprint_git_authority::{
-                BindInitiatedSprintGitAuthorityError, VerifiedRuntimeGitComparison,
-                WorktreeRuntimeGitComparison,
+                BindInitiatedSprintGitAuthorityError, SprintGitComparisonPort,
+                VerifiedRuntimeGitComparison,
             },
             repository::{InitiatedSprintGitAuthorityWrite, SqliteOrchestrationRepository},
             work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUnitHarnessRole},
@@ -2460,7 +2460,7 @@ mod tests {
 
     struct PlannerAuthorityRuntime(Mutex<VerifiedRuntimeGitComparison>);
 
-    impl WorktreeRuntimeGitComparison for PlannerAuthorityRuntime {
+    impl SprintGitComparisonPort for PlannerAuthorityRuntime {
         fn resolve_verified_comparison(
             &self,
             runtime_instance_ref: &str,

@@ -16,7 +16,6 @@ export default defineConfig({
       input: {
         app: 'index.html',
         agentSessionHarness: 'agent-session-harness.html',
-        worktreeReviewHarness: 'worktree-review-harness.html',
       },
     },
   },

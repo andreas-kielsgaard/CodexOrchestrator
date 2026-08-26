@@ -30,17 +30,14 @@ describe('product application composition', () => {
     expect(composition.worktreeReviewClient).toBeDefined();
   });
 
-  it('omits the launcher only for a launched Worktree Review instance', () => {
-    expect(
-      createProductApplicationComposition({ includeWorktreeReview: false }).worktreeReviewClient,
-    ).toBeUndefined();
-  });
-
   it('keeps product startup free of development fixture authority', () => {
     for (const file of ['src/main.tsx', 'src/app/App.tsx']) {
       expect(readFileSync(resolve(file), 'utf8')).not.toMatch(
         /disposableRecordedOrchestrationView|recordedDevelopment|recordedOrchestrationClient/,
       );
     }
+    expect(readFileSync(resolve('src/app/ApplicationRoot.tsx'), 'utf8')).not.toMatch(
+      /VITE_HUMAN_REVIEW_INSTANCE|humanReviewInstance|WorktreeBuildShell/,
+    );
   });
 });

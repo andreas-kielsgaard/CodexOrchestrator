@@ -14,8 +14,7 @@ use super::work_unit_execution_harness::{WorkUnitExecutionHarnessService, WorkUn
 use super::{
     initiated_sprint_git_authority::{
         BindInitiatedSprintGitAuthorityError, BindInitiatedSprintGitAuthorityRequest,
-        InitiatedSprintGitAuthorityService, VerifiedRuntimeGitComparison,
-        WorktreeRuntimeGitComparison,
+        InitiatedSprintGitAuthorityService, SprintGitComparisonPort, VerifiedRuntimeGitComparison,
     },
     repository::{
         InitiatedSprintGitAuthority, InitiatedSprintGitAuthorityError,
@@ -1411,6 +1410,10 @@ pub(crate) struct SprintRunnerTransitionService {
 }
 
 impl SprintRunnerTransitionService {
+    pub(crate) fn git_comparison_port(&self) -> Arc<dyn SprintGitComparisonPort> {
+        self.authority_binder.comparison_port()
+    }
+
     pub(crate) fn open(
         path: impl AsRef<Path>,
         sessions: Arc<AgentSessionApplication>,
@@ -1441,7 +1444,7 @@ impl SprintRunnerTransitionService {
     pub(crate) fn open_with_git_authority_runtime_for_test(
         path: impl AsRef<Path>,
         sessions: Arc<AgentSessionApplication>,
-        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+        runtime: Arc<dyn SprintGitComparisonPort>,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
         Self::open_with_git_authority_runtime(path, sessions, runtime, true)
     }
@@ -1449,7 +1452,7 @@ impl SprintRunnerTransitionService {
     fn open_with_git_authority_runtime(
         path: impl AsRef<Path>,
         sessions: Arc<AgentSessionApplication>,
-        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
+        runtime: Arc<dyn SprintGitComparisonPort>,
         application_git_authority_required: bool,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
         let path = path.as_ref();
@@ -9268,7 +9271,7 @@ fn map_authority_bind_error(
 
 struct UnavailableSprintGitAuthorityRuntime;
 
-impl WorktreeRuntimeGitComparison for UnavailableSprintGitAuthorityRuntime {
+impl SprintGitComparisonPort for UnavailableSprintGitAuthorityRuntime {
     fn resolve_verified_comparison(
         &self,
         _runtime_instance_ref: &str,
@@ -9318,7 +9321,7 @@ impl ApplicationSprintGitAuthorityRuntime {
     }
 }
 
-impl WorktreeRuntimeGitComparison for ApplicationSprintGitAuthorityRuntime {
+impl SprintGitComparisonPort for ApplicationSprintGitAuthorityRuntime {
     fn resolve_verified_comparison(
         &self,
         runtime_instance_ref: &str,

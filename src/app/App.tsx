@@ -56,10 +56,10 @@ import type {
 import { FileReviewScreen } from '../features/fileReview';
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
-import type { WorktreeReviewClient } from '../application/worktreeReview';
-import { WorktreeReviewScreen } from '../features/humanReviewLauncher/WorktreeReviewScreen';
 import { TechnicalSettingsView } from '../features/technicalSettings/TechnicalSettingsView';
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
+import type { WorktreeReviewClient } from '../application/worktreeReview';
+import { WorktreeReviewScreen } from '../features/worktreeReview';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 import { ProductCommandBar } from './ProductCommandBar';
 import {
@@ -133,7 +133,7 @@ export interface AppProps {
   readonly productDecisionClient?: ProductDecisionClient;
   /** Product-owned decision correction conversation boundary; it is never a general chat client. */
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
-  /** Product capability; omitted only from the child instance it launches. */
+  /** Product Worktree Review boundary. Product composition supplies this in every build profile. */
   readonly worktreeReviewClient?: WorktreeReviewClient;
   readonly initialSurface?: ApplicationSurface;
 }
@@ -221,8 +221,8 @@ export function App({
     [
       fileReviewSource,
       harnessManagementPreviewSurface,
-      worktreeReviewClient,
       productDecisionClient,
+      worktreeReviewClient,
     ],
   );
   const initialNavigationDestination: ProductNavigationDestination =
@@ -900,7 +900,7 @@ export function App({
               Files &amp; diffs
             </button>
           ) : null}
-          {(nativeProfileClient || worktreeReviewClient) && (
+          {nativeProfileClient && (
             <button
               className={surface === 'native-settings' ? 'active' : undefined}
               type="button"
@@ -1045,11 +1045,8 @@ export function App({
           onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
           onNavigateToProduct={navigateToProductLocation}
         />
-      ) : surface === 'native-settings' && (nativeProfileClient || worktreeReviewClient) ? (
-        <TechnicalSettingsView
-          nativeProfileClient={nativeProfileClient}
-          worktreeReviewClient={worktreeReviewClient}
-        />
+      ) : surface === 'native-settings' && nativeProfileClient ? (
+        <TechnicalSettingsView nativeProfileClient={nativeProfileClient} />
       ) : (
         harnessManagementPreviewSurface
       )}

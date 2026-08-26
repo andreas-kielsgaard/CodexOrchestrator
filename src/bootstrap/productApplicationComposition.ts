@@ -26,13 +26,10 @@ import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
-import { tauriWorktreeReviewClient } from '../infrastructure/tauriWorktreeReview';
+import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
-export function createProductApplicationComposition(options?: {
-  /** The launched review instance must not offer a launcher for another review instance. */
-  readonly includeWorktreeReview?: boolean;
-}): AppProps {
+export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
     epicOriginProjectClient: tauriEpicOriginProjectClient,
@@ -47,9 +44,7 @@ export function createProductApplicationComposition(options?: {
       createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,
     productDecisionCorrectionClient: tauriProductDecisionCorrectionClient,
-    ...(options?.includeWorktreeReview === false
-      ? {}
-      : { worktreeReviewClient: tauriWorktreeReviewClient }),
+    worktreeReviewClient: tauriWorktreeReview,
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,

@@ -1,4 +1,4 @@
-use crate::repository_context::{FullRefName, RepositoryContext};
+use crate::repository_context::{ObjectId, RepositoryContext};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -40,7 +40,7 @@ struct EpicOriginBranchView {
 #[derive(Clone, Debug)]
 struct LocalBranch {
     name: String,
-    revision: String,
+    revision: ObjectId,
 }
 
 #[tauri::command]
@@ -71,12 +71,8 @@ fn inspect_project(project_path: &Path) -> Result<EpicOriginProjectView, String>
         .unwrap_or("Project")
         .to_owned();
     let path = project_path.to_string_lossy().into_owned();
-    let repository = match RepositoryContext::discover_git().and_then(|context| {
-        context
-            .repository(&project_path)
-            .map(|repository| (context, repository))
-    }) {
-        Ok(value) => value,
+    let context = match RepositoryContext::discover() {
+        Ok(context) => context,
         Err(_) => {
             return Ok(EpicOriginProjectView {
                 name,
@@ -87,12 +83,25 @@ fn inspect_project(project_path: &Path) -> Result<EpicOriginProjectView, String>
             });
         }
     };
-    let (context, repository) = repository;
+    let repository = match context.identities().inspect(&project_path) {
+        Ok(repository) => repository,
+        Err(_) => {
+            return Ok(EpicOriginProjectView {
+                name,
+                path,
+                git_detected: false,
+                repository_root: None,
+                branches: Vec::new(),
+            });
+        }
+    };
     let repository_root = repository.top_level.path().to_path_buf();
     let branches = local_branches(&context, &repository_root)?;
     let current = context
-        .current_branch(&repository_root)
-        .map_err(|error| error.to_string())?;
+        .references()
+        .current_head_ref(&repository_root)
+        .map_err(|error| error.to_string())?
+        .and_then(|reference| reference.branch_name().map(str::to_owned));
     let baseline = baseline_branch(&context, &repository_root, &branches, current.as_deref());
     let views = branches
         .iter()
@@ -121,12 +130,15 @@ fn local_branches(
     repository_root: &Path,
 ) -> Result<Vec<LocalBranch>, String> {
     let mut branches = context
+        .references()
         .local_branches(repository_root)
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(|(name, revision)| LocalBranch {
-            name,
-            revision: revision.as_str().to_owned(),
+        .filter_map(|branch| {
+            Some(LocalBranch {
+                name: branch.full_name.branch_name()?.to_owned(),
+                revision: branch.object_id,
+            })
         })
         .collect::<Vec<_>>();
     branches.sort_by(|left, right| left.name.cmp(&right.name));
@@ -139,14 +151,12 @@ fn baseline_branch(
     branches: &[LocalBranch],
     current: Option<&str>,
 ) -> String {
-    let origin_head = FullRefName::parse("refs/remotes/origin/HEAD")
+    let origin_head = context
+        .references()
+        .remote_default_branch(repository_root)
         .ok()
-        .and_then(|reference| {
-            context
-                .symbolic_ref_short(repository_root, &reference)
-                .ok()
-                .flatten()
-        })
+        .flatten()
+        .map(|reference| reference.display_name().to_owned())
         .and_then(|value| value.strip_prefix("origin/").map(str::to_owned));
     let baseline = [
         origin_head.as_deref(),
@@ -174,35 +184,41 @@ fn branch_view(
     if branch.name == baseline {
         return Ok(EpicOriginBranchView {
             name: branch.name.clone(),
-            revision: abbreviate(&branch.revision),
+            revision: abbreviate(branch.revision.as_str()),
             parent_name: None,
             relationship: "related",
             ahead: 0,
             behind: 0,
-            fork_revision: abbreviate(&branch.revision),
+            fork_revision: abbreviate(branch.revision.as_str()),
             is_current: current == Some(branch.name.as_str()),
             is_baseline: true,
         });
     }
+    let baseline_revision = branches
+        .iter()
+        .find(|candidate| candidate.name == baseline)
+        .map(|candidate| &candidate.revision)
+        .ok_or_else(|| "The baseline branch is unavailable.".to_owned())?;
     let divergence = context
-        .divergence(repository_root, baseline, &branch.name)
+        .commits()
+        .divergence(repository_root, baseline_revision, &branch.revision)
         .map_err(|error| error.to_string())?;
     let Some(fork_revision) = divergence.merge_base else {
         return Ok(EpicOriginBranchView {
             name: branch.name.clone(),
-            revision: abbreviate(&branch.revision),
+            revision: abbreviate(branch.revision.as_str()),
             parent_name: None,
             relationship: "unrelated",
             ahead: 0,
             behind: 0,
-            fork_revision: abbreviate(&branch.revision),
+            fork_revision: abbreviate(branch.revision.as_str()),
             is_current: current == Some(branch.name.as_str()),
             is_baseline: false,
         });
     };
     Ok(EpicOriginBranchView {
         name: branch.name.clone(),
-        revision: abbreviate(&branch.revision),
+        revision: abbreviate(branch.revision.as_str()),
         parent_name: nearest_parent(context, repository_root, branch, branches, baseline),
         relationship: "related",
         ahead: divergence.ahead,
@@ -225,13 +241,15 @@ fn nearest_parent(
         .filter(|candidate| candidate.name != branch.name && candidate.revision != branch.revision)
         .filter_map(|candidate| {
             if !context
-                .is_ancestor(repository_root, &candidate.name, &branch.name)
+                .commits()
+                .is_ancestor(repository_root, &candidate.revision, &branch.revision)
                 .ok()?
             {
                 return None;
             }
             let distance = context
-                .commit_count(repository_root, &candidate.name, &branch.name)
+                .commits()
+                .commit_count(repository_root, &candidate.revision, &branch.revision)
                 .ok()?;
             Some((distance, candidate.name.clone()))
         })

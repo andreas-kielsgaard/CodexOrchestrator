@@ -22,9 +22,9 @@ mod product_decisions;
 mod repository_context;
 mod runtime;
 mod storage;
-mod worktree_review;
 #[allow(dead_code)]
-mod worktree_runtime;
+pub(crate) mod worktree_application;
+mod worktree_review;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 
