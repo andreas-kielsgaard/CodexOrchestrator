@@ -1,6 +1,10 @@
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tauri::State;
 
 const READ_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -68,6 +72,12 @@ pub(crate) struct DiscoveredWorktreeTargetSource {
     database_path: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CurrentBranchWorktree {
+    path: String,
+    branch_name: String,
+}
+
 impl DiscoveredWorktreeTargetSource {
     pub(crate) fn new(database_path: PathBuf) -> Self {
         Self { database_path }
@@ -75,7 +85,9 @@ impl DiscoveredWorktreeTargetSource {
 
     pub(crate) fn list(&self) -> Result<Vec<ResolvedRepoBranchWorktreeTarget>, String> {
         let connection = self.open_read_only_connection()?;
-        query_discovered_worktree_targets(&connection)
+        let candidates = query_discovered_worktree_targets(&connection)?;
+        drop(connection);
+        filter_current_worktree_targets(candidates, discover_current_branch_worktrees)
     }
 
     fn open_read_only_connection(&self) -> Result<Connection, String> {
@@ -138,6 +150,58 @@ fn query_discovered_worktree_targets(
         .map_err(|error| format!("Unable to query discovered worktree targets: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to read discovered worktree targets: {error}"))?;
+    Ok(targets)
+}
+
+fn discover_current_branch_worktrees(
+    repository_root: &str,
+) -> Result<Vec<CurrentBranchWorktree>, String> {
+    Ok(crate::git_worktree_facts(repository_root)?
+        .into_iter()
+        .filter(|worktree| Path::new(&worktree.path).is_dir())
+        .filter_map(|worktree| {
+            worktree
+                .branch_name
+                .map(|branch_name| CurrentBranchWorktree {
+                    path: worktree.path,
+                    branch_name,
+                })
+        })
+        .collect())
+}
+
+fn filter_current_worktree_targets(
+    candidates: Vec<ResolvedRepoBranchWorktreeTarget>,
+    mut discover: impl FnMut(&str) -> Result<Vec<CurrentBranchWorktree>, String>,
+) -> Result<Vec<ResolvedRepoBranchWorktreeTarget>, String> {
+    let mut current_by_repository_root = HashMap::<String, Vec<CurrentBranchWorktree>>::new();
+    let mut targets = Vec::new();
+
+    for candidate in candidates {
+        let repository_key = crate::normalize_path_for_compare(&candidate.repository.root_path);
+        if !current_by_repository_root.contains_key(&repository_key) {
+            let current = discover(&candidate.repository.root_path).map_err(|error| {
+                format!(
+                    "Unable to discover current worktrees for {}: {error}",
+                    candidate.repository.root_path
+                )
+            })?;
+            current_by_repository_root.insert(repository_key.clone(), current);
+        }
+
+        let is_current = current_by_repository_root
+            .get(&repository_key)
+            .is_some_and(|current| {
+                current.iter().any(|worktree| {
+                    worktree.branch_name == candidate.branch.name
+                        && crate::same_filesystem_path(&worktree.path, &candidate.worktree.path)
+                })
+            });
+        if is_current {
+            targets.push(candidate);
+        }
+    }
+
     Ok(targets)
 }
 
