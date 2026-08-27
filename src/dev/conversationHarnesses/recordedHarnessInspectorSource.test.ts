@@ -15,6 +15,7 @@ describe('recorded Harness Management source', () => {
       sessionId: recordedHarnessInspectorSessionId,
       harnessKey: 'epic_plan_builder',
       workingCopy: null,
+      sessionWorkingCopy: null,
       versionControl: {
         support: 'recorded_preview',
         pushedRevision: 4,
@@ -201,6 +202,133 @@ describe('recorded Harness Management source', () => {
       'replacement_key',
     );
     expect(reopened.snapshot.agentIdentity).toEqual(identity);
+  });
+
+  it('keeps a Session customization in memory and discards it without touching the Harness draft', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    if (initial.kind !== 'available' || !source.dispatch)
+      throw new Error('Expected recorded Harness management.');
+    const base = initial.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
+    if (!base) throw new Error('Expected Harness version 3.');
+
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_session_edit', baseRevision: 3 },
+    });
+
+    expect(started).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        workingCopy: null,
+        sessionWorkingCopy: { baseRevision: 3, dirty: true },
+      },
+    });
+    if (started.kind !== 'available' || !started.snapshot.sessionWorkingCopy)
+      throw new Error('Expected a Session working copy.');
+
+    const saved = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'save_session_working_copy',
+        configuration: {
+          ...started.snapshot.sessionWorkingCopy.configuration,
+          promptPrefix: {
+            ...started.snapshot.sessionWorkingCopy.configuration.promptPrefix,
+            content: 'Only this recorded Session receives this context.',
+          },
+        },
+      },
+    });
+    const reopened = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    const peer = await source.load({ sessionId: recordedHarnessInspectorPeerSessionId });
+
+    expect(saved).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        sessionWorkingCopy: {
+          configuration: {
+            promptPrefix: { content: 'Only this recorded Session receives this context.' },
+          },
+        },
+      },
+    });
+    expect(reopened).toMatchObject({
+      kind: 'available',
+      snapshot: { sessionWorkingCopy: { baseRevision: 3 } },
+    });
+    expect(peer).toMatchObject({ kind: 'available', snapshot: { sessionWorkingCopy: null } });
+
+    const discarded = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'discard_session_working_copy' },
+    });
+    expect(discarded).toMatchObject({
+      kind: 'available',
+      snapshot: { workingCopy: null, sessionWorkingCopy: null },
+    });
+  });
+
+  it('publishes a Session customization as a version owned only by that recorded Session', async () => {
+    const source = createRecordedHarnessManagementSource();
+    const initial = await source.load({ sessionId: recordedHarnessInspectorSessionId });
+    if (initial.kind !== 'available' || !source.dispatch)
+      throw new Error('Expected recorded Harness management.');
+
+    const started = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'start_session_edit', baseRevision: 3 },
+    });
+    if (started.kind !== 'available' || !started.snapshot.sessionWorkingCopy)
+      throw new Error('Expected a Session working copy.');
+    await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: {
+        kind: 'save_session_working_copy',
+        configuration: {
+          ...started.snapshot.sessionWorkingCopy.configuration,
+          identity: {
+            ...started.snapshot.sessionWorkingCopy.configuration.identity,
+            name: 'Avery Session Harness',
+          },
+        },
+      },
+    });
+
+    const published = await source.dispatch({
+      sessionId: recordedHarnessInspectorSessionId,
+      command: { kind: 'publish_session_override', expectedBaseRevision: 3 },
+    });
+    const peer = await source.load({ sessionId: recordedHarnessInspectorPeerSessionId });
+
+    expect(published).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        sessionWorkingCopy: null,
+        versionControl: { pushedRevision: 4 },
+        sessionBinding: {
+          state: 'current',
+          appliedRevision: 5,
+          desiredRevision: null,
+        },
+      },
+    });
+    if (published.kind !== 'available') throw new Error('Expected published customization.');
+    expect(published.snapshot.versionControl.versions.at(-1)).toMatchObject({
+      revision: 5,
+      label: 'Session customization from v3',
+      status: 'committed',
+      activeSessionCount: 1,
+      configuration: { identity: { name: 'Avery Session Harness' } },
+    });
+    expect(peer).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        sessionWorkingCopy: null,
+        sessionBinding: { appliedRevision: 3 },
+        versionControl: { versions: [{ revision: 3 }, { revision: 4 }] },
+      },
+    });
   });
 
   it('keeps commit, push, and next-prompt Session changes as distinct recorded commands', async () => {

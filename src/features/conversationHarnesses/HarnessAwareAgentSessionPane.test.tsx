@@ -168,6 +168,28 @@ describe('HarnessAwareAgentSessionPane', () => {
     await waitFor(() => expect(screen.getByLabelText('Product conversation')).toBeVisible());
   });
 
+  it('enters the recorded in-memory Session customization instead of staying in a starting state', async () => {
+    render(
+      <HarnessAwareAgentSessionPane
+        sessionId={recordedHarnessInspectorSessionId}
+        source={createRecordedHarnessManagementSource()}
+      >
+        <div>Conversation body</div>
+      </HarnessAwareAgentSessionPane>,
+    );
+    await openHarnessManagement();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customize this Session' }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Viewed harness version')).toHaveValue('session-draft'),
+    );
+    expect(screen.queryByRole('option', { name: 'Starting Session customization...' })).toBeNull();
+    expect(screen.getByText('Session draft · in memory · based on v3')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Publish for this Session' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeVisible();
+  });
+
   it('inspects and edits the Harness name subset without renaming the existing Session', async () => {
     render(
       <HarnessAwareAgentSessionPane
