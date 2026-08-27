@@ -59,6 +59,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         transaction
+            .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Harness catalog schema: {error}"))?;
+        transaction
             .commit()
             .map_err(|error| format!("Unable to commit active v45 schema evolution: {error}"))?;
         return Ok(());
@@ -317,6 +320,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
                 .map_err(|error| format!("Unable to migrate Harness binding schema: {error}"))?;
         }
+        transaction
+            .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Harness catalog schema: {error}"))?;
         if current_version <= 44 {
             let agent_sessions_present = transaction
                 .query_row(
@@ -446,6 +452,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
     transaction
+        .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness catalog schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
@@ -518,13 +527,22 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             |row| row.get::<_, bool>(0),
         )
         .map_err(|error| format!("Unable to inspect active Harness binding schema: {error}"))?;
+    let harness_catalog_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('harnesses','harness_versions','harness_drafts','harness_version_replacements')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 4)
+        .map_err(|error| format!("Unable to inspect active Harness catalog schema: {error}"))?;
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && workflow_schema_is_present
         && workflow_role_schema_is_present
         && workflow_instance_schema_is_present
-        && harness_binding_schema_is_present)
+        && harness_binding_schema_is_present
+        && harness_catalog_schema_is_present)
 }
 use std::time::Duration;
 

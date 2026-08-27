@@ -125,6 +125,10 @@ pub(crate) fn run() {
                 &database_path,
                 managed_mcp_upstreams.clone(),
             )?;
+            let harness_catalog =
+                crate::harness_engine::catalog_service::HarnessCatalogService::open(
+                    &database_path,
+                )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 &database_path,
@@ -205,6 +209,9 @@ pub(crate) fn run() {
             app.manage(crate::harness_engine::HarnessEngineTauriState::new(
                 harness_engine,
             ));
+            app.manage(
+                crate::harness_engine::transport::HarnessCatalogTauriState::new(harness_catalog),
+            );
             app.manage(crate::native_profiles::NativeProfileTauriState::new(
                 native_profiles,
             ));
@@ -375,6 +382,15 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::harness_engine::transport::list_harnesses,
+            crate::harness_engine::transport::load_harness,
+            crate::harness_engine::transport::create_harness,
+            crate::harness_engine::transport::rename_harness,
+            crate::harness_engine::transport::save_harness_draft,
+            crate::harness_engine::transport::publish_harness_draft,
+            crate::harness_engine::transport::publish_session_harness_override,
+            crate::harness_engine::transport::order_harness_version_replacement,
+            crate::harness_engine::transport::resolve_harness_version,
             crate::workflows::transport::list_workflow_types,
             crate::workflows::transport::list_workflow_roles,
             crate::workflows::transport::list_workflow_mcp_components,
