@@ -9,7 +9,7 @@ use crate::agent_sessions::{
     application::{
         AgentSessionApplication, CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
         SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
-        SendIdempotentApplicationAgentSessionMessageCommand,
+        SendIdempotentApplicationAgentSessionMessageCommand, UpdateAgentSessionHarnessCommand,
     },
     domain::{AgentRuntimeOptions, AgentSessionId},
 };
@@ -64,6 +64,7 @@ impl WorkflowNodeSessions {
             .ok_or_else(|| "The Workflow node is absent from the instance recipe.".to_string())?;
         self.deliver(Delivery {
             workflow_instance_id,
+            workflow_type_id: &instance.recipe.workflow_type_id,
             recipe_id: &instance.recipe.id,
             node: &node,
             worktree_root: &instance.target.worktree.path,
@@ -94,6 +95,7 @@ impl WorkflowNodeSessions {
             })?;
         self.deliver(Delivery {
             workflow_instance_id: &trigger.workflow_instance_id,
+            workflow_type_id: &trigger.recipe.workflow_type_id,
             recipe_id: &trigger.recipe.id,
             node,
             worktree_root: &trigger.worktree_root,
@@ -168,16 +170,24 @@ impl WorkflowNodeSessions {
                     },
                 })
                 .map_err(|error| ("session_creation", error.to_string()))?;
-            self.harnesses
+            let harness_version = self
+                .harnesses
                 .bind_workflow_session(BindWorkflowSessionHarness {
                     session_id: session.clone(),
                     runtime_instance_id: invocation.as_str().to_string(),
                     workflow_instance_id: request.workflow_instance_id.to_string(),
+                    workflow_type_id: request.workflow_type_id.to_string(),
                     recipe_id: request.recipe_id.to_string(),
                     node_id: request.node.id.clone(),
                     harness: request.node.harness.clone(),
                 })
                 .map_err(|reason| ("harness_binding", reason))?;
+            self.sessions
+                .update_session_harness(UpdateAgentSessionHarnessCommand {
+                    session_id: session.clone(),
+                    harness_version: Some(harness_version),
+                })
+                .map_err(|error| ("harness_binding", error.to_string()))?;
         }
         let associated_at = Utc::now().to_rfc3339();
         if let Some(activation_id) = request.connection_activation_id {
@@ -301,6 +311,7 @@ impl WorkflowNodeSessions {
 
 struct Delivery<'a> {
     workflow_instance_id: &'a str,
+    workflow_type_id: &'a str,
     recipe_id: &'a str,
     node: &'a EffectiveWorkflowNodeConfig,
     worktree_root: &'a str,

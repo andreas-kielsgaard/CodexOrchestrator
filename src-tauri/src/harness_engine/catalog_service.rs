@@ -1,5 +1,8 @@
 use super::{
-    catalog::{next_version, HarnessDraft, HarnessRecord, HarnessVersion, ResolvedHarnessVersion},
+    catalog::{
+        configuration_digest, next_version, HarnessDraft, HarnessRecord, HarnessVersion,
+        ResolvedHarnessVersion,
+    },
     catalog_repository::{HarnessCatalogRepository, SqliteHarnessCatalogRepository},
     configuration::{HarnessConfiguration, HarnessMetadata},
     domain::{HarnessId, HarnessVersionRef, HarnessVersionReplacement, HarnessVersionScope},
@@ -7,12 +10,16 @@ use super::{
 };
 use crate::agent_sessions::{application::SessionHarnessVersionResolver, domain::AgentSessionId};
 use chrono::Utc;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct HarnessCatalogService {
     repository: Arc<dyn HarnessCatalogRepository>,
+    workflow_materialization_lane: Arc<Mutex<()>>,
 }
 
 impl HarnessCatalogService {
@@ -23,7 +30,15 @@ impl HarnessCatalogService {
     }
 
     pub(crate) fn new(repository: Arc<dyn HarnessCatalogRepository>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            workflow_materialization_lane: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> Self {
+        Self::new(Arc::new(SqliteHarnessCatalogRepository::in_memory()))
     }
 
     pub(crate) fn create_harness(
@@ -55,6 +70,61 @@ impl HarnessCatalogService {
             0,
         )?;
         Ok(harness)
+    }
+
+    /// Materializes one activated Workflow node as an ordinary reusable Harness. Repeated
+    /// launches with the same effective configuration reuse the latest immutable version.
+    pub(crate) fn materialize_workflow_harness(
+        &self,
+        harness_id: HarnessId,
+        name: String,
+        configuration: HarnessConfiguration,
+    ) -> Result<HarnessVersionRef, String> {
+        let _guard = self
+            .workflow_materialization_lane
+            .lock()
+            .map_err(|_| "Workflow Harness materialization is unavailable.".to_string())?;
+        if name.trim().is_empty() {
+            return Err("Workflow Harness name must not be empty.".into());
+        }
+        configuration.validate()?;
+        let now = Utc::now();
+        match self.repository.harness(&harness_id)? {
+            Some(existing) if existing.metadata.name != name => {
+                self.repository.update_metadata(
+                    &harness_id,
+                    &HarnessMetadata { name: name.clone() },
+                    now,
+                )?;
+            }
+            Some(_) => {}
+            None => self.repository.create_harness(&HarnessRecord {
+                id: harness_id.clone(),
+                metadata: HarnessMetadata { name },
+                created_at: now,
+                updated_at: now,
+            })?,
+        }
+
+        let versions = self.repository.versions(&harness_id)?;
+        let digest = configuration_digest(&configuration)?;
+        if let Some(latest) = versions
+            .iter()
+            .rev()
+            .find(|version| version.scope == HarnessVersionScope::Reusable)
+        {
+            if latest.configuration_digest == digest {
+                return Ok(latest.reference.clone());
+            }
+        }
+        let version = HarnessVersion::build(
+            HarnessVersionRef::new(harness_id, next_version(&versions)?),
+            HarnessVersionScope::Reusable,
+            configuration,
+            now,
+        )?;
+        self.repository.publish(&version, None)?;
+        Ok(version.reference)
     }
 
     pub(crate) fn list(&self) -> Result<Vec<HarnessRecord>, String> {
@@ -248,7 +318,6 @@ impl SessionHarnessVersionResolver for HarnessCatalogService {
 mod tests {
     use super::*;
     use crate::harness_engine::{
-        catalog_repository::SqliteHarnessCatalogRepository,
         configuration::{
             HarnessApprovalPolicy, HarnessContextCompressionDelivery, HarnessDiscoveryPolicy,
             HarnessIdentityAssignmentPolicy, HarnessInitialDelivery, HarnessPromptPrefixConfiguration,
@@ -289,7 +358,51 @@ mod tests {
     }
 
     fn service() -> HarnessCatalogService {
-        HarnessCatalogService::new(Arc::new(SqliteHarnessCatalogRepository::in_memory()))
+        HarnessCatalogService::in_memory()
+    }
+
+    #[test]
+    fn workflow_materialization_reuses_unchanged_configuration_and_versions_real_changes() {
+        let service = service();
+        let harness_id = HarnessId::new("harness-workflow-stable").unwrap();
+
+        let first = service
+            .materialize_workflow_harness(
+                harness_id.clone(),
+                "Workflow reviewer".into(),
+                configuration("Version one"),
+            )
+            .unwrap();
+        let session_override = service
+            .publish_session_override(
+                &harness_id,
+                "session-1".into(),
+                configuration("Session override"),
+            )
+            .unwrap();
+        let repeated = service
+            .materialize_workflow_harness(
+                harness_id.clone(),
+                "Renamed Workflow reviewer".into(),
+                configuration("Version one"),
+            )
+            .unwrap();
+        let second = service
+            .materialize_workflow_harness(
+                harness_id.clone(),
+                "Renamed Workflow reviewer".into(),
+                configuration("Version two"),
+            )
+            .unwrap();
+
+        assert_eq!(first, repeated);
+        assert_eq!(first.version().get(), 1);
+        assert_eq!(session_override.reference.version().get(), 2);
+        assert_eq!(second.version().get(), 3);
+        let (record, draft, versions) = service.load(&harness_id).unwrap();
+        assert_eq!(record.metadata.name, "Renamed Workflow reviewer");
+        assert!(draft.is_none());
+        assert_eq!(versions.len(), 3);
     }
 
     #[test]

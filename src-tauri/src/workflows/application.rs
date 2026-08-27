@@ -183,13 +183,17 @@ pub(crate) struct BindWorkflowSessionHarness {
     pub(crate) session_id: AgentSessionId,
     pub(crate) runtime_instance_id: String,
     pub(crate) workflow_instance_id: String,
+    pub(crate) workflow_type_id: String,
     pub(crate) recipe_id: String,
     pub(crate) node_id: String,
     pub(crate) harness: WorkflowHarnessConfig,
 }
 
 pub(crate) trait WorkflowSessionHarnessBinder: Send + Sync {
-    fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String>;
+    fn bind_workflow_session(
+        &self,
+        request: BindWorkflowSessionHarness,
+    ) -> Result<crate::harness_engine::domain::HarnessVersionRef, String>;
 }
 
 pub(crate) struct WorkflowApplication {
@@ -1200,20 +1204,47 @@ mod tests {
     struct RecordingHarnessBinder;
 
     impl WorkflowSessionHarnessBinder for RecordingHarnessBinder {
-        fn bind_workflow_session(&self, _: BindWorkflowSessionHarness) -> Result<(), String> {
-            Ok(())
+        fn bind_workflow_session(
+            &self,
+            _: BindWorkflowSessionHarness,
+        ) -> Result<crate::harness_engine::domain::HarnessVersionRef, String> {
+            Ok(recording_harness_reference())
         }
     }
 
     struct ReceiverFailingHarnessBinder;
 
     impl WorkflowSessionHarnessBinder for ReceiverFailingHarnessBinder {
-        fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String> {
+        fn bind_workflow_session(
+            &self,
+            request: BindWorkflowSessionHarness,
+        ) -> Result<crate::harness_engine::domain::HarnessVersionRef, String> {
             if request.node_id == "sender" {
-                Ok(())
+                Ok(recording_harness_reference())
             } else {
                 Err("receiver Harness binding failed".to_string())
             }
+        }
+    }
+
+    fn recording_harness_reference() -> crate::harness_engine::domain::HarnessVersionRef {
+        crate::harness_engine::domain::HarnessVersionRef::new(
+            crate::harness_engine::domain::HarnessId::new("harness-workflow-test").unwrap(),
+            crate::harness_engine::domain::HarnessVersionNumber::new(1).unwrap(),
+        )
+    }
+
+    struct RecordingHarnessResolver;
+
+    impl crate::agent_sessions::application::SessionHarnessVersionResolver
+        for RecordingHarnessResolver
+    {
+        fn resolve_session_harness_version(
+            &self,
+            _: &AgentSessionId,
+            requested: &crate::harness_engine::domain::HarnessVersionRef,
+        ) -> Result<crate::harness_engine::domain::HarnessVersionRef, String> {
+            Ok(requested.clone())
         }
     }
 
@@ -1249,14 +1280,17 @@ mod tests {
             Arc::new(SqliteAgentSessionRepository::new(agent_connection).unwrap());
         let runtime = Arc::new(RecordingRuntime::default());
         let providers = Arc::new(SystemAgentSessionProviders);
-        let sessions = Arc::new(AgentSessionApplication::new(
-            agent_repository,
-            runtime.clone(),
-            Arc::new(NoopNotifier),
-            providers.clone(),
-            providers,
-            Some("codex-test".to_string()),
-        ));
+        let sessions = Arc::new(
+            AgentSessionApplication::new(
+                agent_repository,
+                runtime.clone(),
+                Arc::new(NoopNotifier),
+                providers.clone(),
+                providers,
+                Some("codex-test".to_string()),
+            )
+            .with_session_harness_version_resolver(Arc::new(RecordingHarnessResolver)),
+        );
         let workflows = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
         let application = WorkflowApplication::new(workflows.clone(), sessions, harnesses);
         (directory, workflows, runtime, application)
@@ -1398,6 +1432,10 @@ mod tests {
             history.session.working_directory.as_deref(),
             Some(directory.path().to_string_lossy().as_ref())
         );
+        assert_eq!(
+            history.session.harness_version,
+            Some(recording_harness_reference())
+        );
         assert_eq!(runtime.launches.lock().unwrap().len(), 1);
     }
 
@@ -1465,14 +1503,17 @@ mod tests {
         );
         let runtime = Arc::new(RecordingRuntime::default());
         let providers = Arc::new(SystemAgentSessionProviders);
-        let sessions = Arc::new(AgentSessionApplication::new(
-            agent_repository.clone(),
-            runtime.clone(),
-            Arc::new(NoopNotifier),
-            providers.clone(),
-            providers,
-            Some("codex-test".to_string()),
-        ));
+        let sessions = Arc::new(
+            AgentSessionApplication::new(
+                agent_repository.clone(),
+                runtime.clone(),
+                Arc::new(NoopNotifier),
+                providers.clone(),
+                providers,
+                Some("codex-test".to_string()),
+            )
+            .with_session_harness_version_resolver(Arc::new(RecordingHarnessResolver)),
+        );
         let workflow_repository = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
         let definition = workflow_repository
             .create_workflow_type("Connection execution")

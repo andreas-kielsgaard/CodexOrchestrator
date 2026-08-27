@@ -121,14 +121,15 @@ pub(crate) fn run() {
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
-            let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
-                &database_path,
-                managed_mcp_upstreams.clone(),
-            )?;
             let harness_catalog =
                 crate::harness_engine::catalog_service::HarnessCatalogService::open(
                     &database_path,
                 )?;
+            let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
+                &database_path,
+                managed_mcp_upstreams.clone(),
+                harness_catalog.clone(),
+            )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 &database_path,

@@ -9,6 +9,7 @@ pub(crate) mod resolution;
 pub(crate) mod service;
 pub(crate) mod sidecar;
 pub(crate) mod transport;
+pub(crate) mod workflow_adapter;
 
 pub(crate) use domain::ManagedMcpUpstreamDescriptor;
 pub(crate) use service::{

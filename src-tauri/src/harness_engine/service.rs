@@ -1,4 +1,5 @@
 use super::{
+    catalog_service::HarnessCatalogService,
     domain::{
         binding_digest, HarnessBindingRecord, HarnessBindingStage, HarnessMcpExposurePlan,
         HarnessMediationPlan, HarnessToolAccess, ManagedMcpUpstreamDescriptor,
@@ -7,6 +8,7 @@ use super::{
     proxy::proxy_url,
     repository::{HarnessBindingRepository, SqliteHarnessBindingRepository},
     sidecar::{HarnessSidecarClient, ProcessHarnessSidecar},
+    workflow_adapter::adapt_workflow_harness,
 };
 use crate::{
     agent_sessions::{
@@ -139,27 +141,31 @@ pub(crate) struct HarnessEngineService {
     repository: Arc<dyn HarnessBindingRepository>,
     sidecar: Arc<dyn HarnessSidecarClient>,
     upstreams: Arc<ManagedMcpUpstreamRegistry>,
+    catalog: HarnessCatalogService,
 }
 
 impl HarnessEngineService {
     pub(crate) fn open_system(
         database_path: &Path,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
+        catalog: HarnessCatalogService,
     ) -> Result<Arc<Self>, String> {
         let repository = Arc::new(SqliteHarnessBindingRepository::open(database_path)?);
         let sidecar = ProcessHarnessSidecar::start_system()?;
-        Self::new(repository, sidecar, upstreams)
+        Self::new(repository, sidecar, upstreams, catalog)
     }
 
     fn new(
         repository: Arc<dyn HarnessBindingRepository>,
         sidecar: Arc<dyn HarnessSidecarClient>,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
+        catalog: HarnessCatalogService,
     ) -> Result<Arc<Self>, String> {
         let service = Arc::new(Self {
             repository,
             sidecar,
             upstreams,
+            catalog,
         });
         Ok(service)
     }
@@ -268,10 +274,23 @@ impl HarnessEngineService {
 }
 
 impl WorkflowSessionHarnessBinder for HarnessEngineService {
-    fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String> {
+    fn bind_workflow_session(
+        &self,
+        request: BindWorkflowSessionHarness,
+    ) -> Result<super::domain::HarnessVersionRef, String> {
         let harness_snapshot = serde_json::to_string(&request.harness)
             .map_err(|error| format!("Unable to materialize Workflow Harness: {error}"))?;
         let plan = self.compile_plan(&request.harness)?;
+        let canonical = adapt_workflow_harness(
+            &request.workflow_type_id,
+            &request.node_id,
+            &request.harness,
+        )?;
+        let harness_version = self.catalog.materialize_workflow_harness(
+            canonical.id,
+            canonical.name,
+            canonical.configuration,
+        )?;
         let mediation_plan = serde_json::to_string(&plan)
             .map_err(|error| format!("Unable to compile Harness mediation plan: {error}"))?;
         let prepared_at = Utc::now().to_rfc3339();
@@ -294,7 +313,7 @@ impl WorkflowSessionHarnessBinder for HarnessEngineService {
         };
         self.repository.insert_prepared(&binding)?;
         self.complete_prepared_binding(&binding)?;
-        Ok(())
+        Ok(harness_version)
     }
 }
 
@@ -466,6 +485,22 @@ mod tests {
         )
     }
 
+    fn catalog() -> HarnessCatalogService {
+        HarnessCatalogService::in_memory()
+    }
+
+    fn workflow_harness(name: &str) -> WorkflowHarnessConfig {
+        let mut harness = WorkflowHarnessConfig::test_definition(
+            name,
+            "Application user authority.",
+            "Workflow instructions.",
+            "",
+            "",
+        );
+        harness.0.tools.schema_boundary = "Workflow tools.".into();
+        harness
+    }
+
     #[test]
     fn binding_is_persisted_then_bound_and_launch_receives_only_proxy_configuration() {
         let (_directory, repository) = repository();
@@ -481,17 +516,18 @@ mod tests {
             })
             .unwrap();
         let service =
-            HarnessEngineService::new(repository.clone(), sidecar.clone(), registry).unwrap();
-        service
+            HarnessEngineService::new(repository.clone(), sidecar.clone(), registry, catalog())
+                .unwrap();
+        let canonical_reference = service
             .bind_workflow_session(BindWorkflowSessionHarness {
                 session_id: AgentSessionId::new("session-1").unwrap(),
                 runtime_instance_id: "invocation-1".into(),
                 workflow_instance_id: "workflow-instance-1".into(),
+                workflow_type_id: "workflow-type-1".into(),
                 recipe_id: "recipe-1".into(),
                 node_id: "node-1".into(),
                 harness: {
-                    let mut harness =
-                        WorkflowHarnessConfig::test_definition("Review", "", "", "", "");
+                    let mut harness = workflow_harness("Review");
                     harness.0.tools.mcp_servers =
                         vec![crate::workflows::domain::WorkflowMcpServerExposure {
                             server_name: "plan_builder".into(),
@@ -503,6 +539,15 @@ mod tests {
                 },
             })
             .unwrap();
+        assert_eq!(canonical_reference.version().get(), 1);
+        assert_eq!(
+            canonical_reference.harness_id(),
+            &super::super::workflow_adapter::stable_workflow_harness_id(
+                "workflow-type-1",
+                "node-1",
+            )
+            .unwrap()
+        );
         let binding = repository
             .current_for_session("session-1")
             .unwrap()
@@ -547,6 +592,7 @@ mod tests {
             repository,
             Arc::new(FakeSidecar::default()),
             Arc::new(ManagedMcpUpstreamRegistry::default()),
+            catalog(),
         )
         .unwrap();
         let error = service
@@ -653,15 +699,17 @@ mod tests {
             repository.clone(),
             sidecar,
             Arc::new(ManagedMcpUpstreamRegistry::default()),
+            catalog(),
         )
         .unwrap();
         let request = BindWorkflowSessionHarness {
             session_id: AgentSessionId::new("session-1").unwrap(),
             runtime_instance_id: "invocation-1".into(),
             workflow_instance_id: "workflow-instance-1".into(),
+            workflow_type_id: "workflow-type-1".into(),
             recipe_id: "recipe-1".into(),
             node_id: "node-1".into(),
-            harness: WorkflowHarnessConfig::default(),
+            harness: workflow_harness("Review"),
         };
 
         assert!(service.bind_workflow_session(request).is_err());
@@ -703,6 +751,7 @@ mod tests {
             failing_repository,
             sidecar.clone(),
             Arc::new(ManagedMcpUpstreamRegistry::default()),
+            catalog(),
         )
         .unwrap();
 
@@ -711,9 +760,10 @@ mod tests {
                 session_id: AgentSessionId::new("session-1").unwrap(),
                 runtime_instance_id: "invocation-1".into(),
                 workflow_instance_id: "workflow-instance-1".into(),
+                workflow_type_id: "workflow-type-1".into(),
                 recipe_id: "recipe-1".into(),
                 node_id: "node-1".into(),
-                harness: WorkflowHarnessConfig::default(),
+                harness: workflow_harness("Review"),
             })
             .unwrap_err()
             .contains("persistence failure"));
