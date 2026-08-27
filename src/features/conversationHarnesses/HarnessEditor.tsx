@@ -17,7 +17,6 @@ import type {
   ConversationHarnessManagementRead,
   ConversationHarnessManagementSnapshot,
   HarnessEffectiveConfiguration,
-  HarnessModelPolicy,
   HarnessReasoningLevel,
   HarnessSkillPolicy,
   HarnessToolPolicy,
@@ -588,17 +587,14 @@ function AvailableHarnessManagement({
 
           <ManagementCard
             title="Models and reasoning"
-            description="Allow caller choices and constrain the reasoning range supported by each model."
+            description="Set optional preferences that are resolved against the application-wide model catalog."
             wide
           >
-            <ModelPolicy
+            <ModelPreferences
               configuration={configuration}
               snapshot={snapshot}
               editable={editable}
-              editMode={editMode}
-              selectedRevision={selectedRevision}
               onChange={saveConfiguration}
-              onCommand={onCommand}
             />
           </ManagementCard>
 
@@ -915,280 +911,65 @@ function PolicyCard({
   );
 }
 
-function ModelPolicy({
+function ModelPreferences({
   configuration,
   snapshot,
   editable,
-  editMode,
-  selectedRevision,
   onChange,
-  onCommand,
 }: {
   readonly configuration: HarnessEffectiveConfiguration;
   readonly snapshot: ConversationHarnessManagementSnapshot;
   readonly editable: boolean;
-  readonly editMode: boolean;
-  readonly selectedRevision: number | null;
   onChange(configuration: HarnessEffectiveConfiguration): void;
-  onCommand?(command: ConversationHarnessManagementCommand): void;
 }) {
   const models = snapshot.catalogs.models.items;
-  const configuredPolicy = policyFromConfiguration(configuration);
-  const delegatedPolicy = snapshot.modelChoices.delegatedPolicies.find(
-    (policy) => policy.revision === selectedRevision,
-  );
-  const harnessPolicy =
-    configuration.runtime.modelPolicyMode === 'delegated_shared' && delegatedPolicy
-      ? delegatedPolicy.policy
-      : configuredPolicy;
-  const harnessPolicyEditable = Boolean(
-    editable ||
-    (!editMode &&
-      selectedRevision !== null &&
-      configuration.runtime.modelPolicyMode === 'delegated_shared' &&
-      onCommand),
-  );
-  const updateHarnessPolicy = (policy: HarnessModelPolicy) => {
-    if (editable) {
-      onChange(configurationWithPolicy(configuration, policy));
-      return;
-    }
-    if (selectedRevision !== null)
-      onCommand?.({ kind: 'save_delegated_model_policy', revision: selectedRevision, policy });
-  };
-  const harnessPolicyInteractionBoundary =
-    selectedRevision === null
-      ? `draft:${snapshot.workingCopy?.baseRevision ?? 'starting'}:${editMode ? 'editing' : 'viewing'}`
-      : `revision:${selectedRevision}:${editMode ? 'editing' : 'viewing'}`;
+  const preferredModel = models.find((model) => model.id === configuration.runtime.defaultModel);
+  const reasoningOptions = preferredModel?.reasoningLevels ?? [];
 
   return (
     <div className="harness-management__model-policy">
-      {editMode && (
-        <label className="harness-management__model-mode">
-          <span>
-            <strong>Version specific</strong>
-            <small>
-              On fixes these choices in the revision. Off delegates them to its shared policy.
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            checked={configuration.runtime.modelPolicyMode === 'revision_owned'}
+      <div className="harness-management__defaults">
+        <ManagementField label="Preferred model">
+          <select
+            aria-label="Harness preferred model"
+            value={configuration.runtime.defaultModel ?? ''}
             disabled={!editable}
+            onChange={(event) => {
+              onChange({
+                ...configuration,
+                runtime: {
+                  ...configuration.runtime,
+                  defaultModel: event.target.value || null,
+                  defaultReasoning: null,
+                },
+              });
+            }}
+          >
+            <option value="">No preference</option>
+            {models.map((model) => (
+              <option value={model.id} key={model.id}>
+                {model.label}
+              </option>
+            ))}
+          </select>
+        </ManagementField>
+        <ManagementField label="Preferred reasoning">
+          <select
+            aria-label="Harness preferred reasoning"
+            value={configuration.runtime.defaultReasoning ?? ''}
+            disabled={!editable || !configuration.runtime.defaultModel}
             onChange={(event) =>
               onChange({
                 ...configuration,
                 runtime: {
                   ...configuration.runtime,
-                  modelPolicyMode: event.target.checked ? 'revision_owned' : 'delegated_shared',
+                  defaultReasoning: (event.target.value as HarnessReasoningLevel | '') || null,
                 },
               })
             }
-          />
-        </label>
-      )}
-      <section
-        className="harness-management__model-owner"
-        aria-label="Harness revision model policy"
-      >
-        <header>
-          <span>
-            <strong>Harness revision policy</strong>
-            <small>
-              {configuration.runtime.modelPolicyMode === 'revision_owned'
-                ? 'Fixed by this revision; edit the Harness to change it.'
-                : `Shared by recorded Sessions using v${selectedRevision ?? snapshot.workingCopy?.baseRevision ?? ''}.`}
-            </small>
-          </span>
-          {delegatedPolicy?.dirty && (
-            <StateBadge tone="caution">Recorded shared adjustment</StateBadge>
-          )}
-        </header>
-        <ModelPolicyControls
-          policy={harnessPolicy}
-          models={models}
-          editable={harnessPolicyEditable}
-          boundaryKey={`harness:${harnessPolicyInteractionBoundary}:${configuration.runtime.modelPolicyMode}`}
-          labelPrefix="Harness"
-          onChange={updateHarnessPolicy}
-        />
-      </section>
-      <p className="harness-management__catalog-boundary">
-        <strong>Recorded model catalog.</strong> {snapshot.catalogs.models.reason}
-      </p>
-    </div>
-  );
-}
-
-function ModelPolicyControls({
-  policy,
-  models,
-  editable,
-  boundaryKey,
-  labelPrefix,
-  onChange,
-}: {
-  readonly policy: HarnessModelPolicy;
-  readonly models: ConversationHarnessManagementSnapshot['catalogs']['models']['items'];
-  readonly editable: boolean;
-  readonly boundaryKey: string;
-  readonly labelPrefix: string;
-  onChange(policy: HarnessModelPolicy): void;
-}) {
-  const rememberedDefault = useRef<{
-    readonly model: string;
-    readonly reasoning: HarnessReasoningLevel | null;
-  } | null>(null);
-  // Auto-cache updates deliberately keep the same boundary. Finish editing, revision changes,
-  // ownership changes, and remounting create a new interaction and discard fallback memory.
-  useEffect(() => {
-    rememberedDefault.current = null;
-  }, [boundaryKey]);
-
-  const updateModels = (nextModels: HarnessModelPolicy['models']) =>
-    onChange(reconcileProvisionalDefault(policy, nextModels, models, rememberedDefault));
-  const defaultModelConfiguration = policy.models.find(
-    (model) => model.modelId === policy.defaultModel,
-  );
-  const defaultModelCatalog = models.find((model) => model.id === policy.defaultModel);
-  const defaultReasoningOptions =
-    defaultModelCatalog && defaultModelConfiguration
-      ? defaultModelCatalog.reasoningLevels.slice(
-          defaultModelCatalog.reasoningLevels.indexOf(defaultModelConfiguration.minReasoning),
-          defaultModelCatalog.reasoningLevels.indexOf(defaultModelConfiguration.maxReasoning) + 1,
-        )
-      : [];
-
-  return (
-    <>
-      <div className="harness-management__model-list">
-        {models.map((catalogModel) => {
-          const model = policy.models.find((candidate) => candidate.modelId === catalogModel.id);
-          if (!model) return null;
-          const minIndex = catalogModel.reasoningLevels.indexOf(model.minReasoning);
-          const maxIndex = catalogModel.reasoningLevels.indexOf(model.maxReasoning);
-          return (
-            <div className="harness-management__model" key={catalogModel.id}>
-              <label className="harness-management__model-allow">
-                <input
-                  type="checkbox"
-                  checked={model.allowed}
-                  disabled={!editable}
-                  aria-label={`${labelPrefix} allows ${catalogModel.label}`}
-                  onChange={(event) =>
-                    updateModels(
-                      policy.models.map((candidate) =>
-                        candidate.modelId === model.modelId
-                          ? { ...candidate, allowed: event.target.checked }
-                          : candidate,
-                      ),
-                    )
-                  }
-                />
-                <strong>{catalogModel.label}</strong>
-              </label>
-              <div className="harness-management__reasoning-range">
-                <output
-                  aria-label={`${catalogModel.label} selected reasoning range: ${model.minReasoning} through ${model.maxReasoning}`}
-                >
-                  <span>{model.minReasoning}</span>
-                  <i aria-hidden="true">–</i>
-                  <span>{model.maxReasoning}</span>
-                </output>
-                <div className="harness-management__dual-range">
-                  <input
-                    type="range"
-                    aria-label={`${labelPrefix} ${catalogModel.label} minimum reasoning`}
-                    min={0}
-                    max={catalogModel.reasoningLevels.length - 1}
-                    step={1}
-                    value={minIndex}
-                    disabled={!editable || !model.allowed}
-                    onChange={(event) => {
-                      const nextIndex = Math.min(Number(event.target.value), maxIndex);
-                      updateModels(
-                        policy.models.map((candidate) =>
-                          candidate.modelId === model.modelId
-                            ? {
-                                ...candidate,
-                                minReasoning: catalogModel.reasoningLevels[nextIndex],
-                              }
-                            : candidate,
-                        ),
-                      );
-                    }}
-                  />
-                  <input
-                    type="range"
-                    aria-label={`${labelPrefix} ${catalogModel.label} maximum reasoning`}
-                    min={0}
-                    max={catalogModel.reasoningLevels.length - 1}
-                    step={1}
-                    value={maxIndex}
-                    disabled={!editable || !model.allowed}
-                    onChange={(event) => {
-                      const nextIndex = Math.max(Number(event.target.value), minIndex);
-                      updateModels(
-                        policy.models.map((candidate) =>
-                          candidate.modelId === model.modelId
-                            ? {
-                                ...candidate,
-                                maxReasoning: catalogModel.reasoningLevels[nextIndex],
-                              }
-                            : candidate,
-                        ),
-                      );
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="harness-management__defaults">
-        <ManagementField label="Default model">
-          <select
-            aria-label={`${labelPrefix} default model`}
-            value={policy.defaultModel ?? ''}
-            disabled={!editable}
-            onChange={(event) => {
-              rememberedDefault.current = null;
-              const defaultModel = event.target.value || null;
-              onChange({
-                ...policy,
-                defaultModel,
-                defaultReasoning: null,
-              });
-            }}
           >
-            <option value="">Caller choice</option>
-            {models
-              .filter((catalogModel) =>
-                policy.models.some((model) => model.modelId === catalogModel.id && model.allowed),
-              )
-              .map((model) => (
-                <option value={model.id} key={model.id}>
-                  {model.label}
-                </option>
-              ))}
-          </select>
-        </ManagementField>
-        <ManagementField label="Default reasoning">
-          <select
-            aria-label={`${labelPrefix} default reasoning`}
-            value={policy.defaultReasoning ?? ''}
-            disabled={!editable || !policy.defaultModel}
-            onChange={(event) => {
-              rememberedDefault.current = null;
-              onChange({
-                ...policy,
-                defaultReasoning: (event.target.value as HarnessReasoningLevel | '') || null,
-              });
-            }}
-          >
-            <option value="">Caller choice</option>
-            {defaultReasoningOptions.map((level) => (
+            <option value="">No preference</option>
+            {reasoningOptions.map((level) => (
               <option value={level} key={level}>
                 {level}
               </option>
@@ -1196,101 +977,11 @@ function ModelPolicyControls({
           </select>
         </ManagementField>
       </div>
-    </>
+      <p className="harness-management__catalog-boundary">
+        These preferences do not restrict Session choices. {snapshot.catalogs.models.reason}
+      </p>
+    </div>
   );
-}
-
-function reconcileProvisionalDefault(
-  policy: HarnessModelPolicy,
-  models: HarnessModelPolicy['models'],
-  catalog: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
-  remembered: {
-    current: {
-      readonly model: string;
-      readonly reasoning: HarnessReasoningLevel | null;
-    } | null;
-  },
-): HarnessModelPolicy {
-  let next: HarnessModelPolicy = { ...policy, models };
-  if (
-    remembered.current &&
-    isValidPolicyChoice(remembered.current.model, remembered.current.reasoning, next, catalog)
-  ) {
-    next = {
-      ...next,
-      defaultModel: remembered.current.model,
-      defaultReasoning: remembered.current.reasoning,
-    };
-    remembered.current = null;
-    return next;
-  }
-  if (
-    !policy.defaultModel ||
-    isValidPolicyChoice(policy.defaultModel, policy.defaultReasoning, next, catalog)
-  )
-    return next;
-  remembered.current ??= {
-    model: policy.defaultModel,
-    reasoning: policy.defaultReasoning,
-  };
-  const sameModel = models.find((model) => model.modelId === policy.defaultModel && model.allowed);
-  if (sameModel) {
-    const levels = catalog.find((model) => model.id === sameModel.modelId)?.reasoningLevels ?? [];
-    const selectedIndex = levels.indexOf(policy.defaultReasoning ?? sameModel.minReasoning);
-    const minIndex = levels.indexOf(sameModel.minReasoning);
-    const maxIndex = levels.indexOf(sameModel.maxReasoning);
-    const fallbackIndex = Math.max(minIndex, Math.min(selectedIndex, maxIndex));
-    return {
-      ...next,
-      defaultModel: sameModel.modelId,
-      defaultReasoning: levels[fallbackIndex] ?? sameModel.minReasoning,
-    };
-  }
-  const fallback = models.find((model) => model.allowed);
-  return {
-    ...next,
-    defaultModel: fallback?.modelId ?? null,
-    defaultReasoning: fallback?.minReasoning ?? null,
-  };
-}
-
-function isValidPolicyChoice(
-  modelId: string,
-  reasoning: HarnessReasoningLevel | null,
-  policy: HarnessModelPolicy,
-  catalog: ConversationHarnessManagementSnapshot['catalogs']['models']['items'],
-): boolean {
-  const model = policy.models.find((candidate) => candidate.modelId === modelId);
-  if (!model?.allowed) return false;
-  if (reasoning === null) return true;
-  const levels = catalog.find((candidate) => candidate.id === modelId)?.reasoningLevels ?? [];
-  const selected = levels.indexOf(reasoning);
-  return (
-    selected >= levels.indexOf(model.minReasoning) && selected <= levels.indexOf(model.maxReasoning)
-  );
-}
-
-function policyFromConfiguration(configuration: HarnessEffectiveConfiguration): HarnessModelPolicy {
-  return {
-    models: configuration.runtime.models,
-    defaultModel: configuration.runtime.defaultModel,
-    defaultReasoning: configuration.runtime.defaultReasoning,
-  };
-}
-
-function configurationWithPolicy(
-  configuration: HarnessEffectiveConfiguration,
-  policy: HarnessModelPolicy,
-): HarnessEffectiveConfiguration {
-  return {
-    ...configuration,
-    runtime: {
-      ...configuration.runtime,
-      models: policy.models,
-      defaultModel: policy.defaultModel,
-      defaultReasoning: policy.defaultReasoning,
-    },
-  };
 }
 
 function VersionHistory({

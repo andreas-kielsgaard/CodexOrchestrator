@@ -46,9 +46,11 @@ describe('HarnessEditor visual contract', () => {
     expect(screen.getByRole('button', { name: 'Edit tools' })).toBeVisible();
     expect(screen.getAllByRole('button', { name: /Always applicable/ })).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: /Initial ingestion only/ })).toHaveLength(2);
-    expect(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra minimum reasoning' }),
-    ).toBeVisible();
+    expect(screen.getByLabelText('Harness preferred model')).toBeDisabled();
+    expect(screen.getByLabelText('Harness preferred reasoning')).toBeDisabled();
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByLabelText(/Harness allows/)).toBeNull();
+    expect(screen.queryByText(/delegated|shared policy|version specific/i)).toBeNull();
 
     expect(screen.queryByLabelText('Harness skills')).toBeNull();
     expect(screen.queryByLabelText('Harness tools')).toBeNull();
