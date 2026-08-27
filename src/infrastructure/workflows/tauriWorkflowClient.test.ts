@@ -30,7 +30,7 @@ describe('Tauri Workflow client', () => {
       repository: {
         id: 'repo-1',
         name: 'Review repo',
-        rootPath: 'C:\\repos\\review',
+        gitCommonDirectory: 'C:\\repos\\review\\.git',
       },
       branch: { id: 'branch-1', name: 'feature/workflow' },
       worktree: { id: 'worktree-1', path: 'C:\\worktrees\\review' },

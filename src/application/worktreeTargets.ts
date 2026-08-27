@@ -2,7 +2,8 @@ export interface ResolvedRepoBranchWorktreeTarget {
   readonly repository: {
     readonly id: string;
     readonly name: string;
-    readonly rootPath: string;
+    /** Local Git repository identity shared by all linked worktrees. */
+    readonly gitCommonDirectory: string;
   };
   readonly branch: {
     readonly id: string;

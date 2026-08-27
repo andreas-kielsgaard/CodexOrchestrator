@@ -1767,7 +1767,7 @@ mod tests {
             repository: WorkflowRepositoryTarget {
                 id: "repo-1".to_string(),
                 name: "Codex Orchestrator".to_string(),
-                root_path: "C:/Repos/Codex Orchestrator".to_string(),
+                git_common_directory: "C:/Repos/Codex Orchestrator/.git".to_string(),
             },
             branch: WorkflowBranchTarget {
                 id: "branch-1".to_string(),

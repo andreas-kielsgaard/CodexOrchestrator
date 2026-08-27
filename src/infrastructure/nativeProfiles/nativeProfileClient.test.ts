@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decodeNativeProfileQuery, createNativeProfileClient } from './nativeProfileClient';
+import {
+  createNativeProfileClient,
+  decodeDiscoveredNativeCodexHomes,
+  decodeNativeProfileQuery,
+} from './nativeProfileClient';
 
 const profile = {
   id: 'p1', homePath: 'C:/codex', ownership: 'registered_existing', lifecycle: 'active', selected: true,
@@ -86,6 +90,31 @@ describe('native profile client', () => {
       { settledAt: 'not-a-timestamp' },
     ]) expect(() => decodeNativeProfileQuery({ ...query(), profiles: [{ ...profile, setupAttempt: { ...policyUnsupported, ...contradiction } }] })).toThrow(/policy_unsupported/);
   });
+  it('discovers existing Codex homes through a strict read-only command result', async () => {
+    const discovered = [
+      {
+        homePath: 'C:/Users/user/.codex',
+        source: 'default',
+        registeredProfileId: null,
+        selected: false,
+      },
+    ];
+    const calls: string[] = [];
+    const invoke = async <T>(command: string) => {
+      calls.push(command);
+      return discovered as T;
+    };
+
+    await expect(createNativeProfileClient(invoke).discoverHomes()).resolves.toEqual(discovered);
+    expect(calls).toEqual(['discover_native_codex_homes']);
+    expect(() => decodeDiscoveredNativeCodexHomes([{ ...discovered[0], extra: true }])).toThrow(
+      /unknown field/,
+    );
+    expect(() =>
+      decodeDiscoveredNativeCodexHomes([{ ...discovered[0], homePath: 'relative/.codex' }]),
+    ).toThrow(/absolute/);
+  });
+
   it('serializes actions and reloads durable state after each action', async () => {
     const calls: string[] = [];
     const invoke = async <T>(command: string) => { calls.push(command); return (command === 'load_native_profile_query' ? query() : profile) as T; };

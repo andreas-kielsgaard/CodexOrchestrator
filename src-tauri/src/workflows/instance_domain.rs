@@ -14,7 +14,7 @@ pub(crate) struct ResolvedRepoBranchWorktreeTarget {
 pub(crate) struct WorkflowRepositoryTarget {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) root_path: String,
+    pub(crate) git_common_directory: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

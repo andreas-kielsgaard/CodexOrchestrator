@@ -24,7 +24,10 @@ import {
   OrchestrationSection,
   type OrchestrationNavigationChangeIntent,
 } from '../features/orchestrations';
-import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
+import {
+  AgentSessionRuntimeGuidanceProvider,
+  type EmbeddedAgentSessionComposition,
+} from '../features/agentSessions';
 import {
   useCallback,
   useEffect,
@@ -172,6 +175,7 @@ export function App({
   fileReviewSource,
   contextualFileReviewClient,
   nativeProfileClient,
+  nativeProfileApplicationConsumer,
   fileReviewSourceForEvidence,
   epicProductDecisionSource,
   productDecisionClient,
@@ -846,7 +850,7 @@ export function App({
     ],
   );
 
-  return (
+  const appShell = (
     <div className="primary-app-shell">
       {confirmation.receiptError && (
         <p className="application-confirmation-error" role="alert">
@@ -1137,6 +1141,16 @@ export function App({
         harnessManagementPreviewSurface
       )}
     </div>
+  );
+  return (
+    <AgentSessionRuntimeGuidanceProvider
+      consumer={nativeProfileApplicationConsumer}
+      onOpenTechnicalSettings={
+        nativeProfileClient ? () => setSurface('native-settings') : undefined
+      }
+    >
+      {appShell}
+    </AgentSessionRuntimeGuidanceProvider>
   );
 }
 

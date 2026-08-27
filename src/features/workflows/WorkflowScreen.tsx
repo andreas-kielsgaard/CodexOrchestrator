@@ -20,6 +20,7 @@ import {
   type ComponentType,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { AgentSessionClient } from '../../application/agentSessions';
 import type { HarnessConfigurationCatalogs } from '../../application/conversationHarnesses';
@@ -49,6 +50,16 @@ import type { RepoBranchWorktreeTargetSelectorProps } from '../../application/wo
 import { AgentSessionWorkspace, useAgentSession } from '../agentSessions';
 import { WorkflowAgentSessionPane } from './WorkflowAgentSessionPane';
 import { WorkflowInstanceCreationDialog } from './WorkflowInstanceCreationDialog';
+import {
+  WorkflowEditorController,
+  type WorkflowEditableConfig,
+} from './editor/workflowEditorController';
+import {
+  beginWorkflowNodeDrag,
+  projectWorkflowNodeDrag,
+  type WorkflowNodeDragPreview,
+  type WorkflowNodeDragState,
+} from './editor/workflowNodeDrag';
 import {
   HarnessDefinitionEditor,
   SearchableSingleSelect,
@@ -377,7 +388,12 @@ function WorkflowTypeEditor({
   const dragSourceRef = useRef<string | null>(null);
   const dragReconnectConnectionIdRef = useRef<string | null>(null);
   const suppressConnectionClickRef = useRef(false);
+  const suppressNodeClickRef = useRef<string | null>(null);
+  const nodeDragRef = useRef<WorkflowNodeDragState | null>(null);
+  const [nodeDragPreview, setNodeDragPreview] = useState<WorkflowNodeDragPreview | null>(null);
   const definitionRef = useRef<WorkflowDefinition | null>(null);
+  const editorControllerRef = useRef<WorkflowEditorController | null>(null);
+  if (!editorControllerRef.current) editorControllerRef.current = new WorkflowEditorController();
   const mountedRef = useRef(true);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -429,6 +445,7 @@ function WorkflowTypeEditor({
     let current = true;
     setLoad({ kind: 'loading' });
     definitionRef.current = null;
+    editorControllerRef.current?.reset();
     replaceWorkingNodes(new Map());
     replaceWorkingConnections(new Map());
     workingRevisionsRef.current.clear();
@@ -477,6 +494,28 @@ function WorkflowTypeEditor({
       window.removeEventListener('pointerup', clearMissedPointerGesture);
       window.removeEventListener('pointercancel', clearMissedPointerGesture);
     };
+  }, []);
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        isEditableHistoryTarget(event.target)
+      )
+        return;
+      const key = event.key.toLowerCase();
+      const undo = key === 'z' && !event.shiftKey;
+      const redo = key === 'y' || (key === 'z' && event.shiftKey);
+      if (!undo && !redo) return;
+      event.preventDefault();
+      const operation = undo
+        ? editorControllerRef.current?.undo()
+        : editorControllerRef.current?.redo();
+      void operation?.catch((error: unknown) => setActionError(errorMessage(error)));
+    };
+    window.addEventListener('keydown', handleHistoryShortcut);
+    return () => window.removeEventListener('keydown', handleHistoryShortcut);
   }, []);
 
   if (load.kind === 'loading')
@@ -528,13 +567,8 @@ function WorkflowTypeEditor({
     }
   };
 
-  const updateWorkingNode = (node: WorkflowNodeConfig) => {
-    const next = new Map(workingNodesRef.current);
-    next.set(node.id, node);
-    workingRevisionsRef.current.set(node.id, (workingRevisionsRef.current.get(node.id) ?? 0) + 1);
-    replaceWorkingNodes(next);
-    void persistNode(node);
-  };
+  const updateWorkingNode = (node: WorkflowNodeConfig) =>
+    editorControllerRef.current?.changeElement({ kind: 'node', id: node.id }, node);
 
   const persistConnection = async (
     connection: WorkflowConnectionConfig,
@@ -561,16 +595,11 @@ function WorkflowTypeEditor({
     }
   };
 
-  const updateWorkingConnection = (connection: WorkflowConnectionConfig) => {
-    const next = new Map(workingConnectionsRef.current);
-    next.set(connection.id, connection);
-    connectionRevisionsRef.current.set(
-      connection.id,
-      (connectionRevisionsRef.current.get(connection.id) ?? 0) + 1,
+  const updateWorkingConnection = (connection: WorkflowConnectionConfig) =>
+    editorControllerRef.current?.changeElement(
+      { kind: 'connection', id: connection.id },
+      connection,
     );
-    replaceWorkingConnections(next);
-    void persistConnection(connection);
-  };
 
   const placeNodeAt = (positionX: number, positionY: number) => {
     if ((!nodeBrush && !copyBrush) || saving || selectedNodeId) return;
@@ -591,12 +620,11 @@ function WorkflowTypeEditor({
         ? cloneNodeHarness(source.config.harness, source.effectiveHarness)
         : { kind: 'standalone', config: emptyHarness() },
     };
-    const next = new Map(workingNodesRef.current);
-    next.set(id, node);
-    workingRevisionsRef.current.set(id, 1);
-    replaceWorkingNodes(next);
+    editorControllerRef.current?.changeElement({ kind: 'node', id }, node, { blocking: true });
+    setNodeBrush(false);
+    setCopyBrush(false);
+    setCopySourceId(null);
     setSelectedNodeId(id);
-    void persistNode(node, { blocking: true });
   };
 
   const placeNode = (event: MouseEvent<HTMLDivElement>) => {
@@ -655,6 +683,7 @@ function WorkflowTypeEditor({
       );
       definitionRef.current = next;
       setLoad({ kind: 'ready', value: next });
+      editorControllerRef.current?.reset();
       setBulkOpen(false);
       setBulkSelection(new Set());
     } catch (error) {
@@ -677,15 +706,13 @@ function WorkflowTypeEditor({
       receiverNodeId,
       mechanism: null,
     };
-    const next = new Map(workingConnectionsRef.current);
-    next.set(id, connection);
-    connectionRevisionsRef.current.set(id, 1);
-    replaceWorkingConnections(next);
+    editorControllerRef.current?.changeElement({ kind: 'connection', id }, connection, {
+      blocking: true,
+    });
     setConnectionSourceId(null);
     setSelectedConnection({ id, full: true });
     setSelectedNodeId(null);
     setConnectionList(null);
-    void persistConnection(connection, { blocking: true });
   };
 
   const handleConnectionNodeClick = (nodeId: string) => {
@@ -697,13 +724,45 @@ function WorkflowTypeEditor({
     else setConnectionSourceId(nodeId);
   };
 
-  const handleNodePointerDown = (nodeId: string) => {
-    if (!connectionBrush || saving) return;
-    dragReconnectConnectionIdRef.current = null;
-    dragSourceRef.current = nodeId;
+  const handleNodePointerDown = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: WorkflowNodeConfig,
+  ) => {
+    if (saving) return;
+    if (connectionBrush) {
+      dragReconnectConnectionIdRef.current = null;
+      dragSourceRef.current = node.id;
+      return;
+    }
+    if (nodeBrush || copyBrush || event.button > 0) return;
+    nodeDragRef.current = beginWorkflowNodeDrag({
+      nodeId: node.id,
+      pointerId: event.pointerId,
+      positionX: node.positionX,
+      positionY: node.positionY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
-  const handleNodePointerUp = (nodeId: string) => {
+  const handleNodePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = nodeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!bounds) return;
+    setNodeDragPreview(
+      projectWorkflowNodeDrag(drag, event.clientX, event.clientY, {
+        width: bounds.width,
+        height: bounds.height,
+      }),
+    );
+  };
+
+  const handleNodePointerUp = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    node: WorkflowNodeConfig,
+  ) => {
     const reconnectConnectionId = dragReconnectConnectionIdRef.current;
     dragReconnectConnectionIdRef.current = null;
     if (connectionBrush && reconnectConnectionId) {
@@ -712,7 +771,7 @@ function WorkflowTypeEditor({
       );
       if (connection) {
         suppressConnectionClickRef.current = true;
-        const reconnected = { ...connection.config, receiverNodeId: nodeId };
+        const reconnected = { ...connection.config, receiverNodeId: node.id };
         updateWorkingConnection(reconnected);
         setSelectedConnection({ id: reconnectConnectionId, full: true });
         setConnectionList(null);
@@ -725,12 +784,41 @@ function WorkflowTypeEditor({
     }
     const source = dragSourceRef.current;
     dragSourceRef.current = null;
-    if (!connectionBrush || !source || source === nodeId) return;
-    suppressConnectionClickRef.current = true;
-    createConnection(source, nodeId);
-    globalThis.setTimeout(() => {
-      suppressConnectionClickRef.current = false;
-    }, 0);
+    if (connectionBrush) {
+      if (!source || source === node.id) return;
+      suppressConnectionClickRef.current = true;
+      createConnection(source, node.id);
+      globalThis.setTimeout(() => {
+        suppressConnectionClickRef.current = false;
+      }, 0);
+      return;
+    }
+    const drag = nodeDragRef.current;
+    nodeDragRef.current = null;
+    const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+    const preview =
+      drag && bounds
+        ? projectWorkflowNodeDrag(drag, event.clientX, event.clientY, {
+            width: bounds.width,
+            height: bounds.height,
+          })
+        : null;
+    setNodeDragPreview(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    if (!drag || drag.pointerId !== event.pointerId || !preview?.moved) return;
+    suppressNodeClickRef.current = node.id;
+    updateWorkingNode({
+      ...node,
+      positionX: preview.positionX,
+      positionY: preview.positionY,
+    });
+  };
+
+  const handleNodePointerCancel = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (nodeDragRef.current?.pointerId !== event.pointerId) return;
+    nodeDragRef.current = null;
+    setNodeDragPreview(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
   };
 
   const openConnectionList = (state: ConnectionListState) => {
@@ -740,43 +828,128 @@ function WorkflowTypeEditor({
     setConnectionList(state);
   };
 
-  const deleteNode = async (nodeId: string) => {
+  const deletePersistedElement = async (target: WorkflowElementRef) => {
     if (saving) return;
     setSaving(true);
     setActionError(null);
     try {
-      const next = await client.deleteNodeDraft(workflowTypeId, nodeId);
+      const next =
+        target.kind === 'node'
+          ? await client.deleteNodeDraft(workflowTypeId, target.id)
+          : await client.deleteConnectionDraft(workflowTypeId, target.id);
       definitionRef.current = next;
       setLoad({ kind: 'ready', value: next });
-      const local = new Map(workingNodesRef.current);
-      local.delete(nodeId);
-      replaceWorkingNodes(local);
-      setSelectedNodeId(null);
+      if (target.kind === 'node') {
+        const local = new Map(workingNodesRef.current);
+        local.delete(target.id);
+        replaceWorkingNodes(local);
+        setSelectedNodeId(null);
+      } else {
+        const local = new Map(workingConnectionsRef.current);
+        local.delete(target.id);
+        replaceWorkingConnections(local);
+        setSelectedConnection(null);
+      }
     } catch (error) {
       setActionError(errorMessage(error));
+      throw error;
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteConnection = async (connectionId: string) => {
-    if (saving) return;
-    setSaving(true);
-    setActionError(null);
-    try {
-      const next = await client.deleteConnectionDraft(workflowTypeId, connectionId);
-      definitionRef.current = next;
-      setLoad({ kind: 'ready', value: next });
-      const local = new Map(workingConnectionsRef.current);
-      local.delete(connectionId);
-      replaceWorkingConnections(local);
-      setSelectedConnection(null);
-    } catch (error) {
-      setActionError(errorMessage(error));
-    } finally {
-      setSaving(false);
+  const readElement = (target: WorkflowElementRef): WorkflowEditableConfig | null => {
+    if (target.kind === 'node') {
+      const local = workingNodesRef.current.get(target.id);
+      if (local) return local;
+      const element = definitionRef.current?.nodes.find((candidate) => candidate.id === target.id);
+      return element?.draft ?? element?.live ?? null;
     }
+    const local = workingConnectionsRef.current.get(target.id);
+    if (local) return local;
+    const element = definitionRef.current?.connections.find(
+      (candidate) => candidate.id === target.id,
+    );
+    return element?.draft ?? element?.live ?? null;
   };
+
+  editorControllerRef.current.configure({
+    readElement,
+    isPersisted: (target) =>
+      target.kind === 'node'
+        ? Boolean(definitionRef.current?.nodes.some((candidate) => candidate.id === target.id))
+        : Boolean(
+            definitionRef.current?.connections.some((candidate) => candidate.id === target.id),
+          ),
+    dependentConnections: (nodeId) => {
+      const ids = new Set<string>();
+      const connections: WorkflowConnectionConfig[] = [];
+      for (const element of definitionRef.current?.connections ?? []) {
+        const connection =
+          workingConnectionsRef.current.get(element.id) ?? element.draft ?? element.live;
+        if (
+          connection &&
+          (connection.senderNodeId === nodeId || connection.receiverNodeId === nodeId)
+        ) {
+          ids.add(connection.id);
+          connections.push(connection);
+        }
+      }
+      for (const connection of workingConnectionsRef.current.values())
+        if (
+          !ids.has(connection.id) &&
+          (connection.senderNodeId === nodeId || connection.receiverNodeId === nodeId)
+        )
+          connections.push(connection);
+      return connections;
+    },
+    saveElement: (target, value, options) => {
+      if (target.kind === 'node') {
+        const node = value as WorkflowNodeConfig;
+        const next = new Map(workingNodesRef.current);
+        next.set(node.id, node);
+        workingRevisionsRef.current.set(
+          node.id,
+          (workingRevisionsRef.current.get(node.id) ?? 0) + 1,
+        );
+        replaceWorkingNodes(next);
+        void persistNode(node, options);
+      } else {
+        const connection = value as WorkflowConnectionConfig;
+        const next = new Map(workingConnectionsRef.current);
+        next.set(connection.id, connection);
+        connectionRevisionsRef.current.set(
+          connection.id,
+          (connectionRevisionsRef.current.get(connection.id) ?? 0) + 1,
+        );
+        replaceWorkingConnections(next);
+        void persistConnection(connection, options);
+      }
+    },
+    removeLocalElement: (target) => {
+      setActionError(null);
+      if (target.kind === 'node') {
+        const next = new Map(workingNodesRef.current);
+        next.delete(target.id);
+        workingRevisionsRef.current.set(
+          target.id,
+          (workingRevisionsRef.current.get(target.id) ?? 0) + 1,
+        );
+        replaceWorkingNodes(next);
+        setSelectedNodeId(null);
+      } else {
+        const next = new Map(workingConnectionsRef.current);
+        next.delete(target.id);
+        connectionRevisionsRef.current.set(
+          target.id,
+          (connectionRevisionsRef.current.get(target.id) ?? 0) + 1,
+        );
+        replaceWorkingConnections(next);
+        setSelectedConnection(null);
+      }
+    },
+    deletePersistedElement,
+  });
 
   return (
     <main
@@ -928,6 +1101,9 @@ function WorkflowTypeEditor({
             const highlighted = group.connections.some(
               (connection) => connection.config.id === hoveredConnectionId,
             );
+            const selected = group.connections.some(
+              (connection) => connection.config.id === selectedConnection?.id,
+            );
             const destination = group.dangling
               ? 'a dangling endpoint'
               : receiver?.config.name || receiver?.config.harnessName || 'receiver';
@@ -947,7 +1123,8 @@ function WorkflowTypeEditor({
                 role="button"
                 tabIndex={0}
                 aria-label={label}
-                className={`${highlighted ? 'is-highlighted ' : ''}${group.dangling ? 'is-dangling' : ''}`}
+                aria-pressed={selected}
+                className={`${highlighted ? 'is-highlighted ' : ''}${selected ? 'is-selected ' : ''}${group.dangling ? 'is-dangling' : ''}`}
                 onPointerDown={(event) => {
                   if (!connectionBrush || !group.dangling || group.connections.length !== 1) return;
                   event.stopPropagation();
@@ -997,12 +1174,27 @@ function WorkflowTypeEditor({
             key={config.id}
             type="button"
             disabled={saving}
-            className={`workflow-node${config.isStartingPoint ? ' is-start' : ''}${connectionSourceId === config.id ? ' is-connection-source' : ''}${element?.draft === null && element.live ? ' is-deleted' : ''}`}
-            style={{ left: config.positionX, top: config.positionY }}
-            onPointerDown={() => handleNodePointerDown(config.id)}
-            onPointerUp={() => handleNodePointerUp(config.id)}
+            className={`workflow-node${config.isStartingPoint ? ' is-start' : ''}${selectedNodeId === config.id ? ' is-selected' : ''}${connectionSourceId === config.id ? ' is-connection-source' : ''}${nodeDragPreview?.nodeId === config.id ? ' is-dragging' : ''}${element?.draft === null && element.live ? ' is-deleted' : ''}`}
+            style={{
+              left:
+                nodeDragPreview?.nodeId === config.id
+                  ? nodeDragPreview.positionX
+                  : config.positionX,
+              top:
+                nodeDragPreview?.nodeId === config.id
+                  ? nodeDragPreview.positionY
+                  : config.positionY,
+            }}
+            onPointerDown={(event) => handleNodePointerDown(event, config)}
+            onPointerMove={handleNodePointerMove}
+            onPointerUp={(event) => handleNodePointerUp(event, config)}
+            onPointerCancel={handleNodePointerCancel}
             onClick={(event) => {
               event.stopPropagation();
+              if (suppressNodeClickRef.current === config.id) {
+                suppressNodeClickRef.current = null;
+                return;
+              }
               if (connectionBrush) {
                 handleConnectionNodeClick(config.id);
                 return;
@@ -1030,6 +1222,7 @@ function WorkflowTypeEditor({
               setActionError(null);
             }}
             aria-label={`Configure ${config.name || 'new node'}`}
+            aria-pressed={selectedNodeId === config.id}
           >
             <span className="workflow-node__badges">
               {config.isStartingPoint ? <small>Start</small> : null}
@@ -1062,6 +1255,18 @@ function WorkflowTypeEditor({
             busy={saving}
             error={actionError}
             onChange={updateWorkingNode}
+            onBeginFieldEdit={() =>
+              editorControllerRef.current?.beginFieldEdit({
+                kind: 'node',
+                id: selectedNode.config.id,
+              })
+            }
+            onCommitFieldEdit={() =>
+              editorControllerRef.current?.commitFieldEdit({
+                kind: 'node',
+                id: selectedNode.config.id,
+              })
+            }
             onClose={() => {
               const localDraft = workingNodesRef.current.get(selectedNode.config.id);
               if (localDraft) void persistNode(localDraft, { blocking: true, closeAfter: true });
@@ -1069,7 +1274,11 @@ function WorkflowTypeEditor({
             }}
             onSave={() => void persistNode(selectedNode.config, { blocking: true })}
             onActivate={() => void activateElements([{ kind: 'node', id: selectedNode.config.id }])}
-            onDelete={() => void deleteNode(selectedNode.config.id)}
+            onDelete={() =>
+              void editorControllerRef.current
+                ?.deleteElement({ kind: 'node', id: selectedNode.config.id })
+                .catch((error: unknown) => setActionError(errorMessage(error)))
+            }
             onDetach={async () => {
               setSaving(true);
               setActionError(null);
@@ -1164,6 +1373,18 @@ function WorkflowTypeEditor({
               busy={saving}
               error={actionError}
               onChange={updateWorkingConnection}
+              onBeginFieldEdit={() =>
+                editorControllerRef.current?.beginFieldEdit({
+                  kind: 'connection',
+                  id: selectedConnectionDisplay.config.id,
+                })
+              }
+              onCommitFieldEdit={() =>
+                editorControllerRef.current?.commitFieldEdit({
+                  kind: 'connection',
+                  id: selectedConnectionDisplay.config.id,
+                })
+              }
               onClose={() => {
                 const local = workingConnectionsRef.current.get(
                   selectedConnectionDisplay.config.id,
@@ -1179,7 +1400,14 @@ function WorkflowTypeEditor({
                   { kind: 'connection', id: selectedConnectionDisplay.config.id },
                 ])
               }
-              onDelete={() => void deleteConnection(selectedConnectionDisplay.config.id)}
+              onDelete={() =>
+                void editorControllerRef.current
+                  ?.deleteElement({
+                    kind: 'connection',
+                    id: selectedConnectionDisplay.config.id,
+                  })
+                  .catch((error: unknown) => setActionError(errorMessage(error)))
+              }
             />
           ) : (
             <ConnectionPreview
@@ -1354,7 +1582,7 @@ function WorkflowInstanceView({
         <dl>
           <div>
             <dt>Repository</dt>
-            <dd>{instance.target.repository.rootPath}</dd>
+            <dd>{instance.target.repository.name}</dd>
           </div>
           <div>
             <dt>Branch</dt>
@@ -2010,6 +2238,8 @@ function NodeConfiguration({
   busy,
   error,
   onChange,
+  onBeginFieldEdit,
+  onCommitFieldEdit,
   onClose,
   onSave,
   onActivate,
@@ -2027,6 +2257,8 @@ function NodeConfiguration({
   readonly busy: boolean;
   readonly error: string | null;
   onChange(node: WorkflowNodeConfig): void;
+  onBeginFieldEdit(): void;
+  onCommitFieldEdit(): void;
   onClose(): void;
   onSave(): void;
   onActivate(): void;
@@ -2050,6 +2282,12 @@ function NodeConfiguration({
       role="dialog"
       aria-label={node.name ? `Configure ${node.name}` : 'Configure new node'}
       onClick={(event) => event.stopPropagation()}
+      onFocusCapture={(event) => {
+        if (isEditableHistoryTarget(event.target)) onBeginFieldEdit();
+      }}
+      onBlurCapture={(event) => {
+        if (isEditableHistoryTarget(event.target)) onCommitFieldEdit();
+      }}
     >
       <header>
         <div>
@@ -2209,7 +2447,7 @@ function NodeConfiguration({
         <div>
           {!pendingDeletion ? (
             <>
-              <button type="button" onClick={onDelete} disabled={busy || !persistedElement}>
+              <button type="button" onClick={onDelete} disabled={busy}>
                 <Trash2 size={15} aria-hidden="true" />
                 Delete
               </button>
@@ -2808,6 +3046,8 @@ function ConnectionConfiguration({
   busy,
   error,
   onChange,
+  onBeginFieldEdit,
+  onCommitFieldEdit,
   onClose,
   onSave,
   onActivate,
@@ -2821,6 +3061,8 @@ function ConnectionConfiguration({
   readonly busy: boolean;
   readonly error: string | null;
   onChange(connection: WorkflowConnectionConfig): void;
+  onBeginFieldEdit(): void;
+  onCommitFieldEdit(): void;
   onClose(): void;
   onSave(): void;
   onActivate(): void;
@@ -2849,6 +3091,12 @@ function ConnectionConfiguration({
       role="dialog"
       aria-label={`Configure ${connection.name || 'connection'}`}
       onClick={(event) => event.stopPropagation()}
+      onFocusCapture={(event) => {
+        if (isEditableHistoryTarget(event.target)) onBeginFieldEdit();
+      }}
+      onBlurCapture={(event) => {
+        if (isEditableHistoryTarget(event.target)) onCommitFieldEdit();
+      }}
     >
       <header>
         <div>
@@ -2960,7 +3208,7 @@ function ConnectionConfiguration({
         <div>
           {!pendingDeletion ? (
             <>
-              <button type="button" onClick={onDelete} disabled={busy || !persistedElement}>
+              <button type="button" onClick={onDelete} disabled={busy}>
                 <Trash2 size={15} aria-hidden="true" /> Delete
               </button>
               <button type="button" onClick={onSave} disabled={busy || !locallyChanged}>
@@ -3712,4 +3960,11 @@ function elementKey(element: WorkflowElementRef): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isEditableHistoryTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.matches('input, textarea, select') || target.isContentEditable)
+  );
 }

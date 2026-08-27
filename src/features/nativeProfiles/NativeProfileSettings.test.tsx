@@ -20,10 +20,35 @@ const profiles: readonly NativeProfile[] = [
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
   const query = async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles });
-  return { load: query, registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, verifyPreprovisionedSandbox: query, confirmPreprovisionedSandboxAdoption: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
+  return { load: query, discoverHomes: async () => [], registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, verifyPreprovisionedSandbox: query, confirmPreprovisionedSandboxAdoption: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
 }
 
 describe('NativeProfileSettings', () => {
+  it('offers discovered homes as the primary registration path and refreshes them', async () => {
+    const user = userEvent.setup();
+    const discovered = [
+      {
+        homePath: 'C:/Users/user/.codex-review',
+        source: 'sibling' as const,
+        registeredProfileId: null,
+        selected: false,
+      },
+    ];
+    const discoverHomes = vi.fn(async () => discovered);
+    const registerExisting = vi.fn(async () => ({
+      contract: 'native-codex-profile-query/v1' as const,
+      profiles,
+    }));
+    render(<NativeProfileSettings client={client({ discoverHomes, registerExisting })} />);
+
+    const selector = await screen.findByRole('combobox', { name: 'Discovered Codex home' });
+    await user.selectOptions(selector, discovered[0]!.homePath);
+    await user.click(screen.getByRole('button', { name: 'Register discovered home' }));
+    await waitFor(() => expect(registerExisting).toHaveBeenCalledWith(discovered[0]!.homePath));
+    await user.click(screen.getByRole('button', { name: 'Refresh discovered homes' }));
+    await waitFor(() => expect(discoverHomes).toHaveBeenCalledTimes(3));
+  });
+
   it('targets the clicked non-selected card and keeps setup actions per-card', async () => {
     const user = userEvent.setup();
     const select = vi.fn(async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles: profiles.map((profile) => ({ ...profile, selected: profile.id === 'p2' })) }));
@@ -145,8 +170,8 @@ describe('NativeProfileSettings', () => {
     expect(settings).toHaveAttribute('tabindex', '0');
     const styles = readFileSync(resolve('src/features/nativeProfiles/nativeProfileSettings.css'), 'utf8');
     const shell = readFileSync(resolve('src/styles.css'), 'utf8');
-    expect(shell).toMatch(/\.primary-app-shell\s*\{[\s\S]*height: 100vh;[\s\S]*padding-top: 48px;[\s\S]*overflow: hidden;/);
+    expect(shell).toMatch(/\.primary-app-shell\s*\{[\s\S]*--app-top-offset: 48px;[\s\S]*height: 100vh;[\s\S]*padding-top: var\(--app-top-offset\);[\s\S]*overflow: hidden;/);
     expect(styles).toMatch(/\.native-profile-settings\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*overscroll-behavior: contain;/);
-    expect(styles).toMatch(/@media \(max-width: 520px\)\s*\{[\s\S]*\.native-profile-facts, \.native-profile-login-attempt dl\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
+    expect(styles).toMatch(/@media \(max-width: 520px\)\s*\{[\s\S]*\.native-profile-facts,\s*\.native-profile-login-attempt dl\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
   });
 });

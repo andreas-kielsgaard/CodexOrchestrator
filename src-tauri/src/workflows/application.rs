@@ -920,7 +920,10 @@ fn validate_target(target: &ResolvedRepoBranchWorktreeTarget) -> Result<(), Stri
     for (value, label) in [
         (&target.repository.id, "repository ID"),
         (&target.repository.name, "repository name"),
-        (&target.repository.root_path, "repository root"),
+        (
+            &target.repository.git_common_directory,
+            "repository Git identity",
+        ),
         (&target.branch.id, "branch ID"),
         (&target.branch.name, "branch name"),
         (&target.worktree.id, "worktree ID"),
@@ -1301,7 +1304,7 @@ mod tests {
             repository: WorkflowRepositoryTarget {
                 id: "repo-1".to_string(),
                 name: "Codex Orchestrator".to_string(),
-                root_path: path.to_string_lossy().into_owned(),
+                git_common_directory: path.to_string_lossy().into_owned(),
             },
             branch: WorkflowBranchTarget {
                 id: "branch-1".to_string(),

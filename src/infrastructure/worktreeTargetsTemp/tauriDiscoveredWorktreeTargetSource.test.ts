@@ -9,7 +9,7 @@ describe('Tauri discovered worktree target source', () => {
         repository: {
           id: 'repo-orchestrator',
           name: 'Codex Orchestrator',
-          rootPath: 'C:\\Repos\\Codex Orchestrator',
+          gitCommonDirectory: 'C:\\Repos\\Codex Orchestrator\\.git',
         },
         branch: { id: 'branch-feature', name: 'codex/workflow-engine-v1' },
         worktree: {

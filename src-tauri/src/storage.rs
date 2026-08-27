@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 44;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 45;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -33,7 +33,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction = connection
             .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin active v44 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to begin active v45 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
         transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
@@ -60,10 +60,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v44 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v45 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=43).contains(&current_version) {
+    if (1..=44).contains(&current_version) {
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -317,7 +317,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
                 .map_err(|error| format!("Unable to migrate Harness binding schema: {error}"))?;
         }
-        if current_version <= 43 {
+        if current_version <= 44 {
             let agent_sessions_present = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions')",
@@ -344,7 +344,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 .map_err(|error| format!("Unable to reset alpha Workflow runtime storage: {error}"))?;
             transaction
                 .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
-                .map_err(|error| format!("Unable to create v44 Workflow runtime storage: {error}"))?;
+                .map_err(|error| format!("Unable to create v45 Workflow runtime storage: {error}"))?;
         }
         if current_version == 14 {
             transaction
@@ -502,7 +502,7 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             "SELECT
                 (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_instances','workflow_instance_sessions','workflow_connection_activations'))=3
                 AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_activations')
-                AND (SELECT COUNT(*) FROM pragma_table_info('workflow_instances') WHERE name IN ('repository_id','repository_name','repository_root','branch_id','branch_name','worktree_id','worktree_root'))=7
+                AND (SELECT COUNT(*) FROM pragma_table_info('workflow_instances') WHERE name IN ('repository_id','repository_name','repository_git_common_directory','branch_id','branch_name','worktree_id','worktree_root'))=7
                 AND NOT EXISTS(SELECT 1 FROM pragma_table_info('workflow_instances') WHERE name IN ('starting_prompt','working_directory'))
                 AND EXISTS(SELECT 1 FROM pragma_table_info('workflow_connection_activations') WHERE name='resolved_output_json')",
             [],
@@ -1081,14 +1081,15 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v43_by_resetting_only_alpha_workflow_runtime_storage() {
+    fn migrates_v44_by_resetting_only_alpha_workflow_runtime_storage() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("active-v43.sqlite");
+        let path = directory.path().join("active-v44.sqlite");
         {
             let connection = open_active_database(&path).expect("current database");
             connection
                 .execute_batch(
-                    "INSERT INTO workflow_types(id,name,active_recipe_id,created_at,updated_at) VALUES('type','Type',NULL,'t','t');
+                    "ALTER TABLE workflow_instances RENAME COLUMN repository_git_common_directory TO repository_root;
+                     INSERT INTO workflow_types(id,name,active_recipe_id,created_at,updated_at) VALUES('type','Type',NULL,'t','t');
                      INSERT INTO workflow_effective_recipes(id,workflow_type_id,ordinal,nodes_json,connections_json,created_at) VALUES('recipe','type',1,'[]','[]','t');
                      UPDATE workflow_types SET active_recipe_id='recipe' WHERE id='type';
                      INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,repository_id,repository_name,repository_root,branch_id,branch_name,worktree_id,worktree_root,created_at) VALUES('instance','type','recipe','Instance','repo','Repository','C:/repo','branch','feature','worktree','C:/repo','t');
@@ -1096,12 +1097,12 @@ mod tests {
                      INSERT INTO workflow_instance_sessions(workflow_instance_id,node_id,session_id,associated_at) VALUES('instance','sender','session','t');
                      INSERT INTO session_harness_bindings(id,contract_version,session_id,runtime_instance_id,session_instance_token,stage,harness_snapshot,mediation_plan,configuration_digest,source_workflow_instance_id,source_recipe_id,source_node_id,prepared_at) VALUES('binding','harness-binding/v1','session','runtime','token','prepared','{}','{}','digest','instance','recipe','sender','t');
                      INSERT INTO workflow_connection_activations(id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,delivery_kind,context_inheritance,compression,requested_at) VALUES('activation','instance','recipe','edge','sender','receiver','session','invocation','direct_prompt_runtime_v1','none','none','t');
-                     PRAGMA user_version=43;",
+                     PRAGMA user_version=44;",
                 )
-                .expect("seed v43 Workflow runtime facts");
+                .expect("seed v44 Workflow runtime facts");
         }
 
-        let migrated = open_active_database(&path).expect("migrate v43");
+        let migrated = open_active_database(&path).expect("migrate v44");
         assert_eq!(
             migrated
                 .query_row(

@@ -397,6 +397,7 @@ pub(crate) fn run() {
             crate::workflows::transport::load_workflow_instance,
             crate::worktree_targets_temp::list_discovered_worktree_targets,
             crate::native_profiles::load_native_profile_query,
+            crate::native_profiles::discover_native_codex_homes,
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,
             crate::native_profiles::select_native_profile,

@@ -117,7 +117,7 @@ describe('WorkflowScreen', () => {
     expect(screen.getByLabelText('Workflow instance graph')).toBeVisible();
     expect(screen.getByText('Sender Harness')).toBeVisible();
     expect(screen.getByText('1 Session · 1 active · 0 idle')).toBeVisible();
-    expect(screen.getByText('Review repo')).toBeVisible();
+    expect(screen.getAllByText('Review repo')).toHaveLength(2);
     expect(screen.getByText('C:\\worktrees\\review')).toBeVisible();
   });
 
@@ -443,7 +443,7 @@ describe('WorkflowScreen', () => {
     expect(edge).toHaveFocus();
   });
 
-  it('keeps the node brush active, persists a closed draft, and activates it', async () => {
+  it('uses the node brush once, persists a closed draft, and activates it', async () => {
     const client = workflowClient(emptyDefinition());
     render(
       <WorkflowScreen
@@ -479,7 +479,7 @@ describe('WorkflowScreen', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(screen.getByText('Draft')).toBeVisible();
-    expect(nodeBrush).toHaveAttribute('aria-pressed', 'true');
+    expect(nodeBrush).toHaveAttribute('aria-pressed', 'false');
     const savedNode = vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1];
     expect(savedNode).toMatchObject({
       name: 'Review architecture',
@@ -519,6 +519,82 @@ describe('WorkflowScreen', () => {
       roleName: null,
       isStartingPoint: true,
     });
+  });
+
+  it('deletes a new invalid node through the same Delete action without calling persistence', async () => {
+    const client = workflowClient(emptyDefinition());
+    client.saveNodeDraft = vi.fn(async () => {
+      throw new Error('Harness name is required');
+    });
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+
+    const canvas = await screen.findByLabelText('Workflow canvas');
+    fireEvent.click(screen.getByRole('button', { name: 'Node' }));
+    fireEvent.keyDown(canvas, { key: 'Enter' });
+    const dialog = screen.getByRole('dialog', { name: 'Configure new node' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Harness name is required');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(client.deleteNodeDraft).not.toHaveBeenCalled();
+    expect(screen.getByText('0 nodes')).toBeVisible();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('commits one dragged node position through autosave and undo', async () => {
+    const client = workflowClient(definitionWithNodes());
+    render(
+      <WorkflowScreen
+        client={client}
+        workflowTypeId="workflow-1"
+        onOpenWorkflowType={() => undefined}
+      />,
+    );
+    const canvas = await screen.findByLabelText('Workflow canvas');
+    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 1000,
+      bottom: 800,
+      width: 1000,
+      height: 800,
+      toJSON: () => ({}),
+    });
+    const nodeButton = screen.getByRole('button', { name: 'Configure Sender' });
+
+    const pointer = (type: string, clientX: number, clientY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX, clientY });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      fireEvent(nodeButton, event);
+    };
+    pointer('pointerdown', 100, 100);
+    pointer('pointermove', 180, 150);
+    pointer('pointerup', 180, 150);
+
+    await waitFor(() =>
+      expect(vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1]).toMatchObject({
+        id: 'sender',
+        positionX: 160,
+        positionY: 150,
+      }),
+    );
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    await waitFor(() =>
+      expect(vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1]).toMatchObject({
+        id: 'sender',
+        positionX: 80,
+        positionY: 100,
+      }),
+    );
   });
 
   it('flushes the latest serialized draft before an editor is navigated away and reopened', async () => {
@@ -1070,7 +1146,7 @@ describe('WorkflowScreen', () => {
     ).toHaveValue('Reviewer');
   });
 
-  it('keeps the copy brush active and copies only the selected node Harness as non-starting', async () => {
+  it('uses the copy brush once and copies only the selected node Harness as non-starting', async () => {
     const client = workflowClient(definitionWithNodes());
     render(
       <WorkflowScreen
@@ -1095,7 +1171,7 @@ describe('WorkflowScreen', () => {
         config: { identity: { name: 'Sender Harness' } },
       },
     });
-    expect(brush).toHaveAttribute('aria-pressed', 'true');
+    expect(brush).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('copies a Role binding with its sparse overrides rather than materializing it', async () => {
@@ -1516,7 +1592,7 @@ const workflowTarget: ResolvedRepoBranchWorktreeTarget = {
   repository: {
     id: 'repo-1',
     name: 'Review repo',
-    rootPath: 'C:\\repos\\review',
+    gitCommonDirectory: 'C:\\repos\\review\\.git',
   },
   branch: { id: 'branch-1', name: 'feature/workflow' },
   worktree: { id: 'worktree-1', path: 'C:\\worktrees\\review' },

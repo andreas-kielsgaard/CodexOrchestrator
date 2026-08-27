@@ -12,7 +12,7 @@ const targets: readonly ResolvedRepoBranchWorktreeTarget[] = [
     repository: {
       id: 'repo-orchestrator',
       name: 'Codex Orchestrator',
-      rootPath: 'C:\\Repos\\Codex Orchestrator',
+      gitCommonDirectory: 'C:\\Repos\\Codex Orchestrator\\.git',
     },
     branch: { id: 'branch-main', name: 'main' },
     worktree: { id: 'worktree-main', path: 'C:\\Repos\\Codex Orchestrator' },
@@ -21,7 +21,7 @@ const targets: readonly ResolvedRepoBranchWorktreeTarget[] = [
     repository: {
       id: 'repo-extension',
       name: 'Image Saver',
-      rootPath: 'C:\\Repos\\Image Saver',
+      gitCommonDirectory: 'C:\\Repos\\Image Saver\\.git',
     },
     branch: { id: 'branch-viewer', name: 'viewer' },
     worktree: { id: 'worktree-viewer', path: 'C:\\Worktrees\\viewer' },

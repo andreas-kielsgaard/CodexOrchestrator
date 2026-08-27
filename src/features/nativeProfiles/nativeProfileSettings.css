@@ -5,7 +5,8 @@
 .native-profile-settings section { margin: 24px 0; }
 .native-profile-register { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
 .native-profile-register label { display: grid; gap: 5px; min-width: min(100%, 420px); }
-.native-profile-settings input { padding: 9px; border: 1px solid #b9c2b9; border-radius: 5px; }
+.native-profile-settings input, .native-profile-settings select { padding: 9px; border: 1px solid #b9c2b9; border-radius: 5px; }
+.native-profile-register__manual { flex-basis: 100%; }
 .native-profile-card { min-width: 0; margin: 18px 0; padding: 20px; background: #fffdf8; border: 1px solid #cbd3cb; border-radius: 9px; }
 .native-profile-card > header { display: flex; justify-content: space-between; gap: 12px; min-width: 0; }
 .native-profile-card > header > div { min-width: 0; }

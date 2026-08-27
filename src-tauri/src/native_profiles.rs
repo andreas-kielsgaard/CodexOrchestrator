@@ -1,6 +1,8 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
+mod discovery;
+
 use axum::http::{header, StatusCode};
 use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
@@ -4764,6 +4766,24 @@ pub(crate) fn load_native_profile_query(
     state: State<'_, NativeProfileTauriState>,
 ) -> Result<NativeProfileQueryDto, String> {
     state.service.query()
+}
+
+#[tauri::command]
+pub(crate) fn discover_native_codex_homes(
+    state: State<'_, NativeProfileTauriState>,
+) -> Result<Vec<discovery::DiscoveredNativeCodexHome>, String> {
+    let query = state.service.query()?;
+    discovery::discover_native_codex_homes(
+        &query
+            .profiles
+            .into_iter()
+            .map(|profile| discovery::RegisteredNativeCodexHome {
+                profile_id: profile.id,
+                home_path: PathBuf::from(profile.home_path),
+                selected: profile.selected,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 #[tauri::command]
 pub(crate) fn register_native_profile(

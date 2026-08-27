@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS workflow_instances (
     name TEXT NOT NULL,
     repository_id TEXT NOT NULL,
     repository_name TEXT NOT NULL,
-    repository_root TEXT NOT NULL,
+    repository_git_common_directory TEXT NOT NULL,
     branch_id TEXT NOT NULL,
     branch_name TEXT NOT NULL,
     worktree_id TEXT NOT NULL,
@@ -101,7 +101,7 @@ pub(super) fn create_instance(
     }
     transaction
         .execute(
-            "INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,repository_id,repository_name,repository_root,branch_id,branch_name,worktree_id,worktree_root,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            "INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,repository_id,repository_name,repository_git_common_directory,branch_id,branch_name,worktree_id,worktree_root,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 preparation.instance_id,
                 preparation.workflow_type_id,
@@ -109,7 +109,7 @@ pub(super) fn create_instance(
                 preparation.name,
                 preparation.target.repository.id,
                 preparation.target.repository.name,
-                preparation.target.repository.root_path,
+                preparation.target.repository.git_common_directory,
                 preparation.target.branch.id,
                 preparation.target.branch.name,
                 preparation.target.worktree.id,
@@ -172,7 +172,7 @@ pub(super) fn load_instance(
 ) -> Result<WorkflowInstanceRecord, String> {
     let row = connection
         .query_row(
-            "SELECT instance.id,instance.workflow_type_id,type.name,instance.recipe_id,instance.name,instance.repository_id,instance.repository_name,instance.repository_root,instance.branch_id,instance.branch_name,instance.worktree_id,instance.worktree_root,instance.created_at FROM workflow_instances instance JOIN workflow_types type ON type.id=instance.workflow_type_id WHERE instance.id=?1",
+            "SELECT instance.id,instance.workflow_type_id,type.name,instance.recipe_id,instance.name,instance.repository_id,instance.repository_name,instance.repository_git_common_directory,instance.branch_id,instance.branch_name,instance.worktree_id,instance.worktree_root,instance.created_at FROM workflow_instances instance JOIN workflow_types type ON type.id=instance.workflow_type_id WHERE instance.id=?1",
             [workflow_instance_id],
             |row| {
                 Ok((
@@ -213,7 +213,7 @@ pub(super) fn load_instance(
             repository: WorkflowRepositoryTarget {
                 id: row.5,
                 name: row.6,
-                root_path: row.7,
+                git_common_directory: row.7,
             },
             branch: WorkflowBranchTarget {
                 id: row.8,
