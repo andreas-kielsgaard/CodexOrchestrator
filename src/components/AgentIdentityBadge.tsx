@@ -1,5 +1,10 @@
 import type { AgentIdentity } from '../application/agentSessions';
-import { AgentIdentityMarker } from '../features/agentSessions/AgentIdentityMarker';
+import {
+  assignedIdentityFromLegacyAgentIdentity,
+  legacyHarnessRoleLabel,
+} from '../application/identities';
+import { AgentIdentityBadge as IdentityBadge } from '../features/identities';
+import type { CSSProperties } from 'react';
 import './agentIdentityBadge.css';
 
 export interface AgentIdentityBadgeProps {
@@ -7,25 +12,25 @@ export interface AgentIdentityBadgeProps {
   readonly compact?: boolean;
 }
 
-/** Composes the accepted marker with injected, Session-owned identity text. */
+/** Compatibility wrapper for callers that still receive the legacy AgentIdentity DTO. */
 export function AgentIdentityBadge({ identity, compact = false }: AgentIdentityBadgeProps) {
-  const role = identity.harnessRole
-    .split('_')
-    .filter(Boolean)
-    .map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`)
-    .join(' ');
+  const assignedIdentity = assignedIdentityFromLegacyAgentIdentity(identity);
+  const role = legacyHarnessRoleLabel(identity.harnessRole);
+  // Legacy selectors and metadata stay at this boundary until wire consumers use identities.
   return (
     <span
-      className={`agent-identity-badge${compact ? ' is-compact' : ''}`}
-      aria-label={`${identity.name}, ${role}`}
+      className={`agent-identity-badge agent-identity-marker is-${assignedIdentity.shape}${
+        compact ? ' is-compact' : ''
+      }`}
+      data-harness-role={identity.harnessRole}
+      data-visual-identity-token={identity.visualIdentityToken}
+      style={
+        {
+          '--agent-identity-accent': assignedIdentity.color,
+        } as CSSProperties
+      }
     >
-      <AgentIdentityMarker identity={identity} />
-      {!compact && (
-        <span className="agent-identity-badge__text">
-          <strong>{identity.name}</strong>
-          <small>{role}</small>
-        </span>
-      )}
+      <IdentityBadge identity={assignedIdentity} secondaryLabel={role} compact={compact} />
     </span>
   );
 }

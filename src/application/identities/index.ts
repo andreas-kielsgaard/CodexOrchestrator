@@ -4,3 +4,7 @@ export type {
   IdentityId,
   IdentityShape,
 } from './contracts';
+export {
+  assignedIdentityFromLegacyAgentIdentity,
+  legacyHarnessRoleLabel,
+} from './legacyAgentIdentityAdapter';
