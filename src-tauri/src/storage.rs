@@ -62,6 +62,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness catalog schema: {error}"))?;
         transaction
+            .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Identity catalog schema: {error}"))?;
+        transaction
             .commit()
             .map_err(|error| format!("Unable to commit active v45 schema evolution: {error}"))?;
         return Ok(());
@@ -323,6 +326,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Harness catalog schema: {error}"))?;
+        transaction
+            .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         if current_version <= 44 {
             let agent_sessions_present = transaction
                 .query_row(
@@ -455,6 +461,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness catalog schema: {error}"))?;
     transaction
+        .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Identity catalog schema: {error}"))?;
+    transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
     transaction
@@ -535,6 +544,13 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 4)
         .map_err(|error| format!("Unable to inspect active Harness catalog schema: {error}"))?;
+    let identity_catalog_schema_is_present = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='identity_definitions')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Unable to inspect active Identity catalog schema: {error}"))?;
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
@@ -542,7 +558,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         && workflow_role_schema_is_present
         && workflow_instance_schema_is_present
         && harness_binding_schema_is_present
-        && harness_catalog_schema_is_present)
+        && harness_catalog_schema_is_present
+        && identity_catalog_schema_is_present)
 }
 use std::time::Duration;
 
@@ -667,11 +684,16 @@ mod tests {
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
                 "file_review_git_capture_documents",
+                "harness_drafts",
                 "harness_revision_commands",
                 "harness_revision_publications",
                 "harness_revisions",
+                "harness_version_replacements",
+                "harness_versions",
                 "harness_working_copies",
                 "harness_working_copy_commands",
+                "harnesses",
+                "identity_definitions",
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",

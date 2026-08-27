@@ -125,6 +125,7 @@ pub(crate) fn run() {
                 crate::harness_engine::catalog_service::HarnessCatalogService::open(
                     &database_path,
                 )?;
+            let identities = crate::identities::service::IdentityService::open(&database_path)?;
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
                 &database_path,
                 managed_mcp_upstreams.clone(),
@@ -214,6 +215,9 @@ pub(crate) fn run() {
             app.manage(
                 crate::harness_engine::transport::HarnessCatalogTauriState::new(harness_catalog),
             );
+            app.manage(crate::identities::transport::IdentityTauriState::new(
+                identities,
+            ));
             app.manage(crate::native_profiles::NativeProfileTauriState::new(
                 native_profiles,
             ));
@@ -387,6 +391,10 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
+            crate::identities::transport::list_identities,
+            crate::identities::transport::create_identity,
+            crate::identities::transport::update_identity,
+            crate::identities::transport::delete_identity,
             crate::harness_engine::transport::list_harnesses,
             crate::harness_engine::transport::load_harness,
             crate::harness_engine::transport::create_harness,
