@@ -1,15 +1,14 @@
 use super::{
     domain::{
-        ArtifactSetId, CleanupDisposition, CleanupEffect, CleanupEligibility, CleanupJob,
-        CleanupJobId, CleanupJobState, CleanupReceipt, CleanupResource, CleanupResourceId,
-        CleanupTrigger, ContainmentRoot, RetentionPolicy, ReviewBuild, ReviewBuildId,
-        ReviewOperationAttempt, WorkspaceLifecycle, WorkspaceOwnership,
+        BuildOutputId, BuildOutputStorageKey, CleanupDisposition, CleanupEffect,
+        CleanupEligibility, CleanupJob, CleanupJobId, CleanupJobState, CleanupReceipt,
+        CleanupResource, CleanupResourceId, CleanupTrigger, ContainmentRoot, RetentionPolicy,
+        ReviewBuild, ReviewBuildId, ReviewOperationAttempt,
     },
     retention::{self, RetentionDisposition},
     storage::{
-        ArtifactSetRepository, CleanupRepository, OperationAttemptRepository,
-        ReviewBuildRepository, ReviewSettingsRepository, StorageError, WorkspaceRepository,
-        WorktreeReviewDatabase,
+        BuildOutputRepository, CleanupRepository, OperationAttemptRepository,
+        ReviewBuildRepository, ReviewSettingsRepository, StorageError, WorktreeReviewDatabase,
     },
 };
 use chrono::{DateTime, Utc};
@@ -24,8 +23,8 @@ use std::{
 };
 
 /// Narrow effect adapter for Worktree Review-owned AppData. Worktrees and runtime processes are
-/// intentionally unsupported here: retaining a build worktree is independent from artifact
-/// retention, and process cleanup requires its own opaque runtime authority.
+/// outside this cleanup domain: retaining a build worktree is independent from build output
+/// retention, and opening a build creates no managed runtime lifecycle.
 pub(crate) struct AppDataCleanupEffects {
     review_root: PathBuf,
 }
@@ -80,16 +79,12 @@ impl AppDataCleanupEffects {
 impl CleanupEffectPort for AppDataCleanupEffects {
     fn apply(&self, resource: &CleanupResource) -> Result<CleanupEffectOutcome, String> {
         match resource {
-            CleanupResource::ArtifactSet { storage_key, .. }
-            | CleanupResource::AttemptLogs { storage_key, .. }
-            | CleanupResource::BuildScratch { storage_key, .. } => {
+            CleanupResource::BuildOutput { storage_key, .. } => {
                 self.remove_storage_key(storage_key.as_str())
             }
-            CleanupResource::Workspace { .. } => {
-                Err("Build worktrees are retained by Worktree Review policy.".into())
-            }
-            CleanupResource::RuntimeInstance { .. } | CleanupResource::PortLease { .. } => {
-                Err("Runtime cleanup requires the isolated runtime authority adapter.".into())
+            CleanupResource::AttemptLogs { storage_key, .. }
+            | CleanupResource::BuildScratch { storage_key, .. } => {
+                self.remove_storage_key(storage_key.as_str())
             }
         }
     }
@@ -186,7 +181,6 @@ pub(crate) struct WorktreeReviewCleanupService {
     database: Arc<WorktreeReviewDatabase>,
     effects: Arc<dyn CleanupEffectPort>,
     clock: Arc<dyn CleanupClock>,
-    review_root: PathBuf,
     containment_root: ContainmentRoot,
 }
 
@@ -227,7 +221,6 @@ impl WorktreeReviewCleanupService {
             database,
             effects,
             clock,
-            review_root,
             containment_root,
         })
     }
@@ -372,9 +365,6 @@ impl WorktreeReviewCleanupService {
             return Ok(CleanupEligibility::RetentionProtected);
         }
         for resource in resources {
-            if matches!(resource, CleanupResource::Workspace { .. }) {
-                return Ok(CleanupEligibility::RetentionProtected);
-            }
             match self.authorize(build, resource)? {
                 ResourceAuthority::Authorized => {}
                 ResourceAuthority::Borrowed => return Ok(CleanupEligibility::BorrowedResource),
@@ -393,38 +383,15 @@ impl WorktreeReviewCleanupService {
             return Ok(ResourceAuthority::Borrowed);
         }
         match resource {
-            CleanupResource::Workspace {
-                workspace_id,
-                ownership,
-                containment_root,
-                ..
-            } => {
-                let Some(workspace) = self.database.workspaces().find(workspace_id)? else {
-                    return Ok(ResourceAuthority::Unverified);
-                };
-                if workspace.ownership != *ownership {
-                    return Ok(ResourceAuthority::Unverified);
-                }
-                if !matches!(ownership, WorkspaceOwnership::OwnedBuildWorktree { build_id } if build_id == &build.id)
-                {
-                    return Ok(ResourceAuthority::Borrowed);
-                }
-                if containment_root.as_ref() != Some(&self.containment_root)
-                    || !path_is_contained(&self.review_root, Path::new(workspace.location.as_str()))
-                    || workspace.lifecycle == WorkspaceLifecycle::Unverified
-                {
-                    return Ok(ResourceAuthority::Unverified);
-                }
-            }
-            CleanupResource::ArtifactSet {
-                artifact_set_id,
+            CleanupResource::BuildOutput {
+                output_id,
                 storage_key,
                 containment_root,
                 ..
             } => {
                 if containment_root != &self.containment_root
                     || !safe_storage_key(storage_key.as_str())
-                    || !self.artifact_matches(build, artifact_set_id, storage_key)?
+                    || !self.output_matches(build, output_id, storage_key)?
                 {
                     return Ok(ResourceAuthority::Unverified);
                 }
@@ -459,28 +426,22 @@ impl WorktreeReviewCleanupService {
                     return Ok(ResourceAuthority::Unverified);
                 }
             }
-            CleanupResource::RuntimeInstance { build_id, .. }
-            | CleanupResource::PortLease { build_id, .. } => {
-                if build_id != &build.id {
-                    return Ok(ResourceAuthority::Unverified);
-                }
-            }
         }
         Ok(ResourceAuthority::Authorized)
     }
 
-    fn artifact_matches(
+    fn output_matches(
         &self,
         build: &ReviewBuild,
-        artifact_set_id: &ArtifactSetId,
-        storage_key: &super::domain::ArtifactStorageKey,
+        output_id: &BuildOutputId,
+        storage_key: &BuildOutputStorageKey,
     ) -> Result<bool, CleanupServiceError> {
         Ok(self
             .database
-            .artifacts()
-            .find(artifact_set_id)?
-            .is_some_and(|artifacts| {
-                artifacts.build_id == build.id && artifacts.storage_key == *storage_key
+            .outputs()
+            .find(output_id)?
+            .is_some_and(|output| {
+                output.build_id == build.id && output.storage_key == *storage_key
             }))
     }
 
@@ -707,10 +668,10 @@ mod tests {
     use super::*;
     use crate::worktree_review::{
         domain::{
-            ArtifactStorageKey, BranchRef, BuildLifecycle, GitObjectId, OperationAttemptId,
+            BranchRef, BuildLifecycle, CleanupStorageKey, GitObjectId, OperationAttemptId,
             OperationExecutionState, OperationVerdict, RepositoryId, RetentionKey, ReviewBranch,
             ReviewBuildName, ReviewOperationKind, ReviewRepository, ReviewSourceSelection,
-            ReviewWorkspace, SourceBinding, SourceFingerprint, WorkspaceId, WorktreeAssociationId,
+            ReviewWorkspace, SourceBinding, WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership,
             WorktreeId, WorktreeLocation,
         },
         storage::{ReviewRepositoryRepository, WorkspaceRepository},
@@ -837,18 +798,13 @@ mod tests {
                 repository_id: repository.id.clone(),
                 branch_ref: branch.branch_ref.clone(),
                 selection: ReviewSourceSelection::BranchCommit {
-                    selected_object: selected.clone(),
+                    selected_object: selected,
                 },
                 workspace_id: workspace_id.clone(),
-                materialized_object: selected,
-                materialized_state_fingerprint: SourceFingerprint::new(format!(
-                    "fingerprint-{suffix}"
-                ))
-                .unwrap(),
             },
             workspace_id,
             retention_key: RetentionKey::new("logical-source").unwrap(),
-            current_artifact_set_id: None,
+            current_output_id: None,
             lifecycle: BuildLifecycle::Active,
             created_at: now,
             updated_at: now,
@@ -885,7 +841,7 @@ mod tests {
         let resource = CleanupResource::BuildScratch {
             id: CleanupResourceId::new("scratch").unwrap(),
             build_id: old.id.clone(),
-            storage_key: ArtifactStorageKey::new("builds/old/scratch").unwrap(),
+            storage_key: CleanupStorageKey::new("builds/old/scratch").unwrap(),
             containment_root: service.containment_root().clone(),
         };
         let presentation = service
@@ -900,42 +856,6 @@ mod tests {
     }
 
     #[test]
-    fn every_build_workspace_is_retained_without_an_effect() {
-        let (_directory, database, service, effects, old) = service_fixture();
-        let association_id = WorktreeAssociationId::new("association").unwrap();
-        let workspace = ReviewWorkspace {
-            id: WorkspaceId::new("borrowed-workspace").unwrap(),
-            repository_id: old.source.repository_id.clone(),
-            worktree_id: WorktreeId::new("borrowed-worktree").unwrap(),
-            location: WorktreeLocation::new("C:/borrowed").unwrap(),
-            ownership: WorkspaceOwnership::BorrowedExternal {
-                association_id: association_id.clone(),
-            },
-            lifecycle: WorkspaceLifecycle::Ready,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        database.workspaces().save(&workspace).unwrap();
-        let presentation = service
-            .cleanup_superseded_appdata_resources(CleanupRequest {
-                build_id: old.id,
-                resources: vec![CleanupResource::Workspace {
-                    id: CleanupResourceId::new("borrowed").unwrap(),
-                    workspace_id: workspace.id,
-                    ownership: WorkspaceOwnership::BorrowedExternal { association_id },
-                    containment_root: None,
-                }],
-            })
-            .unwrap();
-        assert_eq!(
-            presentation.eligibility,
-            CleanupEligibility::RetentionProtected
-        );
-        assert_eq!(presentation.state, CleanupJobState::NotEligible);
-        assert!(effects.applied.lock().unwrap().is_empty());
-    }
-
-    #[test]
     fn rejects_an_appdata_key_that_escapes_the_product_root() {
         let (_directory, _database, service, effects, old) = service_fixture();
         let presentation = service
@@ -944,7 +864,7 @@ mod tests {
                 resources: vec![CleanupResource::BuildScratch {
                     id: CleanupResourceId::new("escape").unwrap(),
                     build_id: old.id,
-                    storage_key: ArtifactStorageKey::new("../foreign").unwrap(),
+                    storage_key: CleanupStorageKey::new("../foreign").unwrap(),
                     containment_root: service.containment_root().clone(),
                 }],
             })
@@ -962,7 +882,7 @@ mod tests {
         let resource = CleanupResource::BuildScratch {
             id: CleanupResourceId::new("already-recorded").unwrap(),
             build_id: old.id.clone(),
-            storage_key: ArtifactStorageKey::new("builds/old/already-recorded").unwrap(),
+            storage_key: CleanupStorageKey::new("builds/old/already-recorded").unwrap(),
             containment_root: service.containment_root().clone(),
         };
         let now = Utc::now();

@@ -6,7 +6,7 @@ export function ReadinessNotice({ repository }: { readonly repository: ReviewRep
     ['Browse', repository.readiness.browse],
     ['Create worktree', repository.readiness.createWorktree],
     ['Build', repository.readiness.build],
-    ['Artifact storage', repository.readiness.artifactStorage],
+    ['Build output storage', repository.readiness.buildOutputStorage],
   ];
   const unavailable = capabilities.filter(
     (item): item is readonly [string, { state: 'unavailable'; reason: string }] =>

@@ -1,5 +1,5 @@
 import {
-  artifactLabel,
+  buildOutputLabel,
   attemptLabel,
   cleanupLabel,
   sourceLabel,
@@ -37,6 +37,10 @@ export function BuildHistory({
               </div>
               <dl>
                 <div>
+                  <dt>Branch</dt>
+                  <dd>{build.branchRef}</dd>
+                </div>
+                <div>
                   <dt>Source</dt>
                   <dd>{sourceLabel(build.source)}</dd>
                 </div>
@@ -49,8 +53,8 @@ export function BuildHistory({
                   <dd>{worktreeStateLabel(build.workspace.lifecycle)}</dd>
                 </div>
                 <div>
-                  <dt>Artifacts</dt>
-                  <dd>{artifactLabel(build.artifact)}</dd>
+                  <dt>Build output</dt>
+                  <dd>{buildOutputLabel(build.output)}</dd>
                 </div>
                 <div>
                   <dt>AppData retention</dt>
@@ -67,7 +71,7 @@ export function BuildHistory({
                   {build.attention.summary}
                 </p>
               )}
-              {build.artifact.state === 'available' && (
+              {build.output.state === 'available' && (
                 <div className="worktree-review__actions">
                   <button
                     type="button"
@@ -103,10 +107,10 @@ function worktreeStateLabel(lifecycle: ReviewBuild['workspace']['lifecycle']): s
 }
 
 function attemptTone(build: ReviewBuild): string {
-  if (build.latestAttempt?.verdict === 'passed')
-    return 'worktree-review__status worktree-review__status--passed';
+  if (build.latestAttempt?.outcome === 'succeeded')
+    return 'worktree-review__status worktree-review__status--completed';
   if (
-    build.latestAttempt?.verdict === 'failed' ||
+    build.latestAttempt?.outcome === 'failed' ||
     build.latestAttempt?.executionState === 'interrupted'
   ) {
     return 'worktree-review__status worktree-review__status--failed';

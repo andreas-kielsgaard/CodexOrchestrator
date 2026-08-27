@@ -1,13 +1,13 @@
 use super::{
-    artifact_store::ArtifactStore,
-    build_executor::{BuildExecutionFailure, ReviewBuildExecutor},
+    build_executor::{resolve_retained_output, BuildExecutionFailure, ReviewBuildExecutor},
     build_presentation::{
-        artifact_view, cleanup_presentation_view, cleanup_view, review_build_view, BuildSourceInput,
+        build_output_view, cleanup_presentation_view, cleanup_view, review_build_view,
+        CreateBuildSourceInput,
     },
     cleanup_service::{CleanupRequest, WorktreeReviewCleanupService},
     domain::{
-        ArtifactStorageKey, BranchRef, BuildAttention, BuildAttentionCategory, BuildAttentionId,
-        BuildLifecycle, CleanupJobState, CleanupResource, CleanupResourceId, OperationAttemptId,
+        BranchRef, BuildAttention, BuildAttentionCategory, BuildAttentionId, BuildLifecycle,
+        CleanupJobState, CleanupResource, CleanupResourceId, CleanupStorageKey, OperationAttemptId,
         OperationExecutionState, OperationFailure, OperationFailureCategory, OperationStage,
         OperationVerdict, RepositoryId, RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName,
         ReviewOperationAttempt, ReviewOperationKind, WorkspaceId,
@@ -18,16 +18,14 @@ use super::{
         WORKTREE_REVIEW_DATA_DIR_ENV,
     },
     storage::{
-        ArtifactSetRepository, BuildAttentionRepository, CleanupRepository,
+        BuildAttentionRepository, BuildOutputRepository, CleanupRepository,
         OperationAttemptRepository, ReviewBuildRepository, WorkspaceRepository,
         WorktreeAssociationRepository, WorktreeReviewDatabase,
     },
 };
 use crate::{
     repository_context::{BranchRef as ObservedBranch, RepositoryIdentity},
-    worktree_application::{
-        PhysicalWorktreeApplication, PhysicalWorktreeBuildResult, WorktreeApplicationLaunchContext,
-    },
+    worktree_application::{PhysicalWorktreeApplication, WorktreeApplicationLaunchContext},
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -98,7 +96,7 @@ impl ReviewBuildCoordinator {
             source: prepared.source().clone(),
             workspace_id: prepared.workspace().id.clone(),
             retention_key: retention_key(&repository, &branch, &input.source)?,
-            current_artifact_set_id: None,
+            current_output_id: None,
             lifecycle: BuildLifecycle::Active,
             created_at: now,
             updated_at: now,
@@ -185,7 +183,7 @@ impl ReviewBuildCoordinator {
             .save(&attempt)
             .map_err(|error| error.to_string())?;
         attempt.execution = OperationExecutionState::Running;
-        attempt.active_stage = Some(OperationStage::DependencyProvisioning);
+        attempt.active_stage = Some(OperationStage::Compilation);
         attempt.started_at = Some(Utc::now());
         self.database
             .attempts()
@@ -194,36 +192,37 @@ impl ReviewBuildCoordinator {
 
         let executor = ReviewBuildExecutor::open(self.application.review_root(), &repository);
         let execution = executor.and_then(|executor| {
-            executor.provision_dependencies(materialized.workspace())?;
-            attempt.active_stage = Some(OperationStage::Compilation);
-            self.database
-                .attempts()
-                .save(&attempt)
-                .map_err(|error| BuildExecutionFailure {
-                    stage: OperationStage::Compilation,
-                    category: OperationFailureCategory::Internal,
-                    message: error.to_string(),
-                })?;
             executor.execute(&build.id, &attempt.id, materialized.workspace())
         });
         match execution {
-            Ok(artifacts) => {
+            Ok(output) => {
                 attempt.execution = OperationExecutionState::Completed;
                 attempt.verdict = OperationVerdict::Passed;
-                attempt.active_stage = Some(OperationStage::ArtifactPromotion);
+                attempt.active_stage = Some(OperationStage::OutputPublication);
                 attempt.completed_at = Some(Utc::now());
-                self.database
-                    .transaction(|transaction| {
-                        transaction.artifacts().save_verified(&artifacts)?;
-                        transaction.builds().set_current_artifact(
-                            &build.id,
-                            &artifacts.id,
-                            Utc::now(),
-                        )?;
-                        transaction.attempts().save(&attempt)
-                    })
-                    .map_err(|error| error.to_string())?;
-                if let Err(error) = self.cleanup_superseded_appdata(&build) {
+                let retained = self.database.transaction(|transaction| {
+                    transaction.attempts().save(&attempt)?;
+                    transaction.outputs().save(&output)?;
+                    transaction
+                        .builds()
+                        .set_current_output(&build.id, &output.id, Utc::now())
+                });
+                if let Err(error) = retained {
+                    settle_failure(
+                        &mut attempt,
+                        BuildExecutionFailure {
+                            stage: OperationStage::OutputPublication,
+                            category: OperationFailureCategory::OutputPublicationFailed,
+                            message: format!(
+                                "The compiled output could not be recorded durably: {error}"
+                            ),
+                        },
+                    );
+                    self.database
+                        .attempts()
+                        .save(&attempt)
+                        .map_err(|save_error| save_error.to_string())?;
+                } else if let Err(error) = self.cleanup_superseded_appdata(&build) {
                     self.database
                         .attentions()
                         .append(&BuildAttention {
@@ -231,14 +230,14 @@ impl ReviewBuildCoordinator {
                             build_id: build.id.clone(),
                             category: BuildAttentionCategory::CleanupCoordination,
                             summary: format!(
-                                "The build passed, but retention cleanup needs attention: {error}"
+                                "The build succeeded, but retention cleanup needs attention: {error}"
                             ),
                             recorded_at: Utc::now(),
                             resolved_at: None,
                         })
                         .map_err(|attention_error| {
                             format!(
-                                "The build passed, but its cleanup attention could not be retained: {attention_error}"
+                                "The build succeeded, but its cleanup attention could not be retained: {attention_error}"
                             )
                         })?;
                 }
@@ -295,28 +294,18 @@ impl ReviewBuildCoordinator {
             .find(&build.workspace_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "The review build worktree record is unavailable.".to_string())?;
-        let artifact_id = build
-            .current_artifact_set_id
+        let output_id = build
+            .current_output_id
             .as_ref()
             .ok_or_else(|| "This build has no retained application output.".to_string())?;
-        let artifacts = self
+        let output = self
             .database
-            .artifacts()
-            .find(artifact_id)
+            .outputs()
+            .find(output_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "The retained application output is unavailable.".to_string())?;
-        #[cfg(windows)]
-        let executable_relative = "cargo-target/debug/codex-orchestrator.exe";
-        #[cfg(not(windows))]
-        let executable_relative = "cargo-target/debug/codex-orchestrator";
-        let executable = artifacts
-            .files
-            .iter()
-            .find(|file| file.relative_path.as_str() == executable_relative)
-            .ok_or_else(|| "The retained application executable is unavailable.".to_string())?;
-        let artifact_store = ArtifactStore::open(self.application.review_root().to_path_buf())?;
-        let (output_root, executable_path) =
-            artifact_store.resolve_file(&artifacts.storage_key, &executable.relative_path)?;
+        let physical_build =
+            resolve_retained_output(self.application.review_root(), &workspace, &output)?;
         let launch_context = WorktreeApplicationLaunchContext::new([
             (
                 OsString::from(WORKTREE_REVIEW_DATA_DIR_ENV),
@@ -333,14 +322,7 @@ impl ReviewBuildCoordinator {
         ])
         .map_err(|error| error.message)?;
         PhysicalWorktreeApplication
-            .open(
-                &PhysicalWorktreeBuildResult {
-                    worktree_root: workspace.location.as_str().into(),
-                    output_root,
-                    executable: executable_path,
-                },
-                &launch_context,
-            )
+            .open(&physical_build, &launch_context)
             .map_err(|error| error.message)?;
         Ok(())
     }
@@ -366,18 +348,17 @@ impl ReviewBuildCoordinator {
             .map_err(|error| error.to_string())?
             .into_iter()
             .next();
-        let artifacts = match build.current_artifact_set_id.as_ref() {
-            Some(artifact_id) => Some(
-                self.database
-                    .artifacts()
-                    .find(artifact_id)
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| {
-                        "The build references an unavailable artifact manifest.".to_string()
-                    })?,
-            ),
+        let output = match build.current_output_id.as_ref() {
+            Some(output_id) => self
+                .database
+                .outputs()
+                .find(output_id)
+                .map_err(|error| error.to_string())?,
             None => None,
         };
+        let output_exists = output.as_ref().is_some_and(|output| {
+            resolve_retained_output(self.application.review_root(), &workspace, output).is_ok()
+        });
         let cleanup_effects = match cleanup_job.as_ref() {
             Some(job) => self
                 .database
@@ -386,19 +367,19 @@ impl ReviewBuildCoordinator {
                 .map_err(|error| error.to_string())?,
             None => Vec::new(),
         };
-        let artifact = artifact_view(
+        let output_view = build_output_view(
             &build,
-            latest_attempt.as_ref(),
-            artifacts.as_ref(),
+            output.as_ref(),
+            output_exists,
             cleanup_job.as_ref(),
             &cleanup_effects,
-        )?;
+        );
         let cleanup = match cleanup_job.as_ref() {
             Some(job) => cleanup_presentation_view(
                 self.cleanup
                     .presentation(&job.id)
                     .map_err(|error| error.message)?,
-            ),
+            )?,
             None => cleanup_view(&build, latest_attempt.as_ref()),
         };
         let attention = self
@@ -412,7 +393,7 @@ impl ReviewBuildCoordinator {
             &build,
             &workspace,
             latest_attempt.as_ref(),
-            artifact,
+            output_view,
             cleanup,
             attention,
         ))
@@ -464,32 +445,39 @@ impl ReviewBuildCoordinator {
                 continue;
             }
             let mut resources = Vec::new();
-            if let Some(artifact_id) = &candidate.current_artifact_set_id {
-                if let Some(artifacts) = self
+            if let Some(output_id) = &candidate.current_output_id {
+                if let Some(output) = self
                     .database
-                    .artifacts()
-                    .find(artifact_id)
+                    .outputs()
+                    .find(output_id)
                     .map_err(|error| error.to_string())?
                 {
-                    resources.push(CleanupResource::ArtifactSet {
+                    let attempt_storage = output
+                        .storage_key
+                        .as_str()
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent)
+                        .ok_or_else(|| {
+                            "The retained output storage key has no attempt root.".to_string()
+                        })?;
+                    resources.push(CleanupResource::AttemptLogs {
                         id: CleanupResourceId::random(),
-                        artifact_set_id: artifacts.id,
-                        storage_key: artifacts.storage_key,
+                        attempt_id: output.attempt_id.clone(),
+                        storage_key: CleanupStorageKey::new(format!("{attempt_storage}/build.log"))
+                            .map_err(|error| error.to_string())?,
+                        containment_root: self.cleanup.containment_root().clone(),
+                    });
+                    resources.push(CleanupResource::BuildOutput {
+                        id: CleanupResourceId::random(),
+                        output_id: output.id,
+                        storage_key: output.storage_key,
                         containment_root: self.cleanup.containment_root().clone(),
                     });
                 }
             }
-            resources.push(CleanupResource::BuildScratch {
-                id: CleanupResourceId::random(),
-                build_id: candidate.id.clone(),
-                storage_key: ArtifactStorageKey::new(format!(
-                    "repositories/{}/runtime/dependency-logs/{}.log",
-                    candidate.source.repository_id.as_str(),
-                    candidate.workspace_id.as_str(),
-                ))
-                .map_err(|error| error.to_string())?,
-                containment_root: self.cleanup.containment_root().clone(),
-            });
+            if resources.is_empty() {
+                continue;
+            }
             self.cleanup
                 .cleanup_superseded_appdata_resources(CleanupRequest {
                     build_id: candidate.id,
@@ -504,16 +492,16 @@ impl ReviewBuildCoordinator {
 fn retention_key(
     repository: &RepositoryIdentity,
     branch: &ObservedBranch,
-    source: &BuildSourceInput,
+    source: &CreateBuildSourceInput,
 ) -> Result<RetentionKey, String> {
     let semantic_source = match source {
-        BuildSourceInput::ExistingWorktree { association_id, .. } => {
+        CreateBuildSourceInput::ExistingWorktree { association_id, .. } => {
             format!("existing:{association_id}")
         }
-        BuildSourceInput::WorktreeSnapshot { association_id, .. } => {
+        CreateBuildSourceInput::WorktreeSnapshot { association_id, .. } => {
             format!("snapshot:{association_id}")
         }
-        BuildSourceInput::BranchCommit { .. } => "branch-commit".into(),
+        CreateBuildSourceInput::BranchCommit { .. } => "branch-commit".into(),
     };
     let mut digest = Sha256::new();
     for value in [

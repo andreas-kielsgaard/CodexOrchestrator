@@ -84,7 +84,7 @@ opaque_id!(
 opaque_id!(WorkspaceId, "workspace ID", "workspace");
 opaque_id!(ReviewBuildId, "review build ID", "build");
 opaque_id!(OperationAttemptId, "operation attempt ID", "attempt");
-opaque_id!(ArtifactSetId, "artifact set ID", "artifacts");
+opaque_id!(BuildOutputId, "build output ID", "output");
 opaque_id!(BuildAttentionId, "build attention ID", "attention");
 opaque_id!(CleanupJobId, "cleanup job ID", "cleanup");
 opaque_id!(CleanupResourceId, "cleanup resource ID", "resource");
@@ -155,35 +155,6 @@ impl<'de> Deserialize<'de> for GitObjectId {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(transparent)]
-pub(crate) struct ContentHash(String);
-
-impl ContentHash {
-    pub(crate) fn new(value: impl Into<String>) -> Result<Self, DomainError> {
-        let value = validated_text("content hash", value)?.to_ascii_lowercase();
-        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(DomainError::new(
-                "content hash must be a 64-character hexadecimal value",
-            ));
-        }
-        Ok(Self(value))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for ContentHash {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(D::Error::custom)
-    }
-}
-
 macro_rules! validated_value {
     ($name:ident, $kind:literal) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -211,13 +182,15 @@ macro_rules! validated_value {
     };
 }
 
-validated_value!(SourceFingerprint, "source fingerprint");
 validated_value!(RetentionKey, "retention key");
 validated_value!(ReviewBuildName, "review build name");
 validated_value!(WorktreeLocation, "worktree location");
-validated_value!(ArtifactStorageKey, "artifact storage key");
-validated_value!(ArtifactRelativePath, "artifact relative path");
-validated_value!(ResourceLocator, "cleanup resource locator");
+validated_value!(BuildOutputStorageKey, "build output storage key");
+validated_value!(
+    ExecutableRelativePath,
+    "build output executable relative path"
+);
+validated_value!(CleanupStorageKey, "cleanup storage key");
 validated_value!(ContainmentRoot, "cleanup containment root");
 
 #[cfg(test)]

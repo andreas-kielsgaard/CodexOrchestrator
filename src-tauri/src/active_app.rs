@@ -336,6 +336,7 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             crate::orchestration::transport::load_sprint_runner_transition_query,
+            crate::worktree_application::transport::create_physical_worktree,
             crate::worktree_review::transport::worktree_review_overview,
             crate::worktree_review::transport::select_worktree_review_repository,
             crate::worktree_review::transport::connect_worktree_review_repository,

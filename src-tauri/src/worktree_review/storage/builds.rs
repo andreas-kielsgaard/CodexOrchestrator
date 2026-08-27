@@ -3,9 +3,9 @@ use super::{
     StorageResult,
 };
 use crate::worktree_review::domain::{
-    ArtifactRelativePath, ArtifactSetId, ArtifactStorageKey, BuildLifecycle, ContentHash,
-    OperationAttemptId, RepositoryId, RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName,
-    ReviewWorkspace, SourceBinding, VerifiedArtifactFile, VerifiedArtifactSet, WorkspaceId,
+    BuildLifecycle, BuildOutputId, BuildOutputStorageKey, ExecutableRelativePath,
+    OperationAttemptId, RepositoryId, RetainedBuildOutput, RetentionKey, ReviewBuild,
+    ReviewBuildId, ReviewBuildName, ReviewWorkspace, SourceBinding, WorkspaceId,
     WorkspaceLifecycle, WorkspaceOwnership, WorktreeId, WorktreeLocation,
 };
 use chrono::{DateTime, Utc};
@@ -25,18 +25,18 @@ pub(crate) trait ReviewBuildRepository {
         repository_id: &RepositoryId,
         branch_ref: &crate::worktree_review::domain::BranchRef,
     ) -> StorageResult<Vec<ReviewBuild>>;
-    fn set_current_artifact(
+    fn set_current_output(
         &self,
         build_id: &ReviewBuildId,
-        artifact_set_id: &ArtifactSetId,
+        output_id: &BuildOutputId,
         updated_at: DateTime<Utc>,
     ) -> StorageResult<()>;
 }
 
-pub(crate) trait ArtifactSetRepository {
-    fn save_verified(&self, artifacts: &VerifiedArtifactSet) -> StorageResult<()>;
-    fn find(&self, id: &ArtifactSetId) -> StorageResult<Option<VerifiedArtifactSet>>;
-    fn list_for_build(&self, build_id: &ReviewBuildId) -> StorageResult<Vec<VerifiedArtifactSet>>;
+pub(crate) trait BuildOutputRepository {
+    fn save(&self, output: &RetainedBuildOutput) -> StorageResult<()>;
+    fn find(&self, id: &BuildOutputId) -> StorageResult<Option<RetainedBuildOutput>>;
+    fn list_for_build(&self, build_id: &ReviewBuildId) -> StorageResult<Vec<RetainedBuildOutput>>;
 }
 
 pub(crate) struct SqliteWorkspaceRepository<'owner, Owner> {
@@ -47,7 +47,7 @@ pub(crate) struct SqliteReviewBuildRepository<'owner, Owner> {
     owner: &'owner Owner,
 }
 
-pub(crate) struct SqliteArtifactSetRepository<'owner, Owner> {
+pub(crate) struct SqliteBuildOutputRepository<'owner, Owner> {
     owner: &'owner Owner,
 }
 
@@ -63,7 +63,7 @@ impl<'owner, Owner> SqliteReviewBuildRepository<'owner, Owner> {
     }
 }
 
-impl<'owner, Owner> SqliteArtifactSetRepository<'owner, Owner> {
+impl<'owner, Owner> SqliteBuildOutputRepository<'owner, Owner> {
     pub(super) fn new(owner: &'owner Owner) -> Self {
         Self { owner }
     }
@@ -159,14 +159,15 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                 .execute(
                     "INSERT INTO review_builds(
                        build_id, name, repository_id, full_branch_ref, workspace_id,
-                       source_binding_json, retention_key, current_artifact_set_id, lifecycle,
-                       created_at, updated_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                       source_binding_json, retention_key, current_output_id, lifecycle,
+                       created_at, updated_at, data_contract_version
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 2)
                      ON CONFLICT(build_id) DO UPDATE SET
-                       current_artifact_set_id = excluded.current_artifact_set_id,
+                       current_output_id = excluded.current_output_id,
                        lifecycle = excluded.lifecycle,
                        updated_at = excluded.updated_at
                      WHERE name = excluded.name
+                       AND data_contract_version = 2
                        AND repository_id = excluded.repository_id
                        AND full_branch_ref = excluded.full_branch_ref
                        AND workspace_id = excluded.workspace_id
@@ -180,10 +181,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                         build.workspace_id.as_str(),
                         source,
                         build.retention_key.as_str(),
-                        build
-                            .current_artifact_set_id
-                            .as_ref()
-                            .map(ArtifactSetId::as_str),
+                        build.current_output_id.as_ref().map(BuildOutputId::as_str),
                         build.lifecycle.as_str(),
                         encode_time(build.created_at),
                         encode_time(build.updated_at),
@@ -205,8 +203,8 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
             let raw = connection
                 .query_row(
                     "SELECT build_id, workspace_id, source_binding_json, retention_key,
-                            name, current_artifact_set_id, lifecycle, created_at, updated_at
-                     FROM review_builds WHERE build_id = ?1",
+                            name, current_output_id, lifecycle, created_at, updated_at
+                     FROM review_builds WHERE build_id = ?1 AND data_contract_version = 2",
                     [id.as_str()],
                     decode_build_row,
                 )
@@ -225,9 +223,10 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
             let mut statement = connection
                 .prepare(
                     "SELECT build_id, workspace_id, source_binding_json, retention_key,
-                            name, current_artifact_set_id, lifecycle, created_at, updated_at
+                            name, current_output_id, lifecycle, created_at, updated_at
                      FROM review_builds
                      WHERE repository_id = ?1 AND full_branch_ref = ?2
+                       AND data_contract_version = 2
                      ORDER BY created_at DESC, build_id",
                 )
                 .map_err(sql_error("prepare review build query"))?;
@@ -243,33 +242,33 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
         })
     }
 
-    fn set_current_artifact(
+    fn set_current_output(
         &self,
         build_id: &ReviewBuildId,
-        artifact_set_id: &ArtifactSetId,
+        output_id: &BuildOutputId,
         updated_at: DateTime<Utc>,
     ) -> StorageResult<()> {
         self.owner.with_connection(|connection| {
             let changed = connection
                 .execute(
                     "UPDATE review_builds
-                     SET current_artifact_set_id = ?2, updated_at = ?3
-                     WHERE build_id = ?1
+                     SET current_output_id = ?2, updated_at = ?3
+                     WHERE build_id = ?1 AND data_contract_version = 2
                        AND EXISTS (
-                         SELECT 1 FROM verified_artifact_sets
-                         WHERE artifact_set_id = ?2 AND build_id = ?1
+                         SELECT 1 FROM retained_build_outputs
+                         WHERE output_id = ?2 AND build_id = ?1
                        )",
                     params![
                         build_id.as_str(),
-                        artifact_set_id.as_str(),
+                        output_id.as_str(),
                         encode_time(updated_at)
                     ],
                 )
-                .map_err(sql_error("promote current artifact set"))?;
+                .map_err(sql_error("select current retained build output"))?;
             if changed != 1 {
                 return Err(StorageError::new(
                     StorageErrorKind::Conflict,
-                    "artifact set is not verified for the selected build",
+                    "build output is not retained for the selected build",
                 ));
             }
             Ok(())
@@ -277,112 +276,77 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
     }
 }
 
-impl<Owner: ConnectionProvider> ArtifactSetRepository for SqliteArtifactSetRepository<'_, Owner> {
-    fn save_verified(&self, artifacts: &VerifiedArtifactSet) -> StorageResult<()> {
-        artifacts
+impl<Owner: ConnectionProvider> BuildOutputRepository for SqliteBuildOutputRepository<'_, Owner> {
+    fn save(&self, output: &RetainedBuildOutput) -> StorageResult<()> {
+        output
             .validate()
             .map_err(|error| StorageError::corrupt(error.to_string()))?;
         self.owner.with_connection(|connection| {
-            connection
-                .execute_batch("SAVEPOINT save_verified_artifact_set")
-                .map_err(sql_error("begin artifact set savepoint"))?;
-            let result = save_artifact_set(connection, artifacts);
-            match result {
-                Ok(()) => connection
-                    .execute_batch("RELEASE save_verified_artifact_set")
-                    .map_err(sql_error("commit artifact set savepoint")),
-                Err(error) => {
-                    let _ = connection.execute_batch(
-                        "ROLLBACK TO save_verified_artifact_set; RELEASE save_verified_artifact_set",
-                    );
-                    Err(error)
-                }
+            let changed = connection
+                .execute(
+                    "INSERT INTO retained_build_outputs(
+                       output_id, build_id, attempt_id, storage_key,
+                       executable_relative_path, published_at
+                     )
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6
+                     WHERE EXISTS (
+                       SELECT 1 FROM review_operation_attempts
+                       WHERE attempt_id = ?3 AND build_id = ?2
+                         AND operation_kind = 'build'
+                         AND execution_state = 'completed' AND verdict = 'passed'
+                     ) AND EXISTS (
+                       SELECT 1 FROM review_builds
+                       WHERE build_id = ?2 AND data_contract_version = 2
+                     )",
+                    params![
+                        output.id.as_str(),
+                        output.build_id.as_str(),
+                        output.attempt_id.as_str(),
+                        output.storage_key.as_str(),
+                        output.executable_relative_path.as_str(),
+                        encode_time(output.published_at),
+                    ],
+                )
+                .map_err(sql_error("save retained build output"))?;
+            if changed != 1 {
+                return Err(StorageError::new(
+                    StorageErrorKind::Conflict,
+                    "retained build output requires a succeeded build attempt for the same build",
+                ));
             }
+            Ok(())
         })
     }
 
-    fn find(&self, id: &ArtifactSetId) -> StorageResult<Option<VerifiedArtifactSet>> {
+    fn find(&self, id: &BuildOutputId) -> StorageResult<Option<RetainedBuildOutput>> {
         self.owner
-            .with_connection(|connection| load_artifact_set(connection, id))
+            .with_connection(|connection| load_build_output(connection, id))
     }
 
-    fn list_for_build(&self, build_id: &ReviewBuildId) -> StorageResult<Vec<VerifiedArtifactSet>> {
+    fn list_for_build(&self, build_id: &ReviewBuildId) -> StorageResult<Vec<RetainedBuildOutput>> {
         self.owner.with_connection(|connection| {
             let mut statement = connection
                 .prepare(
-                    "SELECT artifact_set_id FROM verified_artifact_sets
-                     WHERE build_id = ?1 ORDER BY verified_at DESC, artifact_set_id",
+                    "SELECT output_id FROM retained_build_outputs
+                     WHERE build_id = ?1 ORDER BY published_at DESC, output_id",
                 )
-                .map_err(sql_error("prepare artifact set query"))?;
+                .map_err(sql_error("prepare retained build output query"))?;
             let ids = statement
                 .query_map([build_id.as_str()], |row| row.get::<_, String>(0))
-                .map_err(sql_error("query artifact sets"))?
+                .map_err(sql_error("query retained build outputs"))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error("read artifact set IDs"))?;
+                .map_err(sql_error("read retained build output IDs"))?;
             ids.into_iter()
                 .map(|id| {
-                    let id = ArtifactSetId::new(id)
+                    let id = BuildOutputId::new(id)
                         .map_err(|error| StorageError::corrupt(error.to_string()))?;
-                    load_artifact_set(connection, &id)?.ok_or_else(|| {
-                        StorageError::corrupt("artifact set disappeared during durable query")
+                    load_build_output(connection, &id)?.ok_or_else(|| {
+                        StorageError::corrupt("build output disappeared during durable query")
                     })
                 })
                 .collect()
         })
     }
-}
-
-fn save_artifact_set(
-    connection: &rusqlite::Connection,
-    artifacts: &VerifiedArtifactSet,
-) -> StorageResult<()> {
-    let changed = connection
-        .execute(
-            "INSERT INTO verified_artifact_sets(
-               artifact_set_id, build_id, attempt_id, storage_key, manifest_hash, verified_at
-             )
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6
-             WHERE EXISTS (
-               SELECT 1 FROM review_operation_attempts
-               WHERE attempt_id = ?3 AND build_id = ?2
-                 AND operation_kind = 'build'
-                 AND execution_state = 'completed' AND verdict = 'passed'
-             )",
-            params![
-                artifacts.id.as_str(),
-                artifacts.build_id.as_str(),
-                artifacts.attempt_id.as_str(),
-                artifacts.storage_key.as_str(),
-                artifacts.manifest_hash.as_str(),
-                encode_time(artifacts.verified_at),
-            ],
-        )
-        .map_err(sql_error("save verified artifact set"))?;
-    if changed != 1 {
-        return Err(StorageError::new(
-            StorageErrorKind::Conflict,
-            "artifact set requires a passed build attempt for the same build",
-        ));
-    }
-    for (ordinal, file) in artifacts.files.iter().enumerate() {
-        let bytes = i64::try_from(file.bytes)
-            .map_err(|_| StorageError::corrupt("artifact byte size exceeds SQLite range"))?;
-        connection
-            .execute(
-                "INSERT INTO verified_artifact_files(
-                   artifact_set_id, ordinal, relative_path, content_hash, bytes
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    artifacts.id.as_str(),
-                    ordinal as i64,
-                    file.relative_path.as_str(),
-                    file.content_hash.as_str(),
-                    bytes,
-                ],
-            )
-            .map_err(sql_error("save verified artifact file"))?;
-    }
-    Ok(())
 }
 
 type WorkspaceRow = (
@@ -465,9 +429,9 @@ fn decode_build(raw: BuildRow) -> StorageResult<ReviewBuild> {
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
         name: ReviewBuildName::new(raw.4)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
-        current_artifact_set_id: raw
+        current_output_id: raw
             .5
-            .map(ArtifactSetId::new)
+            .map(BuildOutputId::new)
             .transpose()
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
         lifecycle: BuildLifecycle::parse(&raw.6)
@@ -481,14 +445,15 @@ fn decode_build(raw: BuildRow) -> StorageResult<ReviewBuild> {
     Ok(build)
 }
 
-fn load_artifact_set(
+fn load_build_output(
     connection: &rusqlite::Connection,
-    id: &ArtifactSetId,
-) -> StorageResult<Option<VerifiedArtifactSet>> {
+    id: &BuildOutputId,
+) -> StorageResult<Option<RetainedBuildOutput>> {
     let raw = connection
         .query_row(
-            "SELECT artifact_set_id, build_id, attempt_id, storage_key, manifest_hash, verified_at
-             FROM verified_artifact_sets WHERE artifact_set_id = ?1",
+            "SELECT output_id, build_id, attempt_id, storage_key,
+                    executable_relative_path, published_at
+             FROM retained_build_outputs WHERE output_id = ?1",
             [id.as_str()],
             |row| {
                 Ok((
@@ -502,55 +467,24 @@ fn load_artifact_set(
             },
         )
         .optional()
-        .map_err(sql_error("load verified artifact set"))?;
+        .map_err(sql_error("load retained build output"))?;
     let Some(raw) = raw else {
         return Ok(None);
     };
-    let mut statement = connection
-        .prepare(
-            "SELECT relative_path, content_hash, bytes FROM verified_artifact_files
-             WHERE artifact_set_id = ?1 ORDER BY ordinal",
-        )
-        .map_err(sql_error("prepare artifact manifest query"))?;
-    let file_rows = statement
-        .query_map([id.as_str()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
-        .map_err(sql_error("query artifact manifest"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_error("read artifact manifest"))?;
-    let files = file_rows
-        .into_iter()
-        .map(|file| {
-            Ok(VerifiedArtifactFile {
-                relative_path: ArtifactRelativePath::new(file.0)
-                    .map_err(|error| StorageError::corrupt(error.to_string()))?,
-                content_hash: ContentHash::new(file.1)
-                    .map_err(|error| StorageError::corrupt(error.to_string()))?,
-                bytes: u64::try_from(file.2)
-                    .map_err(|_| StorageError::corrupt("invalid artifact byte size"))?,
-            })
-        })
-        .collect::<StorageResult<Vec<_>>>()?;
-    let artifacts = VerifiedArtifactSet {
-        id: ArtifactSetId::new(raw.0).map_err(|error| StorageError::corrupt(error.to_string()))?,
+    let output = RetainedBuildOutput {
+        id: BuildOutputId::new(raw.0).map_err(|error| StorageError::corrupt(error.to_string()))?,
         build_id: ReviewBuildId::new(raw.1)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
         attempt_id: OperationAttemptId::new(raw.2)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
-        storage_key: ArtifactStorageKey::new(raw.3)
+        storage_key: BuildOutputStorageKey::new(raw.3)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
-        manifest_hash: ContentHash::new(raw.4)
+        executable_relative_path: ExecutableRelativePath::new(raw.4)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,
-        files,
-        verified_at: decode_time(raw.5, "artifact verification")?,
+        published_at: decode_time(raw.5, "build output publication")?,
     };
-    artifacts
+    output
         .validate()
         .map_err(|error| StorageError::corrupt(error.to_string()))?;
-    Ok(Some(artifacts))
+    Ok(Some(output))
 }

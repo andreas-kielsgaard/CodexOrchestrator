@@ -11,7 +11,7 @@ mod settings;
 pub(crate) use associations::WorktreeAssociationRepository;
 pub(crate) use attempts::OperationAttemptRepository;
 pub(crate) use attentions::BuildAttentionRepository;
-pub(crate) use builds::{ArtifactSetRepository, ReviewBuildRepository, WorkspaceRepository};
+pub(crate) use builds::{BuildOutputRepository, ReviewBuildRepository, WorkspaceRepository};
 pub(crate) use cleanup::CleanupRepository;
 pub(crate) use repositories::ReviewRepositoryRepository;
 pub(crate) use selection::{PersistedRepositorySelection, RepositorySelectionRepository};
@@ -20,7 +20,7 @@ pub(crate) use settings::ReviewSettingsRepository;
 use associations::SqliteWorktreeAssociationRepository;
 use attempts::SqliteOperationAttemptRepository;
 use attentions::SqliteBuildAttentionRepository;
-use builds::{SqliteArtifactSetRepository, SqliteReviewBuildRepository, SqliteWorkspaceRepository};
+use builds::{SqliteBuildOutputRepository, SqliteReviewBuildRepository, SqliteWorkspaceRepository};
 use cleanup::SqliteCleanupRepository;
 use repositories::SqliteReviewRepositoryRepository;
 use selection::SqliteRepositorySelectionRepository;
@@ -129,8 +129,8 @@ impl WorktreeReviewDatabase {
         SqliteBuildAttentionRepository::new(self)
     }
 
-    pub(crate) fn artifacts(&self) -> impl ArtifactSetRepository + '_ {
-        SqliteArtifactSetRepository::new(self)
+    pub(crate) fn outputs(&self) -> impl BuildOutputRepository + '_ {
+        SqliteBuildOutputRepository::new(self)
     }
 
     pub(crate) fn cleanup(&self) -> impl CleanupRepository + '_ {
@@ -243,8 +243,8 @@ impl WorktreeReviewTransaction<'_> {
         SqliteBuildAttentionRepository::new(self)
     }
 
-    pub(crate) fn artifacts(&self) -> impl ArtifactSetRepository + '_ {
-        SqliteArtifactSetRepository::new(self)
+    pub(crate) fn outputs(&self) -> impl BuildOutputRepository + '_ {
+        SqliteBuildOutputRepository::new(self)
     }
 
     pub(crate) fn cleanup(&self) -> impl CleanupRepository + '_ {
@@ -380,7 +380,7 @@ mod tests {
     fn build_graph(
         transaction: &WorktreeReviewTransaction<'_>,
         now: chrono::DateTime<Utc>,
-    ) -> StorageResult<(ReviewBuild, ReviewOperationAttempt, VerifiedArtifactSet)> {
+    ) -> StorageResult<(ReviewBuild, ReviewOperationAttempt, RetainedBuildOutput)> {
         let repository = repository(now);
         let branch = branch(&repository, now);
         transaction.repositories().save_repository(&repository)?;
@@ -407,12 +407,11 @@ mod tests {
             branch_ref: branch.branch_ref,
             selection: ReviewSourceSelection::WorktreeSnapshot {
                 association_id: association.id,
-                baseline_object: object('a'),
-                captured_state_fingerprint: SourceFingerprint::new("source-fingerprint").unwrap(),
+                head_object_id: object('a'),
+                captured_object_id: object('b'),
+                virtual_commit_id: Some(object('b')),
             },
             workspace_id: workspace.id.clone(),
-            materialized_object: object('a'),
-            materialized_state_fingerprint: SourceFingerprint::new("source-fingerprint").unwrap(),
         };
         let build = ReviewBuild {
             id: build_id,
@@ -420,7 +419,7 @@ mod tests {
             source,
             workspace_id: workspace.id,
             retention_key: RetentionKey::new("logical-source-one").unwrap(),
-            current_artifact_set_id: None,
+            current_output_id: None,
             lifecycle: BuildLifecycle::Active,
             created_at: now,
             updated_at: now,
@@ -439,48 +438,41 @@ mod tests {
             completed_at: Some(now),
         };
         transaction.attempts().save(&attempt)?;
-        let artifacts = VerifiedArtifactSet {
-            id: ArtifactSetId::new("artifacts-one").unwrap(),
+        let output = RetainedBuildOutput {
+            id: BuildOutputId::new("output-one").unwrap(),
             build_id: build.id.clone(),
             attempt_id: attempt.id.clone(),
-            storage_key: ArtifactStorageKey::new("artifacts/build-one/attempt-one").unwrap(),
-            manifest_hash: ContentHash::new("b".repeat(64)).unwrap(),
-            files: vec![VerifiedArtifactFile {
-                relative_path: ArtifactRelativePath::new("app.exe").unwrap(),
-                content_hash: ContentHash::new("c".repeat(64)).unwrap(),
-                bytes: 42,
-            }],
-            verified_at: now,
+            storage_key: BuildOutputStorageKey::new(
+                "repositories/repository-one/build-output/build-one/attempt-one/output",
+            )
+            .unwrap(),
+            executable_relative_path: ExecutableRelativePath::new("cargo-target/debug/app.exe")
+                .unwrap(),
+            published_at: now,
         };
-        transaction.artifacts().save_verified(&artifacts)?;
+        transaction.outputs().save(&output)?;
         transaction
             .builds()
-            .set_current_artifact(&build.id, &artifacts.id, now)?;
-        Ok((build, attempt, artifacts))
+            .set_current_output(&build.id, &output.id, now)?;
+        Ok((build, attempt, output))
     }
 
     #[test]
     fn focused_repositories_share_one_atomic_transaction_owner() {
         let database = WorktreeReviewDatabase::open_in_memory().unwrap();
         let now = Utc::now();
-        let (build, attempt, artifacts) = database
+        let (build, attempt, output) = database
             .transaction(|transaction| build_graph(transaction, now))
             .unwrap();
 
         let loaded_build = database.builds().find(&build.id).unwrap().unwrap();
         assert_eq!(loaded_build.name, build.name);
-        assert_eq!(
-            loaded_build.current_artifact_set_id,
-            Some(artifacts.id.clone())
-        );
+        assert_eq!(loaded_build.current_output_id, Some(output.id.clone()));
         assert_eq!(
             database.attempts().find(&attempt.id).unwrap(),
             Some(attempt)
         );
-        assert_eq!(
-            database.artifacts().find(&artifacts.id).unwrap(),
-            Some(artifacts)
-        );
+        assert_eq!(database.outputs().find(&output.id).unwrap(), Some(output));
     }
 
     #[test]
@@ -570,12 +562,98 @@ mod tests {
                 let count: u32 = connection
                     .query_row(
                         "SELECT COUNT(*) FROM worktree_review_schema_migrations
-                         WHERE version IN (1, 2, 3, 4)",
+                         WHERE version IN (1, 2, 3, 4, 5)",
                         [],
                         |row| row.get(0),
                     )
                     .map_err(sql_error("verify serialized worktree review migrations"))?;
-                assert_eq!(count, 4);
+                assert_eq!(count, 5);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn legacy_source_and_artifact_rows_are_preserved_but_not_promoted_to_current_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("worktree-review.sqlite");
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE review_builds (
+                   build_id TEXT PRIMARY KEY, name TEXT NOT NULL, repository_id TEXT NOT NULL,
+                   full_branch_ref TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                   source_binding_json TEXT NOT NULL, retention_key TEXT NOT NULL,
+                   current_artifact_set_id TEXT, lifecycle TEXT NOT NULL,
+                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE review_cleanup_jobs (
+                   cleanup_job_id TEXT PRIMARY KEY, build_id TEXT NOT NULL, trigger TEXT NOT NULL,
+                   eligibility TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL,
+                   started_at TEXT, settled_at TEXT
+                 );
+                 CREATE TABLE verified_artifact_sets (
+                   artifact_set_id TEXT PRIMARY KEY, build_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+                   storage_key TEXT NOT NULL, manifest_hash TEXT NOT NULL, verified_at TEXT NOT NULL
+                 );
+                 INSERT INTO review_builds VALUES (
+                   'legacy-build', 'Legacy', 'legacy-repository', 'refs/heads/legacy',
+                   'legacy-workspace', '{\"opaqueLegacySource\":true}', 'legacy-source',
+                   'legacy-artifacts', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                 );
+                 INSERT INTO review_cleanup_jobs VALUES (
+                   'legacy-cleanup', 'legacy-build', 'retention_policy', 'eligible', 'planned',
+                   '2026-01-01T00:00:00Z', NULL, NULL
+                 );
+                 INSERT INTO verified_artifact_sets VALUES (
+                   'legacy-artifacts', 'legacy-build', 'legacy-attempt', 'legacy/output',
+                   'legacy-hash', '2026-01-01T00:00:00Z'
+                 );",
+            )
+            .unwrap();
+        drop(legacy);
+
+        let database = WorktreeReviewDatabase::open(&path).unwrap();
+
+        assert!(database
+            .builds()
+            .find(&ReviewBuildId::new("legacy-build").unwrap())
+            .unwrap()
+            .is_none());
+        assert!(database
+            .cleanup()
+            .find_job(&CleanupJobId::new("legacy-cleanup").unwrap())
+            .unwrap()
+            .is_none());
+        database
+            .with_connection(|connection| {
+                let legacy_builds: u32 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM review_builds
+                         WHERE build_id = 'legacy-build' AND data_contract_version = 1
+                           AND current_artifact_set_id = 'legacy-artifacts'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error("verify preserved legacy build"))?;
+                let legacy_outputs: u32 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM verified_artifact_sets
+                         WHERE artifact_set_id = 'legacy-artifacts'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error("verify preserved legacy artifacts"))?;
+                let legacy_cleanup: u32 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM review_cleanup_jobs
+                         WHERE cleanup_job_id = 'legacy-cleanup'
+                           AND resource_contract_version = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error("verify preserved legacy cleanup"))?;
+                assert_eq!((legacy_builds, legacy_outputs, legacy_cleanup), (1, 1, 1));
                 Ok(())
             })
             .unwrap();
@@ -673,13 +751,13 @@ mod tests {
     fn cleanup_receipt_retains_exact_terminal_effects() {
         let database = WorktreeReviewDatabase::open_in_memory().unwrap();
         let now = Utc::now();
-        let (build, _, artifacts) = database
+        let (build, _, output) = database
             .transaction(|transaction| build_graph(transaction, now))
             .unwrap();
-        let resource = CleanupResource::ArtifactSet {
+        let resource = CleanupResource::BuildOutput {
             id: CleanupResourceId::new("artifact-resource").unwrap(),
-            artifact_set_id: artifacts.id,
-            storage_key: artifacts.storage_key,
+            output_id: output.id,
+            storage_key: output.storage_key,
             containment_root: ContainmentRoot::new("appdata-artifacts").unwrap(),
         };
         let job = CleanupJob {

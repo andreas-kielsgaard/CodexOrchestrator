@@ -1,24 +1,18 @@
-use super::{
-    artifact_store::ArtifactStore,
-    domain::{
-        OperationAttemptId, OperationFailureCategory, OperationStage, ReviewBuildId,
-        ReviewWorkspace, VerifiedArtifactSet,
-    },
+use super::domain::{
+    BuildOutputId, BuildOutputStorageKey, ExecutableRelativePath, OperationAttemptId,
+    OperationFailureCategory, OperationStage, RetainedBuildOutput, ReviewBuildId, ReviewWorkspace,
 };
 use crate::{
     repository_context::RepositoryIdentity,
     worktree_application::{
-        PhysicalWorktreeApplication, PhysicalWorktreeBuildRequest, WorktreeApplicationError,
-        WorktreeApplicationErrorKind,
+        PhysicalWorktreeApplication, PhysicalWorktreeBuildRequest, PhysicalWorktreeBuildResult,
+        WorktreeApplicationError, WorktreeApplicationErrorKind,
     },
 };
 use std::{
-    env, fs,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
+    fs,
+    path::{Component, Path, PathBuf},
 };
-
-const MAX_ARTIFACT_FILES: usize = 20_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BuildExecutionFailure {
@@ -41,16 +35,14 @@ impl BuildExecutionFailure {
     }
 }
 
-/// Worktree Review adapter for dependency provisioning, physical compilation, and artifact copy.
+/// Worktree Review adapter for dependency provisioning, physical compilation, and retained output.
 /// Physical build/open mechanics belong to `worktree_application`; this adapter owns only Review
-/// IDs, AppData layout, attempt stages, and artifact publication.
+/// IDs, AppData layout, attempt stages, and the durable pointer to atomically published output.
 pub(crate) struct ReviewBuildExecutor {
     application: PhysicalWorktreeApplication,
-    npm: PathBuf,
+    review_root: PathBuf,
     build_output_root: PathBuf,
-    shared_cache_root: PathBuf,
-    dependency_log_root: PathBuf,
-    artifact_store: ArtifactStore,
+    dependency_cache_root: PathBuf,
 }
 
 impl ReviewBuildExecutor {
@@ -69,9 +61,8 @@ impl ReviewBuildExecutor {
             .join("repositories")
             .join(repository.id.as_str());
         let build_output_root = repository_root.join("build-output");
-        let dependency_log_root = repository_root.join("dependency-logs");
-        let shared_cache_root = review_root.join("shared-cache");
-        for directory in [&build_output_root, &dependency_log_root, &shared_cache_root] {
+        let dependency_cache_root = review_root.join("shared-cache").join("npm");
+        for directory in [&build_output_root, &dependency_cache_root] {
             fs::create_dir_all(directory).map_err(|_| {
                 BuildExecutionFailure::new(
                     OperationStage::WorktreeProvisioning,
@@ -80,26 +71,11 @@ impl ReviewBuildExecutor {
                 )
             })?;
         }
-        let artifact_store = ArtifactStore::open(review_root).map_err(|message| {
-            BuildExecutionFailure::new(
-                OperationStage::ArtifactPromotion,
-                OperationFailureCategory::ProvisioningFailed,
-                message,
-            )
-        })?;
         Ok(Self {
             application: PhysicalWorktreeApplication,
-            npm: resolve_program("npm").ok_or_else(|| {
-                BuildExecutionFailure::new(
-                    OperationStage::DependencyProvisioning,
-                    OperationFailureCategory::ToolchainUnavailable,
-                    "npm is required to provision worktree dependencies.",
-                )
-            })?,
+            review_root,
             build_output_root,
-            shared_cache_root,
-            dependency_log_root,
-            artifact_store,
+            dependency_cache_root,
         })
     }
 
@@ -108,14 +84,15 @@ impl ReviewBuildExecutor {
         build_id: &ReviewBuildId,
         attempt_id: &OperationAttemptId,
         workspace: &ReviewWorkspace,
-    ) -> Result<VerifiedArtifactSet, BuildExecutionFailure> {
-        let output_root = self
+    ) -> Result<RetainedBuildOutput, BuildExecutionFailure> {
+        let attempt_root = self
             .build_output_root
             .join(build_id.as_str())
             .join(attempt_id.as_str());
         let request = PhysicalWorktreeBuildRequest::new(
             PathBuf::from(workspace.location.as_str()),
-            output_root,
+            attempt_root,
+            self.dependency_cache_root.clone(),
             "codex-orchestrator",
         )
         .map_err(application_failure)?;
@@ -123,149 +100,110 @@ impl ReviewBuildExecutor {
             .application
             .build(&request)
             .map_err(application_failure)?;
-        let declared = declared_artifacts(&result.output_root)?;
-        self.artifact_store
-            .promote(
-                build_id.clone(),
-                attempt_id.clone(),
-                &result.output_root,
-                &declared,
-            )
-            .map_err(|message| {
-                BuildExecutionFailure::new(
-                    OperationStage::ArtifactPromotion,
-                    OperationFailureCategory::ArtifactInvalid,
-                    message,
-                )
-            })
-    }
-
-    pub(crate) fn provision_dependencies(
-        &self,
-        workspace: &ReviewWorkspace,
-    ) -> Result<(), BuildExecutionFailure> {
-        let root = PathBuf::from(workspace.location.as_str());
-        let required = [
-            "node_modules/typescript/bin/tsc",
-            "node_modules/vite/bin/vite.js",
-            "node_modules/@tauri-apps/cli/tauri.js",
-        ];
-        if required
-            .iter()
-            .all(|relative| root.join(relative).is_file())
-        {
-            return Ok(());
-        }
-        if !root.join("package-lock.json").is_file() {
-            return Err(BuildExecutionFailure::new(
-                OperationStage::DependencyProvisioning,
-                OperationFailureCategory::ProvisioningFailed,
-                "The selected source has no package-lock.json for a deterministic npm install.",
-            ));
-        }
-        let log_path = self
-            .dependency_log_root
-            .join(format!("{}.log", workspace.id.as_str()));
-        let log = fs::File::create(log_path).map_err(|_| dependency_log_failure())?;
-        let error_log = log.try_clone().map_err(|_| dependency_log_failure())?;
-        let status = Command::new(&self.npm)
-            .args([
-                "ci",
-                "--prefer-offline",
-                "--no-audit",
-                "--no-fund",
-                "--cache",
-            ])
-            .arg(self.shared_cache_root.join("npm"))
-            .current_dir(&root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log))
-            .stderr(Stdio::from(error_log))
-            .status()
-            .map_err(|_| {
-                BuildExecutionFailure::new(
-                    OperationStage::DependencyProvisioning,
-                    OperationFailureCategory::ToolchainUnavailable,
-                    "npm could not be started for the selected worktree.",
-                )
-            })?;
-        if !status.success()
-            || !required
-                .iter()
-                .all(|relative| root.join(relative).is_file())
-        {
-            return Err(BuildExecutionFailure::new(
-                OperationStage::DependencyProvisioning,
-                OperationFailureCategory::ProvisioningFailed,
-                "Deterministic dependency provisioning did not complete successfully.",
-            ));
-        }
-        Ok(())
-    }
-}
-
-fn declared_artifacts(output_root: &Path) -> Result<Vec<PathBuf>, BuildExecutionFailure> {
-    let mut declared = Vec::new();
-    collect_regular_files(
-        output_root,
-        &output_root.join("frontend-dist"),
-        &mut declared,
-    )?;
-    #[cfg(windows)]
-    let executable = PathBuf::from("cargo-target/debug/codex-orchestrator.exe");
-    #[cfg(not(windows))]
-    let executable = PathBuf::from("cargo-target/debug/codex-orchestrator");
-    if !output_root.join(&executable).is_file() {
-        return Err(BuildExecutionFailure::new(
-            OperationStage::ArtifactVerification,
-            OperationFailureCategory::ArtifactMissing,
-            "Compilation reported success but the application executable is missing.",
-        ));
-    }
-    declared.push(executable);
-    Ok(declared)
-}
-
-fn collect_regular_files(
-    root: &Path,
-    directory: &Path,
-    output: &mut Vec<PathBuf>,
-) -> Result<(), BuildExecutionFailure> {
-    let entries = fs::read_dir(directory).map_err(|_| {
-        BuildExecutionFailure::new(
-            OperationStage::ArtifactVerification,
-            OperationFailureCategory::ArtifactMissing,
-            "Compilation reported success but the frontend output is missing.",
+        retained_output(
+            &self.review_root,
+            &request.attempt_root,
+            build_id,
+            attempt_id,
+            &result,
         )
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|_| artifact_invalid())?;
-        let metadata = entry.file_type().map_err(|_| artifact_invalid())?;
-        if metadata.is_symlink() {
-            return Err(artifact_invalid());
-        }
-        if metadata.is_dir() {
-            collect_regular_files(root, &entry.path(), output)?;
-        } else if metadata.is_file() {
-            output.push(
-                entry
-                    .path()
-                    .strip_prefix(root)
-                    .map_err(|_| artifact_invalid())?
-                    .to_path_buf(),
-            );
-            if output.len() > MAX_ARTIFACT_FILES {
-                return Err(BuildExecutionFailure::new(
-                    OperationStage::ArtifactVerification,
-                    OperationFailureCategory::ArtifactInvalid,
-                    "The build produced too many distributable files to retain safely.",
-                ));
-            }
-        } else {
-            return Err(artifact_invalid());
-        }
     }
-    Ok(())
+}
+
+pub(crate) fn resolve_retained_output(
+    review_root: &Path,
+    workspace: &ReviewWorkspace,
+    output: &RetainedBuildOutput,
+) -> Result<PhysicalWorktreeBuildResult, String> {
+    output.validate().map_err(|_| unavailable_output())?;
+    let review_root = review_root
+        .canonicalize()
+        .map_err(|_| unavailable_output())?;
+    let output_root = review_root
+        .join(output.storage_key.as_str())
+        .canonicalize()
+        .map_err(|_| unavailable_output())?;
+    if !output_root.is_dir() || !output_root.starts_with(&review_root) {
+        return Err(unavailable_output());
+    }
+    let executable = output_root
+        .join(output.executable_relative_path.as_str())
+        .canonicalize()
+        .map_err(|_| unavailable_output())?;
+    if !executable.is_file() || !executable.starts_with(&output_root) {
+        return Err(unavailable_output());
+    }
+    let attempt_root = output_root
+        .parent()
+        .ok_or_else(unavailable_output)?
+        .to_path_buf();
+    Ok(PhysicalWorktreeBuildResult {
+        worktree_root: PathBuf::from(workspace.location.as_str()),
+        log_path: attempt_root.join("build.log"),
+        attempt_root,
+        output_root,
+        executable,
+    })
+}
+
+fn retained_output(
+    review_root: &Path,
+    expected_attempt_root: &Path,
+    build_id: &ReviewBuildId,
+    attempt_id: &OperationAttemptId,
+    result: &PhysicalWorktreeBuildResult,
+) -> Result<RetainedBuildOutput, BuildExecutionFailure> {
+    let review_root = review_root.canonicalize().map_err(|_| output_invalid())?;
+    let attempt_root = result
+        .attempt_root
+        .canonicalize()
+        .map_err(|_| output_invalid())?;
+    let expected_attempt_root = expected_attempt_root
+        .canonicalize()
+        .map_err(|_| output_invalid())?;
+    let output_root = result
+        .output_root
+        .canonicalize()
+        .map_err(|_| output_missing())?;
+    let executable = result
+        .executable
+        .canonicalize()
+        .map_err(|_| output_missing())?;
+    if attempt_root != expected_attempt_root
+        || output_root.parent() != Some(attempt_root.as_path())
+        || output_root.file_name().and_then(|name| name.to_str()) != Some("output")
+        || !output_root.is_dir()
+        || !executable.is_file()
+        || !executable.starts_with(&output_root)
+    {
+        return Err(output_missing());
+    }
+    let storage_key = normalized_relative(&review_root, &output_root).ok_or_else(output_invalid)?;
+    let executable_relative_path =
+        normalized_relative(&output_root, &executable).ok_or_else(output_invalid)?;
+    let output = RetainedBuildOutput {
+        id: BuildOutputId::random(),
+        build_id: build_id.clone(),
+        attempt_id: attempt_id.clone(),
+        storage_key: BuildOutputStorageKey::new(storage_key).map_err(|_| output_invalid())?,
+        executable_relative_path: ExecutableRelativePath::new(executable_relative_path)
+            .map_err(|_| output_invalid())?,
+        published_at: chrono::Utc::now(),
+    };
+    output.validate().map_err(|_| output_invalid())?;
+    Ok(output)
+}
+
+fn normalized_relative(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    let components = relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => value.to_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!components.is_empty()).then(|| components.join("/"))
 }
 
 fn application_failure(error: WorktreeApplicationError) -> BuildExecutionFailure {
@@ -274,13 +212,13 @@ fn application_failure(error: WorktreeApplicationError) -> BuildExecutionFailure
             OperationFailureCategory::ToolchainUnavailable
         }
         WorktreeApplicationErrorKind::ExecutableUnavailable => {
-            OperationFailureCategory::ArtifactMissing
+            OperationFailureCategory::OutputMissing
         }
         WorktreeApplicationErrorKind::BuildFailed => OperationFailureCategory::CommandFailed,
         _ => OperationFailureCategory::ProvisioningFailed,
     };
     let stage = match error.kind {
-        WorktreeApplicationErrorKind::ExecutableUnavailable => OperationStage::ArtifactVerification,
+        WorktreeApplicationErrorKind::ExecutableUnavailable => OperationStage::OutputPublication,
         WorktreeApplicationErrorKind::BuildFailed => OperationStage::Compilation,
         WorktreeApplicationErrorKind::ToolchainUnavailable => OperationStage::Compilation,
         _ => OperationStage::WorktreeProvisioning,
@@ -288,33 +226,81 @@ fn application_failure(error: WorktreeApplicationError) -> BuildExecutionFailure
     BuildExecutionFailure::new(stage, category, error.message)
 }
 
-fn resolve_program(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    #[cfg(windows)]
-    let names = [
-        format!("{name}.cmd"),
-        format!("{name}.exe"),
-        name.to_owned(),
-    ];
-    #[cfg(not(windows))]
-    let names = [name.to_owned()];
-    env::split_paths(&path)
-        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
-        .find(|candidate| candidate.is_file())
-}
-
-fn dependency_log_failure() -> BuildExecutionFailure {
+fn output_missing() -> BuildExecutionFailure {
     BuildExecutionFailure::new(
-        OperationStage::DependencyProvisioning,
-        OperationFailureCategory::ProvisioningFailed,
-        "Dependency provisioning log storage is unavailable.",
+        OperationStage::OutputPublication,
+        OperationFailureCategory::OutputMissing,
+        "Compilation completed without a retained application output.",
     )
 }
 
-fn artifact_invalid() -> BuildExecutionFailure {
+fn output_invalid() -> BuildExecutionFailure {
     BuildExecutionFailure::new(
-        OperationStage::ArtifactVerification,
-        OperationFailureCategory::ArtifactInvalid,
-        "A build output entry is not a bounded regular file.",
+        OperationStage::OutputPublication,
+        OperationFailureCategory::OutputPublicationFailed,
+        "The retained application output is outside Worktree Review AppData.",
     )
+}
+
+fn unavailable_output() -> String {
+    "The retained build output is unavailable or outside Worktree Review AppData.".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worktree_review::domain::{
+        RepositoryId, WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership, WorktreeId,
+        WorktreeLocation,
+    };
+
+    #[test]
+    fn retained_output_requires_a_current_contained_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let review_root = directory.path().join("review");
+        let attempt_root = review_root.join("repositories/repository/build-output/build/attempt");
+        let output_root = attempt_root.join("output");
+        let executable = output_root.join("cargo-target/debug/app.exe");
+        let worktree_root = directory.path().join("worktree");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(&worktree_root).unwrap();
+        fs::write(&executable, b"app").unwrap();
+        fs::write(attempt_root.join("build.log"), b"build").unwrap();
+        let physical = PhysicalWorktreeBuildResult {
+            worktree_root: worktree_root.clone(),
+            attempt_root: attempt_root.clone(),
+            output_root: output_root.clone(),
+            log_path: attempt_root.join("build.log"),
+            executable: executable.clone(),
+        };
+        let build_id = ReviewBuildId::new("build").unwrap();
+        let attempt_id = OperationAttemptId::new("attempt").unwrap();
+        let output = retained_output(
+            &review_root,
+            &attempt_root,
+            &build_id,
+            &attempt_id,
+            &physical,
+        )
+        .unwrap();
+        let workspace = ReviewWorkspace {
+            id: WorkspaceId::new("workspace").unwrap(),
+            repository_id: RepositoryId::new("repository").unwrap(),
+            worktree_id: WorktreeId::new("worktree").unwrap(),
+            location: WorktreeLocation::new(worktree_root.to_string_lossy()).unwrap(),
+            ownership: WorkspaceOwnership::OwnedBuildWorktree { build_id },
+            lifecycle: WorkspaceLifecycle::Ready,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        assert_eq!(
+            output.storage_key.as_str(),
+            "repositories/repository/build-output/build/attempt/output"
+        );
+        assert!(resolve_retained_output(&review_root, &workspace, &output).is_ok());
+
+        fs::remove_file(executable).unwrap();
+        assert!(resolve_retained_output(&review_root, &workspace, &output).is_err());
+    }
 }

@@ -41,7 +41,7 @@ pub(crate) struct RepositoryReadinessView {
     pub(crate) browse: CapabilityAvailabilityView,
     pub(crate) create_worktree: CapabilityAvailabilityView,
     pub(crate) build: CapabilityAvailabilityView,
-    pub(crate) artifact_storage: CapabilityAvailabilityView,
+    pub(crate) build_output_storage: CapabilityAvailabilityView,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -77,7 +77,6 @@ pub(crate) struct CommitView {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BranchDetailView {
     pub(crate) branch: BranchView,
-    pub(crate) application_metadata: Vec<ApplicationMetadataView>,
     pub(crate) worktrees: Vec<AssociatedWorktreeView>,
     pub(crate) association_candidates: Vec<AssociationCandidateView>,
     pub(crate) builds: Vec<ReviewBuildView>,
@@ -93,14 +92,6 @@ pub(crate) struct BranchHistoryPageView {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ApplicationMetadataView {
-    pub(crate) label: String,
-    pub(crate) value: String,
-    pub(crate) source: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct AssociatedWorktreeView {
     pub(crate) association_id: String,
     pub(crate) worktree_id: String,
@@ -111,12 +102,10 @@ pub(crate) struct AssociatedWorktreeView {
     pub(crate) ownership: WorkspaceOwnershipView,
     pub(crate) baseline: BaselineView,
     pub(crate) current_head: CommitView,
-    pub(crate) observed_state_fingerprint: String,
     pub(crate) changes: WorktreeChangesView,
     pub(crate) detached_head: bool,
     pub(crate) branch_reachability: String,
     pub(crate) availability: WorktreeAvailabilityView,
-    pub(crate) application_metadata: Vec<ApplicationMetadataView>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -188,7 +177,7 @@ pub(super) fn repository_view(repository: &RepositoryIdentity) -> RepositoryView
             browse: CapabilityAvailabilityView::Available,
             create_worktree: CapabilityAvailabilityView::Available,
             build: CapabilityAvailabilityView::Available,
-            artifact_storage: CapabilityAvailabilityView::Available,
+            build_output_storage: CapabilityAvailabilityView::Available,
         },
     )
 }
@@ -228,11 +217,11 @@ pub(super) fn repository_readiness(
     } else {
         browse.clone()
     };
-    let artifact_storage = capability_availability(&capabilities.artifact_storage);
+    let build_output_storage = capability_availability(&capabilities.build_output_storage);
     let state = if !matches!(&browse, CapabilityAvailabilityView::Available) {
         "unavailable"
     } else if !matches!(&build, CapabilityAvailabilityView::Available)
-        || !matches!(&artifact_storage, CapabilityAvailabilityView::Available)
+        || !matches!(&build_output_storage, CapabilityAvailabilityView::Available)
     {
         "degraded"
     } else {
@@ -243,7 +232,7 @@ pub(super) fn repository_readiness(
         browse,
         create_worktree,
         build,
-        artifact_storage,
+        build_output_storage,
     }
 }
 
@@ -292,13 +281,11 @@ pub(super) fn baseline_view(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn associated_worktree_view(
     association: &WorktreeAssociation,
     observation: Option<&WorktreeObservation>,
     name: String,
     location_label: String,
-    fingerprint: String,
     ownership: WorkspaceOwnershipView,
     availability: WorktreeAvailabilityView,
     baseline: BaselineView,
@@ -322,7 +309,6 @@ pub(super) fn associated_worktree_view(
         ownership,
         baseline,
         current_head,
-        observed_state_fingerprint: fingerprint,
         changes: WorktreeChangesView {
             commits_ahead_of_baseline: association.observed_state.commits_ahead_of_baseline,
             commits_behind_baseline: association.observed_state.commits_behind_baseline,
@@ -340,7 +326,6 @@ pub(super) fn associated_worktree_view(
         }
         .into(),
         availability,
-        application_metadata: Vec::new(),
     }
 }
 

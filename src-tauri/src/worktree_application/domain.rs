@@ -8,27 +8,175 @@ use std::{
 
 const MAX_LAUNCH_ENVIRONMENT_ENTRIES: usize = 16;
 const MAX_LAUNCH_ENVIRONMENT_UNITS: usize = 16 * 1024;
+const MAX_GIT_ID_UNITS: usize = 128;
+const MAX_GIT_REF_UNITS: usize = 512;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct GitCommitId(String);
+
+impl GitCommitId {
+    pub(crate) fn new(value: impl Into<String>) -> Result<Self, WorktreeApplicationError> {
+        let value = value.into();
+        if !matches!(value.len(), 40 | 64)
+            || value.len() > MAX_GIT_ID_UNITS
+            || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(invalid_request("The exact Git commit identity is invalid."));
+        }
+        Ok(Self(value.to_ascii_lowercase()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VirtualCommitCaptureRequest {
+    pub(crate) worktree_root: PathBuf,
+    pub(crate) expected_head: GitCommitId,
+}
+
+impl VirtualCommitCaptureRequest {
+    pub(crate) fn new(
+        worktree_root: PathBuf,
+        expected_head: GitCommitId,
+    ) -> Result<Self, WorktreeApplicationError> {
+        require_absolute(&worktree_root, "The source worktree root must be absolute.")?;
+        Ok(Self {
+            worktree_root,
+            expected_head,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VirtualCommitCaptureResult {
+    pub(crate) worktree_root: PathBuf,
+    pub(crate) baseline_commit: GitCommitId,
+    pub(crate) captured_tree: String,
+    pub(crate) captured_changes: bool,
+    pub(crate) virtual_commit: Option<GitCommitId>,
+}
+
+impl VirtualCommitCaptureResult {
+    pub(crate) fn captured_commit(&self) -> &GitCommitId {
+        self.virtual_commit
+            .as_ref()
+            .unwrap_or(&self.baseline_commit)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalWorktreeAttachment {
+    Detached,
+    ExistingBranch { branch_ref: String },
+    NewBranch { branch_name: String },
+}
+
+impl PhysicalWorktreeAttachment {
+    pub(crate) fn existing_branch(
+        branch_ref: impl Into<String>,
+    ) -> Result<Self, WorktreeApplicationError> {
+        let branch_ref = branch_ref.into();
+        if !valid_full_branch_ref(&branch_ref) {
+            return Err(invalid_request("The existing branch ref is invalid."));
+        }
+        Ok(Self::ExistingBranch { branch_ref })
+    }
+
+    pub(crate) fn new_branch(
+        branch_name: impl Into<String>,
+    ) -> Result<Self, WorktreeApplicationError> {
+        let branch_name = branch_name.into();
+        if !valid_new_branch_name(&branch_name) {
+            return Err(invalid_request("The new branch name is invalid."));
+        }
+        Ok(Self::NewBranch { branch_name })
+    }
+
+    pub(crate) fn expected_head_ref(&self) -> Option<String> {
+        match self {
+            Self::Detached => None,
+            Self::ExistingBranch { branch_ref } => Some(branch_ref.clone()),
+            Self::NewBranch { branch_name } => Some(format!("refs/heads/{branch_name}")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalWorktreeCheckoutRequest {
+    pub(crate) repository_root: PathBuf,
+    pub(crate) worktree_root: PathBuf,
+    pub(crate) commit_id: GitCommitId,
+    pub(crate) attachment: PhysicalWorktreeAttachment,
+}
+
+impl PhysicalWorktreeCheckoutRequest {
+    pub(crate) fn new(
+        repository_root: PathBuf,
+        worktree_root: PathBuf,
+        commit_id: GitCommitId,
+        attachment: PhysicalWorktreeAttachment,
+    ) -> Result<Self, WorktreeApplicationError> {
+        require_absolute(
+            &repository_root,
+            "The repository root must be an absolute path.",
+        )?;
+        require_absolute(
+            &worktree_root,
+            "The checkout root must be an absolute path.",
+        )?;
+        if repository_root == worktree_root || worktree_root.starts_with(&repository_root) {
+            return Err(invalid_request(
+                "The checkout must be outside the source repository worktree.",
+            ));
+        }
+        Ok(Self {
+            repository_root,
+            worktree_root,
+            commit_id,
+            attachment,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalWorktreeCheckoutResult {
+    pub(crate) repository_root: PathBuf,
+    pub(crate) worktree_root: PathBuf,
+    pub(crate) commit_id: GitCommitId,
+    pub(crate) head_ref: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalWorktreeBuildRequest {
     pub(crate) worktree_root: PathBuf,
-    pub(crate) output_root: PathBuf,
+    pub(crate) attempt_root: PathBuf,
+    pub(crate) dependency_cache_root: PathBuf,
     pub(crate) cargo_binary_name: String,
 }
 
 impl PhysicalWorktreeBuildRequest {
     pub(crate) fn new(
         worktree_root: PathBuf,
-        output_root: PathBuf,
+        attempt_root: PathBuf,
+        dependency_cache_root: PathBuf,
         cargo_binary_name: impl Into<String>,
     ) -> Result<Self, WorktreeApplicationError> {
         let cargo_binary_name = cargo_binary_name.into();
-        if !worktree_root.is_absolute() || !output_root.is_absolute() {
-            return Err(WorktreeApplicationError::new(
-                WorktreeApplicationErrorKind::InvalidRequest,
-                "The worktree and output roots must be absolute paths.",
-            ));
-        }
+        require_absolute(
+            &worktree_root,
+            "The physical worktree root must be absolute.",
+        )?;
+        require_absolute(
+            &attempt_root,
+            "The caller-owned build attempt root must be absolute.",
+        )?;
+        require_absolute(
+            &dependency_cache_root,
+            "The caller-owned dependency cache root must be absolute.",
+        )?;
         let binary_path = std::path::Path::new(&cargo_binary_name);
         if cargo_binary_name.trim().is_empty()
             || binary_path.file_name().and_then(|name| name.to_str()) != Some(&cargo_binary_name)
@@ -41,7 +189,8 @@ impl PhysicalWorktreeBuildRequest {
         }
         Ok(Self {
             worktree_root,
-            output_root,
+            attempt_root,
+            dependency_cache_root,
             cargo_binary_name,
         })
     }
@@ -50,7 +199,9 @@ impl PhysicalWorktreeBuildRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalWorktreeBuildResult {
     pub(crate) worktree_root: PathBuf,
+    pub(crate) attempt_root: PathBuf,
     pub(crate) output_root: PathBuf,
+    pub(crate) log_path: PathBuf,
     pub(crate) executable: PathBuf,
 }
 
@@ -120,6 +271,10 @@ pub(crate) enum OpenOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorktreeApplicationErrorKind {
     InvalidRequest,
+    GitUnavailable,
+    SourceChanged,
+    CheckoutConflict,
+    CheckoutUnavailable,
     WorktreeUnavailable,
     OutputUnavailable,
     ToolchainUnavailable,
@@ -151,6 +306,57 @@ impl fmt::Display for WorktreeApplicationError {
 
 impl Error for WorktreeApplicationError {}
 
+fn require_absolute(
+    path: &std::path::Path,
+    message: &'static str,
+) -> Result<(), WorktreeApplicationError> {
+    if path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
+        Ok(())
+    } else {
+        Err(invalid_request(message))
+    }
+}
+
+fn invalid_request(message: &'static str) -> WorktreeApplicationError {
+    WorktreeApplicationError::new(WorktreeApplicationErrorKind::InvalidRequest, message)
+}
+
+fn valid_full_branch_ref(value: &str) -> bool {
+    value.starts_with("refs/heads/")
+        && value.len() > "refs/heads/".len()
+        && value.len() <= MAX_GIT_REF_UNITS
+        && valid_ref_tail(&value["refs/heads/".len()..])
+}
+
+fn valid_new_branch_name(value: &str) -> bool {
+    !value.starts_with("refs/") && value.len() <= MAX_GIT_REF_UNITS && valid_ref_tail(value)
+}
+
+fn valid_ref_tail(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.ends_with('.')
+        && !value.ends_with(".lock")
+        && !value.contains("..")
+        && !value.contains("@{")
+        && !value.contains("//")
+        && !value.bytes().any(|byte| {
+            byte.is_ascii_control()
+                || byte == b' '
+                || matches!(byte, b'~' | b'^' | b':' | b'?' | b'*' | b'[' | b'\\')
+        })
+        && value.split('/').all(|part| !part.is_empty() && part != ".")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +367,7 @@ mod tests {
         assert!(PhysicalWorktreeBuildRequest::new(
             root.join("worktree"),
             root.join("output"),
+            root.join("cache"),
             "codex-orchestrator"
         )
         .is_ok());
@@ -169,6 +376,7 @@ mod tests {
                 PhysicalWorktreeBuildRequest::new(
                     root.join("worktree"),
                     root.join("output"),
+                    root.join("cache"),
                     invalid
                 )
                 .unwrap_err()
@@ -180,6 +388,7 @@ mod tests {
             PhysicalWorktreeBuildRequest::new(
                 "relative-worktree".into(),
                 root.join("output"),
+                root.join("cache"),
                 "codex-orchestrator"
             )
             .unwrap_err()

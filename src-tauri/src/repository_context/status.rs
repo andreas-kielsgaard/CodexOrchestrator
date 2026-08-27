@@ -1,26 +1,14 @@
 use super::{
-    command::{HardenedGitRunner, LARGE_OUTPUT_LIMIT, SMALL_OUTPUT_LIMIT},
-    invalid_output, ObjectId, RepositoryContextError, RepositoryContextErrorKind,
+    command::{HardenedGitRunner, LARGE_OUTPUT_LIMIT},
+    invalid_output, RepositoryContextError,
 };
-use sha2::{Digest, Sha256};
-use std::{fs::File, io::Read, path::Path, sync::Arc};
-
-const SOURCE_CONTENT_LIMIT: u64 = 64 * 1024 * 1024;
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RepositoryStatus {
     pub(crate) staged_paths: usize,
     pub(crate) unstaged_paths: usize,
     pub(crate) untracked_paths: usize,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SourceStateFingerprint(String);
-
-impl SourceStateFingerprint {
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
 #[derive(Clone)]
@@ -36,79 +24,6 @@ impl RepositoryStatusReader {
     pub(crate) fn status(&self, root: &Path) -> Result<RepositoryStatus, RepositoryContextError> {
         let output = self.status_output(root)?;
         parse_status(&output)
-    }
-
-    /// Fingerprints the checked-out source bytes, including tracked changes and untracked files.
-    /// Staging is exposed separately by `status` and does not alter build input identity.
-    pub(crate) fn source_fingerprint(
-        &self,
-        root: &Path,
-    ) -> Result<(ObjectId, SourceStateFingerprint), RepositoryContextError> {
-        let head = ObjectId::parse(text(self.runner.required(
-            root,
-            ["rev-parse", "--verify", "HEAD^{commit}"],
-            SMALL_OUTPUT_LIMIT,
-        )?)?)?;
-        let tracked = self.runner.required(
-            root,
-            [
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "HEAD",
-                "--",
-            ],
-            LARGE_OUTPUT_LIMIT,
-        )?;
-        let untracked = self.runner.required(
-            root,
-            ["ls-files", "--others", "--exclude-standard", "-z", "--"],
-            LARGE_OUTPUT_LIMIT,
-        )?;
-        let mut hash = Sha256::new();
-        hash.update(b"codex-orchestrator/source-state/v1");
-        write_field(&mut hash, head.as_str().as_bytes());
-        write_field(&mut hash, &tracked);
-        for relative in untracked
-            .split(|byte| *byte == 0)
-            .filter(|value| !value.is_empty())
-        {
-            let relative_text = std::str::from_utf8(relative).map_err(|_| invalid_output())?;
-            let path = root.join(relative_text);
-            let metadata = path.metadata().map_err(|_| unavailable())?;
-            if !metadata.is_file() {
-                continue;
-            }
-            if metadata.len() > SOURCE_CONTENT_LIMIT {
-                return Err(limit_exceeded());
-            }
-            write_field(&mut hash, relative);
-            hash.update(metadata.len().to_be_bytes());
-            let mut file = File::open(path).map_err(|_| unavailable())?;
-            let mut remaining = metadata.len();
-            let mut buffer = [0_u8; 64 * 1024];
-            while remaining > 0 {
-                let count = file.read(&mut buffer).map_err(|_| unavailable())?;
-                if count == 0 {
-                    return Err(unavailable());
-                }
-                hash.update(&buffer[..count]);
-                remaining = remaining.saturating_sub(count as u64);
-            }
-        }
-        Ok((
-            head,
-            SourceStateFingerprint(format!("sha256:{:x}", hash.finalize())),
-        ))
-    }
-
-    pub(crate) fn clean_source_fingerprint(&self, head: &ObjectId) -> SourceStateFingerprint {
-        let mut hash = Sha256::new();
-        hash.update(b"codex-orchestrator/source-state/v1");
-        write_field(&mut hash, head.as_str().as_bytes());
-        write_field(&mut hash, &[]);
-        SourceStateFingerprint(format!("sha256:{:x}", hash.finalize()))
     }
 
     fn status_output(&self, root: &Path) -> Result<Vec<u8>, RepositoryContextError> {
@@ -150,36 +65,6 @@ fn parse_status(output: &[u8]) -> Result<RepositoryStatus, RepositoryContextErro
         }
     }
     Ok(status)
-}
-
-fn write_field(hash: &mut Sha256, value: &[u8]) {
-    hash.update((value.len() as u64).to_be_bytes());
-    hash.update(value);
-}
-
-fn text(bytes: Vec<u8>) -> Result<String, RepositoryContextError> {
-    let value = std::str::from_utf8(&bytes)
-        .map_err(|_| invalid_output())?
-        .trim();
-    if value.is_empty() {
-        Err(invalid_output())
-    } else {
-        Ok(value.to_owned())
-    }
-}
-
-fn unavailable() -> RepositoryContextError {
-    RepositoryContextError::new(
-        RepositoryContextErrorKind::PathUnavailable,
-        "Repository source content changed while it was inspected.",
-    )
-}
-
-fn limit_exceeded() -> RepositoryContextError {
-    RepositoryContextError::new(
-        RepositoryContextErrorKind::OutputLimitExceeded,
-        "Repository source content exceeds the inspection limit.",
-    )
 }
 
 #[cfg(test)]

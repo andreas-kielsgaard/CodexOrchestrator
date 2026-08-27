@@ -60,46 +60,125 @@ pub(super) fn build(
     request: &PhysicalWorktreeBuildRequest,
 ) -> Result<PhysicalWorktreeBuildResult, WorktreeApplicationError> {
     let node = resolve_program("node")?;
-    build_with(request, node, &SystemBuildCommandRunner)
+    let npm = resolve_program("npm")?;
+    build_with(request, node, npm, &SystemBuildCommandRunner)
 }
 
 fn build_with(
     request: &PhysicalWorktreeBuildRequest,
     node: PathBuf,
+    npm: PathBuf,
     runner: &dyn BuildCommandRunner,
 ) -> Result<PhysicalWorktreeBuildResult, WorktreeApplicationError> {
     let worktree = canonical_directory(&request.worktree_root)?;
-    let output_root = prepare_output_root(&request.output_root)?;
-    let log_path = output_root.join("build.log");
-    fs::write(&log_path, []).map_err(|_| output_unavailable())?;
-    require_source_file(&worktree.join("package.json"), "package manifest")?;
-    require_source_file(&worktree.join("src-tauri/Cargo.toml"), "Cargo manifest")?;
-    let commands = build_commands(&worktree, &output_root, &log_path, node)?;
-    for command in &commands {
-        if !runner.run(command)? {
-            return Err(WorktreeApplicationError::new(
-                WorktreeApplicationErrorKind::BuildFailed,
-                format!("The {} command failed.", command.label),
-            ));
-        }
+    if request.attempt_root.starts_with(&worktree)
+        || request.dependency_cache_root.starts_with(&worktree)
+    {
+        return Err(WorktreeApplicationError::new(
+            WorktreeApplicationErrorKind::InvalidRequest,
+            "Build storage must be outside the physical worktree.",
+        ));
     }
-    let executable = expected_executable(&output_root, &request.cargo_binary_name);
-    require_regular(&executable, "built application executable").map_err(|_| {
-        WorktreeApplicationError::new(
-            WorktreeApplicationErrorKind::ExecutableUnavailable,
-            "The build completed without the expected application executable.",
-        )
-    })?;
-    Ok(PhysicalWorktreeBuildResult {
-        worktree_root: worktree,
-        output_root,
-        executable: fs::canonicalize(executable).map_err(|_| {
+    let attempt_root = prepare_attempt_root(&request.attempt_root)?;
+    let dependency_cache = prepare_cache_root(&request.dependency_cache_root)?;
+    if attempt_root.starts_with(&worktree) || dependency_cache.starts_with(&worktree) {
+        return Err(WorktreeApplicationError::new(
+            WorktreeApplicationErrorKind::InvalidRequest,
+            "The build attempt root must be outside the physical worktree.",
+        ));
+    }
+    let output_root = attempt_root.join("output");
+    if fs::symlink_metadata(&output_root).is_ok() {
+        return Err(WorktreeApplicationError::new(
+            WorktreeApplicationErrorKind::OutputUnavailable,
+            "The immutable build output has already been published.",
+        ));
+    }
+    require_source_file(&worktree.join("package.json"), "package manifest")?;
+    require_source_file(&worktree.join("package-lock.json"), "npm lockfile")?;
+    require_source_file(&worktree.join("src-tauri/Cargo.toml"), "Cargo manifest")?;
+    let scratch_root = attempt_root.join(format!(".build-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&scratch_root).map_err(|_| output_unavailable())?;
+    let scratch_root = scratch_root
+        .canonicalize()
+        .map_err(|_| output_unavailable())?;
+    let log_path = attempt_root.join("build.log");
+    fs::write(&log_path, []).map_err(|_| output_unavailable())?;
+    let result = (|| {
+        let dependency =
+            dependency_command(&worktree, &scratch_root, &log_path, npm, dependency_cache);
+        run_required(runner, &dependency)?;
+        let commands = build_commands(&worktree, &scratch_root, &log_path, node)?;
+        for command in &commands {
+            run_required(runner, command)?;
+        }
+        let scratch_executable = expected_executable(&scratch_root, &request.cargo_binary_name);
+        require_regular(&scratch_executable, "built application executable").map_err(|_| {
             WorktreeApplicationError::new(
                 WorktreeApplicationErrorKind::ExecutableUnavailable,
-                "The built application executable is unavailable.",
+                "The build completed without the expected application executable.",
             )
-        })?,
-    })
+        })?;
+        fs::rename(&scratch_root, &output_root).map_err(|_| output_unavailable())?;
+        let output_root = output_root
+            .canonicalize()
+            .map_err(|_| output_unavailable())?;
+        let executable = expected_executable(&output_root, &request.cargo_binary_name);
+        Ok(PhysicalWorktreeBuildResult {
+            worktree_root: worktree,
+            attempt_root,
+            output_root,
+            log_path,
+            executable: fs::canonicalize(executable).map_err(|_| {
+                WorktreeApplicationError::new(
+                    WorktreeApplicationErrorKind::ExecutableUnavailable,
+                    "The published application executable is unavailable.",
+                )
+            })?,
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&scratch_root);
+    }
+    result
+}
+
+fn run_required(
+    runner: &dyn BuildCommandRunner,
+    command: &BuildCommand,
+) -> Result<(), WorktreeApplicationError> {
+    if runner.run(command)? {
+        Ok(())
+    } else {
+        Err(WorktreeApplicationError::new(
+            WorktreeApplicationErrorKind::BuildFailed,
+            format!("The {} command failed.", command.label),
+        ))
+    }
+}
+
+fn dependency_command(
+    worktree: &Path,
+    scratch_root: &Path,
+    log_path: &Path,
+    npm: PathBuf,
+    cache: PathBuf,
+) -> BuildCommand {
+    BuildCommand {
+        label: "npm dependency preparation",
+        program: npm,
+        arguments: vec![
+            "ci".into(),
+            "--prefer-offline".into(),
+            "--no-audit".into(),
+            "--no-fund".into(),
+            "--cache".into(),
+            external_path(&cache).into_os_string(),
+        ],
+        working_directory: external_path(worktree),
+        cargo_target: external_path(&scratch_root.join("cargo-target")),
+        log_path: log_path.to_path_buf(),
+    }
 }
 
 fn build_commands(
@@ -217,7 +296,15 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, WorktreeApplicationError>
         })
 }
 
-fn prepare_output_root(path: &Path) -> Result<PathBuf, WorktreeApplicationError> {
+fn prepare_attempt_root(path: &Path) -> Result<PathBuf, WorktreeApplicationError> {
+    fs::create_dir_all(path).map_err(|_| output_unavailable())?;
+    fs::canonicalize(path)
+        .ok()
+        .filter(|path| path.is_dir())
+        .ok_or_else(output_unavailable)
+}
+
+fn prepare_cache_root(path: &Path) -> Result<PathBuf, WorktreeApplicationError> {
     fs::create_dir_all(path).map_err(|_| output_unavailable())?;
     fs::canonicalize(path)
         .ok()
@@ -258,7 +345,11 @@ fn require_file(
 fn resolve_program(name: &str) -> Result<PathBuf, WorktreeApplicationError> {
     let path = env::var_os("PATH").ok_or_else(toolchain_unavailable)?;
     #[cfg(windows)]
-    let names = [format!("{name}.exe"), name.to_owned()];
+    let names = [
+        format!("{name}.cmd"),
+        format!("{name}.exe"),
+        name.to_owned(),
+    ];
     #[cfg(not(windows))]
     let names = [name.to_owned()];
     for directory in env::split_paths(&path) {
@@ -275,7 +366,7 @@ fn resolve_program(name: &str) -> Result<PathBuf, WorktreeApplicationError> {
 fn toolchain_unavailable() -> WorktreeApplicationError {
     WorktreeApplicationError::new(
         WorktreeApplicationErrorKind::ToolchainUnavailable,
-        "Node.js is required to build the worktree application.",
+        "Node.js and npm are required to build the worktree application.",
     )
 }
 
@@ -293,7 +384,6 @@ mod tests {
 
     struct RecordingRunner {
         commands: Mutex<Vec<BuildCommand>>,
-        executable: PathBuf,
         fail_at: Option<&'static str>,
     }
 
@@ -304,8 +394,10 @@ mod tests {
                 return Ok(false);
             }
             if command.label == "Tauri debug build" {
-                fs::create_dir_all(self.executable.parent().unwrap()).unwrap();
-                fs::write(&self.executable, b"application").unwrap();
+                let executable =
+                    expected_executable(command.cargo_target.parent().unwrap(), "sample-app");
+                fs::create_dir_all(executable.parent().unwrap()).unwrap();
+                fs::write(executable, b"application").unwrap();
             }
             Ok(true)
         }
@@ -315,23 +407,38 @@ mod tests {
     fn build_targets_the_selected_physical_worktree() {
         let directory = tempfile::tempdir().unwrap();
         let worktree = fixture(directory.path());
-        let output_root = directory.path().join("output");
-        let request =
-            PhysicalWorktreeBuildRequest::new(worktree.clone(), output_root.clone(), "sample-app")
-                .unwrap();
-        let executable = expected_executable(&output_root, "sample-app");
+        let attempt_root = directory.path().join("attempt");
+        let request = PhysicalWorktreeBuildRequest::new(
+            worktree.clone(),
+            attempt_root.clone(),
+            directory.path().join("npm-cache"),
+            "sample-app",
+        )
+        .unwrap();
         let runner = RecordingRunner {
             commands: Mutex::new(Vec::new()),
-            executable: executable.clone(),
             fail_at: None,
         };
 
-        let result = build_with(&request, worktree.join("node"), &runner).unwrap();
+        let result = build_with(
+            &request,
+            worktree.join("node"),
+            worktree.join("npm"),
+            &runner,
+        )
+        .unwrap();
 
         assert_eq!(result.worktree_root, worktree.canonicalize().unwrap());
-        assert_eq!(result.output_root, output_root.canonicalize().unwrap());
-        assert_eq!(result.executable, executable.canonicalize().unwrap());
-        assert!(result.output_root.join("build.log").is_file());
+        assert_eq!(result.attempt_root, attempt_root.canonicalize().unwrap());
+        assert_eq!(result.output_root, result.attempt_root.join("output"));
+        assert_eq!(
+            result.executable,
+            expected_executable(&result.output_root, "sample-app")
+                .canonicalize()
+                .unwrap()
+        );
+        assert_eq!(result.log_path, result.attempt_root.join("build.log"));
+        assert!(result.log_path.is_file());
         let commands = runner.commands.lock().unwrap();
         assert_eq!(
             commands
@@ -339,16 +446,18 @@ mod tests {
                 .map(|command| command.label)
                 .collect::<Vec<_>>(),
             [
+                "npm dependency preparation",
                 "TypeScript typecheck",
                 "frontend build",
                 "Tauri debug build"
             ]
         );
         assert!(commands.iter().all(|command| {
-            command.cargo_target == external_path(&output_root.join("cargo-target"))
+            command.cargo_target.ends_with(Path::new("cargo-target"))
                 && command.working_directory == external_path(&worktree.canonicalize().unwrap())
-                && command.log_path == output_root.canonicalize().unwrap().join("build.log")
+                && command.log_path == attempt_root.canonicalize().unwrap().join("build.log")
         }));
+        assert!(!result.attempt_root.join(".build").exists());
         assert!(!worktree.join("src-tauri/target").exists());
     }
 
@@ -356,17 +465,26 @@ mod tests {
     fn failed_build_reports_the_exact_step_and_stops() {
         let directory = tempfile::tempdir().unwrap();
         let worktree = fixture(directory.path());
-        let output_root = directory.path().join("output");
-        let request =
-            PhysicalWorktreeBuildRequest::new(worktree.clone(), output_root.clone(), "sample-app")
-                .unwrap();
+        let attempt_root = directory.path().join("attempt");
+        let request = PhysicalWorktreeBuildRequest::new(
+            worktree.clone(),
+            attempt_root.clone(),
+            directory.path().join("npm-cache"),
+            "sample-app",
+        )
+        .unwrap();
         let runner = RecordingRunner {
             commands: Mutex::new(Vec::new()),
-            executable: expected_executable(&output_root, "sample-app"),
             fail_at: Some("frontend build"),
         };
 
-        let error = build_with(&request, worktree.join("node"), &runner).unwrap_err();
+        let error = build_with(
+            &request,
+            worktree.join("node"),
+            worktree.join("npm"),
+            &runner,
+        )
+        .unwrap_err();
 
         assert_eq!(error.kind, WorktreeApplicationErrorKind::BuildFailed);
         assert!(error.message.contains("frontend build"));
@@ -378,19 +496,26 @@ mod tests {
                 .iter()
                 .map(|command| command.label)
                 .collect::<Vec<_>>(),
-            ["TypeScript typecheck", "frontend build"]
+            [
+                "npm dependency preparation",
+                "TypeScript typecheck",
+                "frontend build"
+            ]
         );
+        assert!(!attempt_root.join("output").exists());
     }
 
     fn fixture(root: &Path) -> PathBuf {
         let worktree = root.join("worktree");
         for path in [
             "package.json",
+            "package-lock.json",
             "src-tauri/Cargo.toml",
             "node_modules/typescript/bin/tsc",
             "node_modules/vite/bin/vite.js",
             "node_modules/@tauri-apps/cli/tauri.js",
             "node",
+            "npm",
         ] {
             let path = worktree.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();

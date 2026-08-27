@@ -35,13 +35,10 @@ describe('tauri Worktree Review client', () => {
       source: {
         kind: 'worktree_snapshot',
         associationId: 'association-one',
-        baseObjectId: 'abcdef',
-        stateFingerprint: 'fingerprint-one',
       },
       workspacePlan: {
         kind: 'create_owned_build_worktree',
         originatingAssociationId: 'association-one',
-        objectId: 'abcdef',
       },
     });
     await client.openBuild({ buildId: 'build-one' });
@@ -104,13 +101,10 @@ describe('tauri Worktree Review client', () => {
             source: {
               kind: 'worktree_snapshot',
               associationId: 'association-one',
-              baseObjectId: 'abcdef',
-              stateFingerprint: 'fingerprint-one',
             },
             workspacePlan: {
               kind: 'create_owned_build_worktree',
               originatingAssociationId: 'association-one',
-              objectId: 'abcdef',
             },
           },
         },

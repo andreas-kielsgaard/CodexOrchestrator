@@ -84,7 +84,8 @@ CREATE TABLE IF NOT EXISTS review_builds (
   workspace_id TEXT NOT NULL REFERENCES review_workspaces(workspace_id) ON DELETE RESTRICT,
   source_binding_json TEXT NOT NULL,
   retention_key TEXT NOT NULL,
-  current_artifact_set_id TEXT,
+  current_output_id TEXT,
+  data_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (data_contract_version = 2),
   lifecycle TEXT NOT NULL CHECK (lifecycle IN (
     'active', 'superseded', 'cleanup_pending', 'cleaned', 'unverified_legacy'
   )),
@@ -135,28 +136,19 @@ CREATE INDEX IF NOT EXISTS idx_review_build_attentions_active
   ON review_build_attentions(build_id, recorded_at DESC)
   WHERE resolved_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS verified_artifact_sets (
-  artifact_set_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS retained_build_outputs (
+  output_id TEXT PRIMARY KEY,
   build_id TEXT NOT NULL REFERENCES review_builds(build_id) ON DELETE RESTRICT,
   attempt_id TEXT NOT NULL UNIQUE REFERENCES review_operation_attempts(attempt_id) ON DELETE RESTRICT,
   storage_key TEXT NOT NULL UNIQUE,
-  manifest_hash TEXT NOT NULL,
-  verified_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS verified_artifact_files (
-  artifact_set_id TEXT NOT NULL REFERENCES verified_artifact_sets(artifact_set_id) ON DELETE CASCADE,
-  ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-  relative_path TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  bytes INTEGER NOT NULL CHECK (bytes >= 0),
-  PRIMARY KEY(artifact_set_id, ordinal),
-  UNIQUE(artifact_set_id, relative_path)
+  executable_relative_path TEXT NOT NULL,
+  published_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS review_cleanup_jobs (
   cleanup_job_id TEXT PRIMARY KEY,
   build_id TEXT NOT NULL REFERENCES review_builds(build_id) ON DELETE RESTRICT,
+  resource_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (resource_contract_version = 2),
   trigger TEXT NOT NULL CHECK (trigger IN (
     'retention_policy', 'manual_request', 'reconciliation', 'legacy_migration'
   )),
@@ -261,25 +253,64 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
         .map_err(sql_error("record durable build attention schema"))?;
     connection
         .execute(
-            "DELETE FROM review_operation_attempts
-             WHERE operation_kind IN ('launch', 'stop', 'recover')",
-            [],
-        )
-        .map_err(sql_error("retire legacy review lifecycle attempts"))?;
-    connection
-        .execute(
-            "UPDATE review_operation_attempts
-             SET active_stage = 'interruption_reconciliation'
-             WHERE active_stage = 'recovery'",
-            [],
-        )
-        .map_err(sql_error("rename review interruption reconciliation stage"))?;
-    connection
-        .execute(
             "INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at)
              VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             [],
         )
         .map_err(sql_error("record minimal review operation schema"))?;
+    let build_columns = table_columns(connection, "review_builds")?;
+    if !build_columns
+        .iter()
+        .any(|column| column == "current_output_id")
+    {
+        connection
+            .execute(
+                "ALTER TABLE review_builds ADD COLUMN current_output_id TEXT",
+                [],
+            )
+            .map_err(sql_error("add retained build output pointer"))?;
+    }
+    if !build_columns
+        .iter()
+        .any(|column| column == "data_contract_version")
+    {
+        connection
+            .execute(
+                "ALTER TABLE review_builds ADD COLUMN data_contract_version INTEGER NOT NULL DEFAULT 1",
+                [],
+            )
+            .map_err(sql_error("isolate legacy review build contracts"))?;
+    }
+    let cleanup_columns = table_columns(connection, "review_cleanup_jobs")?;
+    if !cleanup_columns
+        .iter()
+        .any(|column| column == "resource_contract_version")
+    {
+        connection
+            .execute(
+                "ALTER TABLE review_cleanup_jobs ADD COLUMN resource_contract_version INTEGER NOT NULL DEFAULT 1",
+                [],
+            )
+            .map_err(sql_error("isolate legacy cleanup resource contracts"))?;
+    }
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at)
+             VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            [],
+        )
+        .map_err(sql_error("record retained build output schema"))?;
     Ok(())
+}
+
+fn table_columns(connection: &Connection, table: &str) -> StorageResult<Vec<String>> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(sql_error("inspect durable contract columns"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sql_error("query durable contract columns"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error("read durable contract columns"))?;
+    Ok(columns)
 }

@@ -16,7 +16,10 @@ import {
   type TaskRunDetailClient,
 } from '../application/taskRunDetailClient';
 import type { TaskRunLifecycleRecorder } from '../application/taskRunLifecycle';
-import type { TaskWorktreeSelectionService } from '../application/taskWorktreeSelection';
+import type {
+  GitWorktreeCreator,
+  TaskWorktreeSelectionService,
+} from '../application/taskWorktreeSelection';
 import type { ValidationCommandRunnerService } from '../application/validationCommandRunner';
 import type { EntityId, IsoDateTime } from '../domain/model';
 import type { RepoSyncPlanIdProvider } from '../domain/repoSyncPlanApplier';
@@ -37,6 +40,7 @@ import {
   type LocalAppSqliteDatabasePath,
   type OpenLocalAppSqliteDatabaseOptions,
 } from './sqlite/localAppDatabase';
+import { tauriWorktreeCreator } from './tauriWorktreeApplication';
 import {
   createValidationCommandRuntime,
   type ValidationCommandRuntimeOptions,
@@ -54,6 +58,7 @@ export interface LocalRuntimeCompositionOptions {
   codex?: LocalRuntimeCodexOptions;
   validation?: LocalRuntimeValidationOptions;
   repoRegistry?: LocalRuntimeRepoRegistryOptions;
+  worktreeApplication?: LocalRuntimeWorktreeApplicationOptions;
 }
 
 export interface LocalRuntimeGitOptions extends LocalGitRuntimeAdaptersOptions {
@@ -71,6 +76,10 @@ export interface LocalRuntimeValidationOptions extends ValidationCommandRuntimeO
 export interface LocalRuntimeRepoRegistryOptions {
   ids?: RepoSyncPlanIdProvider;
   clock?: RepoRegistryScanClock;
+}
+
+export interface LocalRuntimeWorktreeApplicationOptions {
+  worktreeCreator?: GitWorktreeCreator;
 }
 
 export interface LocalRuntimeServices {
@@ -96,6 +105,7 @@ export interface LocalRuntimeServiceComposition {
 
 export interface LocalRuntimeRuntimes {
   git: LocalGitRuntimeAdapters;
+  worktreeApplication: GitWorktreeCreator;
   codex: CodexRuntime;
   validation: ValidationCommandRunnerService['runtime'];
 }
@@ -110,6 +120,8 @@ export function openLocalRuntimeServiceComposition(
   );
   const stores = database.stores;
   const git = options.git?.adapters ?? createLocalGitRuntimeAdapters(options.git);
+  const worktreeApplication =
+    options.worktreeApplication?.worktreeCreator ?? tauriWorktreeCreator;
   const codex = options.codex?.runtime ?? createCodexRuntime(options.codex);
   const validation =
     options.validation?.runtime ?? createValidationCommandRuntime(options.validation);
@@ -162,7 +174,7 @@ export function openLocalRuntimeServiceComposition(
       dashboardStore: stores.openTaskDashboard,
       taskWriteStore: stores.openTaskWrite,
       repoRegistry: repoRegistryScanService,
-      worktreeCreator: git.worktreeCreator,
+      worktreeCreator: worktreeApplication,
     },
     diffCollectionService,
     validationCommandRunnerService,
@@ -173,6 +185,7 @@ export function openLocalRuntimeServiceComposition(
     stores,
     runtimes: {
       git,
+      worktreeApplication,
       codex,
       validation,
     },

@@ -63,7 +63,7 @@ impl SharedWorktreeReviewDataRoot {
         self.root.join(STATE_DATABASE_FILE)
     }
 
-    fn artifact_store_root(&self) -> &Path {
+    fn build_output_store_root(&self) -> &Path {
         &self.root
     }
 }
@@ -110,7 +110,7 @@ pub(crate) struct SelectedRepositoryView {
 pub(crate) struct WorktreeReviewCapabilitiesView {
     pub(crate) repository_browsing: CapabilityReadinessView,
     pub(crate) build_runtime: CapabilityReadinessView,
-    pub(crate) artifact_storage: CapabilityReadinessView,
+    pub(crate) build_output_storage: CapabilityReadinessView,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -163,7 +163,7 @@ impl WorktreeReviewApplication {
             .and_then(SharedWorktreeReviewDataRoot::prepare);
         let review_root = data_root
             .as_ref()
-            .map(|root| root.artifact_store_root().to_path_buf())
+            .map(|root| root.build_output_store_root().to_path_buf())
             .unwrap_or(requested_root);
         let database = data_root
             .map_err(|_| storage_unavailable())
@@ -205,7 +205,7 @@ impl WorktreeReviewApplication {
             Ok(state) => state,
             Err(_) => return unavailable_overview(),
         };
-        let artifact_storage = if state.storage_available {
+        let build_output_storage = if state.storage_available {
             readiness(
                 CapabilityReadinessStatus::Ready,
                 "Worktree Review storage is ready.",
@@ -246,7 +246,7 @@ impl WorktreeReviewApplication {
             capabilities: WorktreeReviewCapabilitiesView {
                 repository_browsing,
                 build_runtime: state.build_runtime.clone(),
-                artifact_storage,
+                build_output_storage,
             },
         }
     }
@@ -413,7 +413,7 @@ fn unavailable_overview() -> WorktreeReviewOverviewView {
         capabilities: WorktreeReviewCapabilitiesView {
             repository_browsing: unavailable.clone(),
             build_runtime: unavailable.clone(),
-            artifact_storage: unavailable,
+            build_output_storage: unavailable,
         },
     }
 }
@@ -449,7 +449,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(
-            resolved.artifact_store_root(),
+            resolved.build_output_store_root(),
             requested.canonicalize().unwrap()
         );
         assert_eq!(
@@ -473,7 +473,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            resolved.artifact_store_root(),
+            resolved.build_output_store_root(),
             shared_root.canonicalize().unwrap()
         );
         assert_eq!(

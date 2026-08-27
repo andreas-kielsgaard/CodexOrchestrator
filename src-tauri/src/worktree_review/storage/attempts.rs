@@ -42,7 +42,12 @@ impl<Owner: ConnectionProvider> OperationAttemptRepository
                        attempt_id, build_id, operation_kind, execution_state, verdict, active_stage,
                        failure_stage, failure_category, failure_message, requested_at, started_at,
                        completed_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     )
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+                     WHERE EXISTS (
+                       SELECT 1 FROM review_builds
+                       WHERE build_id = ?2 AND data_contract_version = 2
+                     )
                      ON CONFLICT(attempt_id) DO UPDATE SET
                        execution_state = excluded.execution_state,
                        verdict = excluded.verdict,
@@ -94,7 +99,12 @@ impl<Owner: ConnectionProvider> OperationAttemptRepository
         self.owner.with_connection(|connection| {
             let raw = connection
                 .query_row(
-                    &format!("{SELECT_ATTEMPT} WHERE attempt_id = ?1"),
+                    &format!(
+                        "{SELECT_ATTEMPT} WHERE attempt_id = ?1
+                         AND build_id IN (
+                           SELECT build_id FROM review_builds WHERE data_contract_version = 2
+                         )"
+                    ),
                     [id.as_str()],
                     decode_row,
                 )
@@ -112,7 +122,11 @@ impl<Owner: ConnectionProvider> OperationAttemptRepository
             query_many(
                 connection,
                 &format!(
-                    "{SELECT_ATTEMPT} WHERE build_id = ?1 ORDER BY requested_at DESC, attempt_id"
+                    "{SELECT_ATTEMPT} WHERE build_id = ?1
+                     AND build_id IN (
+                       SELECT build_id FROM review_builds WHERE data_contract_version = 2
+                     )
+                     ORDER BY requested_at DESC, attempt_id"
                 ),
                 [build_id.as_str()],
             )
@@ -125,6 +139,9 @@ impl<Owner: ConnectionProvider> OperationAttemptRepository
                 connection,
                 &format!(
                     "{SELECT_ATTEMPT} WHERE execution_state IN ('pending', 'running')
+                     AND build_id IN (
+                       SELECT build_id FROM review_builds WHERE data_contract_version = 2
+                     )
                      ORDER BY requested_at, attempt_id"
                 ),
                 [],

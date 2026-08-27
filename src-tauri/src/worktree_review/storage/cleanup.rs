@@ -62,7 +62,8 @@ impl<Owner: ConnectionProvider> CleanupRepository for SqliteCleanupRepository<'_
             let mut statement = connection
                 .prepare(
                     "SELECT cleanup_job_id FROM review_cleanup_jobs
-                     WHERE build_id = ?1 ORDER BY created_at DESC, cleanup_job_id DESC",
+                     WHERE build_id = ?1 AND resource_contract_version = 2
+                     ORDER BY created_at DESC, cleanup_job_id DESC",
                 )
                 .map_err(sql_error("prepare build cleanup query"))?;
             let ids = statement
@@ -87,7 +88,8 @@ impl<Owner: ConnectionProvider> CleanupRepository for SqliteCleanupRepository<'_
             let mut statement = connection
                 .prepare(
                     "SELECT cleanup_job_id FROM review_cleanup_jobs
-                     WHERE state IN ('planned', 'running')
+                     WHERE resource_contract_version = 2
+                       AND state IN ('planned', 'running')
                      ORDER BY created_at, cleanup_job_id",
                 )
                 .map_err(sql_error("prepare unsettled cleanup query"))?;
@@ -180,14 +182,20 @@ fn save_job(connection: &rusqlite::Connection, job: &CleanupJob) -> StorageResul
     let changed = connection
         .execute(
             "INSERT INTO review_cleanup_jobs(
-               cleanup_job_id, build_id, trigger, eligibility, state, created_at, started_at,
-               settled_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+               cleanup_job_id, build_id, resource_contract_version, trigger, eligibility, state,
+               created_at, started_at, settled_at
+             )
+             SELECT ?1, ?2, 2, ?3, ?4, ?5, ?6, ?7, ?8
+             WHERE EXISTS (
+               SELECT 1 FROM review_builds
+               WHERE build_id = ?2 AND data_contract_version = 2
+             )
              ON CONFLICT(cleanup_job_id) DO UPDATE SET
                state = excluded.state,
                started_at = excluded.started_at,
                settled_at = excluded.settled_at
              WHERE build_id = excluded.build_id
+               AND resource_contract_version = 2
                AND trigger = excluded.trigger
                AND eligibility = excluded.eligibility
                AND created_at = excluded.created_at",
@@ -344,7 +352,7 @@ fn finish_cleanup(
     connection
         .execute(
             "UPDATE review_cleanup_jobs SET state = ?2, settled_at = ?3
-             WHERE cleanup_job_id = ?1",
+             WHERE cleanup_job_id = ?1 AND resource_contract_version = 2",
             params![
                 receipt.job_id.as_str(),
                 final_state.as_str(),
@@ -374,7 +382,8 @@ fn load_job(
         .query_row(
             "SELECT cleanup_job_id, build_id, trigger, eligibility, state, created_at, started_at,
                     settled_at
-             FROM review_cleanup_jobs WHERE cleanup_job_id = ?1",
+             FROM review_cleanup_jobs
+             WHERE cleanup_job_id = ?1 AND resource_contract_version = 2",
             [id.as_str()],
             |row| {
                 Ok((

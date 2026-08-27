@@ -2,10 +2,8 @@ import type { GitCommandInput, GitCommandResult, GitCommandRunner } from './type
 import {
   GitCommandError,
   buildGitTrackedDiffArgs,
-  buildGitWorktreeAddArgs,
   createLocalGitDiffProvider,
   createLocalGitRuntimeAdapters,
-  createLocalGitWorktreeCreator,
   createNodeGitCommandRunner,
   type GitProcessRunInput,
   type GitProcessRunResult,
@@ -97,58 +95,6 @@ describe('createNodeGitCommandRunner', () => {
   });
 });
 
-describe('local Git worktree creator', () => {
-  it('builds narrow git worktree add arguments', () => {
-    expect(
-      buildGitWorktreeAddArgs({
-        repoRootPath: 'C:\\Repos\\App',
-        worktreePath: 'C:\\Repos\\App Worktrees\\035',
-        branchName: 'worker/035-local-git-runtime-adapters',
-        baseBranch: 'main',
-      }),
-    ).toEqual([
-      'worktree',
-      'add',
-      '-b',
-      'worker/035-local-git-runtime-adapters',
-      'C:\\Repos\\App Worktrees\\035',
-      'main',
-    ]);
-  });
-
-  it('runs the worktree add command and returns the created worktree facts', async () => {
-    const runner = new FakeGitCommandRunner([{ stdout: '', stderr: '', exitCode: 0 }]);
-    const creator = createLocalGitWorktreeCreator({ commandRunner: runner });
-
-    const result = await creator.createWorktree({
-      repoRootPath: 'C:\\Repos\\App',
-      worktreePath: 'C:\\Repos\\App Worktrees\\035',
-      branchName: 'worker/035-local-git-runtime-adapters',
-      baseBranch: 'main',
-    });
-
-    expect(runner.inputs).toEqual([
-      {
-        cwd: 'C:\\Repos\\App',
-        args: [
-          'worktree',
-          'add',
-          '-b',
-          'worker/035-local-git-runtime-adapters',
-          'C:\\Repos\\App Worktrees\\035',
-          'main',
-        ],
-      },
-    ]);
-    expect(result).toEqual({
-      repoRootPath: 'C:/Repos/App',
-      worktreePath: 'C:/Repos/App Worktrees/035',
-      branchName: 'worker/035-local-git-runtime-adapters',
-      baseBranch: 'main',
-    });
-  });
-});
-
 describe('local Git diff provider', () => {
   it('builds the tracked binary diff arguments', () => {
     expect(buildGitTrackedDiffArgs()).toEqual(['diff', '--binary', 'HEAD', '--']);
@@ -181,7 +127,7 @@ describe('local Git diff provider', () => {
 });
 
 describe('createLocalGitRuntimeAdapters', () => {
-  it('bundles one command runner into the local scanner, worktree creator, and diff provider', () => {
+  it('bundles one command runner into the local read and diff adapters', () => {
     const processRunner = new FakeGitProcessRunner({
       stdout: '',
       stderr: '',
@@ -197,7 +143,6 @@ describe('createLocalGitRuntimeAdapters', () => {
 
     expect(adapters.commandRunner).toBeDefined();
     expect(adapters.repoScanner).toBeDefined();
-    expect(adapters.worktreeCreator).toBeDefined();
     expect(adapters.diffProvider).toBeDefined();
   });
 });

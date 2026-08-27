@@ -228,7 +228,6 @@
   font-size: 0.84rem;
 }
 
-.worktree-review__metadata,
 .worktree-review__build dl {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -236,12 +235,10 @@
   margin: 16px 0 0;
 }
 
-.worktree-review__metadata div,
 .worktree-review__build dl div {
   min-width: 0;
 }
 
-.worktree-review__metadata dt,
 .worktree-review__build dt {
   color: #6b776f;
   font-size: 0.7rem;
@@ -250,7 +247,6 @@
   text-transform: uppercase;
 }
 
-.worktree-review__metadata dd,
 .worktree-review__build dd {
   margin: 2px 0 0;
   overflow-wrap: anywhere;
@@ -569,7 +565,7 @@
   font-size: 1rem;
 }
 
-.worktree-review__status--passed {
+.worktree-review__status--completed {
   background: #dfeee3;
   color: #245b3b;
 }

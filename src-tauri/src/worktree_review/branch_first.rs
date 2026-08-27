@@ -11,16 +11,15 @@ use super::{
     domain::{
         AssociationBaselineKind, BranchRef as DomainBranchRef, GitObjectId,
         RepositoryId as DomainRepositoryId, ReviewBranch as StoredBranch,
-        ReviewRepository as StoredRepository, WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership,
-        WorktreeAssociation, WorktreeAssociationId, WorktreeAssociationLifecycle,
-        WorktreeAssociationProvenance, WorktreeLocation as StoredLocation,
+        ReviewRepository as StoredRepository, WorkspaceId, WorkspaceOwnership, WorktreeAssociation,
+        WorktreeAssociationId, WorktreeAssociationLifecycle, WorktreeAssociationProvenance,
     },
+    source_materialization::SourceMaterializationService,
     state::WorktreeReviewApplication,
     storage::{
         ReviewRepositoryRepository, WorkspaceRepository, WorktreeAssociationRepository,
         WorktreeReviewDatabase,
     },
-    workspace_provisioner::WorktreeProvisioner,
 };
 use crate::repository_context::{
     BranchRef as ObservedBranch, BranchSummary, FullRefName, ObjectId, RepositoryContext,
@@ -38,16 +37,22 @@ pub(crate) struct BranchFirstReviewService {
     application: Arc<WorktreeReviewApplication>,
     database: Arc<WorktreeReviewDatabase>,
     builds: ReviewBuildCoordinator,
+    sources: SourceMaterializationService,
 }
 
 impl BranchFirstReviewService {
     pub(crate) fn open(application: Arc<WorktreeReviewApplication>) -> Result<Self, String> {
         let database = application.database().map_err(|error| error.message)?;
+        let sources = SourceMaterializationService::new(
+            database.clone(),
+            application.review_root().to_path_buf(),
+        );
         let builds = ReviewBuildCoordinator::open(application.clone())?;
         Ok(Self {
             application,
             database,
             builds,
+            sources,
         })
     }
 
@@ -116,7 +121,6 @@ impl BranchFirstReviewService {
             self.worktrees_for_branch(&context, &repository, &branch)?;
         Ok(BranchDetailView {
             branch: branch_view,
-            application_metadata: Vec::new(),
             worktrees,
             association_candidates,
             builds: self
@@ -261,14 +265,7 @@ impl BranchFirstReviewService {
         let branch = find_branch(&context, &repository, branch_ref)?;
         let association_id = WorktreeAssociationId::random();
         let workspace_id = WorkspaceId::random();
-        let provisioner = WorktreeProvisioner::open(
-            context.clone(),
-            self.application
-                .review_root()
-                .join("repositories")
-                .join(repository.id.as_str()),
-        )?;
-        let mut workspace = provisioner.plan_workspace(
+        let workspace = self.sources.plan_workspace(
             &repository,
             workspace_id.clone(),
             WorkspaceOwnership::ManagedBranchWorktree {
@@ -279,28 +276,22 @@ impl BranchFirstReviewService {
             .workspaces()
             .save(&workspace)
             .map_err(|error| error.to_string())?;
-        let provisioned =
-            provisioner.create_at_commit(&repository, workspace_id.as_str(), &branch.object_id)?;
+        let materialized =
+            self.sources
+                .materialize_branch_workspace(&context, &repository, &branch, workspace)?;
         let association = observe_association(
             &context,
             &repository,
             &branch,
-            &provisioned.observation,
+            &materialized.observation,
             association_id.clone(),
             WorktreeAssociationProvenance::ProductCreated,
             branch.object_id.clone(),
             AssociationBaselineKind::CreatedAtObject,
         )?;
-        if workspace.worktree_id != association.worktree_id {
-            return Err("The created checkout does not match its durable worktree plan.".into());
-        }
-        workspace.location = StoredLocation::new(provisioned.path.to_string_lossy().into_owned())
-            .map_err(|error| error.to_string())?;
-        workspace.lifecycle = WorkspaceLifecycle::Ready;
-        workspace.updated_at = Utc::now();
         self.database
             .transaction(|transaction| {
-                transaction.workspaces().save(&workspace)?;
+                transaction.workspaces().save(&materialized.workspace)?;
                 transaction.associations().save(&association)
             })
             .map_err(|error| error.to_string())?;
@@ -308,7 +299,7 @@ impl BranchFirstReviewService {
             &context,
             &repository,
             &association,
-            Some(&provisioned.observation),
+            Some(&materialized.observation),
         )
     }
 
@@ -501,17 +492,12 @@ impl BranchFirstReviewService {
             &ObjectId::parse(baseline_object.as_str()).map_err(|error| error.to_string())?,
         )?;
         let baseline = baseline_view(association.baseline.kind, baseline)?;
-        let (name, location_label, fingerprint, availability) = match observation {
+        let (name, location_label, availability) = match observation {
             Some(observation) => {
                 let path = available_path(observation)?;
-                let (_, fingerprint) = context
-                    .status()
-                    .source_fingerprint(path)
-                    .map_err(|error| error.to_string())?;
                 (
                     repository_name(path),
                     path.to_string_lossy().into_owned(),
-                    fingerprint.as_str().to_owned(),
                     if association.lifecycle == WorktreeAssociationLifecycle::BranchMismatch {
                         WorktreeAvailabilityView::BranchMismatch {
                             detail: "The checkout no longer matches its associated branch.".into(),
@@ -524,7 +510,6 @@ impl BranchFirstReviewService {
             None => (
                 "Missing worktree".into(),
                 association.location.as_str().into(),
-                "unavailable".into(),
                 WorktreeAvailabilityView::Missing {
                     detail: "Git no longer reports this exact worktree checkout.".into(),
                 },
@@ -546,7 +531,6 @@ impl BranchFirstReviewService {
             observation,
             name,
             location_label,
-            fingerprint,
             ownership,
             availability,
             baseline,
@@ -687,9 +671,9 @@ mod tests {
                 status: CapabilityReadinessStatus::NotEvaluated,
                 message: "Build tooling is checked on demand.".into(),
             },
-            artifact_storage: CapabilityReadinessView {
+            build_output_storage: CapabilityReadinessView {
                 status: CapabilityReadinessStatus::Ready,
-                message: "Artifact storage is ready.".into(),
+                message: "Build output storage is ready.".into(),
             },
         };
 
@@ -704,7 +688,7 @@ mod tests {
             }
         );
         assert_eq!(
-            view.readiness.artifact_storage,
+            view.readiness.build_output_storage,
             CapabilityAvailabilityView::Available
         );
     }

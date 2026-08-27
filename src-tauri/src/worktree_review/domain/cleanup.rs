@@ -1,7 +1,6 @@
 use super::{
-    ArtifactSetId, ArtifactStorageKey, CleanupJobId, CleanupResourceId, ContainmentRoot,
-    DomainError, OperationAttemptId, ResourceLocator, ReviewBuildId, WorkspaceId,
-    WorkspaceOwnership,
+    BuildOutputId, BuildOutputStorageKey, CleanupJobId, CleanupResourceId, CleanupStorageKey,
+    ContainmentRoot, DomainError, OperationAttemptId, ReviewBuildId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -76,67 +75,41 @@ impl CleanupEligibility {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CleanupResource {
-    Workspace {
+    BuildOutput {
         id: CleanupResourceId,
-        workspace_id: WorkspaceId,
-        ownership: WorkspaceOwnership,
-        containment_root: Option<ContainmentRoot>,
-    },
-    ArtifactSet {
-        id: CleanupResourceId,
-        artifact_set_id: ArtifactSetId,
-        storage_key: ArtifactStorageKey,
+        output_id: BuildOutputId,
+        storage_key: BuildOutputStorageKey,
         containment_root: ContainmentRoot,
     },
     AttemptLogs {
         id: CleanupResourceId,
         attempt_id: OperationAttemptId,
-        storage_key: ArtifactStorageKey,
+        storage_key: CleanupStorageKey,
         containment_root: ContainmentRoot,
     },
     BuildScratch {
         id: CleanupResourceId,
         build_id: ReviewBuildId,
-        storage_key: ArtifactStorageKey,
+        storage_key: CleanupStorageKey,
         containment_root: ContainmentRoot,
-    },
-    RuntimeInstance {
-        id: CleanupResourceId,
-        build_id: ReviewBuildId,
-        locator: ResourceLocator,
-    },
-    PortLease {
-        id: CleanupResourceId,
-        build_id: ReviewBuildId,
-        locator: ResourceLocator,
     },
 }
 
 impl CleanupResource {
     pub(crate) fn id(&self) -> &CleanupResourceId {
         match self {
-            Self::Workspace { id, .. }
-            | Self::ArtifactSet { id, .. }
+            Self::BuildOutput { id, .. }
             | Self::AttemptLogs { id, .. }
-            | Self::BuildScratch { id, .. }
-            | Self::RuntimeInstance { id, .. }
-            | Self::PortLease { id, .. } => id,
+            | Self::BuildScratch { id, .. } => id,
         }
     }
 
     pub(crate) fn removable_for_build(&self, build_id: &ReviewBuildId) -> bool {
         match self {
-            Self::Workspace { ownership, .. } => ownership.is_removable_with_build(build_id),
             Self::BuildScratch {
                 build_id: owner, ..
             } => owner == build_id,
-            Self::RuntimeInstance {
-                build_id: owner, ..
-            }
-            | Self::PortLease {
-                build_id: owner, ..
-            } => owner == build_id,
-            Self::ArtifactSet { .. } | Self::AttemptLogs { .. } => true,
+            Self::BuildOutput { .. } | Self::AttemptLogs { .. } => true,
         }
     }
 }
@@ -348,35 +321,5 @@ pub(crate) struct ReviewSettings {
 impl ReviewSettings {
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
         self.retention_policy.validate()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::worktree_review::domain::WorktreeAssociationId;
-
-    #[test]
-    fn borrowed_worktree_cannot_enter_a_build_cleanup_ledger() {
-        let build_id = ReviewBuildId::new("build").unwrap();
-        let job = CleanupJob {
-            id: CleanupJobId::new("job").unwrap(),
-            build_id,
-            trigger: CleanupTrigger::RetentionPolicy,
-            eligibility: CleanupEligibility::Eligible,
-            state: CleanupJobState::Planned,
-            resources: vec![CleanupResource::Workspace {
-                id: CleanupResourceId::new("resource").unwrap(),
-                workspace_id: WorkspaceId::new("workspace").unwrap(),
-                ownership: WorkspaceOwnership::BorrowedExternal {
-                    association_id: WorktreeAssociationId::new("association").unwrap(),
-                },
-                containment_root: None,
-            }],
-            created_at: Utc::now(),
-            started_at: None,
-            settled_at: None,
-        };
-        assert!(job.validate().is_err());
     }
 }

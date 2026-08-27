@@ -94,7 +94,7 @@ mod tests {
     use super::*;
     use crate::worktree_review::domain::{
         BranchRef, GitObjectId, OperationAttemptId, ReviewBuildName, ReviewOperationKind,
-        ReviewSourceSelection, SourceBinding, SourceFingerprint, WorkspaceId,
+        ReviewSourceSelection, SourceBinding, WorkspaceId,
     };
     use chrono::{Duration, Utc};
 
@@ -112,12 +112,10 @@ mod tests {
                     selected_object: GitObjectId::new("a".repeat(40)).unwrap(),
                 },
                 workspace_id: workspace_id.clone(),
-                materialized_object: GitObjectId::new("a".repeat(40)).unwrap(),
-                materialized_state_fingerprint: SourceFingerprint::new("fingerprint").unwrap(),
             },
             workspace_id,
             retention_key: RetentionKey::new(source).unwrap(),
-            current_artifact_set_id: None,
+            current_output_id: None,
             lifecycle: crate::worktree_review::domain::BuildLifecycle::Active,
             created_at: now,
             updated_at: now,

@@ -1,11 +1,10 @@
 use super::{
-    ArtifactRelativePath, ArtifactSetId, ArtifactStorageKey, BuildAttentionId, ContentHash,
-    DomainError, OperationAttemptId, RetentionKey, ReviewBuildId, ReviewBuildName, SourceBinding,
-    WorkspaceId,
+    BuildAttentionId, BuildOutputId, BuildOutputStorageKey, DomainError, ExecutableRelativePath,
+    OperationAttemptId, RetentionKey, ReviewBuildId, ReviewBuildName, SourceBinding, WorkspaceId,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::path::{Component, Path};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,7 +47,7 @@ pub(crate) struct ReviewBuild {
     pub(crate) source: SourceBinding,
     pub(crate) workspace_id: WorkspaceId,
     pub(crate) retention_key: RetentionKey,
-    pub(crate) current_artifact_set_id: Option<ArtifactSetId>,
+    pub(crate) current_output_id: Option<BuildOutputId>,
     pub(crate) lifecycle: BuildLifecycle,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -156,8 +155,7 @@ pub(crate) enum OperationStage {
     WorktreeProvisioning,
     DependencyProvisioning,
     Compilation,
-    ArtifactVerification,
-    ArtifactPromotion,
+    OutputPublication,
     InterruptionReconciliation,
 }
 
@@ -168,8 +166,7 @@ impl OperationStage {
             Self::WorktreeProvisioning => "worktree_provisioning",
             Self::DependencyProvisioning => "dependency_provisioning",
             Self::Compilation => "compilation",
-            Self::ArtifactVerification => "artifact_verification",
-            Self::ArtifactPromotion => "artifact_promotion",
+            Self::OutputPublication => "output_publication",
             Self::InterruptionReconciliation => "interruption_reconciliation",
         }
     }
@@ -180,8 +177,9 @@ impl OperationStage {
             "worktree_provisioning" => Some(Self::WorktreeProvisioning),
             "dependency_provisioning" => Some(Self::DependencyProvisioning),
             "compilation" => Some(Self::Compilation),
-            "artifact_verification" => Some(Self::ArtifactVerification),
-            "artifact_promotion" => Some(Self::ArtifactPromotion),
+            "output_publication" | "artifact_verification" | "artifact_promotion" => {
+                Some(Self::OutputPublication)
+            }
             "interruption_reconciliation" | "recovery" => Some(Self::InterruptionReconciliation),
             _ => None,
         }
@@ -196,8 +194,8 @@ pub(crate) enum OperationFailureCategory {
     ProvisioningFailed,
     ToolchainUnavailable,
     CommandFailed,
-    ArtifactMissing,
-    ArtifactInvalid,
+    OutputMissing,
+    OutputPublicationFailed,
     Interrupted,
     Internal,
 }
@@ -210,8 +208,8 @@ impl OperationFailureCategory {
             Self::ProvisioningFailed => "provisioning_failed",
             Self::ToolchainUnavailable => "toolchain_unavailable",
             Self::CommandFailed => "command_failed",
-            Self::ArtifactMissing => "artifact_missing",
-            Self::ArtifactInvalid => "artifact_invalid",
+            Self::OutputMissing => "output_missing",
+            Self::OutputPublicationFailed => "output_publication_failed",
             Self::Interrupted => "interrupted",
             Self::Internal => "internal",
         }
@@ -224,8 +222,8 @@ impl OperationFailureCategory {
             "provisioning_failed" => Some(Self::ProvisioningFailed),
             "toolchain_unavailable" => Some(Self::ToolchainUnavailable),
             "command_failed" => Some(Self::CommandFailed),
-            "artifact_missing" => Some(Self::ArtifactMissing),
-            "artifact_invalid" => Some(Self::ArtifactInvalid),
+            "output_missing" | "artifact_missing" => Some(Self::OutputMissing),
+            "output_publication_failed" | "artifact_invalid" => Some(Self::OutputPublicationFailed),
             "interrupted" => Some(Self::Interrupted),
             "internal" => Some(Self::Internal),
             _ => None,
@@ -317,43 +315,51 @@ impl ReviewOperationAttempt {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct VerifiedArtifactFile {
-    pub(crate) relative_path: ArtifactRelativePath,
-    pub(crate) content_hash: ContentHash,
-    pub(crate) bytes: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct VerifiedArtifactSet {
-    pub(crate) id: ArtifactSetId,
+pub(crate) struct RetainedBuildOutput {
+    pub(crate) id: BuildOutputId,
     pub(crate) build_id: ReviewBuildId,
     pub(crate) attempt_id: OperationAttemptId,
-    pub(crate) storage_key: ArtifactStorageKey,
-    pub(crate) manifest_hash: ContentHash,
-    pub(crate) files: Vec<VerifiedArtifactFile>,
-    pub(crate) verified_at: DateTime<Utc>,
+    pub(crate) storage_key: BuildOutputStorageKey,
+    pub(crate) executable_relative_path: ExecutableRelativePath,
+    pub(crate) published_at: DateTime<Utc>,
 }
 
-impl VerifiedArtifactSet {
+impl RetainedBuildOutput {
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
-        if self.files.is_empty() {
+        let storage_components = normal_relative_components(self.storage_key.as_str());
+        if storage_components.as_deref().is_none_or(|components| {
+            !components.ends_with(&[self.build_id.as_str(), self.attempt_id.as_str(), "output"])
+        }) {
             return Err(DomainError::new(
-                "verified artifact set must contain at least one declared artifact",
+                "build output storage key must identify its build attempt output",
             ));
         }
-        let unique = self
-            .files
-            .iter()
-            .map(|file| file.relative_path.as_str())
-            .collect::<HashSet<_>>();
-        if unique.len() != self.files.len() {
+        if !is_normal_relative_path(self.executable_relative_path.as_str()) {
             return Err(DomainError::new(
-                "verified artifact paths must be unique within a manifest",
+                "build output executable must be a normalized relative path",
             ));
         }
         Ok(())
     }
+}
+
+fn is_normal_relative_path(value: &str) -> bool {
+    normal_relative_components(value).is_some()
+}
+
+fn normal_relative_components(value: &str) -> Option<Vec<&str>> {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        return None;
+    }
+    let components = path
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!components.is_empty()).then_some(components)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -466,5 +472,26 @@ mod tests {
         };
 
         assert!(attention.validate().is_err());
+    }
+
+    #[test]
+    fn retained_output_paths_are_bounded_relative_values() {
+        let now = Utc::now();
+        let output = |storage_key: &str, executable: &str| RetainedBuildOutput {
+            id: BuildOutputId::new("output").unwrap(),
+            build_id: ReviewBuildId::new("build").unwrap(),
+            attempt_id: OperationAttemptId::new("attempt").unwrap(),
+            storage_key: BuildOutputStorageKey::new(storage_key).unwrap(),
+            executable_relative_path: ExecutableRelativePath::new(executable).unwrap(),
+            published_at: now,
+        };
+
+        assert!(
+            output("outputs/build/attempt/output", "cargo-target/debug/app.exe")
+                .validate()
+                .is_ok()
+        );
+        assert!(output("../foreign", "app.exe").validate().is_err());
+        assert!(output("outputs/build", "../app.exe").validate().is_err());
     }
 }

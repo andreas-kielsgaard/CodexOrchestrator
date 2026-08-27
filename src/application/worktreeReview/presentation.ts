@@ -1,5 +1,5 @@
 import type {
-  ArtifactState,
+  BuildOutputState,
   AssociationBaseline,
   BuildWorkspacePlan,
   CleanupState,
@@ -49,9 +49,13 @@ export function hasWorkSinceBaseline(changes: WorktreeChanges): boolean {
 export function sourceLabel(source: ReviewBuildSource): string {
   switch (source.kind) {
     case 'existing_worktree':
-      return `Direct worktree at ${shortObjectId(source.expectedHead)}`;
+      return source.virtualCommitId
+        ? `Direct worktree at ${shortObjectId(source.headObjectId)} · virtual commit ${shortObjectId(source.virtualCommitId)}`
+        : `Direct worktree at ${shortObjectId(source.headObjectId)}`;
     case 'worktree_snapshot':
-      return `Worktree snapshot from ${shortObjectId(source.baseObjectId)}`;
+      return source.virtualCommitId
+        ? `Retained checkout from virtual commit ${shortObjectId(source.virtualCommitId)} · source HEAD ${shortObjectId(source.headObjectId)}`
+        : `Retained checkout from ${shortObjectId(source.capturedObjectId)}`;
     case 'branch_commit':
       return `Branch commit ${shortObjectId(source.objectId)}`;
   }
@@ -73,28 +77,28 @@ export function attemptLabel(attempt: ReviewOperationAttempt | undefined): strin
   if (attempt.executionState === 'interrupted') return 'Interrupted';
   if (attempt.executionState !== 'completed')
     return `${capitalize(attempt.executionState)} · ${attempt.stage}`;
-  switch (attempt.verdict) {
-    case 'passed':
-      return 'Build passed';
+  switch (attempt.outcome) {
+    case 'succeeded':
+      return 'Compilation completed';
     case 'failed':
-      return 'Build failed';
+      return 'Compilation failed';
     case 'unknown':
       return 'Outcome unknown';
-    case 'not_evaluated':
-      return 'Completed without a build verdict';
+    case 'not_completed':
+      return 'Compilation did not complete';
   }
 }
 
-export function artifactLabel(artifact: ArtifactState): string {
-  switch (artifact.state) {
+export function buildOutputLabel(output: BuildOutputState): string {
+  switch (output.state) {
     case 'not_produced':
       return 'No retained build output';
-    case 'promotion_failed':
-      return 'Artifact promotion failed';
+    case 'unavailable':
+      return `Retained output unavailable · ${output.summary}`;
     case 'available':
-      return `${plural(artifact.fileCount, 'retained file')} · ${artifact.storageLabel}`;
+      return `Available · ${output.storageLabel}`;
     case 'removed':
-      return 'Artifacts removed; receipt retained';
+      return 'Build output removed; receipt retained';
   }
 }
 

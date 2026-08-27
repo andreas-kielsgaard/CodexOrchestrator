@@ -1,6 +1,6 @@
 # Durable Worktree Review correction
 
-Status: implemented candidate; acceptance, commit, publication, and integration remain separate.
+Status: implemented candidate; publication, integration, and acceptance remain separate.
 
 Baseline: `c998c34645847b618ff08354988a219fd00d2d9e` on
 `codex/worktree-review-runtime`.
@@ -29,9 +29,8 @@ The correction is complete when:
   introduced;
 - a reviewed application exposes the same Worktree Review product as any other application;
 - the active build's exact source worktree is identified and excluded from direct/snapshot rebuild
-  choices, while all other worktrees remain available;
-- default branch reads show current direction and tip facts without loading history; and
-- historical commits are fetched only on request through bounded pagination.
+  choices, while all other worktrees remain available; and
+- default branch reads show current direction and tip facts without loading history.
 
 ## Product decisions
 
@@ -50,9 +49,11 @@ The correction is complete when:
   restriction, status registry, stop operation, or recovery operation.
 - Product-created build worktrees are retained. Borrowed worktrees are never removed by build
   retention cleanup.
-- Artifacts, build logs, settings, cleanup ledgers, and receipts live in a shared Worktree Review
-  AppData root. No artifact is copied back to a source worktree.
+- Retained build outputs, build logs, settings, cleanup ledgers, and receipts live in a shared
+  Worktree Review AppData root. No output is copied back to a source worktree.
 - Existing ambiguous legacy data is not assigned invented source or ownership authority.
+- Branch application metadata has no current decision value and is not part of the model or UI.
+- Historical branch search is outside this correction.
 
 ## Architecture
 
@@ -61,18 +62,21 @@ React Worktree Review
   -> unconditional Tauri commands
   -> branch/build/cleanup application services
   -> Worktree Review domain and focused SQLite repositories
-  -> repository context, worktree provisioning, artifact store
+  -> repository context + reusable physical-worktree application
 
 ReviewBuildExecutor
   -> PhysicalWorktreeApplication
-       build(worktree root, output root, binary)
+       capture_virtual_commit(worktree root, exact HEAD)
+       materialize_checkout(repository, target, exact commit, attachment)
+       build(worktree root, attempt root, dependency cache, binary)
        open(build result, environment overlay)
 ```
 
 `worktree_application` is a reusable domain outside Worktree Review. It deliberately contains only:
 
-- a physical build request and result;
-- compilation into an explicit output root;
+- stable virtual-commit capture without changing the user's index, refs, or checkout;
+- exact physical checkout materialization and idempotent adoption;
+- dependency preparation and compilation into an explicit attempt root;
 - a bounded generic launch environment; and
 - focus-existing-window-or-launch behavior.
 
@@ -82,27 +86,28 @@ and consumes the component.
 
 Worktree Review owns:
 
-- `WorktreeAssociation`: exact repository, branch, physical worktree, baseline, observed Git state,
-  provenance, and availability;
+- `WorktreeAssociation`: exact repository, branch, physical worktree, baseline, current observed Git
+  state, provenance, and availability;
 - `ReviewBuild`: immutable trigger-time source binding, workspace, retention key, and current output
   pointer;
 - `ReviewOperationAttempt`: materialization/build execution state, verdict, failure, and timestamps;
-- output manifest and file integrity facts used to avoid presenting missing output as openable; and
+- retained-output location and executable facts used to avoid presenting missing output as
+  openable; and
 - cleanup jobs, effects, receipts, and attention records.
 
-The internal artifact-set integrity terminology means that declared output files were promoted and
-recorded. Product presentation calls them retained or available output; it makes no source-quality
-or runtime-quality claim.
+An available output means only that its durable record and contained executable currently exist. It
+makes no source-quality or runtime-quality claim.
 
 ## Responsibility consolidation
 
 - `RepositoryContext` owns hardened, bounded, read-only Git facts.
-- `WorktreeProvisioner` owns checkout and snapshot effects and constructs the durable planned
-  workspace shape used by both explicit worktree creation and build materialization.
+- `PhysicalWorktreeApplication` is the single physical capture/checkout/build/open effect boundary
+  used by Worktree Review, orchestration worktree creation, and task worktree creation.
 - `association_observer` is the single constructor for observed association state, used by branch
   association, explicit creation, and build-created managed worktrees.
-- `SourceMaterializationService` validates the explicit source choice and turns a durable workspace
-  plan into an exact checkout.
+- `SourceMaterializationService` accepts the minimal source request, records the server-observed
+  source receipt, and turns a durable workspace plan into an exact checkout through the reusable
+  boundary.
 - `ReviewBuildCoordinator` persists build/materialization intent before effects, coordinates build
   output, presents results, and performs stateless Open.
 - `WorktreeReviewCleanupService` owns cleanup planning, effects, receipts, and restart reconciliation.
@@ -115,10 +120,10 @@ or runtime-quality claim.
 The default branch overview performs one batched `for-each-ref` query for local branch tip metadata
 and direction relative to the remote default branch. It does not construct a historical view.
 
-Branch detail presents application metadata, exact worktrees, association candidates, and builds.
-Commit history is requested only after the user chooses a historical source or baseline. Each page
-is bounded and read by one Git log process. Git-heavy Tauri commands run on blocking workers rather
-than the UI-facing async executor.
+Branch detail presents the branch, exact worktrees, association candidates, and builds. Application
+metadata is intentionally absent because it has no current decision value. The existing lazy branch
+history path is unchanged; historical search is outside this correction. Git-heavy Tauri commands
+run on blocking workers rather than the UI-facing async executor.
 
 The active build context is a pair of durable build/worktree identities passed to an opened build.
 It changes only source-choice affordances for that exact worktree; it does not filter repositories,
@@ -135,7 +140,7 @@ branches, other worktrees, or Worktree Review itself.
 ## Durability and cleanup
 
 One shared SQLite database under the canonical Worktree Review AppData root owns selection,
-associations, workspaces, builds, attempts, output manifests, cleanup, settings, and attentions.
+associations, workspaces, builds, attempts, retained outputs, cleanup, settings, and attentions.
 SQLite uses WAL, a bounded busy timeout, and serialized migrations for multiple independent reviewed
 applications.
 
@@ -155,7 +160,8 @@ receipts.
 - No catalog, inventory, query, or projector mutates Git.
 - No Tauri types below transport.
 - No log or filesystem presence infers a build verdict.
-- No artifact presentation without a retained manifest and existing declared executable.
+- No available-output presentation without a retained output record and existing contained
+  executable.
 - No cleanup effect without typed ownership and containment evidence.
 - No build hierarchy, process registry, stop, recovery, or child-launcher authority.
 - No post-build claim that the source worktree or application remains unchanged or correct.
@@ -167,8 +173,8 @@ receipts.
 3. Persist workspace, build, and materialization intent before checkout effects.
 4. Build and retain output through the minimal reusable physical-worktree application component.
 5. Add stateless Open and propagate shared AppData plus exact active build/worktree context.
-6. Batch branch direction reads, move history behind bounded on-demand pagination, and run Git reads
-   off the UI-facing executor.
+6. Keep default branch reads bounded and run Git reads off the UI-facing executor without expanding
+   historical search.
 7. Consolidate provisioning, association observation, projections, and Git comparison ports.
 8. Remove the legacy launcher/runtime/proof surfaces and all Worktree Review debug gates.
 9. Validate focused domain/storage/component behavior plus debug, release, frontend, formatting, and
@@ -176,26 +182,25 @@ receipts.
 
 ## Candidate validation
 
-- Worktree Review Rust suite: 37 passed.
-- Reusable physical-worktree application suite: 6 passed.
-- Concurrent first-open migration test: passed five repeated four-connection runs after correcting
-  the WAL bootstrap race.
-- Release library check: passed; Worktree Review commands are present in the release composition.
-  The crate still reports 26 dead-code warnings across the wider product and a few focused
-  Worktree Review domain/storage helpers; the removed legacy runtime is no longer the warning source.
-- Focused frontend suite: 29 passed across Worktree Review, Tauri adapter, product composition, and
-  application navigation.
+- Worktree Review Rust suite: 38 passed.
+- Reusable physical-worktree application suite: 11 passed.
+- The focused storage suite includes concurrent first-open migration and independent database-owner
+  visibility checks.
+- Development and release library checks passed; Worktree Review and physical-worktree commands are
+  present in the release composition. The crate still reports unrelated and focused dead-code
+  warnings, but the removed legacy runtime is no longer the warning source.
+- Focused frontend suite: 20 passed across Worktree Review, the native worktree adapter, local Git
+  reads, and local runtime composition.
 - TypeScript production build: passed, with the existing large-chunk advisory.
 - Focused ESLint, Rust formatting, and Git diff checks: passed.
-- The broad 542-test Rust run passed the changed modules but was stopped after unrelated long-running
-  orchestration concurrency tests did not settle. Its one observed orchestration failure passed when
-  rerun alone.
 
 ## Known residuals
 
 - Cleanup reconciliation has no cross-process claimant. Effects are idempotent and fail closed, but
   two applications can race one unsettled job and one may record a storage conflict. A future change
   should add a narrow cleanup claim or mutex, not restore application lifecycle tracking.
+- Failed or interrupted build-attempt scratch/output directories are not yet enrolled in the durable
+  cleanup ledger; only retained superseded outputs and their logs are automatically cleaned.
 - Old per-instance Worktree Review databases and artifact roots are not inferred or merged. Any
   migration or retirement needs an explicit audited operation.
 - Automated validation does not replace a packaged manual smoke test of compile, launch, exact-window

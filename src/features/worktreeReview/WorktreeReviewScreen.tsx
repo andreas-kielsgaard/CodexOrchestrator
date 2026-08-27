@@ -228,7 +228,7 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
     try {
       const build = await client.createBuild(request);
       setDetail({ ...detail, builds: [build, ...detail.builds] });
-      setNotice(`Created ${build.name}. Its attempt and artifacts are tracked independently.`);
+      setNotice(`Created ${build.name}. Its attempt and retained output are tracked independently.`);
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -452,14 +452,6 @@ function BranchSummary({ detail }: { readonly detail: BranchReviewDetail }) {
           {detail.branch.aheadOfDefault} ahead · {detail.branch.behindDefault} behind default
         </span>
       </div>
-      <dl className="worktree-review__metadata">
-        {detail.applicationMetadata.map((item) => (
-          <div key={`${item.label}:${item.value}`}>
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
-          </div>
-        ))}
-      </dl>
     </section>
   );
 }

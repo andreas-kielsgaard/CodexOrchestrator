@@ -40,7 +40,6 @@ export const worktreeOne: AssociatedWorktree = {
   ownership: 'borrowed_external',
   baseline: { kind: 'observed_at_association', commit: baseCommit },
   currentHead: tipCommit,
-  observedStateFingerprint: 'fingerprint-a',
   changes: {
     commitsAheadOfBaseline: 1,
     commitsBehindBaseline: 0,
@@ -51,7 +50,6 @@ export const worktreeOne: AssociatedWorktree = {
   detachedHead: false,
   branchReachability: 'reachable',
   availability: { state: 'available' },
-  applicationMetadata: [{ label: 'Package', value: 'codex-orchestrator', source: 'worktree' }],
 };
 
 export const worktreeTwo: AssociatedWorktree = {
@@ -61,7 +59,6 @@ export const worktreeTwo: AssociatedWorktree = {
   name: 'Agent checkout B',
   locationLabel: 'C:\\worktrees\\durable-b',
   provenance: 'user_associated_detached_checkout',
-  observedStateFingerprint: 'fingerprint-b',
   changes: {
     commitsAheadOfBaseline: 1,
     commitsBehindBaseline: 0,
@@ -72,9 +69,9 @@ export const worktreeTwo: AssociatedWorktree = {
   detachedHead: true,
 };
 
-export const passedBuild: ReviewBuild = {
-  buildId: 'build-passed',
-  name: 'Verified review build',
+export const completedBuild: ReviewBuild = {
+  buildId: 'build-completed',
+  name: 'Completed review build',
   branchRef: 'refs/heads/codex/durable-review',
   source: {
     kind: 'branch_commit',
@@ -84,41 +81,39 @@ export const passedBuild: ReviewBuild = {
   workspace: {
     worktreeId: 'worktree-build-owned',
     ownership: 'owned_build_worktree',
-    locationLabel: 'Worktree Review storage / workspaces / build-passed',
+    locationLabel: 'Worktree Review storage / workspaces / build-completed',
     lifecycle: 'ready',
   },
   latestAttempt: {
-    attemptId: 'attempt-passed',
+    attemptId: 'attempt-completed',
     executionState: 'completed',
-    verdict: 'passed',
+    outcome: 'succeeded',
     stage: 'complete',
     startedAt: '2026-08-21T11:00:00Z',
     completedAt: '2026-08-21T11:05:00Z',
   },
-  artifact: {
+  output: {
     state: 'available',
-    artifactSetId: 'artifact-passed',
-    fileCount: 2,
-    manifestHash: 'sha256:abcdef',
-    storageLabel: 'AppData / artifacts / artifact-passed',
+    buildOutputId: 'output-completed',
+    storageLabel: 'AppData / build-output / build-completed',
   },
   cleanup: { state: 'retained', policy: 'Newest successful build for this source' },
 };
 
 export const failedBuild: ReviewBuild = {
-  ...passedBuild,
+  ...completedBuild,
   buildId: 'build-failed',
   name: 'Failed rebuild',
   latestAttempt: {
     attemptId: 'attempt-failed',
     executionState: 'completed',
-    verdict: 'failed',
+    outcome: 'failed',
     stage: 'compile',
     startedAt: '2026-08-22T11:00:00Z',
     completedAt: '2026-08-22T11:01:00Z',
     failure: { category: 'build', stage: 'compile', summary: 'Compiler exited with code 1.' },
   },
-  artifact: { state: 'not_produced' },
+  output: { state: 'not_produced' },
   cleanup: { state: 'eligible', reason: 'Failed terminal attempt' },
 };
 
@@ -134,7 +129,7 @@ export const overviewFixture: WorktreeReviewOverview = {
         browse: { state: 'available' },
         createWorktree: { state: 'available' },
         build: { state: 'available' },
-        artifactStorage: { state: 'available' },
+        buildOutputStorage: { state: 'available' },
       },
     },
   ],
@@ -165,10 +160,6 @@ export function branchDetailFixture(
 ): BranchReviewDetail {
   return {
     branch: overviewFixture.branches[0],
-    applicationMetadata: [
-      { label: 'Application', value: 'Codex Orchestrator', source: 'committed-branch-tip' },
-      { label: 'Version', value: '0.1.0', source: 'committed-branch-tip' },
-    ],
     worktrees: [worktreeOne, worktreeTwo],
     associationCandidates: [
       {
@@ -180,7 +171,7 @@ export function branchDetailFixture(
         associationReason: 'This checkout has not been associated with a Worktree Review branch.',
       },
     ],
-    builds: [failedBuild, passedBuild],
+    builds: [failedBuild, completedBuild],
     ...overrides,
   };
 }

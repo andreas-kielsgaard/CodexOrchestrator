@@ -9,35 +9,35 @@ use super::{
     domain::{
         BranchRef, BuildAttention, BuildLifecycle, CleanupDisposition, CleanupEffect,
         CleanupEligibility, CleanupJob, CleanupJobState, CleanupResource, OperationExecutionState,
-        OperationFailureCategory, OperationStage, OperationVerdict, ReviewBuild,
-        ReviewOperationAttempt, ReviewSourceSelection, ReviewWorkspace, VerifiedArtifactSet,
+        OperationFailureCategory, OperationStage, OperationVerdict, RetainedBuildOutput,
+        ReviewBuild, ReviewOperationAttempt, ReviewSourceSelection, ReviewWorkspace,
     },
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateBuildInput {
     pub(crate) repository_id: String,
     pub(crate) branch_ref: String,
     pub(crate) name: String,
-    pub(crate) source: BuildSourceInput,
+    pub(crate) source: CreateBuildSourceInput,
     pub(crate) workspace_plan: BuildWorkspacePlanInput,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum BuildSourceInput {
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum CreateBuildSourceInput {
     ExistingWorktree {
         association_id: String,
-        expected_head: String,
-        state_fingerprint: String,
     },
     WorktreeSnapshot {
         association_id: String,
-        base_object_id: String,
-        state_fingerprint: String,
     },
     BranchCommit {
         branch_ref: String,
@@ -46,7 +46,12 @@ pub(crate) enum BuildSourceInput {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(crate) enum BuildWorkspacePlanInput {
     BorrowSelectedWorktree {
         association_id: String,
@@ -56,6 +61,31 @@ pub(crate) enum BuildWorkspacePlanInput {
     },
     CreateOwnedBuildWorktree {
         originating_association_id: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ReviewBuildSourceView {
+    ExistingWorktree {
+        association_id: String,
+        head_object_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        virtual_commit_id: Option<String>,
+    },
+    WorktreeSnapshot {
+        association_id: String,
+        head_object_id: String,
+        captured_object_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        virtual_commit_id: Option<String>,
+    },
+    BranchCommit {
+        branch_ref: String,
         object_id: String,
     },
 }
@@ -66,11 +96,11 @@ pub(crate) struct ReviewBuildView {
     pub(crate) build_id: String,
     pub(crate) name: String,
     pub(crate) branch_ref: String,
-    pub(crate) source: BuildSourceInput,
+    pub(crate) source: ReviewBuildSourceView,
     pub(crate) workspace: BuildWorkspaceView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) latest_attempt: Option<ReviewOperationAttemptView>,
-    pub(crate) artifact: ArtifactStateView,
+    pub(crate) output: BuildOutputStateView,
     pub(crate) cleanup: CleanupStateView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) attention: Option<BuildAttentionView>,
@@ -98,7 +128,7 @@ pub(crate) struct BuildWorkspaceView {
 pub(crate) struct ReviewOperationAttemptView {
     pub(crate) attempt_id: String,
     pub(crate) execution_state: String,
-    pub(crate) verdict: String,
+    pub(crate) outcome: String,
     pub(crate) stage: String,
     pub(crate) started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,19 +147,19 @@ pub(crate) struct BuildAttemptFailureView {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum ArtifactStateView {
+pub(crate) enum BuildOutputStateView {
     NotProduced,
-    PromotionFailed {
+    Unavailable {
         summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        build_output_id: Option<String>,
     },
     Available {
-        artifact_set_id: String,
-        file_count: usize,
-        manifest_hash: String,
+        build_output_id: String,
         storage_label: String,
     },
     Removed {
-        artifact_set_id: String,
+        build_output_id: String,
         removed_at: String,
     },
 }
@@ -166,7 +196,7 @@ pub(super) fn review_build_view(
     build: &ReviewBuild,
     workspace: &ReviewWorkspace,
     latest_attempt: Option<&ReviewOperationAttempt>,
-    artifact: ArtifactStateView,
+    output: BuildOutputStateView,
     cleanup: CleanupStateView,
     attention: Option<BuildAttention>,
 ) -> ReviewBuildView {
@@ -182,7 +212,7 @@ pub(super) fn review_build_view(
             lifecycle: workspace.lifecycle.as_str().to_owned(),
         },
         latest_attempt: latest_attempt.map(attempt_view),
-        artifact,
+        output,
         cleanup,
         attention: attention.map(|attention| BuildAttentionView {
             category: attention.category.as_str().to_owned(),
@@ -192,68 +222,61 @@ pub(super) fn review_build_view(
     }
 }
 
-pub(super) fn artifact_view(
+pub(super) fn build_output_view(
     build: &ReviewBuild,
-    latest_attempt: Option<&ReviewOperationAttempt>,
-    artifacts: Option<&VerifiedArtifactSet>,
+    output: Option<&RetainedBuildOutput>,
+    output_exists: bool,
     cleanup_job: Option<&CleanupJob>,
     cleanup_effects: &[CleanupEffect],
-) -> Result<ArtifactStateView, String> {
-    let Some(artifact_id) = &build.current_artifact_set_id else {
-        return Ok(
-            match latest_attempt.and_then(|attempt| attempt.failure.as_ref()) {
-                Some(failure)
-                    if matches!(
-                        failure.stage,
-                        OperationStage::ArtifactVerification | OperationStage::ArtifactPromotion
-                    ) =>
-                {
-                    ArtifactStateView::PromotionFailed {
-                        summary: failure.message.clone(),
-                    }
-                }
-                _ => ArtifactStateView::NotProduced,
-            },
-        );
+) -> BuildOutputStateView {
+    let Some(output_id) = &build.current_output_id else {
+        return BuildOutputStateView::NotProduced;
     };
-    let artifacts = artifacts
-        .filter(|artifacts| &artifacts.id == artifact_id)
-        .ok_or_else(|| "The build references an unavailable artifact manifest.".to_string())?;
+    let Some(output) = output.filter(|output| &output.id == output_id) else {
+        return BuildOutputStateView::Unavailable {
+            summary: "The retained build output record is unavailable.".into(),
+            build_output_id: Some(output_id.as_str().to_owned()),
+        };
+    };
     if let Some(job) = cleanup_job {
         let removed_resource = job.resources.iter().find_map(|resource| match resource {
-            CleanupResource::ArtifactSet {
-                id,
-                artifact_set_id,
-                ..
-            } if artifact_set_id == &artifacts.id => Some(id),
+            CleanupResource::BuildOutput { id, output_id, .. } if output_id == &output.id => {
+                Some(id)
+            }
             _ => None,
         });
         if let Some(resource_id) = removed_resource {
-            let removed = cleanup_effects.iter().any(|effect| {
+            let removed = cleanup_effects.iter().find(|effect| {
                 effect.resource_id == *resource_id
                     && matches!(
                         effect.disposition,
                         CleanupDisposition::Removed | CleanupDisposition::AlreadyAbsent
                     )
             });
-            if removed {
-                return Ok(ArtifactStateView::Removed {
-                    artifact_set_id: artifacts.id.as_str().to_owned(),
-                    removed_at: job.settled_at.unwrap_or(job.created_at).to_rfc3339(),
-                });
+            if let Some(removed) = removed {
+                return BuildOutputStateView::Removed {
+                    build_output_id: output.id.as_str().to_owned(),
+                    removed_at: removed.recorded_at.to_rfc3339(),
+                };
             }
         }
     }
-    Ok(ArtifactStateView::Available {
-        artifact_set_id: artifacts.id.as_str().to_owned(),
-        file_count: artifacts.files.len(),
-        manifest_hash: artifacts.manifest_hash.as_str().to_owned(),
-        storage_label: format!("Worktree Review AppData/{}", artifacts.storage_key.as_str()),
-    })
+    if !output_exists {
+        return BuildOutputStateView::Unavailable {
+            summary: "The retained build output or executable is no longer available.".into(),
+            build_output_id: Some(output.id.as_str().to_owned()),
+        };
+    }
+    BuildOutputStateView::Available {
+        build_output_id: output.id.as_str().to_owned(),
+        storage_label: format!("Worktree Review AppData/{}", output.storage_key.as_str()),
+    }
 }
 
-pub(super) fn cleanup_presentation_view(presentation: CleanupPresentation) -> CleanupStateView {
-    match presentation.state {
+pub(super) fn cleanup_presentation_view(
+    presentation: CleanupPresentation,
+) -> Result<CleanupStateView, String> {
+    Ok(match presentation.state {
         CleanupJobState::Planned => CleanupStateView::Eligible {
             reason: presentation.summary,
         },
@@ -274,14 +297,16 @@ pub(super) fn cleanup_presentation_view(presentation: CleanupPresentation) -> Cl
             cleanup_job_id: presentation.job_id.as_str().to_owned(),
             summary: presentation.summary,
         },
-        CleanupJobState::Completed => CleanupStateView::Complete {
-            cleanup_receipt_id: presentation.job_id.as_str().to_owned(),
-            completed_at: presentation
-                .completed_at
-                .unwrap_or_else(Utc::now)
-                .to_rfc3339(),
-            summary: presentation.summary,
-        },
+        CleanupJobState::Completed => {
+            let completed_at = presentation.completed_at.ok_or_else(|| {
+                "A completed cleanup job has no durable completion timestamp.".to_string()
+            })?;
+            CleanupStateView::Complete {
+                cleanup_receipt_id: presentation.job_id.as_str().to_owned(),
+                completed_at: completed_at.to_rfc3339(),
+                summary: presentation.summary,
+            }
+        }
         CleanupJobState::NotEligible => CleanupStateView::NotEligible {
             reason: match presentation.eligibility {
                 CleanupEligibility::BuildRunning => "The running build was left unchanged.".into(),
@@ -296,7 +321,7 @@ pub(super) fn cleanup_presentation_view(presentation: CleanupPresentation) -> Cl
                 CleanupEligibility::Eligible => presentation.summary,
             },
         },
-    }
+    })
 }
 
 pub(super) fn cleanup_view(
@@ -339,30 +364,38 @@ pub(super) fn cleanup_view(
     }
 }
 
-fn source_view(branch_ref: &BranchRef, selection: &ReviewSourceSelection) -> BuildSourceInput {
+fn source_view(branch_ref: &BranchRef, selection: &ReviewSourceSelection) -> ReviewBuildSourceView {
     match selection {
         ReviewSourceSelection::ExistingWorktree {
             association_id,
-            expected_head,
-            captured_state_fingerprint,
-        } => BuildSourceInput::ExistingWorktree {
+            head_object_id,
+            virtual_commit_id,
+        } => ReviewBuildSourceView::ExistingWorktree {
             association_id: association_id.as_str().to_owned(),
-            expected_head: expected_head.as_str().to_owned(),
-            state_fingerprint: captured_state_fingerprint.as_str().to_owned(),
+            head_object_id: head_object_id.as_str().to_owned(),
+            virtual_commit_id: virtual_commit_id
+                .as_ref()
+                .map(|object| object.as_str().to_owned()),
         },
         ReviewSourceSelection::WorktreeSnapshot {
             association_id,
-            baseline_object,
-            captured_state_fingerprint,
-        } => BuildSourceInput::WorktreeSnapshot {
+            head_object_id,
+            captured_object_id,
+            virtual_commit_id,
+        } => ReviewBuildSourceView::WorktreeSnapshot {
             association_id: association_id.as_str().to_owned(),
-            base_object_id: baseline_object.as_str().to_owned(),
-            state_fingerprint: captured_state_fingerprint.as_str().to_owned(),
+            head_object_id: head_object_id.as_str().to_owned(),
+            captured_object_id: captured_object_id.as_str().to_owned(),
+            virtual_commit_id: virtual_commit_id
+                .as_ref()
+                .map(|object| object.as_str().to_owned()),
         },
-        ReviewSourceSelection::BranchCommit { selected_object } => BuildSourceInput::BranchCommit {
-            branch_ref: branch_ref.as_str().to_owned(),
-            object_id: selected_object.as_str().to_owned(),
-        },
+        ReviewSourceSelection::BranchCommit { selected_object } => {
+            ReviewBuildSourceView::BranchCommit {
+                branch_ref: branch_ref.as_str().to_owned(),
+                object_id: selected_object.as_str().to_owned(),
+            }
+        }
     }
 }
 
@@ -378,11 +411,11 @@ fn attempt_view(attempt: &ReviewOperationAttempt) -> ReviewOperationAttemptView 
     ReviewOperationAttemptView {
         attempt_id: attempt.id.as_str().to_owned(),
         execution_state: attempt.execution.as_str().to_owned(),
-        verdict: match (attempt.execution, attempt.verdict) {
+        outcome: match (attempt.execution, attempt.verdict) {
             (OperationExecutionState::Pending | OperationExecutionState::Running, _) => {
-                "not_evaluated"
+                "not_completed"
             }
-            (_, OperationVerdict::Passed) => "passed",
+            (_, OperationVerdict::Passed) => "succeeded",
             (_, OperationVerdict::Failed) => "failed",
             _ => "unknown",
         }
@@ -411,9 +444,102 @@ fn failure_category(category: OperationFailureCategory) -> &'static str {
         | OperationFailureCategory::ProvisioningFailed => "provisioning",
         OperationFailureCategory::ToolchainUnavailable => "toolchain",
         OperationFailureCategory::CommandFailed | OperationFailureCategory::Internal => "build",
-        OperationFailureCategory::ArtifactMissing | OperationFailureCategory::ArtifactInvalid => {
-            "artifact"
-        }
+        OperationFailureCategory::OutputMissing
+        | OperationFailureCategory::OutputPublicationFailed => "output",
         OperationFailureCategory::Interrupted => "interrupted",
+    }
+}
+
+#[cfg(test)]
+mod source_contract_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_only_source_selection_facts_owned_by_the_caller() {
+        let input: CreateBuildInput = serde_json::from_value(json!({
+            "repositoryId": "repository-one",
+            "branchRef": "refs/heads/feature",
+            "name": "Feature build",
+            "source": {
+                "kind": "worktree_snapshot",
+                "associationId": "association-one"
+            },
+            "workspacePlan": {
+                "kind": "create_owned_build_worktree",
+                "originatingAssociationId": "association-one"
+            }
+        }))
+        .expect("minimal source request should deserialize");
+
+        assert_eq!(
+            input.source,
+            CreateBuildSourceInput::WorktreeSnapshot {
+                association_id: "association-one".into(),
+            }
+        );
+        assert!(matches!(
+            input.workspace_plan,
+            BuildWorkspacePlanInput::CreateOwnedBuildWorktree {
+                originating_association_id: Some(ref association_id)
+            } if association_id == "association-one"
+        ));
+    }
+
+    #[test]
+    fn rejects_client_claims_about_accepted_source_identity() {
+        let stale_source_claim = json!({
+            "repositoryId": "repository-one",
+            "branchRef": "refs/heads/feature",
+            "name": "Feature build",
+            "source": {
+                "kind": "existing_worktree",
+                "associationId": "association-one",
+                "expectedHead": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "stateFingerprint": "caller-owned-fingerprint"
+            },
+            "workspacePlan": {
+                "kind": "borrow_selected_worktree",
+                "associationId": "association-one"
+            }
+        });
+        assert!(serde_json::from_value::<CreateBuildInput>(stale_source_claim).is_err());
+
+        let stale_workspace_claim = json!({
+            "repositoryId": "repository-one",
+            "branchRef": "refs/heads/feature",
+            "name": "Feature build",
+            "source": {
+                "kind": "branch_commit",
+                "branchRef": "refs/heads/feature",
+                "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "workspacePlan": {
+                "kind": "create_owned_build_worktree",
+                "objectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+        });
+        assert!(serde_json::from_value::<CreateBuildInput>(stale_workspace_claim).is_err());
+    }
+
+    #[test]
+    fn source_receipt_discloses_server_accepted_trigger_identity() {
+        let view = ReviewBuildSourceView::WorktreeSnapshot {
+            association_id: "association-one".into(),
+            head_object_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            captured_object_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+            virtual_commit_id: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(view).expect("source receipt should serialize"),
+            json!({
+                "kind": "worktree_snapshot",
+                "associationId": "association-one",
+                "headObjectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "capturedObjectId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "virtualCommitId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            })
+        );
     }
 }

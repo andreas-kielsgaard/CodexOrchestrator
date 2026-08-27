@@ -1,4 +1,3 @@
-mod artifact_store;
 mod association_observer;
 mod branch_first;
 mod branch_presentation;
@@ -12,6 +11,5 @@ mod source_materialization;
 mod state;
 pub(crate) mod storage;
 pub(crate) mod transport;
-mod workspace_provisioner;
 
 pub(crate) use state::WorktreeReviewApplication;

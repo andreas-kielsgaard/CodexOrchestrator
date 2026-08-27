@@ -6,7 +6,7 @@ export type WorktreeId = OpaqueId<'worktree'>;
 export type WorktreeAssociationId = OpaqueId<'worktree-association'>;
 export type BuildId = OpaqueId<'review-build'>;
 export type BuildAttemptId = OpaqueId<'build-attempt'>;
-export type ArtifactSetId = OpaqueId<'artifact-set'>;
+export type BuildOutputId = OpaqueId<'build-output'>;
 export type CleanupJobId = OpaqueId<'cleanup-job'>;
 export type CleanupReceiptId = OpaqueId<'cleanup-receipt'>;
 export type GitObjectId = OpaqueId<'git-object'>;
@@ -27,7 +27,7 @@ export interface RepositoryReadiness {
   readonly browse: CapabilityAvailability;
   readonly createWorktree: CapabilityAvailability;
   readonly build: CapabilityAvailability;
-  readonly artifactStorage: CapabilityAvailability;
+  readonly buildOutputStorage: CapabilityAvailability;
 }
 
 export interface ReviewRepository {
@@ -46,12 +46,6 @@ export interface ReviewBranch {
   readonly aheadOfDefault: number;
   readonly behindDefault: number;
   readonly associatedWorktreeCount: number;
-}
-
-export interface ApplicationMetadataItem {
-  readonly label: string;
-  readonly value: string;
-  readonly source: 'committed-branch-tip' | 'worktree';
 }
 
 export type AssociationBaseline =
@@ -86,12 +80,10 @@ export interface AssociatedWorktree {
   readonly ownership: 'borrowed_external' | 'managed_branch_worktree' | 'owned_build_worktree';
   readonly baseline: AssociationBaseline;
   readonly currentHead: GitCommit;
-  readonly observedStateFingerprint: string;
   readonly changes: WorktreeChanges;
   readonly detachedHead: boolean;
   readonly branchReachability: 'reachable' | 'not_reachable' | 'unknown';
   readonly availability: WorktreeAvailability;
-  readonly applicationMetadata: readonly ApplicationMetadataItem[];
 }
 
 export interface WorktreeAssociationCandidate {
@@ -105,7 +97,6 @@ export interface WorktreeAssociationCandidate {
 
 export interface BranchReviewDetail {
   readonly branch: ReviewBranch;
-  readonly applicationMetadata: readonly ApplicationMetadataItem[];
   readonly worktrees: readonly AssociatedWorktree[];
   readonly associationCandidates: readonly WorktreeAssociationCandidate[];
   readonly builds: readonly ReviewBuild[];
@@ -116,18 +107,34 @@ export interface BranchHistoryPage {
   readonly nextCursor?: string;
 }
 
-export type ReviewBuildSource =
+export type CreateBuildSource =
   | {
       readonly kind: 'existing_worktree';
       readonly associationId: WorktreeAssociationId;
-      readonly expectedHead: GitObjectId;
-      readonly stateFingerprint: string;
     }
   | {
       readonly kind: 'worktree_snapshot';
       readonly associationId: WorktreeAssociationId;
-      readonly baseObjectId: GitObjectId;
-      readonly stateFingerprint: string;
+    }
+  | {
+      readonly kind: 'branch_commit';
+      readonly branchRef: BranchRef;
+      readonly objectId: GitObjectId;
+    };
+
+export type ReviewBuildSource =
+  | {
+      readonly kind: 'existing_worktree';
+      readonly associationId: WorktreeAssociationId;
+      readonly headObjectId: GitObjectId;
+      readonly virtualCommitId?: GitObjectId;
+    }
+  | {
+      readonly kind: 'worktree_snapshot';
+      readonly associationId: WorktreeAssociationId;
+      readonly headObjectId: GitObjectId;
+      readonly capturedObjectId: GitObjectId;
+      readonly virtualCommitId?: GitObjectId;
     }
   | {
       readonly kind: 'branch_commit';
@@ -141,20 +148,19 @@ export type BuildWorkspacePlan =
   | {
       readonly kind: 'create_owned_build_worktree';
       readonly originatingAssociationId?: WorktreeAssociationId;
-      readonly objectId: GitObjectId;
     };
 
 export interface CreateBuildRequest {
   readonly repositoryId: RepositoryId;
   readonly branchRef: BranchRef;
   readonly name: string;
-  readonly source: ReviewBuildSource;
+  readonly source: CreateBuildSource;
   readonly workspacePlan: BuildWorkspacePlan;
 }
 
 export interface BuildAttemptFailure {
   readonly category:
-    'source_changed' | 'provisioning' | 'toolchain' | 'build' | 'artifact' | 'interrupted';
+    'source_changed' | 'provisioning' | 'toolchain' | 'build' | 'output' | 'interrupted';
   readonly stage: string;
   readonly summary: string;
 }
@@ -162,26 +168,28 @@ export interface BuildAttemptFailure {
 export interface ReviewOperationAttempt {
   readonly attemptId: BuildAttemptId;
   readonly executionState: 'pending' | 'running' | 'completed' | 'interrupted';
-  readonly verdict: 'not_evaluated' | 'passed' | 'failed' | 'unknown';
+  readonly outcome: 'not_completed' | 'succeeded' | 'failed' | 'unknown';
   readonly stage: string;
   readonly startedAt: string;
   readonly completedAt?: string;
   readonly failure?: BuildAttemptFailure;
 }
 
-export type ArtifactState =
+export type BuildOutputState =
   | { readonly state: 'not_produced' }
-  | { readonly state: 'promotion_failed'; readonly summary: string }
+  | {
+      readonly state: 'unavailable';
+      readonly summary: string;
+      readonly buildOutputId?: BuildOutputId;
+    }
   | {
       readonly state: 'available';
-      readonly artifactSetId: ArtifactSetId;
-      readonly fileCount: number;
-      readonly manifestHash: string;
+      readonly buildOutputId: BuildOutputId;
       readonly storageLabel: string;
     }
   | {
       readonly state: 'removed';
-      readonly artifactSetId: ArtifactSetId;
+      readonly buildOutputId: BuildOutputId;
       readonly removedAt: string;
     };
 
@@ -215,7 +223,7 @@ export interface ReviewBuild {
     readonly lifecycle: 'ready' | 'missing' | 'removal_pending' | 'removed' | 'unverified';
   };
   readonly latestAttempt?: ReviewOperationAttempt;
-  readonly artifact: ArtifactState;
+  readonly output: BuildOutputState;
   readonly cleanup: CleanupState;
   readonly attention?: {
     readonly category: 'cleanup_coordination';

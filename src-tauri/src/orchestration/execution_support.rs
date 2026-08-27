@@ -11,6 +11,13 @@ use super::{
         SqliteOrchestrationRepository,
     },
 };
+use crate::{
+    repository_context::GitExecutable,
+    worktree_application::{
+        GitCommitId, PhysicalWorktreeApplication, PhysicalWorktreeAttachment,
+        PhysicalWorktreeCheckoutRequest,
+    },
+};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{
@@ -407,16 +414,19 @@ impl ProductExecutionWorkspaceResolver {
         {
             return Err(ExecutionSupportError::Unavailable);
         }
-        git_success(
-            &repository_root,
-            &[
-                "worktree",
-                "add",
-                "--detach",
-                git_argument_path(&root).as_str(),
-                &attempt.baseline_object_id,
-            ],
-        )?;
+        let commit = GitCommitId::new(attempt.baseline_object_id.clone())
+            .map_err(|_| ExecutionSupportError::CorrelationMismatch)?;
+        let request = PhysicalWorktreeCheckoutRequest::new(
+            repository_root.clone(),
+            root.clone(),
+            commit,
+            PhysicalWorktreeAttachment::Detached,
+        )
+        .map_err(|_| ExecutionSupportError::CorrelationMismatch)?;
+        let git = GitExecutable::discover().map_err(|_| ExecutionSupportError::Unavailable)?;
+        PhysicalWorktreeApplication
+            .materialize_checkout(&git, &request)
+            .map_err(|_| ExecutionSupportError::Unavailable)?;
         let binding = ExecutionWorkspaceBinding {
             workspace_id: self.workspace_id(attempt),
             workspace_fingerprint: workspace_fingerprint(attempt, &root),
@@ -1152,10 +1162,6 @@ fn git_is_detached(root: &Path) -> Result<bool, ExecutionSupportError> {
         _ => Err(ExecutionSupportError::Unavailable),
     }
 }
-fn git_argument_path(path: &Path) -> String {
-    runtime_argument_path(path)
-}
-
 /// Windows canonical paths may use the extended-length prefix. Git receives a portable path
 /// already; the provider process must receive the same representation for WorkspaceWrite.
 fn runtime_argument_path(path: &Path) -> String {

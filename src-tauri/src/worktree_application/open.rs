@@ -307,11 +307,14 @@ mod tests {
             "sample-app"
         });
         fs::write(&executable, b"application").unwrap();
+        let attempt_root = directory.path().to_path_buf();
         (
             directory,
             PhysicalWorktreeBuildResult {
                 worktree_root: worktree.clone(),
-                output_root: worktree,
+                attempt_root: attempt_root.clone(),
+                output_root: worktree.clone(),
+                log_path: attempt_root.join("build.log"),
                 executable,
             },
         )

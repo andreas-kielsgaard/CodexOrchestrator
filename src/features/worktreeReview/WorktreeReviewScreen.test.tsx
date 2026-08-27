@@ -10,6 +10,7 @@ import type {
   CreateBuildRequest,
   RepositoryId,
   ReviewBuild,
+  ReviewBuildSource,
   WorktreeReviewClient,
   WorktreeReviewOverview,
 } from '../../application/worktreeReview';
@@ -19,7 +20,7 @@ import {
   branchDetailFixture,
   earlierCommit,
   overviewFixture,
-  passedBuild,
+  completedBuild,
   tipCommit,
   worktreeOne,
   worktreeTwo,
@@ -45,8 +46,6 @@ describe('WorktreeReviewScreen', () => {
     render(<WorktreeReviewScreen client={client} />);
 
     expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
-    expect(screen.getByText('Application').closest('div')).toHaveTextContent('Codex Orchestrator');
-
     const worktreeGroup = screen.getByRole('radiogroup', { name: 'Worktree checkout' });
     const first = within(worktreeGroup).getByRole('radio', { name: /Agent checkout A/ });
     const second = within(worktreeGroup).getByRole('radio', { name: /Agent checkout B/ });
@@ -80,6 +79,9 @@ describe('WorktreeReviewScreen', () => {
     expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
       'create and retain an isolated Worktree checkout',
     );
+    expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
+      'must create a virtual commit before the build can continue',
+    );
 
     const name = screen.getByRole('textbox', { name: 'Build name' });
     await user.clear(name);
@@ -92,13 +94,10 @@ describe('WorktreeReviewScreen', () => {
       source: {
         kind: 'worktree_snapshot',
         associationId: worktreeTwo.associationId,
-        baseObjectId: tipCommit.objectId,
-        stateFingerprint: 'fingerprint-b',
       },
       workspacePlan: {
         kind: 'create_owned_build_worktree',
         originatingAssociationId: worktreeTwo.associationId,
-        objectId: tipCommit.objectId,
       },
     });
     expect(await screen.findByText(/Created Snapshot B/)).toHaveAttribute('role', 'status');
@@ -159,7 +158,7 @@ describe('WorktreeReviewScreen', () => {
     });
   });
 
-  it('presents operation verdict, retained output, and cleanup as independent durable facts', async () => {
+  it('presents compilation outcome, retained output, and cleanup as independent durable facts', async () => {
     const client = new FixtureClient();
     render(<WorktreeReviewScreen client={client} />);
     const builds = await screen.findByRole('heading', { name: 'Builds' });
@@ -167,17 +166,17 @@ describe('WorktreeReviewScreen', () => {
     const failed = within(region)
       .getByRole('heading', { name: 'Failed rebuild' })
       .closest('article')!;
-    expect(failed).toHaveTextContent('Build failed');
+    expect(failed).toHaveTextContent('Compilation failed');
     expect(failed).toHaveTextContent('No retained build output');
     expect(failed).toHaveTextContent('Eligible for cleanup');
     expect(failed).toHaveTextContent('Compiler exited with code 1');
 
-    const passed = within(region)
-      .getByRole('heading', { name: 'Verified review build' })
+    const completed = within(region)
+      .getByRole('heading', { name: 'Completed review build' })
       .closest('article')!;
-    expect(passed).toHaveTextContent('Build passed');
-    expect(passed).toHaveTextContent('2 retained files');
-    expect(passed).toHaveTextContent('Newest successful build for this source');
+    expect(completed).toHaveTextContent('Compilation completed');
+    expect(completed).toHaveTextContent('Available · AppData / build-output / build-completed');
+    expect(completed).toHaveTextContent('Newest successful build for this source');
   });
 
   it('marks the exact active worktree and only blocks direct sources for that checkout', async () => {
@@ -185,14 +184,14 @@ describe('WorktreeReviewScreen', () => {
     const client = new FixtureClient(branchDetailFixture(), {
       ...overviewFixture,
       activeBuildContext: {
-        buildId: passedBuild.buildId,
+        buildId: completedBuild.buildId,
         worktreeId: worktreeOne.worktreeId,
       },
     });
     render(<WorktreeReviewScreen client={client} />);
 
     const context = await screen.findByRole('region', { name: 'Active build context' });
-    expect(context).toHaveTextContent(passedBuild.buildId);
+    expect(context).toHaveTextContent(completedBuild.buildId);
     expect(context).toHaveTextContent(worktreeOne.worktreeId);
     const activeCheckout = screen
       .getByText('Agent checkout A')
@@ -227,9 +226,9 @@ describe('WorktreeReviewScreen', () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
     render(<WorktreeReviewScreen client={client} />);
-    const heading = await screen.findByRole('heading', { name: 'Verified review build' });
+    const heading = await screen.findByRole('heading', { name: 'Completed review build' });
     await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Open' }));
-    await waitFor(() => expect(client.openBuildCalls).toEqual([passedBuild.buildId]));
+    await waitFor(() => expect(client.openBuildCalls).toEqual([completedBuild.buildId]));
   });
 });
 
@@ -294,13 +293,33 @@ class FixtureClient implements WorktreeReviewClient {
   createBuild = async (input: CreateBuildRequest): Promise<ReviewBuild> => {
     this.createBuildCalls.push(input);
     return {
-      ...passedBuild,
+      ...completedBuild,
       buildId: `build-${this.createBuildCalls.length}`,
       name: input.name,
-      source: input.source,
+      source: sourceReceipt(input),
     };
   };
   openBuild = async ({ buildId }: { readonly buildId: BuildId }): Promise<void> => {
     this.openBuildCalls.push(buildId);
   };
+}
+
+function sourceReceipt(input: CreateBuildRequest): ReviewBuildSource {
+  switch (input.source.kind) {
+    case 'existing_worktree':
+      return {
+        ...input.source,
+        headObjectId: tipCommit.objectId,
+        virtualCommitId: '3333333333333333333333333333333333333333',
+      };
+    case 'worktree_snapshot':
+      return {
+        ...input.source,
+        headObjectId: tipCommit.objectId,
+        capturedObjectId: '3333333333333333333333333333333333333333',
+        virtualCommitId: '3333333333333333333333333333333333333333',
+      };
+    case 'branch_commit':
+      return input.source;
+  }
 }

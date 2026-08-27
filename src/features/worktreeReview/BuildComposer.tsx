@@ -44,6 +44,9 @@ export function BuildComposer({
   const [name, setName] = useState(`Review ${detail.branch.displayName}`);
   const [historyOpen, setHistoryOpen] = useState(false);
   const selectedWorktreeIsActive = selectedWorktree?.worktreeId === activeWorktreeId;
+  const selectedWorktreeIsDirty = selectedWorktree
+    ? hasUncommittedWork(selectedWorktree)
+    : false;
 
   useEffect(() => {
     if ((!selectedWorktree || selectedWorktreeIsActive) && sourceMode !== 'commit') {
@@ -77,7 +80,11 @@ export function BuildComposer({
           checked={sourceMode === 'direct'}
           disabled={!selectedWorktree || selectedWorktreeIsActive || disabled}
           title="Selected Worktree checkout"
-          description="Compile the worktree exactly where it is. Source changes during the build cause the attempt to fail closed."
+          description={
+            selectedWorktreeIsDirty
+              ? 'Record the dirty checkout as a virtual commit, then compile the selected live checkout. Later edits do not invalidate the build.'
+              : 'Record the branch and current commit, then compile the selected live checkout. Later edits do not invalidate the build.'
+          }
           unavailableReason={
             selectedWorktreeIsActive
               ? 'Unavailable for the worktree running this application. Choose another worktree or an exact commit.'
@@ -90,7 +97,11 @@ export function BuildComposer({
           checked={sourceMode === 'snapshot'}
           disabled={!selectedWorktree || selectedWorktreeIsActive || disabled}
           title="Snapshot current work"
-          description="Materialize committed, staged, unstaged, and untracked work in a retained build-owned checkout."
+          description={
+            selectedWorktreeIsDirty
+              ? 'Create a stable virtual commit first, then create a retained build checkout from that immutable commit.'
+              : 'Create a retained build checkout from the selected worktree commit.'
+          }
           unavailableReason={
             selectedWorktreeIsActive
               ? 'Unavailable for the worktree running this application. Choose another worktree or an exact commit.'
@@ -174,10 +185,16 @@ export function BuildComposer({
         <div className="worktree-review__disclosure" role="note" aria-label="Worktree change">
           <strong>Before you create this build</strong>
           <p>{workspacePlanDisclosure(request.workspacePlan)}</p>
+          {selectedWorktreeIsDirty && sourceMode !== 'commit' && (
+            <p>
+              This checkout is dirty. Worktree Review must create a virtual commit before the
+              build can continue. The branch, index, and working tree will not be changed.
+            </p>
+          )}
           <p>
-            The produced application files will be retained in Worktree Review storage, not
-            copied into a source worktree. This records build output, not an application-quality
-            guarantee.
+            The produced application files will be retained in Worktree Review AppData, not
+            copied into a source worktree. The source receipt records what triggered the build;
+            it does not guarantee application quality or prevent later source changes.
           </p>
         </div>
       )}
@@ -269,8 +286,6 @@ function createRequest(
       source: {
         kind: 'existing_worktree',
         associationId: worktree.associationId,
-        expectedHead: worktree.currentHead.objectId,
-        stateFingerprint: worktree.observedStateFingerprint,
       },
       workspacePlan: {
         kind: 'borrow_selected_worktree',
@@ -286,13 +301,10 @@ function createRequest(
       source: {
         kind: 'worktree_snapshot',
         associationId: worktree.associationId,
-        baseObjectId: worktree.currentHead.objectId,
-        stateFingerprint: worktree.observedStateFingerprint,
       },
       workspacePlan: {
         kind: 'create_owned_build_worktree',
         originatingAssociationId: worktree.associationId,
-        objectId: worktree.currentHead.objectId,
       },
     };
   }
@@ -307,12 +319,18 @@ function createRequest(
     workspacePlan: worktree
       ? {
           kind: 'create_owned_build_worktree',
-          originatingAssociationId: worktree.associationId,
-          objectId: commitId,
         }
       : {
           kind: 'create_managed_branch_worktree',
           branchRef: detail.branch.branchRef,
         },
   };
+}
+
+function hasUncommittedWork(worktree: AssociatedWorktree): boolean {
+  return (
+    worktree.changes.stagedFiles > 0 ||
+    worktree.changes.unstagedFiles > 0 ||
+    worktree.changes.untrackedFiles > 0
+  );
 }
