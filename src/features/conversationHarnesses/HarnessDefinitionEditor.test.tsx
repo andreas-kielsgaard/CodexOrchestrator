@@ -197,8 +197,11 @@ const catalogs: HarnessConfigurationCatalogs = {
   agentVisualIdentities: {
     source: 'product_visual_catalog',
     items: [
-      { identity: { token: 'sunflower', accent: '#f7bd3f' }, label: 'Sunflower' },
-      { identity: { token: 'ocean', accent: '#287fbc' }, label: 'Ocean' },
+      {
+        identity: { token: 'sunflower', accent: '#f7bd3f', shape: 'circle' },
+        label: 'Sunflower',
+      },
+      { identity: { token: 'ocean', accent: '#287fbc', shape: 'square' }, label: 'Ocean' },
     ],
     reason: 'Recorded identities.',
   },

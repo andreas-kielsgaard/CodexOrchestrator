@@ -182,24 +182,28 @@ export function HarnessDefinitionEditor({
           source={provenance?.visualIdentity}
           onReset={onResetProperty ? () => onResetProperty('visualIdentity') : undefined}
           options={catalogs.agentVisualIdentities.items.map((entry) => ({
-            value: `${entry.identity.token}\u0000${entry.identity.accent}`,
+            value: `${entry.identity.token}\u0000${entry.identity.accent}\u0000${entry.identity.shape}`,
             label: entry.label,
           }))}
           value={
             configuration.identity.visualIdentity
-              ? `${configuration.identity.visualIdentity.token}\u0000${configuration.identity.visualIdentity.accent}`
+              ? `${configuration.identity.visualIdentity.token}\u0000${configuration.identity.visualIdentity.accent}\u0000${configuration.identity.visualIdentity.shape}`
               : null
           }
           editable={editable}
           clearLabel="Not configured"
           unavailableReason={catalogs.agentVisualIdentities.reason}
           onChange={(value) => {
-            const [token, accent] = value?.split('\u0000') ?? [];
+            const [token, accent, shape] = value?.split('\u0000') ?? [];
             onChange({
               ...configuration,
               identity: {
                 ...configuration.identity,
-                visualIdentity: token && accent ? { token, accent } : null,
+                visualIdentity:
+                  token && accent &&
+                  (shape === 'circle' || shape === 'square' || shape === 'hexagon')
+                    ? { token, accent, shape }
+                    : null,
               },
             });
           }}
