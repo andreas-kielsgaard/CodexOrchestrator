@@ -11,8 +11,8 @@ use crate::repository_context::GitExecutable;
 pub(crate) use domain::{
     GitCommitId, OpenOutcome, PhysicalWorktreeAttachment, PhysicalWorktreeBuildRequest,
     PhysicalWorktreeBuildResult, PhysicalWorktreeCheckoutRequest, PhysicalWorktreeCheckoutResult,
-    VirtualCommitCaptureRequest, VirtualCommitCaptureResult, WorktreeApplicationError,
-    WorktreeApplicationErrorKind, WorktreeApplicationLaunchContext,
+    PhysicalWorktreeDependencyPolicy, VirtualCommitCaptureRequest, VirtualCommitCaptureResult,
+    WorktreeApplicationError, WorktreeApplicationErrorKind, WorktreeApplicationLaunchContext,
 };
 
 #[derive(Default)]

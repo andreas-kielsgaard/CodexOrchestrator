@@ -68,7 +68,7 @@ ReviewBuildExecutor
   -> PhysicalWorktreeApplication
        capture_virtual_commit(worktree root, exact HEAD)
        materialize_checkout(repository, target, exact commit, attachment)
-       build(worktree root, attempt root, dependency cache, binary)
+       build(worktree root, attempt root, dependency policy, binary)
        open(build result, environment overlay)
 ```
 
@@ -76,7 +76,7 @@ ReviewBuildExecutor
 
 - stable virtual-commit capture without changing the user's index, refs, or checkout;
 - exact physical checkout materialization and idempotent adoption;
-- dependency preparation and compilation into an explicit attempt root;
+- ownership-aware dependency use or preparation and compilation into an explicit attempt root;
 - a bounded generic launch environment; and
 - focus-existing-window-or-launch behavior.
 
@@ -88,7 +88,7 @@ Worktree Review owns:
 
 - `WorktreeAssociation`: exact repository, branch, physical worktree, baseline, current observed Git
   state, provenance, and availability;
-- `ReviewBuild`: immutable trigger-time source binding, workspace, retention key, and current output
+- `ReviewBuild`: recorded trigger-time source binding, workspace, retention key, and current output
   pointer;
 - `ReviewOperationAttempt`: materialization/build execution state, verdict, failure, and timestamps;
 - retained-output location and executable facts used to avoid presenting missing output as
@@ -100,7 +100,8 @@ makes no source-quality or runtime-quality claim.
 
 ## Responsibility consolidation
 
-- `RepositoryContext` owns hardened, bounded, read-only Git facts.
+- the shared Git process boundary owns environment isolation, bounded output, and executable
+  selection; repository reads and physical worktree operations use typed adapters over it.
 - `PhysicalWorktreeApplication` is the single physical capture/checkout/build/open effect boundary
   used by Worktree Review, orchestration worktree creation, and task worktree creation.
 - `association_observer` is the single constructor for observed association state, used by branch
@@ -150,7 +151,13 @@ directory. Successful creation promotes that record to ready and saves the assoc
 
 Automatic retention removes only eligible AppData output/log/scratch resources. It never deletes a
 build worktree. Cleanup effects are contained and idempotent, and their outcomes settle into retained
-receipts.
+receipts. A terminal build attempt's durable repository/build/attempt identities deterministically
+identify its AppData attempt directory, so failed, interrupted, and publication-orphaned directories
+remain discoverable without a second storage-plan table.
+
+Borrowed live worktrees compile using dependencies already present in that checkout; Worktree Review
+does not run dependency installation there. Managed and owned checkouts may prepare dependencies by
+using the shared AppData cache.
 
 ## Structural rules
 
@@ -182,14 +189,15 @@ receipts.
 
 ## Candidate validation
 
-- Worktree Review Rust suite: 38 passed.
-- Reusable physical-worktree application suite: 11 passed.
+- Worktree Review Rust suite: 39 passed.
+- Reusable physical-worktree application suite: 12 passed, including the borrowed-checkout
+  no-install policy.
 - The focused storage suite includes concurrent first-open migration and independent database-owner
   visibility checks.
 - Development and release library checks passed; Worktree Review and physical-worktree commands are
   present in the release composition. The crate still reports unrelated and focused dead-code
   warnings, but the removed legacy runtime is no longer the warning source.
-- Focused frontend suite: 20 passed across Worktree Review, the native worktree adapter, local Git
+- Focused frontend suite: 29 passed across Worktree Review, the native worktree adapter, local Git
   reads, and local runtime composition.
 - TypeScript production build: passed, with the existing large-chunk advisory.
 - Focused ESLint, Rust formatting, and Git diff checks: passed.
@@ -199,8 +207,9 @@ receipts.
 - Cleanup reconciliation has no cross-process claimant. Effects are idempotent and fail closed, but
   two applications can race one unsettled job and one may record a storage conflict. A future change
   should add a narrow cleanup claim or mutex, not restore application lifecycle tracking.
-- Failed or interrupted build-attempt scratch/output directories are not yet enrolled in the durable
-  cleanup ledger; only retained superseded outputs and their logs are automatically cleaned.
+- Terminal attempt directories become retention-ledger resources when superseded. There is no eager
+  cleanup before supersession, so diagnostics for the newest failed or interrupted attempt remain
+  available until a successful successor makes that build eligible.
 - Old per-instance Worktree Review databases and artifact roots are not inferred or merged. Any
   migration or retirement needs an explicit audited operation.
 - Automated validation does not replace a packaged manual smoke test of compile, launch, exact-window

@@ -197,12 +197,12 @@ describe('WorktreeReviewScreen', () => {
       .getByText('Agent checkout A')
       .closest('.worktree-review__worktree')!;
     expect(activeCheckout).toHaveTextContent('Active build checkout');
-    expect(screen.getByRole('radio', { name: /Selected Worktree checkout/ })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Specific branch commit/ })).toBeChecked();
 
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
-    expect(screen.getByRole('radio', { name: /Selected Worktree checkout/ })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeEnabled();
   });
 
@@ -309,8 +309,8 @@ function sourceReceipt(input: CreateBuildRequest): ReviewBuildSource {
     case 'existing_worktree':
       return {
         ...input.source,
-        headObjectId: tipCommit.objectId,
-        virtualCommitId: '3333333333333333333333333333333333333333',
+        triggerHeadObjectId: tipCommit.objectId,
+        triggerVirtualCommitId: '3333333333333333333333333333333333333333',
       };
     case 'worktree_snapshot':
       return {

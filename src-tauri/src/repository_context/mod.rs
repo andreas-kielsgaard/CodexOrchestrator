@@ -7,7 +7,7 @@ mod worktrees;
 use command::HardenedGitRunner;
 use std::{path::Path, sync::Arc};
 
-pub(crate) use command::GitExecutable;
+pub(crate) use crate::git_process::GitExecutable;
 pub(crate) use identity::{
     CanonicalDirectory, PathIdentity, RepositoryId, RepositoryIdentity, RepositoryIdentityReader,
 };
@@ -55,11 +55,15 @@ pub(crate) struct RepositoryContext {
 
 impl RepositoryContext {
     pub(crate) fn discover() -> Result<Self, RepositoryContextError> {
-        Self::from_executable(GitExecutable::discover()?)
+        Self::from_executable(
+            GitExecutable::discover().map_err(command::repository_error_from_process)?,
+        )
     }
 
     pub(crate) fn with_git(path: &Path) -> Result<Self, RepositoryContextError> {
-        Self::from_executable(GitExecutable::resolve(path)?)
+        Self::from_executable(
+            GitExecutable::resolve(path).map_err(command::repository_error_from_process)?,
+        )
     }
 
     fn from_executable(executable: GitExecutable) -> Result<Self, RepositoryContextError> {

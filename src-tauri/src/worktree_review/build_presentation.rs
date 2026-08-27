@@ -33,7 +33,8 @@ pub(crate) struct CreateBuildInput {
     deny_unknown_fields
 )]
 pub(crate) enum CreateBuildSourceInput {
-    ExistingWorktree {
+    #[serde(rename = "existing_worktree")]
+    LiveWorktree {
         association_id: String,
     },
     WorktreeSnapshot {
@@ -71,11 +72,12 @@ pub(crate) enum BuildWorkspacePlanInput {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum ReviewBuildSourceView {
-    ExistingWorktree {
+    #[serde(rename = "existing_worktree")]
+    LiveWorktree {
         association_id: String,
-        head_object_id: String,
+        trigger_head_object_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        virtual_commit_id: Option<String>,
+        trigger_virtual_commit_id: Option<String>,
     },
     WorktreeSnapshot {
         association_id: String,
@@ -366,14 +368,14 @@ pub(super) fn cleanup_view(
 
 fn source_view(branch_ref: &BranchRef, selection: &ReviewSourceSelection) -> ReviewBuildSourceView {
     match selection {
-        ReviewSourceSelection::ExistingWorktree {
+        ReviewSourceSelection::LiveWorktree {
             association_id,
-            head_object_id,
-            virtual_commit_id,
-        } => ReviewBuildSourceView::ExistingWorktree {
+            trigger_head_object_id,
+            trigger_virtual_commit_id,
+        } => ReviewBuildSourceView::LiveWorktree {
             association_id: association_id.as_str().to_owned(),
-            head_object_id: head_object_id.as_str().to_owned(),
-            virtual_commit_id: virtual_commit_id
+            trigger_head_object_id: trigger_head_object_id.as_str().to_owned(),
+            trigger_virtual_commit_id: trigger_virtual_commit_id
                 .as_ref()
                 .map(|object| object.as_str().to_owned()),
         },
@@ -487,7 +489,7 @@ mod source_contract_tests {
     }
 
     #[test]
-    fn rejects_client_claims_about_accepted_source_identity() {
+    fn rejects_client_claims_about_trigger_observation() {
         let stale_source_claim = json!({
             "repositoryId": "repository-one",
             "branchRef": "refs/heads/feature",
@@ -523,7 +525,22 @@ mod source_contract_tests {
     }
 
     #[test]
-    fn source_receipt_discloses_server_accepted_trigger_identity() {
+    fn source_receipt_discloses_server_observed_trigger_identity() {
+        let live = ReviewBuildSourceView::LiveWorktree {
+            association_id: "association-one".into(),
+            trigger_head_object_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            trigger_virtual_commit_id: Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(live).expect("live source receipt should serialize"),
+            json!({
+                "kind": "existing_worktree",
+                "associationId": "association-one",
+                "triggerHeadObjectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "triggerVirtualCommitId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            })
+        );
+
         let view = ReviewBuildSourceView::WorktreeSnapshot {
             association_id: "association-one".into(),
             head_object_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),

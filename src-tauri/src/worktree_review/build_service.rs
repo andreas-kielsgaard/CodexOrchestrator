@@ -4,10 +4,11 @@ use super::{
         build_output_view, cleanup_presentation_view, cleanup_view, review_build_view,
         CreateBuildSourceInput,
     },
+    build_storage::attempt_storage_key,
     cleanup_service::{CleanupRequest, WorktreeReviewCleanupService},
     domain::{
         BranchRef, BuildAttention, BuildAttentionCategory, BuildAttentionId, BuildLifecycle,
-        CleanupJobState, CleanupResource, CleanupResourceId, CleanupStorageKey, OperationAttemptId,
+        CleanupJobState, CleanupResource, CleanupResourceId, OperationAttemptId,
         OperationExecutionState, OperationFailure, OperationFailureCategory, OperationStage,
         OperationVerdict, RepositoryId, RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName,
         ReviewOperationAttempt, ReviewOperationKind, WorkspaceId,
@@ -452,21 +453,6 @@ impl ReviewBuildCoordinator {
                     .find(output_id)
                     .map_err(|error| error.to_string())?
                 {
-                    let attempt_storage = output
-                        .storage_key
-                        .as_str()
-                        .rsplit_once('/')
-                        .map(|(parent, _)| parent)
-                        .ok_or_else(|| {
-                            "The retained output storage key has no attempt root.".to_string()
-                        })?;
-                    resources.push(CleanupResource::AttemptLogs {
-                        id: CleanupResourceId::random(),
-                        attempt_id: output.attempt_id.clone(),
-                        storage_key: CleanupStorageKey::new(format!("{attempt_storage}/build.log"))
-                            .map_err(|error| error.to_string())?,
-                        containment_root: self.cleanup.containment_root().clone(),
-                    });
                     resources.push(CleanupResource::BuildOutput {
                         id: CleanupResourceId::random(),
                         output_id: output.id,
@@ -474,6 +460,28 @@ impl ReviewBuildCoordinator {
                         containment_root: self.cleanup.containment_root().clone(),
                     });
                 }
+            }
+            for attempt in self
+                .database
+                .attempts()
+                .list_for_build(&candidate.id)
+                .map_err(|error| error.to_string())?
+            {
+                if attempt.kind != ReviewOperationKind::Build || !attempt.is_terminal() {
+                    continue;
+                }
+                resources.push(CleanupResource::BuildAttemptStorage {
+                    id: CleanupResourceId::random(),
+                    build_id: candidate.id.clone(),
+                    attempt_id: Some(attempt.id.clone()),
+                    storage_key: attempt_storage_key(
+                        &candidate.source.repository_id,
+                        &candidate.id,
+                        &attempt.id,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    containment_root: self.cleanup.containment_root().clone(),
+                });
             }
             if resources.is_empty() {
                 continue;
@@ -495,7 +503,7 @@ fn retention_key(
     source: &CreateBuildSourceInput,
 ) -> Result<RetentionKey, String> {
     let semantic_source = match source {
-        CreateBuildSourceInput::ExistingWorktree { association_id, .. } => {
+        CreateBuildSourceInput::LiveWorktree { association_id, .. } => {
             format!("existing:{association_id}")
         }
         CreateBuildSourceInput::WorktreeSnapshot { association_id, .. } => {

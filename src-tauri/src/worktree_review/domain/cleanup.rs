@@ -87,9 +87,14 @@ pub(crate) enum CleanupResource {
         storage_key: CleanupStorageKey,
         containment_root: ContainmentRoot,
     },
-    BuildScratch {
+    /// Current code treats the legacy `build_scratch` wire name as the complete attempt directory.
+    #[serde(rename = "build_scratch")]
+    BuildAttemptStorage {
         id: CleanupResourceId,
         build_id: ReviewBuildId,
+        /// Present for current attempt-directory resources; absent only on legacy ledgers.
+        #[serde(default)]
+        attempt_id: Option<OperationAttemptId>,
         storage_key: CleanupStorageKey,
         containment_root: ContainmentRoot,
     },
@@ -100,13 +105,13 @@ impl CleanupResource {
         match self {
             Self::BuildOutput { id, .. }
             | Self::AttemptLogs { id, .. }
-            | Self::BuildScratch { id, .. } => id,
+            | Self::BuildAttemptStorage { id, .. } => id,
         }
     }
 
     pub(crate) fn removable_for_build(&self, build_id: &ReviewBuildId) -> bool {
         match self {
-            Self::BuildScratch {
+            Self::BuildAttemptStorage {
                 build_id: owner, ..
             } => owner == build_id,
             Self::BuildOutput { .. } | Self::AttemptLogs { .. } => true,

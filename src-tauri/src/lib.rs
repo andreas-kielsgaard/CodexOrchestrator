@@ -14,6 +14,7 @@ use uuid::Uuid;
 mod active_app;
 mod agent_sessions;
 mod epic_origin;
+mod git_process;
 mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]

@@ -54,7 +54,7 @@ pub(super) fn materialize_checkout(
 }
 
 fn preflight_attachment(
-    runner: &GitRunner<'_>,
+    runner: &GitRunner,
     repository: &Path,
     request: &PhysicalWorktreeCheckoutRequest,
 ) -> Result<(), WorktreeApplicationError> {
@@ -107,7 +107,7 @@ fn checkout_arguments(request: &PhysicalWorktreeCheckoutRequest, target: &Path) 
 }
 
 fn verify_checkout(
-    runner: &GitRunner<'_>,
+    runner: &GitRunner,
     repository: &Path,
     target: &Path,
     request: &PhysicalWorktreeCheckoutRequest,
@@ -162,7 +162,7 @@ fn verify_checkout(
 }
 
 fn is_registered(
-    runner: &GitRunner<'_>,
+    runner: &GitRunner,
     repository: &Path,
     target: &Path,
 ) -> Result<bool, WorktreeApplicationError> {

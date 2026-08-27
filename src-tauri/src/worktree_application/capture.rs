@@ -46,15 +46,7 @@ pub(super) fn capture_virtual_commit(
     let captured_changes = first_tree != baseline_tree;
     let virtual_commit = if captured_changes {
         let parent = request.expected_head.as_str();
-        let environment = [
-            ("GIT_AUTHOR_NAME", VIRTUAL_COMMIT_IDENTITY),
-            ("GIT_AUTHOR_EMAIL", VIRTUAL_COMMIT_EMAIL),
-            ("GIT_AUTHOR_DATE", VIRTUAL_COMMIT_DATE),
-            ("GIT_COMMITTER_NAME", VIRTUAL_COMMIT_IDENTITY),
-            ("GIT_COMMITTER_EMAIL", VIRTUAL_COMMIT_EMAIL),
-            ("GIT_COMMITTER_DATE", VIRTUAL_COMMIT_DATE),
-        ];
-        Some(git_commit_id(runner.required_with_environment(
+        Some(git_commit_id(runner.required_with_commit_identity(
             &root,
             [
                 "commit-tree",
@@ -64,7 +56,9 @@ pub(super) fn capture_virtual_commit(
                 "-m",
                 VIRTUAL_COMMIT_MESSAGE,
             ],
-            &environment,
+            VIRTUAL_COMMIT_IDENTITY,
+            VIRTUAL_COMMIT_EMAIL,
+            VIRTUAL_COMMIT_DATE,
         )?)?)
     } else {
         None
@@ -79,7 +73,7 @@ pub(super) fn capture_virtual_commit(
 }
 
 fn capture_tree(
-    runner: &GitRunner<'_>,
+    runner: &GitRunner,
     root: &Path,
     baseline: &GitCommitId,
 ) -> Result<String, WorktreeApplicationError> {

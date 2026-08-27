@@ -150,10 +150,18 @@ pub(crate) struct PhysicalWorktreeCheckoutResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalWorktreeDependencyPolicy {
+    /// Compile with dependencies already present in a caller-owned live checkout.
+    UseExisting,
+    /// Prepare dependencies for a Worktree Review-owned checkout using the shared cache.
+    Install { cache_root: PathBuf },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalWorktreeBuildRequest {
     pub(crate) worktree_root: PathBuf,
     pub(crate) attempt_root: PathBuf,
-    pub(crate) dependency_cache_root: PathBuf,
+    pub(crate) dependency_policy: PhysicalWorktreeDependencyPolicy,
     pub(crate) cargo_binary_name: String,
 }
 
@@ -161,7 +169,7 @@ impl PhysicalWorktreeBuildRequest {
     pub(crate) fn new(
         worktree_root: PathBuf,
         attempt_root: PathBuf,
-        dependency_cache_root: PathBuf,
+        dependency_policy: PhysicalWorktreeDependencyPolicy,
         cargo_binary_name: impl Into<String>,
     ) -> Result<Self, WorktreeApplicationError> {
         let cargo_binary_name = cargo_binary_name.into();
@@ -173,10 +181,12 @@ impl PhysicalWorktreeBuildRequest {
             &attempt_root,
             "The caller-owned build attempt root must be absolute.",
         )?;
-        require_absolute(
-            &dependency_cache_root,
-            "The caller-owned dependency cache root must be absolute.",
-        )?;
+        if let PhysicalWorktreeDependencyPolicy::Install { cache_root } = &dependency_policy {
+            require_absolute(
+                cache_root,
+                "The caller-owned dependency cache root must be absolute.",
+            )?;
+        }
         let binary_path = std::path::Path::new(&cargo_binary_name);
         if cargo_binary_name.trim().is_empty()
             || binary_path.file_name().and_then(|name| name.to_str()) != Some(&cargo_binary_name)
@@ -190,7 +200,7 @@ impl PhysicalWorktreeBuildRequest {
         Ok(Self {
             worktree_root,
             attempt_root,
-            dependency_cache_root,
+            dependency_policy,
             cargo_binary_name,
         })
     }
@@ -367,7 +377,9 @@ mod tests {
         assert!(PhysicalWorktreeBuildRequest::new(
             root.join("worktree"),
             root.join("output"),
-            root.join("cache"),
+            PhysicalWorktreeDependencyPolicy::Install {
+                cache_root: root.join("cache")
+            },
             "codex-orchestrator"
         )
         .is_ok());
@@ -376,7 +388,7 @@ mod tests {
                 PhysicalWorktreeBuildRequest::new(
                     root.join("worktree"),
                     root.join("output"),
-                    root.join("cache"),
+                    PhysicalWorktreeDependencyPolicy::UseExisting,
                     invalid
                 )
                 .unwrap_err()
@@ -388,7 +400,7 @@ mod tests {
             PhysicalWorktreeBuildRequest::new(
                 "relative-worktree".into(),
                 root.join("output"),
-                root.join("cache"),
+                PhysicalWorktreeDependencyPolicy::UseExisting,
                 "codex-orchestrator"
             )
             .unwrap_err()

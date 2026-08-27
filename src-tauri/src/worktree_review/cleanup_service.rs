@@ -1,9 +1,10 @@
 use super::{
+    build_storage::attempt_storage_key,
     domain::{
         BuildOutputId, BuildOutputStorageKey, CleanupDisposition, CleanupEffect,
         CleanupEligibility, CleanupJob, CleanupJobId, CleanupJobState, CleanupReceipt,
         CleanupResource, CleanupResourceId, CleanupTrigger, ContainmentRoot, RetentionPolicy,
-        ReviewBuild, ReviewBuildId, ReviewOperationAttempt,
+        ReviewBuild, ReviewBuildId, ReviewOperationAttempt, ReviewOperationKind,
     },
     retention::{self, RetentionDisposition},
     storage::{
@@ -83,7 +84,7 @@ impl CleanupEffectPort for AppDataCleanupEffects {
                 self.remove_storage_key(storage_key.as_str())
             }
             CleanupResource::AttemptLogs { storage_key, .. }
-            | CleanupResource::BuildScratch { storage_key, .. } => {
+            | CleanupResource::BuildAttemptStorage { storage_key, .. } => {
                 self.remove_storage_key(storage_key.as_str())
             }
         }
@@ -413,15 +414,34 @@ impl WorktreeReviewCleanupService {
                     return Ok(ResourceAuthority::Unverified);
                 }
             }
-            CleanupResource::BuildScratch {
+            CleanupResource::BuildAttemptStorage {
                 build_id,
+                attempt_id,
                 storage_key,
                 containment_root,
                 ..
             } => {
+                let Some(attempt_id) = attempt_id else {
+                    return Ok(ResourceAuthority::Unverified);
+                };
+                let attempt = self.database.attempts().find(attempt_id)?;
+                let expected_key =
+                    attempt_storage_key(&build.source.repository_id, &build.id, attempt_id)
+                        .map_err(|error| {
+                            CleanupServiceError::new(
+                                CleanupServiceErrorKind::InvalidRequest,
+                                error.to_string(),
+                            )
+                        })?;
                 if build_id != &build.id
                     || containment_root != &self.containment_root
                     || !safe_storage_key(storage_key.as_str())
+                    || storage_key != &expected_key
+                    || attempt.is_none_or(|attempt| {
+                        attempt.build_id != build.id
+                            || attempt.kind != ReviewOperationKind::Build
+                            || !attempt.is_terminal()
+                    })
                 {
                     return Ok(ResourceAuthority::Unverified);
                 }
@@ -821,7 +841,7 @@ mod tests {
         database
             .attempts()
             .save(&ReviewOperationAttempt {
-                id: OperationAttemptId::new(format!("attempt-{}", build.id.as_str())).unwrap(),
+                id: build_attempt_id(build),
                 build_id: build.id.clone(),
                 kind: ReviewOperationKind::Build,
                 execution: OperationExecutionState::Completed,
@@ -835,15 +855,30 @@ mod tests {
             .unwrap();
     }
 
+    fn build_attempt_id(build: &ReviewBuild) -> OperationAttemptId {
+        OperationAttemptId::new(format!("attempt-{}", build.id.as_str())).unwrap()
+    }
+
+    fn attempt_resource(
+        service: &WorktreeReviewCleanupService,
+        build: &ReviewBuild,
+        resource_id: &str,
+    ) -> CleanupResource {
+        let attempt_id = build_attempt_id(build);
+        CleanupResource::BuildAttemptStorage {
+            id: CleanupResourceId::new(resource_id).unwrap(),
+            build_id: build.id.clone(),
+            attempt_id: Some(attempt_id.clone()),
+            storage_key: attempt_storage_key(&build.source.repository_id, &build.id, &attempt_id)
+                .unwrap(),
+            containment_root: service.containment_root().clone(),
+        }
+    }
+
     #[test]
     fn persists_the_job_before_applying_an_owned_effect() {
         let (_directory, _database, service, effects, old) = service_fixture();
-        let resource = CleanupResource::BuildScratch {
-            id: CleanupResourceId::new("scratch").unwrap(),
-            build_id: old.id.clone(),
-            storage_key: CleanupStorageKey::new("builds/old/scratch").unwrap(),
-            containment_root: service.containment_root().clone(),
-        };
+        let resource = attempt_resource(&service, &old, "scratch");
         let presentation = service
             .cleanup_superseded_appdata_resources(CleanupRequest {
                 build_id: old.id,
@@ -861,9 +896,10 @@ mod tests {
         let presentation = service
             .cleanup_superseded_appdata_resources(CleanupRequest {
                 build_id: old.id.clone(),
-                resources: vec![CleanupResource::BuildScratch {
+                resources: vec![CleanupResource::BuildAttemptStorage {
                     id: CleanupResourceId::new("escape").unwrap(),
-                    build_id: old.id,
+                    build_id: old.id.clone(),
+                    attempt_id: Some(build_attempt_id(&old)),
                     storage_key: CleanupStorageKey::new("../foreign").unwrap(),
                     containment_root: service.containment_root().clone(),
                 }],
@@ -879,12 +915,7 @@ mod tests {
     #[test]
     fn restart_reconciliation_skips_a_terminal_effect_and_finishes_its_receipt() {
         let (_directory, database, service, effects, old) = service_fixture();
-        let resource = CleanupResource::BuildScratch {
-            id: CleanupResourceId::new("already-recorded").unwrap(),
-            build_id: old.id.clone(),
-            storage_key: CleanupStorageKey::new("builds/old/already-recorded").unwrap(),
-            containment_root: service.containment_root().clone(),
-        };
+        let resource = attempt_resource(&service, &old, "already-recorded");
         let now = Utc::now();
         let job = CleanupJob {
             id: CleanupJobId::new("interrupted-cleanup").unwrap(),

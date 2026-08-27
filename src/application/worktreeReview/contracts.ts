@@ -74,9 +74,7 @@ export interface AssociatedWorktree {
   /** Presentation-only. Durable operations use worktreeId and associationId. */
   readonly locationLabel: string;
   readonly provenance:
-    | 'git_branch_checkout'
-    | 'user_associated_detached_checkout'
-    | 'worktree_review_created';
+    'git_branch_checkout' | 'user_associated_detached_checkout' | 'worktree_review_created';
   readonly ownership: 'borrowed_external' | 'managed_branch_worktree' | 'owned_build_worktree';
   readonly baseline: AssociationBaseline;
   readonly currentHead: GitCommit;
@@ -126,8 +124,8 @@ export type ReviewBuildSource =
   | {
       readonly kind: 'existing_worktree';
       readonly associationId: WorktreeAssociationId;
-      readonly headObjectId: GitObjectId;
-      readonly virtualCommitId?: GitObjectId;
+      readonly triggerHeadObjectId: GitObjectId;
+      readonly triggerVirtualCommitId?: GitObjectId;
     }
   | {
       readonly kind: 'worktree_snapshot';

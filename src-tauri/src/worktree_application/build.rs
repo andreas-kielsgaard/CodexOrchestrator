@@ -1,6 +1,6 @@
 use super::domain::{
-    PhysicalWorktreeBuildRequest, PhysicalWorktreeBuildResult, WorktreeApplicationError,
-    WorktreeApplicationErrorKind,
+    PhysicalWorktreeBuildRequest, PhysicalWorktreeBuildResult, PhysicalWorktreeDependencyPolicy,
+    WorktreeApplicationError, WorktreeApplicationErrorKind,
 };
 use serde_json::json;
 use std::{
@@ -60,28 +60,34 @@ pub(super) fn build(
     request: &PhysicalWorktreeBuildRequest,
 ) -> Result<PhysicalWorktreeBuildResult, WorktreeApplicationError> {
     let node = resolve_program("node")?;
-    let npm = resolve_program("npm")?;
+    let npm = match request.dependency_policy {
+        PhysicalWorktreeDependencyPolicy::UseExisting => None,
+        PhysicalWorktreeDependencyPolicy::Install { .. } => Some(resolve_program("npm")?),
+    };
     build_with(request, node, npm, &SystemBuildCommandRunner)
 }
 
 fn build_with(
     request: &PhysicalWorktreeBuildRequest,
     node: PathBuf,
-    npm: PathBuf,
+    npm: Option<PathBuf>,
     runner: &dyn BuildCommandRunner,
 ) -> Result<PhysicalWorktreeBuildResult, WorktreeApplicationError> {
     let worktree = canonical_directory(&request.worktree_root)?;
-    if request.attempt_root.starts_with(&worktree)
-        || request.dependency_cache_root.starts_with(&worktree)
-    {
+    let cache_inside_worktree = match &request.dependency_policy {
+        PhysicalWorktreeDependencyPolicy::UseExisting => false,
+        PhysicalWorktreeDependencyPolicy::Install { cache_root } => {
+            cache_root.starts_with(&worktree)
+        }
+    };
+    if request.attempt_root.starts_with(&worktree) || cache_inside_worktree {
         return Err(WorktreeApplicationError::new(
             WorktreeApplicationErrorKind::InvalidRequest,
             "Build storage must be outside the physical worktree.",
         ));
     }
     let attempt_root = prepare_attempt_root(&request.attempt_root)?;
-    let dependency_cache = prepare_cache_root(&request.dependency_cache_root)?;
-    if attempt_root.starts_with(&worktree) || dependency_cache.starts_with(&worktree) {
+    if attempt_root.starts_with(&worktree) {
         return Err(WorktreeApplicationError::new(
             WorktreeApplicationErrorKind::InvalidRequest,
             "The build attempt root must be outside the physical worktree.",
@@ -91,7 +97,7 @@ fn build_with(
     if fs::symlink_metadata(&output_root).is_ok() {
         return Err(WorktreeApplicationError::new(
             WorktreeApplicationErrorKind::OutputUnavailable,
-            "The immutable build output has already been published.",
+            "The build output has already been published.",
         ));
     }
     require_source_file(&worktree.join("package.json"), "package manifest")?;
@@ -105,10 +111,36 @@ fn build_with(
     let log_path = attempt_root.join("build.log");
     fs::write(&log_path, []).map_err(|_| output_unavailable())?;
     let result = (|| {
-        let dependency =
-            dependency_command(&worktree, &scratch_root, &log_path, npm, dependency_cache);
-        run_required(runner, &dependency)?;
-        let commands = build_commands(&worktree, &scratch_root, &log_path, node)?;
+        if let PhysicalWorktreeDependencyPolicy::Install { cache_root } = &request.dependency_policy
+        {
+            let dependency_cache = prepare_cache_root(cache_root)?;
+            if dependency_cache.starts_with(&worktree) {
+                return Err(WorktreeApplicationError::new(
+                    WorktreeApplicationErrorKind::InvalidRequest,
+                    "Dependency storage must be outside the physical worktree.",
+                ));
+            }
+            let dependency = dependency_command(
+                &worktree,
+                &scratch_root,
+                &log_path,
+                npm.ok_or_else(toolchain_unavailable)?,
+                dependency_cache,
+            );
+            run_required(runner, &dependency)?;
+        }
+        let commands =
+            build_commands(&worktree, &scratch_root, &log_path, node).map_err(|error| {
+                if matches!(
+                    request.dependency_policy,
+                    PhysicalWorktreeDependencyPolicy::UseExisting
+                ) && error.kind == WorktreeApplicationErrorKind::ToolchainUnavailable
+                {
+                    existing_dependencies_unavailable()
+                } else {
+                    error
+                }
+            })?;
         for command in &commands {
             run_required(runner, command)?;
         }
@@ -370,6 +402,13 @@ fn toolchain_unavailable() -> WorktreeApplicationError {
     )
 }
 
+fn existing_dependencies_unavailable() -> WorktreeApplicationError {
+    WorktreeApplicationError::new(
+        WorktreeApplicationErrorKind::ToolchainUnavailable,
+        "The live worktree dependencies are unavailable; dependency installation is disabled for this borrowed checkout.",
+    )
+}
+
 fn output_unavailable() -> WorktreeApplicationError {
     WorktreeApplicationError::new(
         WorktreeApplicationErrorKind::OutputUnavailable,
@@ -411,7 +450,9 @@ mod tests {
         let request = PhysicalWorktreeBuildRequest::new(
             worktree.clone(),
             attempt_root.clone(),
-            directory.path().join("npm-cache"),
+            PhysicalWorktreeDependencyPolicy::Install {
+                cache_root: directory.path().join("npm-cache"),
+            },
             "sample-app",
         )
         .unwrap();
@@ -423,7 +464,7 @@ mod tests {
         let result = build_with(
             &request,
             worktree.join("node"),
-            worktree.join("npm"),
+            Some(worktree.join("npm")),
             &runner,
         )
         .unwrap();
@@ -469,7 +510,9 @@ mod tests {
         let request = PhysicalWorktreeBuildRequest::new(
             worktree.clone(),
             attempt_root.clone(),
-            directory.path().join("npm-cache"),
+            PhysicalWorktreeDependencyPolicy::Install {
+                cache_root: directory.path().join("npm-cache"),
+            },
             "sample-app",
         )
         .unwrap();
@@ -481,7 +524,7 @@ mod tests {
         let error = build_with(
             &request,
             worktree.join("node"),
-            worktree.join("npm"),
+            Some(worktree.join("npm")),
             &runner,
         )
         .unwrap_err();
@@ -503,6 +546,40 @@ mod tests {
             ]
         );
         assert!(!attempt_root.join("output").exists());
+    }
+
+    #[test]
+    fn live_worktree_build_uses_existing_dependencies_without_installing() {
+        let directory = tempfile::tempdir().unwrap();
+        let worktree = fixture(directory.path());
+        let request = PhysicalWorktreeBuildRequest::new(
+            worktree.clone(),
+            directory.path().join("live-attempt"),
+            PhysicalWorktreeDependencyPolicy::UseExisting,
+            "sample-app",
+        )
+        .unwrap();
+        let runner = RecordingRunner {
+            commands: Mutex::new(Vec::new()),
+            fail_at: None,
+        };
+
+        build_with(&request, worktree.join("node"), None, &runner).unwrap();
+
+        assert_eq!(
+            runner
+                .commands
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|command| command.label)
+                .collect::<Vec<_>>(),
+            [
+                "TypeScript typecheck",
+                "frontend build",
+                "Tauri debug build"
+            ]
+        );
     }
 
     fn fixture(root: &Path) -> PathBuf {

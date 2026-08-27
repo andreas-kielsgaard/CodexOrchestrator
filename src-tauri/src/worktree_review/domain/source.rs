@@ -175,41 +175,26 @@ pub(crate) struct WorktreeAssociation {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ReviewSourceSelection {
-    ExistingWorktree {
+    #[serde(rename = "existing_worktree")]
+    LiveWorktree {
         association_id: WorktreeAssociationId,
-        head_object_id: GitObjectId,
-        /// Immutable trigger identity only; this is not retained-object or reachability evidence.
-        virtual_commit_id: Option<GitObjectId>,
+        /// HEAD observed when the build was triggered; the borrowed checkout remains live.
+        #[serde(rename = "head_object_id")]
+        trigger_head_object_id: GitObjectId,
+        /// Optional virtual commit observed at trigger time, not retained-object evidence.
+        #[serde(rename = "virtual_commit_id")]
+        trigger_virtual_commit_id: Option<GitObjectId>,
     },
     WorktreeSnapshot {
         association_id: WorktreeAssociationId,
         head_object_id: GitObjectId,
         captured_object_id: GitObjectId,
-        /// Immutable trigger identity only; this is not retained-object or reachability evidence.
+        /// Trigger identity only; the retained checkout itself supplies reachability.
         virtual_commit_id: Option<GitObjectId>,
     },
     BranchCommit {
         selected_object: GitObjectId,
     },
-}
-
-impl ReviewSourceSelection {
-    /// Exact object accepted by the server as this build's immutable source receipt.
-    pub(crate) fn accepted_object(&self) -> &GitObjectId {
-        match self {
-            Self::ExistingWorktree {
-                head_object_id,
-                virtual_commit_id,
-                ..
-            } => virtual_commit_id.as_ref().unwrap_or(head_object_id),
-            Self::WorktreeSnapshot {
-                captured_object_id, ..
-            } => captured_object_id,
-            Self::BranchCommit {
-                selected_object, ..
-            } => selected_object,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -322,27 +307,5 @@ mod tests {
             untracked_paths: 0,
         };
         assert!(summary.has_local_work());
-    }
-
-    #[test]
-    fn accepted_source_object_prefers_a_server_captured_virtual_commit() {
-        let head = GitObjectId::new("a".repeat(40)).unwrap();
-        let captured = GitObjectId::new("b".repeat(40)).unwrap();
-        let association = WorktreeAssociationId::new("association-one").unwrap();
-
-        let direct = ReviewSourceSelection::ExistingWorktree {
-            association_id: association.clone(),
-            head_object_id: head.clone(),
-            virtual_commit_id: Some(captured.clone()),
-        };
-        let snapshot = ReviewSourceSelection::WorktreeSnapshot {
-            association_id: association,
-            head_object_id: head,
-            captured_object_id: captured.clone(),
-            virtual_commit_id: Some(captured.clone()),
-        };
-
-        assert_eq!(direct.accepted_object(), &captured);
-        assert_eq!(snapshot.accepted_object(), &captured);
     }
 }

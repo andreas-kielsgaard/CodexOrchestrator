@@ -57,7 +57,7 @@ impl ReviewBuild {
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
         if self.workspace_id != self.source.workspace_id {
             return Err(DomainError::new(
-                "build workspace must match its immutable source binding",
+                "build workspace must match its recorded source binding",
             ));
         }
         Ok(())

@@ -73,7 +73,7 @@ impl SourceMaterializationService {
     ) -> Result<PreparedMaterialization, String> {
         match (source, plan) {
             (
-                CreateBuildSourceInput::ExistingWorktree { association_id },
+                CreateBuildSourceInput::LiveWorktree { association_id },
                 BuildWorkspacePlanInput::BorrowSelectedWorktree {
                     association_id: planned_association,
                 },
@@ -92,10 +92,10 @@ impl SourceMaterializationService {
                         repository,
                         branch,
                         workspace_id,
-                        ReviewSourceSelection::ExistingWorktree {
+                        ReviewSourceSelection::LiveWorktree {
                             association_id: accepted.association.id,
-                            head_object_id: git_object(&accepted.head)?,
-                            virtual_commit_id: accepted
+                            trigger_head_object_id: git_object(&accepted.head)?,
+                            trigger_virtual_commit_id: accepted
                                 .virtual_commit
                                 .as_ref()
                                 .map(git_object)
@@ -384,9 +384,7 @@ impl SourceMaterializationService {
             || capture.captured_changes != capture.virtual_commit.is_some()
             || capture.baseline_commit.as_str() != observation.head.as_str()
         {
-            return Err(
-                "The captured worktree source does not match its accepted checkout.".into(),
-            );
+            return Err("The captured worktree source does not match its planned checkout.".into());
         }
         if !context
             .commits()
@@ -605,7 +603,7 @@ mod tests {
 
     #[test]
     fn workspace_plan_must_repeat_the_selected_source_identity() {
-        let source = CreateBuildSourceInput::ExistingWorktree {
+        let source = CreateBuildSourceInput::LiveWorktree {
             association_id: "association-one".into(),
         };
         let mismatched = BuildWorkspacePlanInput::BorrowSelectedWorktree {
@@ -614,7 +612,7 @@ mod tests {
         assert!(!matches!(
             (&source, &mismatched),
             (
-                CreateBuildSourceInput::ExistingWorktree { association_id },
+                CreateBuildSourceInput::LiveWorktree { association_id },
                 BuildWorkspacePlanInput::BorrowSelectedWorktree {
                     association_id: planned
                 }

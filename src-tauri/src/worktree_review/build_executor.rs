@@ -1,18 +1,19 @@
-use super::domain::{
-    BuildOutputId, BuildOutputStorageKey, ExecutableRelativePath, OperationAttemptId,
-    OperationFailureCategory, OperationStage, RetainedBuildOutput, ReviewBuildId, ReviewWorkspace,
+use super::{
+    build_storage::attempt_storage_key,
+    domain::{
+        BuildOutputId, BuildOutputStorageKey, ExecutableRelativePath, OperationAttemptId,
+        OperationFailureCategory, OperationStage, RepositoryId, RetainedBuildOutput, ReviewBuildId,
+        ReviewWorkspace, WorkspaceOwnership,
+    },
 };
 use crate::{
     repository_context::RepositoryIdentity,
     worktree_application::{
         PhysicalWorktreeApplication, PhysicalWorktreeBuildRequest, PhysicalWorktreeBuildResult,
-        WorktreeApplicationError, WorktreeApplicationErrorKind,
+        PhysicalWorktreeDependencyPolicy, WorktreeApplicationError, WorktreeApplicationErrorKind,
     },
 };
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BuildExecutionFailure {
@@ -41,7 +42,7 @@ impl BuildExecutionFailure {
 pub(crate) struct ReviewBuildExecutor {
     application: PhysicalWorktreeApplication,
     review_root: PathBuf,
-    build_output_root: PathBuf,
+    repository_id: RepositoryId,
     dependency_cache_root: PathBuf,
 }
 
@@ -57,24 +58,17 @@ impl ReviewBuildExecutor {
                 "Worktree Review AppData storage is unavailable.",
             )
         })?;
-        let repository_root = review_root
-            .join("repositories")
-            .join(repository.id.as_str());
-        let build_output_root = repository_root.join("build-output");
         let dependency_cache_root = review_root.join("shared-cache").join("npm");
-        for directory in [&build_output_root, &dependency_cache_root] {
-            fs::create_dir_all(directory).map_err(|_| {
-                BuildExecutionFailure::new(
-                    OperationStage::WorktreeProvisioning,
-                    OperationFailureCategory::ProvisioningFailed,
-                    "The Worktree Review build storage is unavailable.",
-                )
-            })?;
-        }
         Ok(Self {
             application: PhysicalWorktreeApplication,
             review_root,
-            build_output_root,
+            repository_id: RepositoryId::new(repository.id.as_str()).map_err(|error| {
+                BuildExecutionFailure::new(
+                    OperationStage::WorktreeProvisioning,
+                    OperationFailureCategory::ProvisioningFailed,
+                    error.to_string(),
+                )
+            })?,
             dependency_cache_root,
         })
     }
@@ -85,14 +79,21 @@ impl ReviewBuildExecutor {
         attempt_id: &OperationAttemptId,
         workspace: &ReviewWorkspace,
     ) -> Result<RetainedBuildOutput, BuildExecutionFailure> {
-        let attempt_root = self
-            .build_output_root
-            .join(build_id.as_str())
-            .join(attempt_id.as_str());
+        let attempt_key =
+            attempt_storage_key(&self.repository_id, build_id, attempt_id).map_err(|error| {
+                BuildExecutionFailure::new(
+                    OperationStage::WorktreeProvisioning,
+                    OperationFailureCategory::ProvisioningFailed,
+                    error.to_string(),
+                )
+            })?;
+        let attempt_root = self.review_root.join(attempt_key.as_str());
+        let dependency_policy =
+            dependency_policy(&workspace.ownership, &self.dependency_cache_root);
         let request = PhysicalWorktreeBuildRequest::new(
             PathBuf::from(workspace.location.as_str()),
             attempt_root,
-            self.dependency_cache_root.clone(),
+            dependency_policy,
             "codex-orchestrator",
         )
         .map_err(application_failure)?;
@@ -107,6 +108,23 @@ impl ReviewBuildExecutor {
             attempt_id,
             &result,
         )
+    }
+}
+
+fn dependency_policy(
+    ownership: &WorkspaceOwnership,
+    cache_root: &Path,
+) -> PhysicalWorktreeDependencyPolicy {
+    match ownership {
+        WorkspaceOwnership::BorrowedExternal { .. } => {
+            PhysicalWorktreeDependencyPolicy::UseExisting
+        }
+        WorkspaceOwnership::ManagedBranchWorktree { .. }
+        | WorkspaceOwnership::OwnedBuildWorktree { .. } => {
+            PhysicalWorktreeDependencyPolicy::Install {
+                cache_root: cache_root.to_path_buf(),
+            }
+        }
     }
 }
 
@@ -250,9 +268,10 @@ fn unavailable_output() -> String {
 mod tests {
     use super::*;
     use crate::worktree_review::domain::{
-        RepositoryId, WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership, WorktreeId,
-        WorktreeLocation,
+        RepositoryId, WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership, WorktreeAssociationId,
+        WorktreeId, WorktreeLocation,
     };
+    use std::fs;
 
     #[test]
     fn retained_output_requires_a_current_contained_executable() {
@@ -302,5 +321,25 @@ mod tests {
 
         fs::remove_file(executable).unwrap();
         assert!(resolve_retained_output(&review_root, &workspace, &output).is_err());
+    }
+
+    #[test]
+    fn borrowed_worktree_never_selects_dependency_installation() {
+        let cache = PathBuf::from("C:/review-cache");
+        let borrowed = WorkspaceOwnership::BorrowedExternal {
+            association_id: WorktreeAssociationId::new("association").unwrap(),
+        };
+        let owned = WorkspaceOwnership::OwnedBuildWorktree {
+            build_id: ReviewBuildId::new("build").unwrap(),
+        };
+
+        assert_eq!(
+            dependency_policy(&borrowed, &cache),
+            PhysicalWorktreeDependencyPolicy::UseExisting
+        );
+        assert_eq!(
+            dependency_policy(&owned, &cache),
+            PhysicalWorktreeDependencyPolicy::Install { cache_root: cache }
+        );
     }
 }

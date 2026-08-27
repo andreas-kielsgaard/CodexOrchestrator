@@ -44,9 +44,7 @@ export function BuildComposer({
   const [name, setName] = useState(`Review ${detail.branch.displayName}`);
   const [historyOpen, setHistoryOpen] = useState(false);
   const selectedWorktreeIsActive = selectedWorktree?.worktreeId === activeWorktreeId;
-  const selectedWorktreeIsDirty = selectedWorktree
-    ? hasUncommittedWork(selectedWorktree)
-    : false;
+  const selectedWorktreeIsDirty = selectedWorktree ? hasUncommittedWork(selectedWorktree) : false;
 
   useEffect(() => {
     if ((!selectedWorktree || selectedWorktreeIsActive) && sourceMode !== 'commit') {
@@ -79,11 +77,11 @@ export function BuildComposer({
           value="direct"
           checked={sourceMode === 'direct'}
           disabled={!selectedWorktree || selectedWorktreeIsActive || disabled}
-          title="Selected Worktree checkout"
+          title="Live Worktree checkout"
           description={
             selectedWorktreeIsDirty
-              ? 'Record the dirty checkout as a virtual commit, then compile the selected live checkout. Later edits do not invalidate the build.'
-              : 'Record the branch and current commit, then compile the selected live checkout. Later edits do not invalidate the build.'
+              ? 'Record the dirty checkout as a virtual commit, then compile the live checkout with its existing dependencies. Worktree Review will not install dependencies or invalidate the build after later edits.'
+              : 'Record the branch and current commit, then compile the live checkout with its existing dependencies. Worktree Review will not install dependencies or invalidate the build after later edits.'
           }
           unavailableReason={
             selectedWorktreeIsActive
@@ -99,7 +97,7 @@ export function BuildComposer({
           title="Snapshot current work"
           description={
             selectedWorktreeIsDirty
-              ? 'Create a stable virtual commit first, then create a retained build checkout from that immutable commit.'
+              ? 'Create a stable virtual commit first, then create a retained build checkout from that exact commit.'
               : 'Create a retained build checkout from the selected worktree commit.'
           }
           unavailableReason={
@@ -187,14 +185,14 @@ export function BuildComposer({
           <p>{workspacePlanDisclosure(request.workspacePlan)}</p>
           {selectedWorktreeIsDirty && sourceMode !== 'commit' && (
             <p>
-              This checkout is dirty. Worktree Review must create a virtual commit before the
-              build can continue. The branch, index, and working tree will not be changed.
+              This checkout is dirty. Worktree Review must create a virtual commit before the build
+              can continue. The branch, index, and working tree will not be changed.
             </p>
           )}
           <p>
-            The produced application files will be retained in Worktree Review AppData, not
-            copied into a source worktree. The source receipt records what triggered the build;
-            it does not guarantee application quality or prevent later source changes.
+            The produced application files will be retained in Worktree Review AppData, not copied
+            into a source worktree. The source receipt records what triggered the build; it does not
+            guarantee application quality or prevent later source changes.
           </p>
         </div>
       )}

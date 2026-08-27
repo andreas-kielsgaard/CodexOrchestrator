@@ -1,20 +1,23 @@
 use super::domain::{GitCommitId, WorktreeApplicationError, WorktreeApplicationErrorKind};
-use crate::repository_context::GitExecutable;
+use crate::git_process::{
+    GitCommandEnvironment, GitExecutable, GitProcessError, GitProcessErrorKind, HardenedGitProcess,
+};
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
 };
 
 const GIT_OUTPUT_LIMIT: usize = 1024 * 1024;
 
-pub(super) struct GitRunner<'a> {
-    executable: &'a GitExecutable,
+pub(super) struct GitRunner {
+    process: HardenedGitProcess,
 }
 
-impl<'a> GitRunner<'a> {
-    pub(super) fn new(executable: &'a GitExecutable) -> Self {
-        Self { executable }
+impl GitRunner {
+    pub(super) fn new(executable: &GitExecutable) -> Self {
+        Self {
+            process: HardenedGitProcess::new(executable.clone()),
+        }
     }
 
     pub(super) fn required<I, S>(
@@ -26,12 +29,7 @@ impl<'a> GitRunner<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let output = self.output(root, arguments, None, &[])?;
-        if output.status.success() {
-            bounded_stdout(output)
-        } else {
-            Err(git_command_failed())
-        }
+        self.required_with(root, arguments, GitCommandEnvironment::Clean)
     }
 
     pub(super) fn required_with_index<I, S>(
@@ -44,30 +42,30 @@ impl<'a> GitRunner<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let output = self.output(root, arguments, Some(index), &[])?;
-        if output.status.success() {
-            bounded_stdout(output)
-        } else {
-            Err(git_command_failed())
-        }
+        self.required_with(root, arguments, GitCommandEnvironment::IsolatedIndex(index))
     }
 
-    pub(super) fn required_with_environment<I, S>(
+    pub(super) fn required_with_commit_identity<I, S>(
         &self,
         root: &Path,
         arguments: I,
-        environment: &[(&str, &str)],
+        identity: &str,
+        email: &str,
+        date: &str,
     ) -> Result<Vec<u8>, WorktreeApplicationError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let output = self.output(root, arguments, None, environment)?;
-        if output.status.success() {
-            bounded_stdout(output)
-        } else {
-            Err(git_command_failed())
-        }
+        self.required_with(
+            root,
+            arguments,
+            GitCommandEnvironment::DeterministicCommit {
+                identity,
+                email,
+                date,
+            },
+        )
     }
 
     pub(super) fn optional<I, S>(
@@ -79,59 +77,41 @@ impl<'a> GitRunner<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let output = self.output(root, arguments, None, &[])?;
-        match output.status.code() {
-            Some(0) => bounded_stdout(output).map(Some),
-            Some(1) => Ok(None),
-            _ => Err(git_command_failed()),
+        let outcome = self
+            .process
+            .run(
+                root,
+                arguments,
+                GIT_OUTPUT_LIMIT,
+                GitCommandEnvironment::Clean,
+            )
+            .map_err(git_process_error)?;
+        match (outcome.success, outcome.exit_code) {
+            (true, _) => Ok(Some(outcome.stdout)),
+            (false, Some(1)) => Ok(None),
+            (false, _) => Err(git_command_failed()),
         }
     }
 
-    fn output<I, S>(
+    fn required_with<I, S>(
         &self,
         root: &Path,
         arguments: I,
-        index: Option<&Path>,
-        environment: &[(&str, &str)],
-    ) -> Result<Output, WorktreeApplicationError>
+        environment: GitCommandEnvironment<'_>,
+    ) -> Result<Vec<u8>, WorktreeApplicationError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let mut command = Command::new(self.executable.path());
-        command
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .env("GIT_EDITOR", "true")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", null_device())
-            .env("LC_ALL", "C")
-            .arg("--no-pager")
-            .arg("--no-replace-objects")
-            .arg("--literal-pathspecs")
-            .arg("-c")
-            .arg("core.fsmonitor=false")
-            .arg("-c")
-            .arg("credential.interactive=false")
-            .arg("-c")
-            .arg(format!("core.hooksPath={}", null_device()))
-            .args(arguments);
-        if let Some(index) = index {
-            command.env("GIT_INDEX_FILE", external_path(index));
+        let outcome = self
+            .process
+            .run(root, arguments, GIT_OUTPUT_LIMIT, environment)
+            .map_err(git_process_error)?;
+        if outcome.success {
+            Ok(outcome.stdout)
+        } else {
+            Err(git_command_failed())
         }
-        for (key, value) in environment {
-            command.env(key, value);
-        }
-        command.output().map_err(|_| {
-            WorktreeApplicationError::new(
-                WorktreeApplicationErrorKind::GitUnavailable,
-                "Git could not be started for the physical worktree operation.",
-            )
-        })
     }
 }
 
@@ -163,11 +143,15 @@ pub(super) fn external_path(path: &Path) -> OsString {
     OsString::from(value.strip_prefix(r"\\?\").unwrap_or(&value))
 }
 
-fn bounded_stdout(output: Output) -> Result<Vec<u8>, WorktreeApplicationError> {
-    if output.stdout.len() <= GIT_OUTPUT_LIMIT {
-        Ok(output.stdout)
-    } else {
-        Err(git_output_invalid())
+fn git_process_error(error: GitProcessError) -> WorktreeApplicationError {
+    match error.kind {
+        GitProcessErrorKind::OutputLimitExceeded => git_output_invalid(),
+        GitProcessErrorKind::MissingExecutable | GitProcessErrorKind::StartFailed => {
+            WorktreeApplicationError::new(
+                WorktreeApplicationErrorKind::GitUnavailable,
+                "Git could not be started for the physical worktree operation.",
+            )
+        }
     }
 }
 
@@ -183,12 +167,4 @@ fn git_output_invalid() -> WorktreeApplicationError {
         WorktreeApplicationErrorKind::GitUnavailable,
         "Git returned invalid physical worktree evidence.",
     )
-}
-
-fn null_device() -> &'static str {
-    if cfg!(windows) {
-        "NUL"
-    } else {
-        "/dev/null"
-    }
 }

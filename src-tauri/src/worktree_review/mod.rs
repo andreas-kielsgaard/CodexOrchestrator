@@ -4,6 +4,7 @@ mod branch_presentation;
 mod build_executor;
 mod build_presentation;
 mod build_service;
+mod build_storage;
 mod cleanup_service;
 pub(crate) mod domain;
 mod retention;

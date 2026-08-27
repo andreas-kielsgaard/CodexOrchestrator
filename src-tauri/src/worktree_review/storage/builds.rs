@@ -191,7 +191,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
             if changed == 0 {
                 return Err(StorageError::new(
                     StorageErrorKind::Conflict,
-                    "build identity conflicts with its immutable source binding",
+                    "build identity conflicts with its recorded source binding",
                 ));
             }
             Ok(())

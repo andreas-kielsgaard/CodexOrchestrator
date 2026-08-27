@@ -49,9 +49,9 @@ export function hasWorkSinceBaseline(changes: WorktreeChanges): boolean {
 export function sourceLabel(source: ReviewBuildSource): string {
   switch (source.kind) {
     case 'existing_worktree':
-      return source.virtualCommitId
-        ? `Direct worktree at ${shortObjectId(source.headObjectId)} · virtual commit ${shortObjectId(source.virtualCommitId)}`
-        : `Direct worktree at ${shortObjectId(source.headObjectId)}`;
+      return source.triggerVirtualCommitId
+        ? `Live checkout triggered at ${shortObjectId(source.triggerHeadObjectId)} · virtual commit ${shortObjectId(source.triggerVirtualCommitId)}`
+        : `Live checkout triggered at ${shortObjectId(source.triggerHeadObjectId)}`;
     case 'worktree_snapshot':
       return source.virtualCommitId
         ? `Retained checkout from virtual commit ${shortObjectId(source.virtualCommitId)} · source HEAD ${shortObjectId(source.headObjectId)}`
@@ -64,7 +64,7 @@ export function sourceLabel(source: ReviewBuildSource): string {
 export function workspacePlanDisclosure(plan: BuildWorkspacePlan): string {
   switch (plan.kind) {
     case 'borrow_selected_worktree':
-      return 'This build will run in the selected Worktree checkout. Worktree Review will not remove it.';
+      return 'This build will compile the live Worktree checkout using its existing dependencies. Worktree Review will neither install dependencies in nor remove that checkout.';
     case 'create_managed_branch_worktree':
       return 'Creating this build will first create and retain a Worktree checkout for this branch.';
     case 'create_owned_build_worktree':
