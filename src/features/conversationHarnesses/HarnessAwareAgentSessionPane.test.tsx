@@ -3,6 +3,7 @@ import {
   createRecordedHarnessManagementSource,
   recordedHarnessInspectorSessionId,
 } from '../../dev/conversationHarnesses/recordedHarnessInspectorSource';
+import type { ConversationHarnessManagementCommand } from '../../application/conversationHarnesses';
 import { ConversationHarnessManagement } from './ConversationHarnessInspector';
 import { HarnessAwareAgentSessionPane } from './HarnessAwareAgentSessionPane';
 
@@ -49,8 +50,16 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(await screen.findByRole('button', { name: 'Manage harness' })).toBeVisible();
   });
 
-  it('keeps Session-owned model and effort choices against the application catalog', async () => {
-    const source = createRecordedHarnessManagementSource();
+  it('keeps only the Session-owned model choice against the application catalog', async () => {
+    const recordedSource = createRecordedHarnessManagementSource();
+    const dispatched: ConversationHarnessManagementCommand[] = [];
+    const source = {
+      ...recordedSource,
+      async dispatch(input: Parameters<NonNullable<typeof recordedSource.dispatch>>[0]) {
+        dispatched.push(input.command);
+        return recordedSource.dispatch!(input);
+      },
+    };
     render(
       <HarnessAwareAgentSessionPane sessionId={recordedHarnessInspectorSessionId} source={source}>
         <div>Conversation body</div>
@@ -58,20 +67,22 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
 
     const model = await screen.findByLabelText('Session model');
-    const effort = screen.getByLabelText('Session effort');
-    expect(screen.getByText('This Session · application model catalog')).toBeVisible();
+    expect(screen.getByText('Saved for this Session · application model catalog')).toBeVisible();
     expect(model).toHaveValue('');
-    expect(effort).toBeDisabled();
+    expect(screen.queryByLabelText('Session effort')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Current Session model' })).toBeVisible();
     expect(within(model).getByRole('option', { name: 'GPT-5.6 Terra' })).toBeVisible();
     expect(within(model).getByRole('option', { name: 'GPT-5.6 Sol' })).toBeVisible();
     expect(screen.queryByText(/Harness constraints/i)).toBeNull();
 
     fireEvent.change(model, { target: { value: 'gpt-5.6-terra' } });
     await waitFor(() => expect(model).toHaveValue('gpt-5.6-terra'));
-    expect(effort).toBeEnabled();
-    expect(within(effort).getByRole('option', { name: 'xhigh' })).toBeVisible();
-    fireEvent.change(effort, { target: { value: 'xhigh' } });
-    await waitFor(() => expect(effort).toHaveValue('xhigh'));
+    expect(dispatched).toEqual([
+      {
+        kind: 'set_session_model_override',
+        override: { model: 'gpt-5.6-terra', reasoning: null },
+      },
+    ]);
 
     await openHarnessManagement();
     expect(screen.queryByLabelText('Session model')).toBeNull();
@@ -81,11 +92,17 @@ describe('HarnessAwareAgentSessionPane', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     expect(await screen.findByLabelText('Session model')).toHaveValue('gpt-5.6-terra');
-    expect(screen.getByLabelText('Session effort')).toHaveValue('xhigh');
+    expect(screen.queryByLabelText('Session effort')).toBeNull();
 
     fireEvent.change(screen.getByLabelText('Session model'), { target: { value: '' } });
     await waitFor(() => expect(screen.getByLabelText('Session model')).toHaveValue(''));
-    expect(screen.getByLabelText('Session effort')).toBeDisabled();
+    expect(dispatched).toEqual([
+      {
+        kind: 'set_session_model_override',
+        override: { model: 'gpt-5.6-terra', reasoning: null },
+      },
+      { kind: 'set_session_model_override', override: null },
+    ]);
   });
 
   it('defaults to the Session version and presents the corrected management hierarchy', async () => {
