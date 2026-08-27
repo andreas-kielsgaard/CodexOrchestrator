@@ -8,6 +8,30 @@ import {
 } from './tauriAgentSessionClient';
 
 describe('Tauri Agent Session client', () => {
+  it('sends Session-owned model selection and clearing through the dedicated command', async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const client = createTauriAgentSessionClient({
+      invoke: async <T>(command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args });
+        return completedDetails().session as T;
+      },
+    });
+
+    await client.updateModelOverride?.({ sessionId: 'session-1', model: 'selected-model' });
+    await client.updateModelOverride?.({ sessionId: 'session-1', model: null });
+
+    expect(calls).toEqual([
+      {
+        command: 'update_agent_session_model_override',
+        args: { input: { sessionId: 'session-1', model: 'selected-model' } },
+      },
+      {
+        command: 'update_agent_session_model_override',
+        args: { input: { sessionId: 'session-1', model: null } },
+      },
+    ]);
+  });
+
   it('completes listener registration before invoking send and keeps both correlation IDs', async () => {
     let finishListen: ((unlisten: () => void) => void) | undefined;
     const calls: string[] = [];

@@ -4,7 +4,7 @@ use super::lifecycle::{
     CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
     SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
-    UpdateAgentSessionIdentityCommand,
+    UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 use crate::agent_sessions::{
     domain::{
@@ -104,6 +104,71 @@ fn application_creates_and_updates_session_owned_harness_and_identity() {
         })
         .expect("clear Session identity");
     assert!(cleared.assigned_identity.is_none());
+}
+
+#[test]
+fn application_updates_and_clears_the_session_model_without_changing_sandbox() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime,
+        notifier,
+        providers.clone(),
+        providers,
+        None,
+    );
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: None,
+            working_directory: None,
+            requested_options: AgentRuntimeOptions {
+                model: None,
+                sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
+            },
+        })
+        .unwrap();
+
+    let updated = application
+        .update_session_model_override(UpdateAgentSessionModelOverrideCommand {
+            session_id: session.id.clone(),
+            model: Some("  user-selected-model  ".into()),
+        })
+        .unwrap();
+    assert_eq!(
+        updated.requested_options.model.as_deref(),
+        Some("user-selected-model")
+    );
+    assert_eq!(
+        updated.requested_options.sandbox,
+        Some(RuntimeSandboxMode::WorkspaceWrite)
+    );
+
+    let error = application
+        .update_session_model_override(UpdateAgentSessionModelOverrideCommand {
+            session_id: session.id.clone(),
+            model: Some("  ".into()),
+        })
+        .expect_err("blank override is not a model identifier");
+    assert!(error.to_string().contains("cannot be blank"));
+
+    let cleared = application
+        .update_session_model_override(UpdateAgentSessionModelOverrideCommand {
+            session_id: session.id,
+            model: None,
+        })
+        .unwrap();
+    assert!(cleared.requested_options.model.is_none());
+    assert_eq!(
+        cleared.requested_options.sandbox,
+        Some(RuntimeSandboxMode::WorkspaceWrite)
+    );
 }
 
 #[test]

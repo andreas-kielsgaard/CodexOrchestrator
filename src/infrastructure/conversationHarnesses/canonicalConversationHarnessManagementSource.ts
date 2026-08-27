@@ -146,7 +146,13 @@ async function dispatchCommand(
       });
       return;
     case 'set_session_model_override':
-      throw new Error('Session model updates are not connected to the application command yet.');
+      if (!sessions.updateModelOverride)
+        throw new Error('This Agent Session client cannot update its model override.');
+      await sessions.updateModelOverride({
+        sessionId: context.session.id,
+        model: command.override?.model ?? null,
+      });
+      return;
     case 'save_delegated_model_policy':
       throw new Error('Model providers and catalogs are application-global, not Harness-owned.');
   }
@@ -363,4 +369,3 @@ function toCanonicalConfiguration(
 }
 
 class UnboundSessionHarness extends Error {}
-

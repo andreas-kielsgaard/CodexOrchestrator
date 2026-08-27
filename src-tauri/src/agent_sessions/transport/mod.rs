@@ -6,7 +6,8 @@ use self::dto::{
     AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionSummaryDto,
     AgentSessionUpdateDto, CancelAgentInvocationCommandDto, CreateAgentSessionCommandDto,
     ListAgentSessionsQueryDto, LoadAgentSessionQueryDto, SendAgentSessionMessageCommandDto,
-    SendAgentSessionMessageResultDto,
+    SendAgentSessionMessageResultDto, UpdateAgentSessionHarnessCommandDto,
+    UpdateAgentSessionIdentityCommandDto, UpdateAgentSessionModelOverrideCommandDto,
 };
 use crate::agent_sessions::application::{
     AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
@@ -70,9 +71,43 @@ pub(crate) fn create_agent_session(
     state: State<'_, AgentSessionTauriState>,
     input: CreateAgentSessionCommandDto,
 ) -> Result<AgentSessionDto, String> {
+    let ownership = input.ownership();
     state
         .application
-        .create_session(input.into())
+        .create_session_with_ownership(input.into(), ownership)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn update_agent_session_harness(
+    state: State<'_, AgentSessionTauriState>,
+    input: UpdateAgentSessionHarnessCommandDto,
+) -> Result<AgentSessionDto, String> {
+    state
+        .application
+        .update_session_harness(input.into())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn update_agent_session_identity(
+    state: State<'_, AgentSessionTauriState>,
+    input: UpdateAgentSessionIdentityCommandDto,
+) -> Result<AgentSessionDto, String> {
+    state
+        .application
+        .update_session_identity(input.into())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn update_agent_session_model_override(
+    state: State<'_, AgentSessionTauriState>,
+    input: UpdateAgentSessionModelOverrideCommandDto,
+) -> Result<AgentSessionDto, String> {
+    state
+        .application
+        .update_session_model_override(input.into())
         .map_err(|error| error.to_string())
 }
 

@@ -1,3 +1,6 @@
+import type { HarnessVersionRef } from '../harnesses';
+import type { AssignedAgentIdentity } from '../identities';
+
 export type AgentSessionIdDto = string;
 export type AgentInvocationIdDto = string;
 export type AgentRuntimeEventIdDto = string;
@@ -34,6 +37,10 @@ export interface AgentSessionDto {
   runtimeBinding: AgentRuntimeBindingDto;
   workingDirectory: string | null;
   requestedOptions: AgentRuntimeOptionsDto;
+  /** Present on canonical Session reads; optional only for recorded/legacy clients. */
+  harnessVersion?: HarnessVersionRef | null;
+  /** Present on canonical Session reads; optional only for recorded/legacy clients. */
+  assignedIdentity?: AssignedAgentIdentity | null;
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
 }
@@ -183,6 +190,8 @@ export interface CreateAgentSessionCommandDto {
   title?: string;
   workingDirectory?: string;
   requestedOptions?: PartialAgentRuntimeOptionsDto;
+  harnessVersion?: HarnessVersionRef | null;
+  assignedIdentity?: AssignedAgentIdentity | null;
 }
 
 export interface SendAgentSessionMessageCommandDto {
@@ -240,6 +249,11 @@ export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void
 
 export interface AgentSessionClient {
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
+  updateHarness?(command: UpdateAgentSessionHarnessCommandDto): Promise<AgentSessionDto>;
+  updateIdentity?(command: UpdateAgentSessionIdentityCommandDto): Promise<AgentSessionDto>;
+  updateModelOverride?(
+    command: UpdateAgentSessionModelOverrideCommandDto,
+  ): Promise<AgentSessionDto>;
   listSessions(query?: ListAgentSessionsQueryDto): Promise<AgentSessionSummaryDto[]>;
   loadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
   reloadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
@@ -249,4 +263,19 @@ export interface AgentSessionClient {
   ): Promise<SendAgentSessionMessageResultDto>;
   cancelInvocation(command: CancelAgentInvocationCommandDto): Promise<AgentInvocationDto>;
   disconnectUpdates(): Promise<void>;
+}
+
+export interface UpdateAgentSessionHarnessCommandDto {
+  readonly sessionId: AgentSessionIdDto;
+  readonly harnessVersion: HarnessVersionRef | null;
+}
+
+export interface UpdateAgentSessionIdentityCommandDto {
+  readonly sessionId: AgentSessionIdDto;
+  readonly assignedIdentity: AssignedAgentIdentity | null;
+}
+
+export interface UpdateAgentSessionModelOverrideCommandDto {
+  readonly sessionId: AgentSessionIdDto;
+  readonly model: string | null;
 }

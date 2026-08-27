@@ -385,6 +385,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,
+            crate::agent_sessions::transport::update_agent_session_model_override,
             crate::harness_engine::transport::list_harnesses,
             crate::harness_engine::transport::load_harness,
             crate::harness_engine::transport::create_harness,

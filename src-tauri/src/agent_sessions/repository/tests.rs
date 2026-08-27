@@ -3,7 +3,7 @@ use crate::agent_sessions::domain::{
     AgentDiagnosticSeverity, AgentDiagnosticSource, AgentInvocationInputProvenance,
     AgentInvocationTerminalStatus, AgentRuntimeEventId, AgentRuntimeEventSource,
     AgentRuntimeFailure, ExternalRuntimeContextId, NormalizedRuntimeEvent,
-    NormalizedRuntimeEventKind,
+    NormalizedRuntimeEventKind, RuntimeSandboxMode,
 };
 use crate::{
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
@@ -12,6 +12,51 @@ use crate::{
 use serde_json::json;
 use std::{fs, path::PathBuf};
 use uuid::Uuid;
+
+#[test]
+fn model_override_persists_without_replacing_the_session_sandbox() {
+    let path = temporary_database_path();
+    let connection = initialized_file_database(&path);
+    let repository = SqliteAgentSessionRepository::new(connection).expect("construct repository");
+    let mut session = test_session("model-session", at(0));
+    session.requested_options.model = Some("initial-model".into());
+    session.requested_options.sandbox = Some(RuntimeSandboxMode::ReadOnly);
+    let session = repository.create_session(session).expect("create session");
+
+    let updated = repository
+        .update_session_model_override(&session.id, Some("replacement-model".into()), at(1))
+        .expect("update model override");
+    assert_eq!(
+        updated.requested_options.model.as_deref(),
+        Some("replacement-model")
+    );
+    assert_eq!(
+        updated.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    let cleared = repository
+        .update_session_model_override(&session.id, None, at(2))
+        .expect("clear model override");
+    assert!(cleared.requested_options.model.is_none());
+    assert_eq!(
+        cleared.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    drop(repository);
+
+    let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
+    let persisted = reopened
+        .get_session(&session.id)
+        .unwrap()
+        .expect("persisted session");
+    assert!(persisted.requested_options.model.is_none());
+    assert_eq!(
+        persisted.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    drop(reopened);
+    fs::remove_file(path).expect("remove test database");
+}
 
 #[test]
 fn persists_and_updates_session_owned_harness_and_identity() {

@@ -102,6 +102,14 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError>;
 
+    /// Updates the Session-owned model preference without changing its sandbox selection.
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
     fn create_pending_invocation(
         &self,
         invocation: AgentInvocation,

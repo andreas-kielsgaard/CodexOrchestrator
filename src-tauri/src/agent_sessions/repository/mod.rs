@@ -318,6 +318,37 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         Ok(candidate)
     }
 
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin Session model override update"))?;
+        let current = required_session(&transaction, session_id)?;
+        let mut candidate = current.clone();
+        candidate.requested_options.model = model;
+        candidate.updated_at = updated_at;
+        validate_session_update(&current, &candidate).map_err(contract_error)?;
+        transaction
+            .execute(
+                "UPDATE agent_sessions SET requested_options_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    to_json(&candidate.requested_options)?,
+                    timestamp(updated_at),
+                    session_id.as_str()
+                ],
+            )
+            .map_err(sql_unavailable("update Session model override"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit Session model override update"))?;
+        Ok(candidate)
+    }
+
     fn create_pending_invocation(
         &self,
         invocation: AgentInvocation,

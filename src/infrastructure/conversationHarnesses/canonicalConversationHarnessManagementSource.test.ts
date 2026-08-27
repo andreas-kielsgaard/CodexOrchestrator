@@ -94,6 +94,16 @@ function createSessionClient(values: readonly AgentSessionDto[]): AgentSessionCl
       sessions.set(sessionId, updated);
       return updated;
     }),
+    updateModelOverride: vi.fn(async ({ sessionId, model }) => {
+      const current = sessions.get(sessionId);
+      if (!current) throw new Error(`Unknown Session: ${sessionId}`);
+      const updated = {
+        ...current,
+        requestedOptions: { ...current.requestedOptions, model },
+      };
+      sessions.set(sessionId, updated);
+      return updated;
+    }),
     listSessions: vi.fn(async () => [...sessions.values()].map(summary)),
     loadSession: vi.fn(async ({ sessionId }) => {
       const value = sessions.get(sessionId);
@@ -251,6 +261,34 @@ describe('canonical Conversation Harness Management source', () => {
         color: '#4f46e5',
         shape: 'hexagon',
       },
+    });
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('sets and clears the model override on the Agent Session', async () => {
+    const sessions = createSessionClient([session('session-current', reference(2))]);
+    const harnesses = createHarnessClient(harnessDetails());
+    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses);
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: {
+        kind: 'set_session_model_override',
+        override: { model: 'application-model', reasoning: null },
+      },
+    });
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'set_session_model_override', override: null },
+    });
+
+    expect(sessions.updateModelOverride).toHaveBeenNthCalledWith(1, {
+      sessionId: 'session-current',
+      model: 'application-model',
+    });
+    expect(sessions.updateModelOverride).toHaveBeenNthCalledWith(2, {
+      sessionId: 'session-current',
+      model: null,
     });
     expect(harnesses.saveDraft).not.toHaveBeenCalled();
   });

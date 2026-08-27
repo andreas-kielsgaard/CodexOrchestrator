@@ -559,6 +559,22 @@ impl AgentSessionRepository for FakeRepository {
         Ok(session.clone())
     }
 
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
+        session.requested_options.model = model;
+        session.updated_at = updated_at;
+        Ok(session.clone())
+    }
+
     fn create_pending_invocation(
         &self,
         invocation: AgentInvocation,

@@ -15,6 +15,9 @@ import type {
   LoadAgentSessionQueryDto,
   SendAgentSessionMessageCommandDto,
   SendAgentSessionMessageResultDto,
+  UpdateAgentSessionHarnessCommandDto,
+  UpdateAgentSessionIdentityCommandDto,
+  UpdateAgentSessionModelOverrideCommandDto,
 } from '../../application/agentSessions';
 
 export const AGENT_SESSION_UPDATE_EVENT = 'agent-session-update';
@@ -59,6 +62,22 @@ export function createTauriAgentSessionClient(
   return {
     createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto> {
       return invokeCommand<AgentSessionDto>('create_agent_session', { input: command });
+    },
+
+    updateHarness(command: UpdateAgentSessionHarnessCommandDto): Promise<AgentSessionDto> {
+      return invokeCommand<AgentSessionDto>('update_agent_session_harness', { input: command });
+    },
+
+    updateIdentity(command: UpdateAgentSessionIdentityCommandDto): Promise<AgentSessionDto> {
+      return invokeCommand<AgentSessionDto>('update_agent_session_identity', { input: command });
+    },
+
+    updateModelOverride(
+      command: UpdateAgentSessionModelOverrideCommandDto,
+    ): Promise<AgentSessionDto> {
+      return invokeCommand<AgentSessionDto>('update_agent_session_model_override', {
+        input: command,
+      });
     },
 
     listSessions(query: ListAgentSessionsQueryDto = {}): Promise<AgentSessionSummaryDto[]> {
