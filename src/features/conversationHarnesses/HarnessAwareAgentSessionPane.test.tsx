@@ -12,30 +12,63 @@ async function openHarnessManagement() {
 }
 
 async function setHarnessDefault(model: string, reasoning: string) {
-  fireEvent.change(screen.getByLabelText('Harness default model'), {
-    target: { value: model },
-  });
-  await waitFor(() => expect(screen.getByLabelText('Harness default model')).toHaveValue(model));
-  fireEvent.change(screen.getByLabelText('Harness default reasoning'), {
-    target: { value: reasoning },
-  });
+  chooseClosedOption('Harness default model', modelLabel(model));
   await waitFor(() =>
-    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(reasoning),
+    expect(screen.getByLabelText('Harness default model')).toHaveValue(modelLabel(model)),
+  );
+  chooseClosedOption('Harness default reasoning', reasoningLabel(reasoning));
+  await waitFor(() =>
+    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(
+      reasoningLabel(reasoning),
+    ),
   );
 }
 
 async function expectHarnessDefault(model: string, reasoning: string) {
   await waitFor(() => {
-    expect(screen.getByLabelText('Harness default model')).toHaveValue(model);
-    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(reasoning);
+    expect(screen.getByLabelText('Harness default model')).toHaveValue(modelLabel(model));
+    expect(screen.getByLabelText('Harness default reasoning')).toHaveValue(
+      reasoningLabel(reasoning),
+    );
   });
 }
 
-function setTerraMaximum(index: number) {
-  fireEvent.change(
-    screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra maximum reasoning' }),
-    { target: { value: String(index) } },
+async function setTerraMaximum(index: number) {
+  await waitFor(() =>
+    expect(
+      screen.getByRole('combobox', {
+        name: 'Harness GPT-5.6 Terra maximum reasoning',
+      }),
+    ).toBeEnabled(),
   );
+  chooseClosedOption(
+    'Harness GPT-5.6 Terra maximum reasoning',
+    ['Low', 'Medium', 'High', 'Xhigh'][index],
+  );
+}
+
+function chooseClosedOption(label: string, option: string | RegExp) {
+  const selector = screen.getByRole('combobox', { name: label });
+  fireEvent.focus(selector);
+  const listbox = document.getElementById(selector.getAttribute('aria-controls') ?? '');
+  if (!listbox) throw new Error(`${label} did not open its option list.`);
+  fireEvent.click(within(listbox).getByRole('option', { name: option }));
+}
+
+async function toggleAllowedModel(model: string) {
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'Allowed models' })).toBeEnabled(),
+  );
+  chooseClosedOption('Allowed models', model);
+}
+
+function modelLabel(model: string): string {
+  if (!model) return 'Caller choice';
+  return model === 'gpt-5.6-terra' ? 'GPT-5.6 Terra' : 'GPT-5.6 Sol';
+}
+
+function reasoningLabel(reasoning: string): string {
+  return reasoning ? reasoning[0].toUpperCase() + reasoning.slice(1) : 'Caller choice';
 }
 
 describe('HarnessAwareAgentSessionPane', () => {
@@ -102,14 +135,16 @@ describe('HarnessAwareAgentSessionPane', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     expect(await screen.findByRole('heading', { name: 'Harness details' })).toBeVisible();
+    expect(screen.getByTestId('harness-definition-editor')).toBeVisible();
     expect(screen.queryByLabelText('Product conversation')).toBeNull();
-    expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
+    expect(screen.getByLabelText('Viewed harness version').getAttribute('value')).toContain('v3');
     expect(
       screen.getByRole('button', {
         name: 'Newest pushed: v4 · Next-prompt update policy',
       }),
     ).toBeVisible();
     expect(screen.queryByText('Viewed version is not pushed')).toBeNull();
+    fireEvent.focus(screen.getByLabelText('Viewed harness version'));
     expect(screen.queryByText(/Session version ·/)).toBeNull();
     expect(screen.queryByText(/Current pushed ·/)).toBeNull();
     expect(screen.getByRole('option', { name: 'v3 · Session binding baseline' })).toBeVisible();
@@ -118,35 +153,26 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.queryByLabelText('Harness role')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Skills' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Tools' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Tools and MCP exposure' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Models and reasoning' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Application hooks' })).toBeVisible();
     expect(screen.getByText(/Proposed application hook reference:/)).toBeVisible();
-    expect(screen.getByText('Proposed', { selector: '.harness-management__badge' })).toBeVisible();
+    expect(screen.getByText('Proposed')).toBeVisible();
     expect(screen.queryByText(/Connected application hook:/)).toBeNull();
-    expect(screen.queryByText('Exposed', { selector: '.harness-management__badge' })).toBeNull();
+    expect(screen.queryByText('Exposed')).toBeNull();
     expect(screen.getByRole('table')).toHaveAccessibleName('');
     expect(screen.getByRole('heading', { name: 'Version history' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Agent Session updates' })).toBeNull();
     expect(
-      screen.getByRole('slider', { name: 'Harness GPT-5.6 Terra minimum reasoning' }),
+      screen.getByRole('combobox', { name: 'Harness GPT-5.6 Terra minimum reasoning' }),
     ).toBeEnabled();
     expect(screen.getAllByLabelText('Avery, Epic Plan Builder').length).toBeGreaterThan(0);
     expect(
       screen.queryByText(/validation|provenance|delivery not evidenced|future invocation/i),
     ).toBeNull();
 
-    const always = screen.getAllByRole('button', { name: /Always applicable/ })[0];
-    const initial = screen.getAllByRole('button', { name: /Initial ingestion only/ })[0];
-    const available = screen.getAllByRole('button', { name: /^Available/ })[0];
-    expect(screen.getAllByRole('button', { name: /Always applicable/ })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: /Initial ingestion only/ })).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /Every invocation/ })).toBeNull();
-    expect(always).toHaveAccessibleName('Always applicable 0');
-    expect(initial).toHaveAccessibleName('Initial ingestion only 0');
-    expect(always).toHaveAttribute('aria-expanded', 'false');
-    expect(initial).toHaveAttribute('aria-expanded', 'false');
-    expect(available).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('epic-plan-builder', { selector: 'output' })).toBeVisible();
+    expect(screen.getAllByText(/submit_epic_plan_proposal/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await waitFor(() => expect(screen.getByLabelText('Product conversation')).toBeVisible());
@@ -164,23 +190,15 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
 
-    fireEvent.click(screen.getByRole('button', { name: /Permitted name pool/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'Permitted name pool' });
-    expect(within(dialog).getByLabelText('Eero Saarinen permitted')).toBeChecked();
-    expect(within(dialog).getByLabelText('Grace Hopper permitted')).not.toBeChecked();
-    expect(within(dialog).getByLabelText('Grace Hopper permitted')).toBeDisabled();
+    expect(screen.getByText(/Eero Saarinen/, { selector: 'output' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    await waitFor(() => expect(screen.getByLabelText('Permitted Agent names')).toBeEnabled());
+    const permitted = screen.getByLabelText('Permitted Agent names');
+    fireEvent.focus(permitted);
+    fireEvent.change(permitted, { target: { value: 'Grace Hopper' } });
+    fireEvent.click(screen.getByRole('option', { name: 'Grace Hopper' }));
+    await waitFor(() => expect(permitted).toHaveAttribute('placeholder', '11 selected'));
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit name pool' }));
-    await waitFor(() =>
-      expect(within(dialog).getByLabelText('Grace Hopper permitted')).toBeEnabled(),
-    );
-    fireEvent.click(within(dialog).getByLabelText('Grace Hopper permitted'));
-    await waitFor(() =>
-      expect(within(dialog).getByLabelText('Grace Hopper permitted')).toBeChecked(),
-    );
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close permitted name pool' }));
-
-    expect(screen.getByRole('button', { name: /Harness subset · 11 names/ })).toBeVisible();
     expect(screen.getAllByLabelText('Avery, Epic Plan Builder').length).toBeGreaterThan(0);
     expect(
       screen.getByText('Working draft · uncommitted', {
@@ -189,7 +207,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     ).toBeVisible();
   }, 10_000);
 
-  it('opens full selected-skill details and changes applicability without replacing the catalog flow', async () => {
+  it('changes selected-skill applicability through the shared searchable definition control', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -200,30 +218,17 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
-    fireEvent.click(screen.getAllByRole('button', { name: /^Available/ })[0]);
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'View epic-plan-builder skill details' }),
+    expect(screen.getByText('Available', { selector: 'output' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('epic-plan-builder applicability')).toBeEnabled(),
     );
-
-    const dialog = await screen.findByRole('dialog', { name: 'epic-plan-builder' });
-    expect(within(dialog).getByText(/# Epic Plan Builder/)).toBeVisible();
-    expect(
-      within(dialog).getByText(/application can derive it from the calling session/),
-    ).toBeVisible();
-    const applicability = within(dialog).getByLabelText('epic-plan-builder details applicability');
-    expect(applicability).toBeDisabled();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit skill policy' }));
-    await waitFor(() => expect(applicability).toBeEnabled());
-    fireEvent.change(applicability, { target: { value: 'always_applicable' } });
-    await waitFor(() => expect(applicability).toHaveValue('always_applicable'));
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: 'Close epic-plan-builder details' }),
+    chooseClosedOption('epic-plan-builder applicability', 'Always applicable');
+    await waitFor(() =>
+      expect(screen.getByLabelText('epic-plan-builder applicability')).toHaveValue(
+        'Always applicable',
+      ),
     );
-
-    expect(
-      screen.getByRole('button', { name: 'View epic-plan-builder skill details' }),
-    ).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Edit skills' })).toBeVisible();
   });
 
   it('keeps one prompt value and caret-safe rendered/Plain source across navigation and remount', async () => {
@@ -267,12 +272,10 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
 
-    expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
+    expect(screen.getByLabelText('Viewed harness version').getAttribute('value')).toContain('v3');
     expect(screen.getByText('Working draft has uncommitted changes')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit draft' })).toBeVisible();
-    fireEvent.change(screen.getByLabelText('Viewed harness version'), {
-      target: { value: 'draft' },
-    });
+    chooseClosedOption('Viewed harness version', /Working draft/);
     const renderedHeading = await screen.findByRole('heading', { name: 'Revised prefix' });
     expect(renderedHeading).toBeVisible();
     expect(renderedHeading.closest('.agent-markdown')).toHaveClass(
@@ -280,7 +283,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
   });
 
-  it('searches, adds, categorizes, collapses, and removes skills in the draft dialog', async () => {
+  it('searches, adds, categorizes, and removes skills in the shared definition control', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -291,38 +294,21 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit skills' });
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
-    await waitFor(() => expect(within(dialog).getByLabelText('Available discovery')).toBeEnabled());
-    fireEvent.change(within(dialog).getByLabelText('Search all skills'), {
-      target: { value: 'sprnr' },
-    });
-    const result = await within(dialog).findByText('sprint-runner');
-    const resultRow = result.closest('.harness-management__catalog-row');
-    expect(resultRow).not.toBeNull();
-    if (!resultRow) return;
-    fireEvent.click(within(resultRow as HTMLElement).getByRole('button', { name: 'Add' }));
-    const applicability = await within(dialog).findByLabelText('sprint-runner applicability');
-    fireEvent.change(applicability, { target: { value: 'always_applicable' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close Edit skills' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    const skills = await waitFor(() => screen.getByRole('combobox', { name: 'Harness skills' }));
+    fireEvent.focus(skills);
+    fireEvent.change(skills, { target: { value: 'sprint' } });
+    fireEvent.click(await screen.findByRole('option', { name: /sprint-runner/ }));
+    const applicability = await screen.findByLabelText('sprint-runner applicability');
+    chooseClosedOption('sprint-runner applicability', 'Always applicable');
+    await waitFor(() => expect(applicability).toHaveValue('Always applicable'));
 
-    const always = screen.getAllByRole('button', { name: /Always applicable/ })[0];
-    await waitFor(() => expect(always).toHaveAttribute('aria-expanded', 'true'));
-    expect(await screen.findByText('sprint-runner')).toBeVisible();
-    fireEvent.click(always);
-    expect(always).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('sprint-runner')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
-    const reopened = await screen.findByRole('dialog', { name: 'Edit skills' });
-    fireEvent.click(await within(reopened).findByRole('button', { name: 'Remove sprint-runner' }));
-    await waitFor(() =>
-      expect(within(reopened).queryByLabelText('sprint-runner applicability')).toBeNull(),
-    );
+    fireEvent.focus(skills);
+    fireEvent.click(await screen.findByRole('option', { name: /sprint-runner/ }));
+    await waitFor(() => expect(screen.queryByLabelText('sprint-runner applicability')).toBeNull());
   });
 
-  it('edits and removes runtime-owned tools through the searchable tool dialog', async () => {
+  it('edits and removes runtime-owned tools through the shared searchable definition control', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -333,28 +319,21 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit tools' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit tools' });
-    const exposure = within(dialog).getByLabelText('request_epic_initiation exposure');
-    await waitFor(() => expect(exposure).toBeEnabled());
-    expect(within(exposure).getByRole('option', { name: 'Always applicable' })).toBeVisible();
-    expect(within(exposure).getByRole('option', { name: 'Initial ingestion only' })).toBeVisible();
-    expect(within(exposure).queryByRole('option', { name: 'Every invocation' })).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText('Search all tools'), {
-      target: { value: 'reqinit' },
-    });
-    fireEvent.change(exposure, {
-      target: { value: 'initial_invocation' },
-    });
-    fireEvent.click(
-      within(dialog).getByRole('button', {
-        name: 'Remove submit_epic_plan_proposal',
-      }),
+    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    const exposure = await waitFor(() =>
+      screen.getByRole('combobox', { name: 'request_epic_initiation exposure timing' }),
     );
+    chooseClosedOption('request_epic_initiation exposure timing', 'Initial invocation only');
+    await waitFor(() => expect(exposure).toHaveValue('Initial invocation only'));
+
+    const tools = screen.getByLabelText('Harness tools');
+    fireEvent.focus(tools);
+    fireEvent.change(tools, { target: { value: 'submit_epic_plan_proposal' } });
+    fireEvent.click(screen.getByRole('option', { name: /submit_epic_plan_proposal/ }));
     await waitFor(() =>
-      expect(within(dialog).queryByLabelText('submit_epic_plan_proposal exposure')).toBeNull(),
+      expect(screen.queryByLabelText('submit_epic_plan_proposal exposure timing')).toBeNull(),
     );
-    expect(within(dialog).getByText(/schemas remain runtime-owned/i)).toBeVisible();
+    expect(screen.getByText(/schemas remain runtime-owned/i)).toBeVisible();
   });
 
   it('changes only the current Session identity from the complete recorded identity catalog', async () => {
@@ -383,7 +362,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.change(within(dialog).getByLabelText('Agent name'), {
       target: { value: 'Mildred Plot Twist' },
     });
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'Runner route' }));
+    chooseClosedOption('Visual identity', 'Runner route');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply to this Session' }));
 
     expect(
@@ -391,7 +370,6 @@ describe('HarnessAwareAgentSessionPane', () => {
         name: 'Edit Agent identity for Mildred Plot Twist',
       }),
     ).toBeVisible();
-    expect(screen.getByRole('button', { name: /Harness subset · 10 names/ })).toBeVisible();
     expect(
       screen.getAllByLabelText('Mildred Plot Twist, Epic Plan Builder').length,
     ).toBeGreaterThan(0);
@@ -408,44 +386,37 @@ describe('HarnessAwareAgentSessionPane', () => {
     );
     await openHarnessManagement();
 
-    const terraMaximum = screen.getByRole('slider', {
+    const terraMaximum = screen.getByRole('combobox', {
       name: 'Harness GPT-5.6 Terra maximum reasoning',
     });
     expect(terraMaximum).toBeEnabled();
     expect(screen.getByText('Shared by recorded Sessions using v3.')).toBeVisible();
-    const range = screen.getByLabelText(
-      'GPT-5.6 Terra selected reasoning range: low through xhigh',
-    );
-    expect(range).toHaveTextContent('low');
-    expect(range).toHaveTextContent('xhigh');
-    expect(within(range).queryByText('medium')).toBeNull();
-    expect(within(range).queryByText('high')).toBeNull();
+    expect(screen.getByLabelText('Harness GPT-5.6 Terra minimum reasoning')).toHaveValue('Low');
+    expect(terraMaximum).toHaveValue('Xhigh');
 
-    fireEvent.change(screen.getByLabelText('Viewed harness version'), {
-      target: { value: 'version:4' },
-    });
+    chooseClosedOption('Viewed harness version', /v4.*Next-prompt update policy/);
     await waitFor(() =>
       expect(
-        screen.getByRole('slider', {
+        screen.queryByRole('combobox', {
           name: 'Harness GPT-5.6 Terra maximum reasoning',
         }),
-      ).toBeDisabled(),
+      ).toBeNull(),
     );
     expect(
       screen.getByText('Fixed by this revision; edit the Harness to change it.'),
     ).toBeVisible();
-    expect(screen.getByLabelText('Harness default model')).toBeDisabled();
+    expect(screen.queryByRole('combobox', { name: 'Harness default model' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
     await waitFor(() =>
       expect(
-        screen.getByRole('slider', {
+        screen.getByRole('combobox', {
           name: 'Harness GPT-5.6 Terra maximum reasoning',
         }),
       ).toBeEnabled(),
     );
     expect(screen.getByLabelText('Harness default model')).toBeEnabled();
-    expect(screen.getByLabelText('Harness allows GPT-5.6 Terra')).toBeEnabled();
+    expect(screen.getByLabelText('Allowed models')).toBeEnabled();
   });
 
   it('restores untouched model and range defaults across delegated shared-policy cache writes', async () => {
@@ -460,34 +431,30 @@ describe('HarnessAwareAgentSessionPane', () => {
     await openHarnessManagement();
     await setHarnessDefault('gpt-5.6-terra', 'high');
 
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
     expect(await screen.findByText('Recorded shared adjustment')).toBeVisible();
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-terra', 'high');
 
-    setTerraMaximum(1);
+    await setTerraMaximum(1);
     await expectHarnessDefault('gpt-5.6-terra', 'medium');
-    setTerraMaximum(3);
+    await setTerraMaximum(3);
     await expectHarnessDefault('gpt-5.6-terra', 'high');
 
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
-    fireEvent.change(screen.getByLabelText('Harness default model'), {
-      target: { value: '' },
-    });
+    chooseClosedOption('Harness default model', 'Caller choice');
     await expectHarnessDefault('', '');
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('', '');
 
     await setHarnessDefault('gpt-5.6-terra', 'high');
-    setTerraMaximum(1);
+    await setTerraMaximum(1);
     await expectHarnessDefault('gpt-5.6-terra', 'medium');
-    fireEvent.change(screen.getByLabelText('Harness default reasoning'), {
-      target: { value: 'low' },
-    });
+    chooseClosedOption('Harness default reasoning', 'Low');
     await expectHarnessDefault('gpt-5.6-terra', 'low');
-    setTerraMaximum(3);
+    await setTerraMaximum(3);
     await expectHarnessDefault('gpt-5.6-terra', 'low');
   });
 
@@ -505,24 +472,22 @@ describe('HarnessAwareAgentSessionPane', () => {
     await waitFor(() => expect(screen.getByLabelText('Harness default model')).toBeEnabled());
     await setHarnessDefault('gpt-5.6-terra', 'high');
 
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
     expect(
       await screen.findByText('Working draft · uncommitted', {
         selector: '.harness-management__badge',
       }),
     ).toBeVisible();
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-terra', 'high');
 
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
     fireEvent.click(screen.getByRole('button', { name: 'Finish editing' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit draft' }));
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness allows GPT-5.6 Terra')).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await waitFor(() => expect(screen.getByLabelText('Allowed models')).toBeEnabled());
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
   });
 
@@ -538,21 +503,21 @@ describe('HarnessAwareAgentSessionPane', () => {
     await openHarnessManagement();
     await setHarnessDefault('gpt-5.6-terra', 'high');
 
-    setTerraMaximum(1);
+    await setTerraMaximum(1);
     await expectHarnessDefault('gpt-5.6-terra', 'medium');
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await screen.findByText('Conversation body');
     await openHarnessManagement();
-    setTerraMaximum(3);
+    await setTerraMaximum(3);
     await expectHarnessDefault('gpt-5.6-terra', 'medium');
 
     await setHarnessDefault('gpt-5.6-terra', 'high');
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
     fireEvent.click(screen.getByRole('button', { name: 'Back to conversation' }));
     await screen.findByText('Conversation body');
     await openHarnessManagement();
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
   });
 
@@ -570,9 +535,9 @@ describe('HarnessAwareAgentSessionPane', () => {
     await waitFor(() => expect(screen.getByLabelText('Harness default model')).toBeEnabled());
     await setHarnessDefault('gpt-5.6-terra', 'high');
 
-    setTerraMaximum(1);
+    await setTerraMaximum(1);
     await expectHarnessDefault('gpt-5.6-terra', 'medium');
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
+    await toggleAllowedModel('GPT-5.6 Terra');
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
 
     fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
@@ -581,16 +546,14 @@ describe('HarnessAwareAgentSessionPane', () => {
     });
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Commit version' }));
     await waitFor(() =>
-      expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:5'),
+      expect(screen.getByLabelText('Viewed harness version').getAttribute('value')).toContain('v5'),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Finish editing' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit harness' }));
-    await waitFor(() =>
-      expect(screen.getByLabelText('Harness allows GPT-5.6 Terra')).toBeEnabled(),
-    );
+    await waitFor(() => expect(screen.getByLabelText('Allowed models')).toBeEnabled());
 
-    fireEvent.click(screen.getByLabelText('Harness allows GPT-5.6 Terra'));
-    setTerraMaximum(3);
+    await toggleAllowedModel('GPT-5.6 Terra');
+    await setTerraMaximum(3);
     await expectHarnessDefault('gpt-5.6-sol', 'medium');
   });
 
@@ -606,9 +569,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
 
-    fireEvent.change(screen.getByLabelText('Viewed harness version'), {
-      target: { value: 'version:4' },
-    });
+    chooseClosedOption('Viewed harness version', /v4.*Next-prompt update policy/);
     fireEvent.click(screen.getByRole('button', { name: 'Use v4 for this Session' }));
     let confirmation = screen.getByRole('alertdialog', {
       name: 'Change this Session to v4?',
@@ -634,7 +595,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(within(confirmation).getByText(/does not push.*Sessions/i)).toBeVisible();
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Commit version' }));
     await waitFor(() =>
-      expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:5'),
+      expect(screen.getByLabelText('Viewed harness version').getAttribute('value')).toContain('v5'),
     );
     expect(screen.getByRole('button', { name: 'v5 · Harness settings update' })).toBeVisible();
     expect(screen.getByText('Committed', { selector: '.harness-management__badge' })).toBeVisible();

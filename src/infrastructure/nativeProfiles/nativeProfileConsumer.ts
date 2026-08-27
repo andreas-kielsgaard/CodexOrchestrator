@@ -9,7 +9,12 @@ export interface NativeProfileApplicationResolution {
 
 export interface NativeProfileApplicationConsumer {
   resolve(selectedProfileId: string): Promise<NativeProfileApplicationResolution>;
+  currentSelection(): Promise<NativeProfileCurrentSelection>;
 }
+
+export type NativeProfileCurrentSelection =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'selected'; readonly profileId: string; readonly codexHome: string };
 
 /** Resolve a caller-owned selected id against one current, strictly decoded query. */
 export function resolveNativeProfileApplicationConsumer(
@@ -29,5 +34,21 @@ export function resolveNativeProfileApplicationConsumer(
 export function createNativeProfileApplicationConsumer(
   client: Pick<NativeProfileClient, 'load'>,
 ): NativeProfileApplicationConsumer {
-  return { resolve: async (selectedProfileId) => resolveNativeProfileApplicationConsumer(await client.load(), selectedProfileId) };
+  return {
+    resolve: async (selectedProfileId) => resolveNativeProfileApplicationConsumer(await client.load(), selectedProfileId),
+    currentSelection: async () => resolveCurrentNativeProfileSelection(await client.load()),
+  };
+}
+
+export function resolveCurrentNativeProfileSelection(
+  query: NativeProfileQuery,
+): NativeProfileCurrentSelection {
+  const selected = query.profiles.filter((profile) => profile.selected);
+  if (selected.length === 0) return { kind: 'none' };
+  if (selected.length !== 1) throw new Error('Native profile selection is ambiguous');
+  return {
+    kind: 'selected',
+    profileId: selected[0]!.id,
+    codexHome: selected[0]!.homePath,
+  };
 }

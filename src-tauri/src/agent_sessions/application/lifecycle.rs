@@ -104,6 +104,18 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     ) -> Result<RuntimeLaunchExtension, String>;
 }
 
+/// Session-owned runtime mediation consulted after all role and profile launch configuration has
+/// been resolved. A bound Session can replace only the MCP surface while preserving unrelated
+/// launch settings.
+pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
+    fn prepare_launch(
+        &self,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String>;
+}
+
 pub(crate) trait AgentSessionClock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
@@ -145,6 +157,7 @@ pub(crate) struct AgentSessionApplication {
     ids: Arc<dyn AgentSessionIdProvider>,
     runtime_version: Option<String>,
     native_profile_launch_authority: Option<Arc<dyn NativeProfileLaunchAuthority>>,
+    session_harness_launch_authority: Option<Arc<dyn SessionHarnessLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
 }
 
@@ -165,6 +178,7 @@ impl AgentSessionApplication {
             ids,
             runtime_version,
             native_profile_launch_authority: None,
+            session_harness_launch_authority: None,
             update_lanes: Arc::new(InvocationUpdateLanes::default()),
         }
     }
@@ -174,6 +188,14 @@ impl AgentSessionApplication {
         authority: Arc<dyn NativeProfileLaunchAuthority>,
     ) -> Self {
         self.native_profile_launch_authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn with_session_harness_launch_authority(
+        mut self,
+        authority: Arc<dyn SessionHarnessLaunchAuthority>,
+    ) -> Self {
+        self.session_harness_launch_authority = Some(authority);
         self
     }
 
@@ -636,6 +658,26 @@ impl AgentSessionApplication {
                 launch_extension,
             ) {
                 Ok(extension) => Some(extension),
+                Err(message) => {
+                    self.finish_preflight_failure(
+                        &invocation,
+                        RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                    )?;
+                    return Ok(SendAgentSessionMessageLaunchResult {
+                        acknowledgement,
+                        launch_accepted: false,
+                    });
+                }
+            },
+            None => launch_extension,
+        };
+        let launch_extension = match self.session_harness_launch_authority.as_ref() {
+            Some(authority) => match authority.prepare_launch(
+                &session.id,
+                &invocation.id,
+                launch_extension,
+            ) {
+                Ok(extension) => extension,
                 Err(message) => {
                     self.finish_preflight_failure(
                         &invocation,

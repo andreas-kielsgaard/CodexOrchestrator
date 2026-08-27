@@ -2,6 +2,7 @@ use super::lifecycle::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
     CreateAgentSessionCommand, NativeProfileLaunchAuthority, SendAgentSessionMessageCommand,
+    SessionHarnessLaunchAuthority,
     SendIdempotentApplicationAgentSessionMessageCommand,
 };
 use crate::agent_sessions::{
@@ -29,6 +30,55 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
+
+#[test]
+fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection.execute_batch(AGENT_SESSION_SCHEMA).expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let authority = Arc::new(RecordingSessionHarnessAuthority::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".into()),
+    )
+    .with_session_harness_launch_authority(authority.clone());
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: None,
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .unwrap();
+
+    application.send_message(message(&session.id, "fresh")).unwrap();
+    application.send_message(message(&session.id, "resume")).unwrap();
+
+    assert_eq!(authority.invocations.lock().unwrap().len(), 2);
+    let requests = runtime
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|call| match call {
+            RuntimeCall::Start(request) | RuntimeCall::Resume(request, _) => {
+                Some(request.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| request
+        .launch_extension
+        .as_ref()
+        .is_some_and(|extension| extension.additional_args.contains(&"mcp_servers={}".to_string()))));
+}
 
 #[test]
 fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacing_role_environment()
@@ -1069,6 +1119,27 @@ impl NativeProfileLaunchAuthority for RejectingProfileAuthority {
         _: Option<RuntimeLaunchExtension>,
     ) -> Result<RuntimeLaunchExtension, String> {
         Err("selected native profile is not ready".into())
+    }
+}
+
+#[derive(Default)]
+struct RecordingSessionHarnessAuthority {
+    invocations: Mutex<Vec<AgentInvocationId>>,
+}
+
+impl SessionHarnessLaunchAuthority for RecordingSessionHarnessAuthority {
+    fn prepare_launch(
+        &self,
+        _: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        self.invocations.lock().unwrap().push(invocation_id.clone());
+        let mut extension = extension.unwrap_or_default();
+        extension
+            .additional_args
+            .extend(["-c".to_string(), "mcp_servers={}".to_string()]);
+        Ok(Some(extension))
     }
 }
 

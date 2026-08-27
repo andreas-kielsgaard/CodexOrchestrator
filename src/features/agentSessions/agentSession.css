@@ -875,6 +875,22 @@
   color: #66510f;
 }
 
+.agent-runtime-guidance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid #d7b96d;
+  border-radius: 8px;
+  background: #fff9e8;
+}
+
+.agent-runtime-guidance p {
+  margin: 0;
+}
+
 .agent-session-composer {
   padding: 12px clamp(18px, 7vw, 96px) 16px;
   border-top: 1px solid #d8ddd5;

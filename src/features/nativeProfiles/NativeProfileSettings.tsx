@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type {
+  DiscoveredNativeCodexHome,
+  NativeProfile,
+  NativeProfileClient,
+} from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import './nativeProfileSettings.css';
 
 export function NativeProfileSettings({ client }: { readonly client: NativeProfileClient }) {
   const [profiles, setProfiles] = useState<readonly NativeProfile[]>([]);
-  const [homePath, setHomePath] = useState('');
+  const [discoveredHomes, setDiscoveredHomes] = useState<readonly DiscoveredNativeCodexHome[]>([]);
+  const [selectedHomePath, setSelectedHomePath] = useState('');
+  const [manualHomePath, setManualHomePath] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('Loading durable Codex home profiles.');
   const requestVersion = useRef(0);
   const refresh = useCallback(async () => {
     const version = ++requestVersion.current;
     try {
-      const result = await client.load();
+      const [result, homes] = await Promise.all([client.load(), client.discoverHomes()]);
       if (version !== requestVersion.current) return;
       setProfiles(result.profiles);
+      setDiscoveredHomes(homes);
       setMessage('Showing current durable profile state.');
     } catch (error) {
       if (version !== requestVersion.current) return;
       setProfiles([]);
+      setDiscoveredHomes([]);
       setMessage(error instanceof Error ? error.message : 'Profile state is unavailable.');
     }
   }, [client]);
@@ -31,20 +39,63 @@ export function NativeProfileSettings({ client }: { readonly client: NativeProfi
       const result = await action();
       if (version !== requestVersion.current) return;
       setProfiles(result.profiles);
+      setDiscoveredHomes(await client.discoverHomes());
       setMessage(actionResultMessage(name, label));
     } catch (error) {
       if (version !== requestVersion.current) return;
       setMessage(`${label} failed: ${error instanceof Error ? error.message : 'the request was rejected.'}`);
     }
     finally { if (version === requestVersion.current) setBusy(null); }
-  }, [busy]);
+  }, [busy, client]);
   return (
     <main className="native-profile-settings" aria-label="Technical Codex settings" tabIndex={0}>
       <header><p className="eyebrow">Technical Settings</p><h1>Codex home profiles</h1><p>Manage product-owned Codex homes and their observed setup state. Account identity and provider readiness are never inferred here.</p></header>
-      <section aria-labelledby="profile-registration"><h2 id="profile-registration">Register or create a home</h2>
-        <div className="native-profile-register"><label>Existing Codex home path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="C:\\Users\\you\\.codex" /></label>
-          <button type="button" disabled={!homePath.trim() || busy !== null} onClick={() => void run('register', async () => { const result = await client.registerExisting(homePath.trim()); setHomePath(''); return result; })}>Register existing</button>
-          <button type="button" disabled={busy !== null} onClick={() => void run('create', () => client.createDedicated())}>Create dedicated Orchestrator home</button>
+      <section aria-labelledby="profile-registration">
+        <h2 id="profile-registration">Register or create a home</h2>
+        <div className="native-profile-register">
+          <label>
+            Discovered Codex home
+            <select value={selectedHomePath} onChange={(event) => setSelectedHomePath(event.target.value)}>
+              <option value="">Choose an existing home</option>
+              {discoveredHomes.map((home) => (
+                <option key={home.homePath} value={home.homePath}>
+                  {home.homePath} · {home.selected ? 'selected' : home.registeredProfileId ? 'registered' : home.source}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!selectedHomePath || busy !== null || discoveredHomes.some((home) => home.homePath === selectedHomePath && home.registeredProfileId !== null)}
+            onClick={() => void run('register', async () => {
+              const result = await client.registerExisting(selectedHomePath);
+              setSelectedHomePath('');
+              return result;
+            })}
+          >
+            Register discovered home
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => void refresh()}>
+            Refresh discovered homes
+          </button>
+          <label className="native-profile-register__manual">
+            Manual path fallback
+            <input value={manualHomePath} onChange={(event) => setManualHomePath(event.target.value)} placeholder="C:\\Users\\you\\.codex-custom" />
+          </label>
+          <button
+            type="button"
+            disabled={!manualHomePath.trim() || busy !== null}
+            onClick={() => void run('register', async () => {
+              const result = await client.registerExisting(manualHomePath.trim());
+              setManualHomePath('');
+              return result;
+            })}
+          >
+            Register manual path
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => void run('create', () => client.createDedicated())}>
+            Create dedicated Orchestrator home
+          </button>
         </div>
       </section>
       <button type="button" disabled={busy !== null} onClick={() => void refresh()}>Refresh durable state</button>

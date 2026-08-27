@@ -1,6 +1,7 @@
 import type {
   AgentDiagnosticDto,
   AgentInvocationStatusDto,
+  AgentRuntimeFailureDto,
   AgentRuntimeEventDto,
   AgentRuntimeUsageDto,
   AgentSessionDetailsDto,
@@ -85,6 +86,7 @@ export interface ProjectedInvocation {
   technical: TranscriptActivity[];
   diagnostics: AgentDiagnosticDto[];
   finalResponse: TranscriptFinalResponse | null;
+  runtimeFailure: AgentRuntimeFailureDto | null;
   outcome: TranscriptOutcome;
 }
 
@@ -160,6 +162,7 @@ export function projectAgentSessionTranscript(
               text: finalEvent.normalized.text.trim(),
             }
           : null,
+        runtimeFailure: invocation.runtimeError,
         outcome: projectOutcome(invocation.status, invocation.runtimeError?.message ?? null),
       };
     });

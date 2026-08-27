@@ -331,17 +331,15 @@ fn launch_provenance_redacts_the_exact_workspace_from_project_trust_configuratio
 }
 
 #[test]
-fn omits_optional_options_when_capability_data_is_absent() {
+fn rejects_requested_model_when_support_is_unknown() {
     let options = AgentRuntimeOptions {
         model: Some("unverified-model".to_string()),
         sandbox: None,
     };
-    let effective =
-        prepare_options(&options, &InvocationCapabilities::default()).expect("preflight defaults");
-    let args =
-        build_args_from_effective_options(InvocationCommand::Start, "hello", &effective, None);
-    assert_eq!(args, ["exec", "--json", "hello"]);
-    assert_eq!(effective, AgentRuntimeOptions::default());
+    let error = prepare_options(&options, &InvocationCapabilities::default())
+        .expect_err("model selection must fail closed");
+    assert_eq!(error.kind, RuntimePortErrorKind::UnsupportedOptions);
+    assert!(error.message.contains("model-selection support is unknown"));
 }
 
 #[test]

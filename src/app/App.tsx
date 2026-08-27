@@ -24,7 +24,10 @@ import {
   OrchestrationSection,
   type OrchestrationNavigationChangeIntent,
 } from '../features/orchestrations';
-import type { EmbeddedAgentSessionComposition } from '../features/agentSessions';
+import {
+  AgentSessionRuntimeGuidanceProvider,
+  type EmbeddedAgentSessionComposition,
+} from '../features/agentSessions';
 import {
   useCallback,
   useEffect,
@@ -33,6 +36,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentType,
   type ReactNode,
 } from 'react';
 import {
@@ -80,9 +84,13 @@ import type {
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
 } from '../application/productDecisions';
+import type { WorkflowApplicationClient } from '../application/workflows';
+import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
+import { WorkflowScreen } from '../features/workflows';
 
 export type ApplicationSurface =
   | 'epics'
+  | 'workflows'
   | 'agent-sessions'
   | 'harness-inspector'
   | 'file-review'
@@ -97,6 +105,8 @@ export interface AppProps {
   /** Session-owned identity read; assignment and durability remain outside this view. */
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
+  readonly workflowClient?: WorkflowApplicationClient;
+  readonly workflowTargetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
   readonly artifactAccessController?: ArtifactAccessController;
@@ -146,6 +156,8 @@ export function App({
   },
   managedPlanBuilderAgentIdentity,
   orchestrationClient,
+  workflowClient,
+  workflowTargetSelector,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
   artifactAccessController = unsupportedArtifactAccessController,
@@ -163,6 +175,7 @@ export function App({
   fileReviewSource,
   contextualFileReviewClient,
   nativeProfileClient,
+  nativeProfileApplicationConsumer,
   fileReviewSourceForEvidence,
   epicProductDecisionSource,
   productDecisionClient,
@@ -172,6 +185,7 @@ export function App({
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
+    (initialSurface === 'workflows' && !workflowClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
     (initialSurface === 'worktree-review' && !humanReviewLauncherView)
@@ -202,6 +216,8 @@ export function App({
         case 'plan_builder':
         case 'agent_sessions':
           return true;
+        case 'workflow':
+          return Boolean(workflowClient);
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
           return sameFileReviewNavigationTarget(
@@ -221,18 +237,21 @@ export function App({
       harnessManagementPreviewSurface,
       humanReviewLauncherView,
       productDecisionClient,
+      workflowClient,
     ],
   );
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
-      : initialApplicationSurface === 'file-review'
-        ? { kind: 'file_review', target: { kind: 'direct' } }
-        : initialApplicationSurface === 'harness-inspector'
-          ? { kind: 'harness_inspector' }
-          : initialApplicationSurface === 'worktree-review'
-            ? { kind: 'worktree_review' }
-            : { kind: 'orchestration', location: null };
+      : initialApplicationSurface === 'workflows'
+        ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
+        : initialApplicationSurface === 'file-review'
+          ? { kind: 'file_review', target: { kind: 'direct' } }
+          : initialApplicationSurface === 'harness-inspector'
+            ? { kind: 'harness_inspector' }
+            : initialApplicationSurface === 'worktree-review'
+              ? { kind: 'worktree_review' }
+              : { kind: 'orchestration', location: null };
   const [productNavigation, dispatchProductNavigation] = useReducer(
     (
       state: ReturnType<typeof createProductNavigation>,
@@ -318,6 +337,8 @@ export function App({
     } else if (destination.kind === 'plan_builder') {
       setSurface('epics');
       setOrchestrationRoute('plan-builder');
+    } else if (destination.kind === 'workflow') {
+      setSurface('workflows');
     } else if (destination.kind === 'agent_sessions') {
       setSurface('agent-sessions');
     } else if (destination.kind === 'harness_inspector') {
@@ -829,7 +850,7 @@ export function App({
     ],
   );
 
-  return (
+  const appShell = (
     <div className="primary-app-shell">
       {confirmation.receiptError && (
         <p className="application-confirmation-error" role="alert">
@@ -855,6 +876,28 @@ export function App({
           >
             Orchestration
           </button>
+          {workflowClient ? (
+            <button
+              className={surface === 'workflows' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'workflows' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: {
+                    kind: 'workflow',
+                    workflowTypeId: null,
+                    workflowInstanceId: null,
+                  },
+                });
+                setSurface('workflows');
+              }}
+            >
+              Workflow
+            </button>
+          ) : null}
           <button
             className={surface === 'agent-sessions' ? 'active' : undefined}
             type="button"
@@ -1017,6 +1060,32 @@ export function App({
           onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
           onPublishProductDecision={openProductDecisionPublish}
         />
+      ) : surface === 'workflows' &&
+        workflowClient &&
+        currentProductDestination.kind === 'workflow' ? (
+        <WorkflowScreen
+          client={workflowClient}
+          agentSessionClient={agentSessionClient}
+          targetSelector={workflowTargetSelector}
+          workflowTypeId={currentProductDestination.workflowTypeId}
+          workflowInstanceId={currentProductDestination.workflowInstanceId}
+          onOpenWorkflowType={(workflowTypeId) => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'workflow', workflowTypeId, workflowInstanceId: null },
+            });
+          }}
+          onOpenWorkflowInstance={(workflowInstanceId) => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'workflow', workflowTypeId: null, workflowInstanceId },
+            });
+          }}
+        />
       ) : surface === 'file-review' && activeFileReviewSource ? (
         <FileReviewScreen
           source={activeFileReviewSource}
@@ -1072,6 +1141,16 @@ export function App({
         harnessManagementPreviewSurface
       )}
     </div>
+  );
+  return (
+    <AgentSessionRuntimeGuidanceProvider
+      consumer={nativeProfileApplicationConsumer}
+      onOpenTechnicalSettings={
+        nativeProfileClient ? () => setSurface('native-settings') : undefined
+      }
+    >
+      {appShell}
+    </AgentSessionRuntimeGuidanceProvider>
   );
 }
 
