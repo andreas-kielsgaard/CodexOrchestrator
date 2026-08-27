@@ -17,8 +17,9 @@ import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/o
 import { createTauriEpicInitiationConfirmationClient } from '../infrastructure/orchestrations/tauriEpicInitiationConfirmation';
 import { tauriEpicBootstrapTransitionClient } from '../infrastructure/orchestrations/tauriEpicBootstrapTransition';
 import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrations/tauriSprintRunnerTransition';
-import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
+import { createCanonicalConversationHarnessManagementSource } from '../infrastructure/conversationHarnesses/canonicalConversationHarnessManagementSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
+import { tauriHarnessManagementClient } from '../infrastructure/harnesses/tauriHarnessManagementClient';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
@@ -38,7 +39,10 @@ export function createProductApplicationComposition(): AppProps {
       tauriAgentSessionClient,
       invoke,
     ),
-    agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
+    agentSessionHarnessManagementSource: createCanonicalConversationHarnessManagementSource(
+      tauriAgentSessionClient,
+      tauriHarnessManagementClient,
+    ),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
     nativeProfileApplicationConsumer:

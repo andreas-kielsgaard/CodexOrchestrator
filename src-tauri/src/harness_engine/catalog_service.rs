@@ -5,6 +5,7 @@ use super::{
     domain::{HarnessId, HarnessVersionRef, HarnessVersionReplacement, HarnessVersionScope},
     resolution::resolve_harness_version,
 };
+use crate::agent_sessions::{application::SessionHarnessVersionResolver, domain::AgentSessionId};
 use chrono::Utc;
 use std::{path::Path, sync::Arc};
 use uuid::Uuid;
@@ -58,6 +59,13 @@ impl HarnessCatalogService {
 
     pub(crate) fn list(&self) -> Result<Vec<HarnessRecord>, String> {
         self.repository.harnesses()
+    }
+
+    pub(crate) fn replacements(
+        &self,
+        harness_id: &HarnessId,
+    ) -> Result<Vec<HarnessVersionReplacement>, String> {
+        self.repository.replacements(harness_id)
     }
 
     pub(crate) fn load(
@@ -212,6 +220,27 @@ impl HarnessCatalogService {
             version,
             replacement_path,
         })
+    }
+}
+
+impl SessionHarnessVersionResolver for HarnessCatalogService {
+    fn resolve_session_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        requested: &HarnessVersionRef,
+    ) -> Result<HarnessVersionRef, String> {
+        let resolved = self.resolve(requested)?;
+        if let HarnessVersionScope::SessionSpecific {
+            session_id: owning_session_id,
+        } = &resolved.version.scope
+        {
+            if owning_session_id != session_id.as_str() {
+                return Err(
+                    "Session-specific Harness version belongs to a different Agent Session.".into(),
+                );
+            }
+        }
+        Ok(resolved.version.reference)
     }
 }
 

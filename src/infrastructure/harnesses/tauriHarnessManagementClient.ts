@@ -146,11 +146,18 @@ export function decodeHarnessCatalogItem(value: unknown, label = 'Harness'): Har
 }
 
 export function decodeHarnessDetails(value: unknown): HarnessDetails {
-  const root = exactObject(value, ['harness', 'draft', 'versions'], 'Harness details');
+  const root = exactObject(
+    value,
+    ['harness', 'draft', 'versions', 'replacements'],
+    'Harness details',
+  );
   const harness = decodeHarnessCatalogItem(root.harness);
   const draft = root.draft === null ? null : decodeHarnessDraft(root.draft);
   const versions = array(root.versions, 'Harness versions').map((item, index) =>
     decodePublishedHarnessVersion(item, `Harness version ${index}`),
+  );
+  const replacements = array(root.replacements, 'Harness replacements').map(
+    decodeHarnessVersionReplacement,
   );
   if (draft !== null && draft.harnessId !== harness.harnessId)
     throw new Error('Harness draft belongs to a different Harness');
@@ -160,7 +167,18 @@ export function decodeHarnessDetails(value: unknown): HarnessDetails {
     versions.map(({ reference }) => reference.version),
     'Harness version numbers',
   );
-  return { harness, draft, versions };
+  if (
+    replacements.some(
+      ({ source, target }) =>
+        source.harnessId !== harness.harnessId || target.harnessId !== harness.harnessId,
+    )
+  )
+    throw new Error('Harness details contain a replacement from a different Harness');
+  requireUnique(
+    replacements.map(({ source }) => source.version),
+    'Harness replacement source versions',
+  );
+  return { harness, draft, versions, replacements };
 }
 
 export function decodeHarnessDraft(value: unknown): HarnessDraft {

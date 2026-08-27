@@ -31,6 +31,7 @@ export interface HarnessDetails {
   readonly harness: HarnessCatalogItem;
   readonly draft: HarnessDraft | null;
   readonly versions: readonly PublishedHarnessVersion[];
+  readonly replacements: readonly HarnessVersionReplacement[];
 }
 
 export interface HarnessVersionReplacement {

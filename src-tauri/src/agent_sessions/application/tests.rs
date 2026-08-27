@@ -3,7 +3,7 @@ use super::lifecycle::{
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
     CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
     SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
-    SessionHarnessLaunchAuthority, UpdateAgentSessionHarnessCommand,
+    SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand,
 };
 use crate::agent_sessions::{
@@ -104,6 +104,128 @@ fn application_creates_and_updates_session_owned_harness_and_identity() {
         })
         .expect("clear Session identity");
     assert!(cleared.assigned_identity.is_none());
+}
+
+#[test]
+fn unchanged_owned_harness_is_resolved_before_launch_without_rewriting_the_reference() {
+    let requested = harness_version("planning", 1);
+    let resolver = Arc::new(RecordingHarnessVersionResolver::succeed(requested.clone()));
+    let (application, repository, runtime, native_authority, harness_authority) =
+        harness_resolution_application(resolver.clone());
+    let session = create_harness_owned_session(&application, requested.clone());
+
+    application
+        .send_message(message(&session.id, "resolve current Harness"))
+        .expect("launch with current Harness");
+
+    assert_eq!(
+        resolver.requests.lock().unwrap().as_slice(),
+        &[(session.id.clone(), requested.clone())]
+    );
+    assert_eq!(
+        repository
+            .get_session(&session.id)
+            .unwrap()
+            .unwrap()
+            .harness_version,
+        Some(requested.clone())
+    );
+    assert_eq!(native_authority.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        native_authority
+            .observed_harness_versions
+            .lock()
+            .unwrap()
+            .as_slice(),
+        &[Some(requested)]
+    );
+    assert_eq!(harness_authority.invocations.lock().unwrap().len(), 1);
+    assert!(runtime
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| matches!(call, RuntimeCall::Preflight(_))));
+}
+
+#[test]
+fn replacement_resolution_is_persisted_before_launch_preparation() {
+    let requested = harness_version("planning", 1);
+    let replacement = harness_version("planning", 2);
+    let resolver = Arc::new(RecordingHarnessVersionResolver::succeed(
+        replacement.clone(),
+    ));
+    let (application, repository, runtime, native_authority, harness_authority) =
+        harness_resolution_application(resolver);
+    let session = create_harness_owned_session(&application, requested);
+
+    application
+        .send_message(message(&session.id, "migrate then launch"))
+        .expect("launch with replacement Harness");
+
+    assert_eq!(
+        repository
+            .get_session(&session.id)
+            .unwrap()
+            .unwrap()
+            .harness_version,
+        Some(replacement.clone())
+    );
+    assert_eq!(native_authority.calls.lock().unwrap().len(), 1);
+    assert_eq!(
+        native_authority
+            .observed_harness_versions
+            .lock()
+            .unwrap()
+            .as_slice(),
+        &[Some(replacement)]
+    );
+    assert_eq!(harness_authority.invocations.lock().unwrap().len(), 1);
+    assert!(runtime
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|call| matches!(call, RuntimeCall::Start(_))));
+}
+
+#[test]
+fn harness_resolution_failure_is_a_durable_preflight_failure_before_launch_preparation() {
+    let requested = harness_version("planning", 1);
+    let resolver = Arc::new(RecordingHarnessVersionResolver::fail(
+        "replacement chain is unavailable",
+    ));
+    let (application, repository, runtime, native_authority, harness_authority) =
+        harness_resolution_application(resolver);
+    let session = create_harness_owned_session(&application, requested.clone());
+
+    let result = application
+        .send_message(message(&session.id, "must not launch"))
+        .expect("resolution failure is terminalized");
+
+    let invocation = repository
+        .get_invocation(&result.invocation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(invocation.status, AgentInvocationStatus::Failed);
+    assert_eq!(
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("runtime_preflight_failed")
+    );
+    assert_eq!(
+        repository
+            .get_session(&session.id)
+            .unwrap()
+            .unwrap()
+            .harness_version,
+        Some(requested)
+    );
+    assert!(native_authority.calls.lock().unwrap().is_empty());
+    assert!(harness_authority.invocations.lock().unwrap().is_empty());
+    assert!(runtime.calls.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -1187,6 +1309,71 @@ fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCo
     }
 }
 
+fn harness_version(harness_id: &str, version: u64) -> HarnessVersionRef {
+    HarnessVersionRef::new(
+        HarnessId::new(harness_id).unwrap(),
+        HarnessVersionNumber::new(version).unwrap(),
+    )
+}
+
+fn create_harness_owned_session(
+    application: &AgentSessionApplication,
+    harness_version: HarnessVersionRef,
+) -> AgentSession {
+    application
+        .create_session_with_ownership(
+            CreateAgentSessionCommand {
+                title: Some("Harness-owned Session".into()),
+                working_directory: None,
+                requested_options: AgentRuntimeOptions::default(),
+            },
+            AgentSessionOwnership {
+                harness_version: Some(harness_version),
+                assigned_identity: None,
+            },
+        )
+        .unwrap()
+}
+
+fn harness_resolution_application(
+    resolver: Arc<dyn SessionHarnessVersionResolver>,
+) -> (
+    AgentSessionApplication,
+    Arc<SqliteAgentSessionRepository>,
+    Arc<FakeRuntime>,
+    Arc<RecordingProfileAuthority>,
+    Arc<RecordingSessionHarnessAuthority>,
+) {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).unwrap());
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let native_authority = Arc::new(RecordingProfileAuthority::observing(repository.clone()));
+    let harness_authority = Arc::new(RecordingSessionHarnessAuthority::default());
+    let application = AgentSessionApplication::new(
+        repository.clone(),
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".into()),
+    )
+    .with_session_harness_version_resolver(resolver)
+    .with_native_profile_launch_authority(native_authority.clone())
+    .with_session_harness_launch_authority(harness_authority.clone());
+    (
+        application,
+        repository,
+        runtime,
+        native_authority,
+        harness_authority,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum RuntimeBehavior {
     CompleteWithBinding,
@@ -1210,17 +1397,74 @@ enum RuntimeCall {
 #[derive(Default)]
 struct RecordingProfileAuthority {
     calls: Mutex<Vec<bool>>,
+    repository: Option<Arc<SqliteAgentSessionRepository>>,
+    observed_harness_versions: Mutex<Vec<Option<HarnessVersionRef>>>,
+}
+
+impl RecordingProfileAuthority {
+    fn observing(repository: Arc<SqliteAgentSessionRepository>) -> Self {
+        Self {
+            repository: Some(repository),
+            ..Self::default()
+        }
+    }
+}
+
+struct RecordingHarnessVersionResolver {
+    result: Result<HarnessVersionRef, String>,
+    requests: Mutex<Vec<(AgentSessionId, HarnessVersionRef)>>,
+}
+
+impl RecordingHarnessVersionResolver {
+    fn succeed(reference: HarnessVersionRef) -> Self {
+        Self {
+            result: Ok(reference),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn fail(message: &str) -> Self {
+        Self {
+            result: Err(message.into()),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl SessionHarnessVersionResolver for RecordingHarnessVersionResolver {
+    fn resolve_session_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        requested: &HarnessVersionRef,
+    ) -> Result<HarnessVersionRef, String> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push((session_id.clone(), requested.clone()));
+        self.result.clone()
+    }
 }
 
 impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
     fn prepare_launch(
         &self,
-        _: &AgentSessionId,
+        session_id: &AgentSessionId,
         _: &AgentInvocationId,
         resuming: bool,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<RuntimeLaunchExtension, String> {
         self.calls.lock().expect("authority calls").push(resuming);
+        if let Some(repository) = self.repository.as_ref() {
+            let harness_version = repository
+                .get_session(session_id)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "Session disappeared before native launch preparation".to_string())?
+                .harness_version;
+            self.observed_harness_versions
+                .lock()
+                .unwrap()
+                .push(harness_version);
+        }
         let mut extension = extension.unwrap_or_default();
         extension
             .environment
@@ -1687,6 +1931,16 @@ impl AgentSessionRepository for FaultInjectingRepository {
     ) -> Result<AgentSession, RepositoryError> {
         self.inner
             .update_assigned_identity(session_id, assigned_identity, updated_at)
+    }
+
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner
+            .update_session_model_override(session_id, model, updated_at)
     }
 
     fn create_pending_invocation(

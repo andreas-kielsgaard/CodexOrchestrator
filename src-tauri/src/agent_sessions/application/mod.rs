@@ -10,8 +10,8 @@ pub(crate) use lifecycle::{
     CreateApplicationAgentSessionCommand, NativeProfileLaunchAuthority,
     SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
     SendIdempotentApplicationAgentSessionMessageCommand, SessionHarnessLaunchAuthority,
-    SystemAgentSessionProviders, UpdateAgentSessionHarnessCommand,
-    UpdateAgentSessionIdentityCommand,
+    SessionHarnessVersionResolver, SystemAgentSessionProviders, UpdateAgentSessionHarnessCommand,
+    UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
 

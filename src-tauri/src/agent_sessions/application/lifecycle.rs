@@ -51,6 +51,12 @@ pub(crate) struct UpdateAgentSessionIdentityCommand {
     pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionModelOverrideCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) model: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SendAgentSessionMessageCommand {
     pub(crate) session_id: Option<AgentSessionId>,
@@ -135,6 +141,15 @@ pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
     ) -> Result<Option<RuntimeLaunchExtension>, String>;
 }
 
+/// Resolves the Session's exact owned Harness reference before any launch configuration is built.
+pub(crate) trait SessionHarnessVersionResolver: Send + Sync {
+    fn resolve_session_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        requested: &HarnessVersionRef,
+    ) -> Result<HarnessVersionRef, String>;
+}
+
 pub(crate) trait AgentSessionClock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }
@@ -176,6 +191,7 @@ pub(crate) struct AgentSessionApplication {
     ids: Arc<dyn AgentSessionIdProvider>,
     runtime_version: Option<String>,
     native_profile_launch_authority: Option<Arc<dyn NativeProfileLaunchAuthority>>,
+    session_harness_version_resolver: Option<Arc<dyn SessionHarnessVersionResolver>>,
     session_harness_launch_authority: Option<Arc<dyn SessionHarnessLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
 }
@@ -197,6 +213,7 @@ impl AgentSessionApplication {
             ids,
             runtime_version,
             native_profile_launch_authority: None,
+            session_harness_version_resolver: None,
             session_harness_launch_authority: None,
             update_lanes: Arc::new(InvocationUpdateLanes::default()),
         }
@@ -215,6 +232,14 @@ impl AgentSessionApplication {
         authority: Arc<dyn SessionHarnessLaunchAuthority>,
     ) -> Self {
         self.session_harness_launch_authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn with_session_harness_version_resolver(
+        mut self,
+        resolver: Arc<dyn SessionHarnessVersionResolver>,
+    ) -> Self {
+        self.session_harness_version_resolver = Some(resolver);
         self
     }
 
@@ -315,6 +340,24 @@ impl AgentSessionApplication {
                 command.assigned_identity,
                 self.clock.now(),
             )
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn update_session_model_override(
+        &self,
+        command: UpdateAgentSessionModelOverrideCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        let model = match command.model {
+            Some(model) if model.trim().is_empty() => {
+                return Err(AgentSessionApplicationError::invalid(
+                    "Session model override cannot be blank",
+                ));
+            }
+            Some(model) => Some(model.trim().to_string()),
+            None => None,
+        };
+        self.repository
+            .update_session_model_override(&command.session_id, model, self.clock.now())
             .map_err(AgentSessionApplicationError::repository)
     }
 
@@ -714,6 +757,20 @@ impl AgentSessionApplication {
             invocation_id: invocation.id.clone(),
         };
 
+        let session = match self.resolve_owned_harness_version(session) {
+            Ok(session) => session,
+            Err(message) => {
+                self.finish_preflight_failure(
+                    &invocation,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        };
+
         let launch_extension = match self.native_profile_launch_authority.as_ref() {
             Some(authority) => match authority.prepare_launch(
                 &session.id,
@@ -832,6 +889,26 @@ impl AgentSessionApplication {
             acknowledgement,
             launch_accepted,
         })
+    }
+
+    fn resolve_owned_harness_version(&self, session: AgentSession) -> Result<AgentSession, String> {
+        let Some(requested) = session.harness_version.as_ref() else {
+            return Ok(session);
+        };
+        let resolver = self
+            .session_harness_version_resolver
+            .as_ref()
+            .ok_or_else(|| {
+                "Session has a Harness reference, but Harness version resolution is unavailable."
+                    .to_string()
+            })?;
+        let resolved = resolver.resolve_session_harness_version(&session.id, requested)?;
+        if &resolved == requested {
+            return Ok(session);
+        }
+        self.repository
+            .update_harness_version(&session.id, Some(resolved), self.clock.now())
+            .map_err(|error| format!("Unable to persist resolved Session Harness: {error}"))
     }
 
     pub(crate) fn cancel_invocation(

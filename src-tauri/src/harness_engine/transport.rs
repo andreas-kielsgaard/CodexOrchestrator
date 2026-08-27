@@ -33,6 +33,7 @@ pub(crate) struct HarnessManagementView {
     harness: HarnessRecord,
     draft: Option<HarnessDraftView>,
     versions: Vec<HarnessVersion>,
+    replacements: Vec<super::domain::HarnessVersionReplacement>,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +185,7 @@ fn management_view(
         harness,
         draft,
         versions,
+        replacements: service.replacements(harness_id)?,
     })
 }
 

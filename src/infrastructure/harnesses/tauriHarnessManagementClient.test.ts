@@ -44,7 +44,7 @@ describe('Tauri Harness management client', () => {
       calls.push({ command, args });
       const result: Record<string, unknown> = {
         list_harnesses: [record],
-        load_harness: { harness: record, draft, versions: [version(1)] },
+        load_harness: { harness: record, draft, versions: [version(1)], replacements: [] },
         create_harness: record,
         rename_harness: { ...record, metadata: { name: 'Plan Builder' } },
         save_harness_draft: draft,
@@ -103,6 +103,7 @@ describe('Tauri Harness management client', () => {
       harness: record,
       draft,
       versions: [version(1)],
+      replacements: [],
     });
 
     expect(details.draft).toMatchObject({
@@ -117,7 +118,13 @@ describe('Tauri Harness management client', () => {
 
   it('rejects unknown, malformed, or internally contradictory transport values', () => {
     expect(() =>
-      decodeHarnessDetails({ harness: record, draft: null, versions: [], revisionId: 'private' }),
+      decodeHarnessDetails({
+        harness: record,
+        draft: null,
+        versions: [],
+        replacements: [],
+        revisionId: 'private',
+      }),
     ).toThrow(/unknown field/);
     expect(() =>
       decodeHarnessConfiguration({
@@ -135,6 +142,7 @@ describe('Tauri Harness management client', () => {
             reference: { harnessId: 'different-harness', version: 1 },
           },
         ],
+        replacements: [],
       }),
     ).toThrow(/different Harness/);
     expect(() =>

@@ -171,6 +171,7 @@ pub(crate) fn run() {
                     None,
                 )
                 .with_native_profile_launch_authority(native_profiles.clone())
+                .with_session_harness_version_resolver(Arc::new(harness_catalog.clone()))
                 .with_session_harness_launch_authority(harness_engine.clone()),
             );
             application
@@ -382,6 +383,8 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::agent_sessions::transport::update_agent_session_harness,
+            crate::agent_sessions::transport::update_agent_session_identity,
             crate::harness_engine::transport::list_harnesses,
             crate::harness_engine::transport::load_harness,
             crate::harness_engine::transport::create_harness,
