@@ -28,7 +28,6 @@ interface SelectOption<T extends string = string> {
 
 export type HarnessDefinitionProperty =
   | 'identityName'
-  | 'identityMachineKey'
   | 'permittedAgentNames'
   | 'visualIdentity'
   | 'promptPrefixContent'
@@ -76,7 +75,7 @@ export function HarnessDefinitionEditor({
   modelPolicy = configuration.runtime,
   modelPolicyEditable = editable,
   modelPolicyNote,
-  modelPolicyBoundaryKey = configuration.identity.machineKey,
+  modelPolicyBoundaryKey = configuration.identity.name,
   modelPolicyLabelPrefix = 'Harness',
   provenance,
   onResetProperty,
@@ -126,7 +125,7 @@ export function HarnessDefinitionEditor({
   return (
     <div className="harness-definition-editor" data-testid="harness-definition-editor">
       <DefinitionSection title="Harness details">
-        <div className="harness-management__field-row">
+        <div className="harness-management__field-row is-single">
           <DefinitionField
             label="Harness name"
             source={provenance?.identityName}
@@ -140,23 +139,6 @@ export function HarnessDefinitionEditor({
                 onChange({
                   ...configuration,
                   identity: { ...configuration.identity, name: event.currentTarget.value },
-                })
-              }
-            />
-          </DefinitionField>
-          <DefinitionField
-            label="Machine key"
-            source={provenance?.identityMachineKey}
-            onReset={onResetProperty ? () => onResetProperty('identityMachineKey') : undefined}
-          >
-            <input
-              aria-label="Harness machine key"
-              value={configuration.identity.machineKey}
-              disabled={!editable}
-              onChange={(event) =>
-                onChange({
-                  ...configuration,
-                  identity: { ...configuration.identity, machineKey: event.currentTarget.value },
                 })
               }
             />
@@ -200,7 +182,8 @@ export function HarnessDefinitionEditor({
               identity: {
                 ...configuration.identity,
                 visualIdentity:
-                  token && accent &&
+                  token &&
+                  accent &&
                   (shape === 'circle' || shape === 'square' || shape === 'hexagon')
                     ? { token, accent, shape }
                     : null,

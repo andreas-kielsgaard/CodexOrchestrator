@@ -461,6 +461,8 @@ describe('WorkflowScreen', () => {
 
     let dialog = screen.getByRole('dialog', { name: 'Configure new node' });
     await waitFor(() => expect(within(dialog).getByLabelText('Harness name')).toBeEnabled());
+    expect(within(dialog).queryByText('Machine key')).toBeNull();
+    expect(within(dialog).queryByLabelText('Harness machine key')).toBeNull();
     expect(within(dialog).getByRole('combobox', { name: 'Harness source' })).toHaveValue(
       'From scratch',
     );
@@ -1116,13 +1118,13 @@ describe('WorkflowScreen', () => {
         },
       }),
     );
-    expect(
-      (
-        vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness as unknown as {
-          overrides: Record<string, unknown>;
-        }
-      ).overrides,
-    ).toEqual({ promptPrefixContent: 'Security-only instructions' });
+    const savedOverrides = (
+      vi.mocked(client.saveNodeDraft).mock.calls.at(-1)?.[1].harness as unknown as {
+        overrides: Record<string, unknown>;
+      }
+    ).overrides;
+    expect(savedOverrides).toEqual({ promptPrefixContent: 'Security-only instructions' });
+    expect(savedOverrides).not.toHaveProperty('identityMachineKey');
     await waitFor(() => expect(promptField).toHaveClass('is-overridden'));
     fireEvent.click(within(promptField).getByRole('button', { name: 'Use inherited value' }));
     await waitFor(() =>

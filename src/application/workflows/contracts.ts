@@ -34,6 +34,7 @@ export type WorkflowMcpServerExposure = HarnessMcpServerExposure;
 
 export interface WorkflowHarnessOverrides {
   readonly identityName?: string | null;
+  /** Legacy transport compatibility only; active editors neither expose nor write this override. */
   readonly identityMachineKey?: string | null;
   readonly permittedAgentNames?: readonly string[] | null;
   readonly visualIdentity?: HarnessEffectiveConfiguration['identity']['visualIdentity'] | null;

@@ -40,6 +40,8 @@ describe('HarnessDefinitionEditor', () => {
     expect(within(role).getByTestId('harness-definition-editor')).toBeVisible();
     expect(within(session).getByLabelText('Harness name')).toHaveValue('Session Harness');
     expect(within(role).getByLabelText('Harness name')).toHaveValue('Role Harness');
+    expect(within(session).queryByLabelText('Harness machine key')).toBeNull();
+    expect(within(role).queryByText('Machine key')).toBeNull();
 
     fireEvent.change(within(role).getByLabelText('Harness name'), {
       target: { value: 'Security Harness' },

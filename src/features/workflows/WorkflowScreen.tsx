@@ -2627,7 +2627,6 @@ function definitionProvenance(
 ): Record<HarnessDefinitionProperty, 'inherited' | 'overridden' | 'instance'> {
   const properties: readonly HarnessDefinitionProperty[] = [
     'identityName',
-    'identityMachineKey',
     'permittedAgentNames',
     'visualIdentity',
     'promptPrefixContent',
@@ -2684,7 +2683,6 @@ function updateNodeHarnessDefinition(
   const overrides = { ...node.harness.overrides };
   const properties: readonly HarnessDefinitionProperty[] = [
     'identityName',
-    'identityMachineKey',
     'permittedAgentNames',
     'visualIdentity',
     'promptPrefixContent',
@@ -2723,8 +2721,6 @@ function harnessProperty(
   switch (property) {
     case 'identityName':
       return harness.identity.name;
-    case 'identityMachineKey':
-      return harness.identity.machineKey;
     case 'permittedAgentNames':
       return harness.identity.permittedAgentNames;
     case 'visualIdentity':
