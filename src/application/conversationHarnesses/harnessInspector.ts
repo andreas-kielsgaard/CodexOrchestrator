@@ -1,9 +1,10 @@
-import type { AgentIdentity } from '../agentSessions';
+import type { AgentIdentity, AgentIdentityShape } from '../agentSessions';
 
 /** Recorded/configuration visual choice; Session identity remains injected by its owner. */
 export interface HarnessVisualIdentity {
   readonly token: string;
   readonly accent: string;
+  readonly shape: AgentIdentityShape;
 }
 
 export type HarnessSkillPolicy = 'always_applicable' | 'initial_ingestion' | 'available';

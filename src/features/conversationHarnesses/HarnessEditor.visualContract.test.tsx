@@ -37,8 +37,11 @@ describe('HarnessEditor visual contract', () => {
       'Application hooks',
       'Version history',
     ]);
+    expect(screen.getAllByRole('button', { name: /^Collapse / })).toHaveLength(8);
 
     expect(screen.getByRole('button', { name: /Permitted name pool/ })).toBeVisible();
+    expect(screen.queryByLabelText('Machine key')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit Agent color and shape' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit skills' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit tools' })).toBeVisible();
     expect(screen.getAllByRole('button', { name: /Always applicable/ })).toHaveLength(2);
@@ -51,6 +54,14 @@ describe('HarnessEditor visual contract', () => {
     expect(screen.queryByLabelText('Harness tools')).toBeNull();
     expect(screen.queryByLabelText('Allowed models')).toBeNull();
     expect(container.querySelector('.harness-definition-selector')).toBeNull();
+
+    const promptToggle = screen.getByRole('button', { name: 'Collapse Prompt prefix' });
+    fireEvent.click(promptToggle);
+    expect(screen.getByRole('button', { name: 'Expand Prompt prefix' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(screen.getByText(/You are the Epic Plan Builder/)).not.toBeVisible();
   });
 
   it('keeps catalog editing and item inspection in focused dialogs', async () => {
@@ -65,6 +76,14 @@ describe('HarnessEditor visual contract', () => {
     expect(within(names).getByLabelText('Antoni Gaudi permitted')).toBeChecked();
     expect(within(names).getByLabelText('Grace Hopper permitted')).not.toBeChecked();
     fireEvent.click(within(names).getByRole('button', { name: 'Close permitted name pool' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Agent color and shape' }));
+    const identity = screen.getByRole('dialog', { name: 'Current Agent identity' });
+    expect(within(identity).getByLabelText('Agent identity color')).toHaveValue('#39745a');
+    expect(within(identity).getByRole('radio', { name: 'circle' })).toBeChecked();
+    expect(within(identity).getByRole('radio', { name: 'square' })).not.toBeChecked();
+    expect(within(identity).getByRole('radio', { name: 'hexagon' })).not.toBeChecked();
+    fireEvent.click(within(identity).getByRole('button', { name: 'Close current Agent identity' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
     const skills = screen.getByRole('dialog', { name: 'Edit skills' });

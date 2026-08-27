@@ -142,9 +142,9 @@ export const harnessAgentNamePools = {
 } as const;
 
 export const harnessVisualIdentities = {
-  epic_plan_builder: { token: 'drafting_compass', accent: '#39745a' },
-  epic_bootstrap_generator: { token: 'bootstrap_package', accent: '#9a6730' },
-  epic_runner: { token: 'runner_route', accent: '#466d98' },
+  epic_plan_builder: { token: 'drafting_compass', accent: '#39745a', shape: 'circle' },
+  epic_bootstrap_generator: { token: 'bootstrap_package', accent: '#9a6730', shape: 'square' },
+  epic_runner: { token: 'runner_route', accent: '#466d98', shape: 'hexagon' },
 } as const;
 
 export function validateAgentNamePool(pool: readonly string[]): readonly string[] {

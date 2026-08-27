@@ -2,14 +2,14 @@
   height: calc(100vh - 48px);
   min-height: 0;
   padding: 10px;
-  overflow: hidden;
+  overflow: clip;
   background: #f4f6f8;
 }
 
 .harness-inspector-development__pane {
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
   border: 1px solid #d5dce2;
   border-radius: 8px;
   background: #fffdf8;
@@ -19,6 +19,7 @@
   position: relative;
   height: 100%;
   min-height: 0;
+  overflow: clip;
   container-type: inline-size;
 }
 
@@ -456,24 +457,17 @@
 }
 
 .harness-management__card > header {
-  display: flex;
-  min-width: 0;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
   margin-bottom: 9px;
-}
-
-.harness-management__card-title {
-  display: flex;
-  align-items: center;
-  gap: 5px;
 }
 
 .harness-management__card > header h2 {
   color: #283a30;
   font-size: 0.88rem;
   font-weight: 820;
+}
+
+.harness-management__card > .collapsible-section__content {
+  min-width: 0;
 }
 
 .harness-management__help {
@@ -544,6 +538,10 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.harness-management__field-row.is-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .harness-management__field {
@@ -659,6 +657,27 @@
   > .agent-identity-badge
   .agent-identity-badge__text {
   min-width: 0;
+}
+
+.harness-management__identity-policy-button.is-visual {
+  align-content: center;
+}
+
+.harness-management__visual-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  text-transform: none;
+}
+
+.harness-management__visual-summary > strong {
+  overflow: hidden;
+  color: #2e4036;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .harness-management__identity-policy > div > small,
@@ -1423,8 +1442,8 @@
 }
 
 .harness-management__visual-choices {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr);
   gap: 6px;
   margin-top: 12px;
   padding: 10px;
@@ -1447,6 +1466,54 @@
   border-radius: 6px;
   color: #405148;
   font-size: 0.67rem;
+}
+
+.harness-management__identity-preview {
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  background: #fafaf6;
+}
+
+.harness-management__color-picker {
+  justify-content: flex-start;
+}
+
+.harness-management__color-picker input[type='color'] {
+  width: 42px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid #cbd2ca;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.harness-management__color-picker output {
+  color: #526058;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.harness-management__shape-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.harness-management__shape-choices label {
+  border: 1px solid #d8ddd5;
+  background: #fff;
+}
+
+.harness-management__shape-choices label:has(input:checked) {
+  border-color: #39745a;
+  background: #e9f1e9;
+  color: #245f48;
 }
 
 .harness-management__visual-choices input {
@@ -1614,7 +1681,8 @@
   }
 
   .harness-management__identity-dialog-fields,
-  .harness-management__identity-name-results {
+  .harness-management__identity-name-results,
+  .harness-management__visual-choices {
     grid-template-columns: 1fr;
   }
 }

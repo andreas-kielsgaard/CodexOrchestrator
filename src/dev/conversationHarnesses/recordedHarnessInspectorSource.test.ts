@@ -44,7 +44,9 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.agentIdentity).toMatchObject({
       name: 'Avery',
       harnessRole: 'epic_plan_builder',
-      visualIdentityToken: 'sunflower',
+      visualIdentityToken: 'drafting_compass',
+      visualIdentityAccent: '#39745a',
+      visualIdentityShape: 'circle',
     });
     const current = read.snapshot.versionControl.versions.at(-1)?.configuration;
     expect(current).toMatchObject({
@@ -79,12 +81,19 @@ describe('recorded Harness Management source', () => {
     expect(read.snapshot.catalogs.skills.items.map((skill) => skill.name)).toContain(
       'epic-plan-builder',
     );
-    expect(read.snapshot.catalogs.skills.items.every((skill) => skill.path.startsWith('product/skills/'))).toBe(true);
+    expect(
+      read.snapshot.catalogs.skills.items.every((skill) =>
+        skill.path.startsWith('product/skills/'),
+      ),
+    ).toBe(true);
     expect(
       read.snapshot.catalogs.skills.items.find((skill) => skill.name === 'epic-plan-builder')?.text,
     ).toContain('# Product Epic Plan Builder');
     expect(read.snapshot.catalogs.skills.items.map(({ name, path }) => ({ name, path }))).toEqual([
-      { name: 'epic-bootstrap-generator', path: 'product/skills/epic-bootstrap-generator/SKILL.md' },
+      {
+        name: 'epic-bootstrap-generator',
+        path: 'product/skills/epic-bootstrap-generator/SKILL.md',
+      },
       { name: 'epic-plan-builder', path: 'product/skills/epic-plan-builder/SKILL.md' },
       { name: 'epic-runner', path: 'product/skills/epic-runner/SKILL.md' },
       { name: 'sprint-runner', path: 'product/skills/sprint-runner/SKILL.md' },
@@ -457,6 +466,8 @@ describe('recorded Harness Management source', () => {
     expect(changed.snapshot.agentIdentity).toMatchObject({
       name: 'Mildred Plot Twist',
       visualIdentityToken: runner.identity.token,
+      visualIdentityAccent: runner.identity.accent,
+      visualIdentityShape: runner.identity.shape,
     });
     expect(
       changed.snapshot.versionControl.versions[0].configuration.identity.permittedAgentNames,

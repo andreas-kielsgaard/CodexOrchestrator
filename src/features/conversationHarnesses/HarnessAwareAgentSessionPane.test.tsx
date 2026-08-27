@@ -344,7 +344,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.getByText(/schemas remain runtime-owned/i)).toBeVisible();
   });
 
-  it('changes only the current Session identity from the complete recorded identity catalog', async () => {
+  it('changes only the current Session identity with a color and shape', async () => {
     render(
       <HarnessAwareAgentSessionPane
         sessionId={recordedHarnessInspectorSessionId}
@@ -370,7 +370,10 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.change(within(dialog).getByLabelText('Agent name'), {
       target: { value: 'Mildred Plot Twist' },
     });
-    chooseClosedOption('Visual identity', 'Runner route');
+    fireEvent.change(within(dialog).getByLabelText('Agent identity color'), {
+      target: { value: '#6f4ab5' },
+    });
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'hexagon' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply to this Session' }));
 
     expect(
@@ -381,6 +384,9 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(
       screen.getAllByLabelText('Mildred Plot Twist, Epic Plan Builder').length,
     ).toBeGreaterThan(0);
+    expect(document.querySelector('.agent-identity-marker.is-hexagon')).toHaveStyle({
+      '--agent-identity-accent': '#6f4ab5',
+    });
   });
 
   it('enforces revision-owned edit mode while allowing delegated shared policy in view mode', async () => {

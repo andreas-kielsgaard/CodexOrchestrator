@@ -78,7 +78,9 @@ const recordedSessionAppliedRevision = Math.max(1, recordedProfile.version - 1);
 export const recordedHarnessInspectorAgentIdentity: AgentIdentity = {
   name: 'Avery',
   harnessRole: 'epic_plan_builder',
-  visualIdentityToken: 'sunflower',
+  visualIdentityToken: harnessVisualIdentities.epic_plan_builder.token,
+  visualIdentityAccent: harnessVisualIdentities.epic_plan_builder.accent,
+  visualIdentityShape: harnessVisualIdentities.epic_plan_builder.shape,
 };
 
 export const recordedHarnessInspectorSessionDetails: AgentSessionDetailsDto =
@@ -471,15 +473,10 @@ function reduceRecordedCommand(
   if (command.kind === 'update_session_identity') {
     const name = command.name.trim();
     if (!name) throw new Error('Agent name must not be blank.');
-    const visualCatalog = snapshot.catalogs.agentVisualIdentities.items;
-    if (
-      !visualCatalog.some(
-        (entry) =>
-          entry.identity.token === command.visualIdentity.token &&
-          entry.identity.accent === command.visualIdentity.accent,
-      )
-    )
-      throw new Error('Agent visual identity is outside the recorded product catalog.');
+    if (!/^#[0-9a-f]{6}$/i.test(command.visualIdentity.accent))
+      throw new Error('Agent visual identity color must be a six-digit hex color.');
+    if (!['circle', 'square', 'hexagon'].includes(command.visualIdentity.shape))
+      throw new Error('Agent visual identity shape is not supported.');
     if (!snapshot.agentIdentity) throw new Error('This Session has no Agent identity to update.');
     return {
       ...snapshot,
@@ -487,6 +484,8 @@ function reduceRecordedCommand(
         ...snapshot.agentIdentity,
         name,
         visualIdentityToken: command.visualIdentity.token,
+        visualIdentityAccent: command.visualIdentity.accent,
+        visualIdentityShape: command.visualIdentity.shape,
       },
     };
   }

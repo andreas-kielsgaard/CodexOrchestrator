@@ -6,12 +6,15 @@ export type IsoDateTimeDto = string;
 
 export type AgentSessionAvailabilityDto = 'available' | 'archived';
 export type RuntimeSandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
+export type AgentIdentityShape = 'circle' | 'square' | 'hexagon';
 
 /** Session-owned presentation identity. Assignment and persistence belong outside the view. */
 export interface AgentIdentity {
   readonly name: string;
   readonly harnessRole: string;
   readonly visualIdentityToken: string;
+  readonly visualIdentityAccent?: string;
+  readonly visualIdentityShape?: AgentIdentityShape;
 }
 
 export interface AgentRuntimeOptionsDto {
