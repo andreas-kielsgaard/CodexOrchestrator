@@ -219,10 +219,17 @@ impl HarnessCatalogService {
         &self,
         harness_id: &HarnessId,
         session_id: String,
+        base_harness_ref: &HarnessVersionRef,
         configuration: HarnessConfiguration,
     ) -> Result<HarnessVersion, String> {
         if self.repository.harness(harness_id)?.is_none() {
             return Err("Harness does not exist.".into());
+        }
+        if base_harness_ref.harness_id() != harness_id {
+            return Err("Session Harness override base belongs to a different Harness.".into());
+        }
+        if self.repository.version(base_harness_ref)?.is_none() {
+            return Err("Session Harness override base version does not exist.".into());
         }
         let version = HarnessVersion::build(
             HarnessVersionRef::new(
@@ -377,6 +384,7 @@ mod tests {
             .publish_session_override(
                 &harness_id,
                 "session-1".into(),
+                &first,
                 configuration("Session override"),
             )
             .unwrap();
@@ -435,12 +443,13 @@ mod tests {
         let harness = service
             .create_harness("Plan builder".into(), configuration("Reusable"))
             .unwrap();
-        service.publish_draft(&harness.id).unwrap();
+        let reusable = service.publish_draft(&harness.id).unwrap();
 
         let session_version = service
             .publish_session_override(
                 &harness.id,
                 "session-1".into(),
+                &reusable.reference,
                 configuration("Session-specific"),
             )
             .unwrap();

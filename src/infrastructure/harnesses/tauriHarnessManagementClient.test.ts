@@ -73,7 +73,12 @@ describe('Tauri Harness management client', () => {
     await client.rename({ harnessId, name: 'Plan Builder' });
     await client.saveDraft({ harnessId, basedOn: first, configuration });
     await client.publishDraft({ harnessId });
-    await client.publishSessionOverride({ harnessId, sessionId: 'session-1', configuration });
+    await client.publishSessionOverride({
+      harnessId,
+      sessionId: 'session-1',
+      baseHarnessRef: first,
+      configuration,
+    });
     await client.orderReplacement({ source: first, target: second });
     await client.resolveVersion({ requested: first });
 
@@ -93,7 +98,7 @@ describe('Tauri Harness management client', () => {
       input: { harnessId, basedOn: first, configuration },
     });
     expect(calls[6]?.args).toEqual({
-      input: { harnessId, sessionId: 'session-1', configuration },
+      input: { harnessId, sessionId: 'session-1', baseHarnessRef: first, configuration },
     });
     expect(calls[7]?.args).toEqual({ input: { source: first, target: second } });
   });
@@ -173,7 +178,12 @@ describe('Tauri Harness management client', () => {
     });
 
     await expect(
-      client.publishSessionOverride({ harnessId, sessionId: 'session-1', configuration }),
+      client.publishSessionOverride({
+        harnessId,
+        sessionId: 'session-1',
+        baseHarnessRef: createHarnessVersionRef(harnessId, createHarnessVersionNumber(1)),
+        configuration,
+      }),
     ).rejects.toThrow(/does not match its request/);
     await expect(
       client.resolveVersion({

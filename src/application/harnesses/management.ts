@@ -73,6 +73,7 @@ export interface PublishHarnessDraftInput {
 export interface PublishSessionHarnessOverrideInput {
   readonly harnessId: HarnessId;
   readonly sessionId: string;
+  readonly baseHarnessRef: HarnessVersionRef;
   readonly configuration: HarnessConfiguration;
 }
 

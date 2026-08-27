@@ -69,6 +69,7 @@ pub(crate) struct SaveHarnessDraftInput {
 pub(crate) struct PublishSessionHarnessOverrideInput {
     harness_id: HarnessId,
     session_id: String,
+    base_harness_ref: HarnessVersionRef,
     configuration: HarnessConfiguration,
 }
 
@@ -153,6 +154,7 @@ pub(crate) fn publish_session_harness_override(
     state.service.publish_session_override(
         &input.harness_id,
         input.session_id,
+        &input.base_harness_ref,
         input.configuration,
     )
 }

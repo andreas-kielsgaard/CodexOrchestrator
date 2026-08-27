@@ -79,10 +79,16 @@ export function createTauriHarnessManagementClient(
     async publishSessionOverride(input: PublishSessionHarnessOverrideInput) {
       const harnessId = decodeHarnessId(input.harnessId, 'Harness ID');
       const sessionId = trimmedString(input.sessionId, 'Agent Session ID');
+      const baseHarnessRef = decodeHarnessVersionRef(
+        input.baseHarnessRef,
+        'Session Harness override base',
+      );
+      if (baseHarnessRef.harnessId !== harnessId)
+        throw new Error('Session Harness override base belongs to a different Harness');
       const configuration = decodeHarnessConfiguration(input.configuration);
       const version = decodePublishedHarnessVersion(
         await invokeCommand<unknown>('publish_session_harness_override', {
-          input: { harnessId, sessionId, configuration },
+          input: { harnessId, sessionId, baseHarnessRef, configuration },
         }),
       );
       if (
