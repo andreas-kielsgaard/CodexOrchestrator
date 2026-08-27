@@ -123,6 +123,131 @@ describe('HarnessEditor visual contract', () => {
     });
   });
 
+  it('displays reusable Identity definitions while saving only their IDs in the Harness policy', async () => {
+    const read = await createRecordedHarnessManagementSource().load({
+      sessionId: recordedHarnessInspectorSessionId,
+    });
+    if (read.kind !== 'available') throw new Error('Expected the recorded Harness to load.');
+    const base = read.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
+    if (!base) throw new Error('Expected Harness version 3.');
+    const configuration = {
+      ...base.configuration,
+      identity: {
+        ...base.configuration.identity,
+        permittedAgentNames: ['identity-avery', 'identity-retired'],
+      },
+    };
+    const identityRead = {
+      ...read,
+      snapshot: {
+        ...read.snapshot,
+        catalogs: {
+          ...read.snapshot.catalogs,
+          identities: {
+            source: 'application_identity_catalog' as const,
+            items: [
+              {
+                id: 'identity-avery',
+                displayName: 'Avery',
+                color: '#4f46e5',
+                shape: 'hexagon' as const,
+              },
+              {
+                id: 'identity-grace',
+                displayName: 'Grace Hopper',
+                color: '#39745a',
+                shape: 'circle' as const,
+              },
+            ],
+            reason: 'Application Identity catalog.',
+          },
+        },
+        workingCopy: {
+          baseRevision: 3,
+          draftRevision: 4,
+          dirty: true,
+          configuration,
+        },
+      },
+    };
+    const onCommand = vi.fn();
+    render(<HarnessEditor read={identityRead} onBack={vi.fn()} onCommand={onCommand} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Harness' }));
+    fireEvent.click(screen.getByRole('button', { name: /Permitted identities/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Permitted identities' });
+
+    expect(within(dialog).getByLabelText('Avery')).toBeVisible();
+    expect(within(dialog).getByLabelText('Grace Hopper')).toBeVisible();
+    expect(within(dialog).getByLabelText('Avery permitted')).toBeChecked();
+    expect(within(dialog).getByLabelText('Grace Hopper permitted')).not.toBeChecked();
+    expect(within(dialog).getByText('Unavailable definition · identity-retired')).toBeVisible();
+    fireEvent.click(within(dialog).getByLabelText('Grace Hopper permitted'));
+
+    expect(onCommand).toHaveBeenLastCalledWith({
+      kind: 'save_working_copy',
+      configuration: expect.objectContaining({
+        identity: expect.objectContaining({
+          permittedAgentNames: ['identity-avery', 'identity-retired', 'identity-grace'],
+        }),
+      }),
+    });
+
+    fireEvent.change(within(dialog).getByLabelText('Identity pool source'), {
+      target: { value: 'full_catalog' },
+    });
+    expect(onCommand).toHaveBeenLastCalledWith({
+      kind: 'save_working_copy',
+      configuration: expect.objectContaining({
+        identity: expect.objectContaining({ permittedAgentNames: null }),
+      }),
+    });
+  });
+
+  it('keeps a fresh empty Identity catalog unrestricted', async () => {
+    const read = await createRecordedHarnessManagementSource().load({
+      sessionId: recordedHarnessInspectorSessionId,
+    });
+    if (read.kind !== 'available') throw new Error('Expected the recorded Harness to load.');
+    const base = read.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
+    if (!base) throw new Error('Expected Harness version 3.');
+    const emptyCatalogRead = {
+      ...read,
+      snapshot: {
+        ...read.snapshot,
+        catalogs: {
+          ...read.snapshot.catalogs,
+          identities: {
+            source: 'application_identity_catalog' as const,
+            items: [],
+            reason: 'Application Identity catalog.',
+          },
+        },
+        workingCopy: {
+          baseRevision: 3,
+          draftRevision: 4,
+          dirty: true,
+          configuration: {
+            ...base.configuration,
+            identity: { ...base.configuration.identity, permittedAgentNames: null },
+          },
+        },
+      },
+    };
+    render(<HarnessEditor read={emptyCatalogRead} onBack={vi.fn()} onCommand={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Harness' }));
+    fireEvent.click(screen.getByRole('button', { name: /Permitted identities/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Permitted identities' });
+
+    expect(within(dialog).getByLabelText('Identity pool source')).toBeDisabled();
+    expect(
+      within(dialog).getByText(
+        'No reusable identities exist yet. This Harness remains unrestricted.',
+      ),
+    ).toBeVisible();
+  });
+
   it('separates reusable Harness editing from in-memory Session customization', async () => {
     const read = await createRecordedHarnessManagementSource().load({
       sessionId: recordedHarnessInspectorSessionId,

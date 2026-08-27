@@ -1,4 +1,5 @@
 import type { AgentIdentity, AgentIdentityShape } from '../agentSessions';
+import type { IdentityDefinition } from '../identities';
 
 /** Recorded/configuration visual choice; Session identity remains injected by its owner. */
 export interface HarnessVisualIdentity {
@@ -93,6 +94,12 @@ export interface HarnessMcpServerExposure {
 }
 
 export interface HarnessConfigurationCatalogs {
+  /** Application-owned reusable identities. Harness assignment policies store only their IDs. */
+  readonly identities?: {
+    readonly source: 'application_identity_catalog' | 'not_connected';
+    readonly items: readonly IdentityDefinition[];
+    readonly reason: string;
+  };
   readonly agentNames: {
     readonly source: 'product_default_pool' | 'not_connected';
     readonly items: readonly string[];

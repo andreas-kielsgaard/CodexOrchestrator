@@ -4,6 +4,7 @@ import type {
   AgentSessionSummaryDto,
 } from '../../application/agentSessions';
 import type { HarnessEffectiveConfiguration } from '../../application/conversationHarnesses';
+import type { IdentityManagementClient } from '../../application/identities';
 import {
   createHarnessId,
   createHarnessVersionNumber,
@@ -168,6 +169,38 @@ function createHarnessClient(
   };
 }
 
+function createIdentityClient(): IdentityManagementClient {
+  return {
+    list: vi.fn(async () => [
+      {
+        id: 'identity-avery',
+        displayName: 'Avery',
+        color: '#4f46e5',
+        shape: 'hexagon' as const,
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        id: 'identity-grace',
+        displayName: 'Grace Hopper',
+        color: '#39745a',
+        shape: 'circle' as const,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ]),
+    create: vi.fn(async () => {
+      throw new Error('not used');
+    }),
+    update: vi.fn(async () => {
+      throw new Error('not used');
+    }),
+    delete: vi.fn(async () => {
+      throw new Error('not used');
+    }),
+  };
+}
+
 async function availableConfiguration(
   source: ReturnType<typeof createCanonicalConversationHarnessManagementSource>,
 ): Promise<HarnessEffectiveConfiguration> {
@@ -204,6 +237,107 @@ describe('canonical Conversation Harness Management source', () => {
         },
       },
     });
+  });
+
+  it('loads reusable Identity definitions while preserving assignment IDs and the Session-owned copy', async () => {
+    const identityClient = createIdentityClient();
+    const configuration = {
+      ...exampleHarnessConfiguration(),
+      identityAssignment: {
+        kind: 'allow_list' as const,
+        identityIds: ['identity-avery'] as const,
+      },
+    };
+    const resolved = { ...publishedVersion(2), configuration };
+    const details = {
+      ...harnessDetails(),
+      versions: [publishedVersion(1), resolved],
+    };
+    const currentSession = {
+      ...session('session-current', reference(2)),
+      assignedIdentity: {
+        originIdentityId: 'identity-avery',
+        displayName: 'Avery Session Copy',
+        color: '#aabbcc',
+        shape: 'square' as const,
+      },
+    };
+    const sessions = createSessionClient([currentSession]);
+    const harnesses = createHarnessClient(details, resolved);
+    const source = createCanonicalConversationHarnessManagementSource(
+      sessions,
+      harnesses,
+      identityClient,
+    );
+
+    const read = await source.load({ sessionId: 'session-current' });
+
+    expect(identityClient.list).toHaveBeenCalledTimes(1);
+    expect(read).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        agentIdentity: {
+          name: 'Avery Session Copy',
+          visualIdentityAccent: '#aabbcc',
+          visualIdentityShape: 'square',
+        },
+        catalogs: {
+          identities: {
+            source: 'application_identity_catalog',
+            items: [
+              {
+                id: 'identity-avery',
+                displayName: 'Avery',
+                color: '#4f46e5',
+                shape: 'hexagon',
+              },
+              {
+                id: 'identity-grace',
+                displayName: 'Grace Hopper',
+                color: '#39745a',
+                shape: 'circle',
+              },
+            ],
+          },
+        },
+        versionControl: {
+          versions: [
+            expect.anything(),
+            expect.objectContaining({
+              configuration: expect.objectContaining({
+                identity: expect.objectContaining({
+                  permittedAgentNames: ['identity-avery'],
+                }),
+              }),
+            }),
+          ],
+        },
+      },
+    });
+    if (read.kind !== 'available') throw new Error('Expected available Harness management.');
+    const edited = {
+      ...read.snapshot.versionControl.versions[1]!.configuration,
+      identity: {
+        ...read.snapshot.versionControl.versions[1]!.configuration.identity,
+        permittedAgentNames: ['identity-avery', 'identity-grace'],
+      },
+    };
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'save_working_copy', configuration: edited },
+    });
+
+    expect(harnesses.saveDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configuration: expect.objectContaining({
+          identityAssignment: {
+            kind: 'allow_list',
+            identityIds: ['identity-avery', 'identity-grace'],
+          },
+        }),
+      }),
+    );
   });
 
   it('dispatches draft save, publication, and replacement push through the Harness engine', async () => {
@@ -251,7 +385,12 @@ describe('canonical Conversation Harness Management source', () => {
     const sessions = createSessionClient([session('session-current', reference(2))]);
     const harnesses = createHarnessClient(harnessDetails());
     const drafts = new InMemorySessionHarnessOverrideDraftCache();
-    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+    const source = createCanonicalConversationHarnessManagementSource(
+      sessions,
+      harnesses,
+      undefined,
+      drafts,
+    );
 
     await source.dispatch?.({
       sessionId: 'session-current',
@@ -314,7 +453,12 @@ describe('canonical Conversation Harness Management source', () => {
     const sessions = createSessionClient([session('session-current', reference(2))]);
     const harnesses = createHarnessClient(harnessDetails());
     const drafts = new InMemorySessionHarnessOverrideDraftCache();
-    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+    const source = createCanonicalConversationHarnessManagementSource(
+      sessions,
+      harnesses,
+      undefined,
+      drafts,
+    );
 
     await source.dispatch?.({
       sessionId: 'session-current',
@@ -343,7 +487,12 @@ describe('canonical Conversation Harness Management source', () => {
     const sessions = createSessionClient([session('session-current', reference(2))]);
     const harnesses = createHarnessClient(harnessDetails([], persistentDraft));
     const drafts = new InMemorySessionHarnessOverrideDraftCache();
-    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+    const source = createCanonicalConversationHarnessManagementSource(
+      sessions,
+      harnesses,
+      undefined,
+      drafts,
+    );
 
     await source.dispatch?.({
       sessionId: 'session-current',

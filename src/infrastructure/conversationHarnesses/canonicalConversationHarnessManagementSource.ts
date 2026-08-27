@@ -16,6 +16,8 @@ import type {
   HarnessVersionRef,
   PublishedHarnessVersion,
 } from '../../application/harnesses';
+import type { IdentityDefinition, IdentityManagementClient } from '../../application/identities';
+import { identityDefinitionFromCatalog } from '../../application/identities';
 import {
   createHarnessVersionNumber,
   createHarnessVersionRef,
@@ -25,10 +27,11 @@ import {
 export function createCanonicalConversationHarnessManagementSource(
   sessions: AgentSessionClient,
   harnesses: HarnessManagementClient,
+  identities?: IdentityManagementClient,
   sessionOverrideDrafts: SessionHarnessOverrideDraftCache = new InMemorySessionHarnessOverrideDraftCache(),
 ): ConversationHarnessManagementSource {
   const load = async ({ sessionId }: { readonly sessionId: string }) =>
-    loadSessionHarness(sessions, harnesses, sessionOverrideDrafts, sessionId);
+    loadSessionHarness(sessions, harnesses, identities, sessionOverrideDrafts, sessionId);
 
   return {
     load,
@@ -50,14 +53,18 @@ interface AvailableContext {
 async function loadSessionHarness(
   sessions: AgentSessionClient,
   harnesses: HarnessManagementClient,
+  identities: IdentityManagementClient | undefined,
   sessionOverrideDrafts: SessionHarnessOverrideDraftCache,
   sessionId: string,
 ): Promise<ConversationHarnessManagementRead> {
   try {
-    const context = await availableContext(sessions, harnesses, sessionId);
+    const [context, identityCatalog] = await Promise.all([
+      availableContext(sessions, harnesses, sessionId),
+      loadIdentityCatalog(identities),
+    ]);
     return {
       kind: 'available',
-      snapshot: snapshot(context, sessionOverrideDrafts.get(sessionId)),
+      snapshot: snapshot(context, sessionOverrideDrafts.get(sessionId), identityCatalog),
     };
   } catch (error) {
     if (error instanceof UnboundSessionHarness)
@@ -68,6 +75,39 @@ async function loadSessionHarness(
     return {
       kind: 'unavailable',
       reason: error instanceof Error ? error.message : 'Harness Management is unavailable.',
+    };
+  }
+}
+
+interface LoadedIdentityCatalog {
+  readonly source: 'application_identity_catalog' | 'not_connected';
+  readonly items: readonly IdentityDefinition[];
+  readonly reason: string;
+}
+
+async function loadIdentityCatalog(
+  identities: IdentityManagementClient | undefined,
+): Promise<LoadedIdentityCatalog> {
+  if (!identities)
+    return {
+      source: 'not_connected',
+      items: [],
+      reason: 'The application Identity catalog is unavailable through this source.',
+    };
+  try {
+    return {
+      source: 'application_identity_catalog',
+      items: (await identities.list()).map(identityDefinitionFromCatalog),
+      reason: 'Application-owned reusable identities available to new Agent Sessions.',
+    };
+  } catch (error) {
+    return {
+      source: 'not_connected',
+      items: [],
+      reason:
+        error instanceof Error
+          ? `The application Identity catalog is unavailable: ${error.message}`
+          : 'The application Identity catalog is unavailable.',
     };
   }
 }
@@ -214,6 +254,7 @@ async function dispatchCommand(
 function snapshot(
   context: AvailableContext,
   sessionOverrideDraft: SessionHarnessOverrideDraft | null,
+  identityCatalog: LoadedIdentityCatalog,
 ): ConversationHarnessManagementSnapshot {
   const { session, details, requested, resolved } = context;
   const pushedVersions = new Set(details.replacements.map(({ target }) => target.version));
@@ -243,6 +284,7 @@ function snapshot(
         }
       : null,
     catalogs: {
+      identities: identityCatalog,
       agentNames: {
         source: 'not_connected',
         items:

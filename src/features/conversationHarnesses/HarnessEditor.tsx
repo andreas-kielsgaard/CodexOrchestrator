@@ -21,13 +21,13 @@ import type {
   HarnessSkillPolicy,
   HarnessToolPolicy,
 } from '../../application/conversationHarnesses';
-import type { AssignedAgentIdentity } from '../../application/identities';
+import type { AssignedAgentIdentity, IdentityDefinition } from '../../application/identities';
 import { assignedIdentityFromLegacyAgentIdentity } from '../../application/identities';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { MarkdownEditor } from '../../components/MarkdownEditor';
 import { AgentMarkdown } from '../agentSessions/AgentMarkdown';
-import { IdentityPickerDialog } from '../identities';
+import { AgentIdentityBadge as IdentityDefinitionBadge, IdentityPickerDialog } from '../identities';
 
 export interface HarnessEditorProps {
   readonly read: ConversationHarnessManagementRead | null;
@@ -46,7 +46,7 @@ interface Confirmation {
 
 type VersionSelection = `version:${number}` | 'draft' | 'session-draft';
 type EditMode = 'none' | 'harness' | 'session';
-type CatalogDialog = 'names' | 'skills' | 'tools' | null;
+type CatalogDialog = 'identities' | 'skills' | 'tools' | null;
 
 export function HarnessEditor({
   read,
@@ -266,6 +266,7 @@ function AvailableHarnessManagement({
   };
   const openConfirmation = (next: Confirmation) => setConfirmation(next);
   const sessionIdentity = assignedIdentityForManagement(snapshot);
+  const identityCatalog = snapshot.catalogs.identities;
 
   const selectedIsCurrentPushed =
     selectedRevision !== null && selectedRevision === snapshot.versionControl.pushedRevision;
@@ -530,15 +531,21 @@ function AvailableHarnessManagement({
               <button
                 className="harness-management__identity-policy-button"
                 type="button"
-                onClick={() => setCatalogDialog('names')}
+                onClick={() => setCatalogDialog('identities')}
               >
-                <span>Permitted name pool</span>
+                <span>{identityCatalog ? 'Permitted identities' : 'Permitted name pool'}</span>
                 <strong>
                   {configuration.identity.permittedAgentNames
-                    ? `Harness subset · ${configuration.identity.permittedAgentNames.length} names`
-                    : 'Product default · 100 names'}
+                    ? `Harness subset · ${configuration.identity.permittedAgentNames.length} ${
+                        identityCatalog ? 'identities' : 'names'
+                      }`
+                    : identityCatalog?.source === 'application_identity_catalog'
+                      ? `Full catalog · ${identityCatalog.items.length} identities`
+                      : identityCatalog
+                        ? 'Identity catalog unavailable'
+                        : 'Product default · 100 names'}
                 </strong>
-                <small>Existing Sessions keep their assigned names.</small>
+                <small>Existing Sessions keep their assigned identity.</small>
               </button>
               <button
                 className="harness-management__identity-policy-button is-visual"
@@ -781,13 +788,13 @@ function AvailableHarnessManagement({
           onClose={() => setIdentityDialogOpen(false)}
         />
       )}
-      {catalogDialog === 'names' && (
-        <NamePoolDialog
+      {catalogDialog === 'identities' && (
+        <IdentityPoolDialog
           snapshot={snapshot}
           configuration={configuration}
           editable={editable}
           canEdit={Boolean(onCommand)}
-          onStartEdit={() => beginEdit('names')}
+          onStartEdit={() => beginEdit('identities')}
           onChange={saveConfiguration}
           onClose={() => setCatalogDialog(null)}
         />
@@ -1274,7 +1281,179 @@ function legacySessionIdentityCommand(
   };
 }
 
-function NamePoolDialog({
+function IdentityPoolDialog(props: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly configuration: HarnessEffectiveConfiguration;
+  readonly editable: boolean;
+  readonly canEdit: boolean;
+  onStartEdit(): void;
+  onChange(configuration: HarnessEffectiveConfiguration): void;
+  onClose(): void;
+}) {
+  if (props.snapshot.catalogs.identities) return <ReusableIdentityPoolDialog {...props} />;
+  return <LegacyNamePoolDialog {...props} />;
+}
+
+function ReusableIdentityPoolDialog({
+  snapshot,
+  configuration,
+  editable,
+  canEdit,
+  onStartEdit,
+  onChange,
+  onClose,
+}: {
+  readonly snapshot: ConversationHarnessManagementSnapshot;
+  readonly configuration: HarnessEffectiveConfiguration;
+  readonly editable: boolean;
+  readonly canEdit: boolean;
+  onStartEdit(): void;
+  onChange(configuration: HarnessEffectiveConfiguration): void;
+  onClose(): void;
+}) {
+  const [query, setQuery] = useState('');
+  const catalog = snapshot.catalogs.identities!;
+  const subset = configuration.identity.permittedAgentNames;
+  const selectedIds = new Set(subset ?? catalog.items.map(({ id }) => id));
+  const catalogIds = new Set(catalog.items.map(({ id }) => id));
+  const unavailableSelectedIds = subset?.filter((identityId) => !catalogIds.has(identityId)) ?? [];
+  const filteredIdentities = catalog.items.filter((identity) =>
+    fuzzyMatch(identity.displayName, identity.id, query),
+  );
+  const updateIdentityIds = (identityIds: readonly string[] | null) =>
+    onChange({
+      ...configuration,
+      identity: {
+        ...configuration.identity,
+        permittedAgentNames: identityIds,
+      },
+    });
+
+  return (
+    <div className="harness-management__modal-backdrop">
+      <section
+        className="harness-management__modal is-details"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="harness-identity-pool-title"
+      >
+        <header>
+          <div>
+            <h2 id="harness-identity-pool-title">Permitted identities</h2>
+            <p>Reusable identities available when this Harness creates an Agent Session.</p>
+          </div>
+          <button type="button" aria-label="Close permitted identities" onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="harness-management__details-actions">
+          {!editable && canEdit && (
+            <button type="button" onClick={onStartEdit}>
+              <Pencil size={14} aria-hidden="true" />
+              Edit identity pool
+            </button>
+          )}
+          <small>Existing Sessions keep their assigned identity.</small>
+        </div>
+        <div className="harness-management__modal-scroll">
+          <label className="harness-management__discovery-policy">
+            <span>Pool</span>
+            <select
+              aria-label="Identity pool source"
+              value={subset ? 'harness_subset' : 'full_catalog'}
+              disabled={
+                !editable || catalog.source === 'not_connected' || catalog.items.length === 0
+              }
+              onChange={(event) =>
+                updateIdentityIds(
+                  event.target.value === 'full_catalog'
+                    ? null
+                    : initialIdentitySubset(snapshot, catalog.items),
+                )
+              }
+            >
+              <option value="harness_subset">Harness subset</option>
+              <option value="full_catalog">Full identity catalog</option>
+            </select>
+          </label>
+          {catalog.source === 'not_connected' ? (
+            <p>{catalog.reason}</p>
+          ) : subset ? (
+            <>
+              <label className="harness-management__catalog-search">
+                <Search size={16} aria-hidden="true" />
+                <span className="visually-hidden">Search reusable identities</span>
+                <input
+                  aria-label="Search reusable identities"
+                  value={query}
+                  placeholder="Search reusable identities"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </label>
+              <div className="harness-management__name-grid">
+                {filteredIdentities.map((identity) => {
+                  const checked = selectedIds.has(identity.id);
+                  return (
+                    <label key={identity.id}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${identity.displayName} permitted`}
+                        checked={checked}
+                        disabled={!editable || (checked && subset.length === 1)}
+                        onChange={(event) =>
+                          updateIdentityIds(
+                            event.target.checked
+                              ? [...subset, identity.id]
+                              : subset.filter((candidate) => candidate !== identity.id),
+                          )
+                        }
+                      />
+                      <IdentityDefinitionBadge identity={identity} />
+                    </label>
+                  );
+                })}
+              </div>
+              {unavailableSelectedIds.length > 0 && (
+                <>
+                  <p className="harness-management__pool-summary">
+                    These permitted Identity IDs are no longer present in the application catalog.
+                    They remain in the Harness policy until explicitly removed.
+                  </p>
+                  <div className="harness-management__name-grid">
+                    {unavailableSelectedIds.map((identityId) => (
+                      <label key={identityId}>
+                        <input
+                          type="checkbox"
+                          aria-label={`${identityId} unavailable identity permitted`}
+                          checked
+                          disabled={!editable || subset.length === 1}
+                          onChange={() =>
+                            updateIdentityIds(
+                              subset.filter((candidate) => candidate !== identityId),
+                            )
+                          }
+                        />
+                        <span>Unavailable definition · {identityId}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <p className="harness-management__pool-summary">
+              {catalog.items.length === 0
+                ? 'No reusable identities exist yet. This Harness remains unrestricted.'
+                : `All ${catalog.items.length} reusable identities are permitted for new Sessions.`}
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LegacyNamePoolDialog({
   snapshot,
   configuration,
   editable,
@@ -1894,6 +2073,20 @@ function initialNameSubset(
   const assignedName = snapshot.agentIdentity?.name;
   if (!assignedName || !names.includes(assignedName)) return names.slice(0, 10);
   return [assignedName, ...names.filter((name) => name !== assignedName)].slice(0, 10);
+}
+
+function initialIdentitySubset(
+  snapshot: ConversationHarnessManagementSnapshot,
+  identities: readonly IdentityDefinition[],
+): readonly string[] {
+  const identityIds = identities.map(({ id }) => id);
+  const assignedIdentityId = snapshot.agentIdentity?.visualIdentityToken;
+  if (!assignedIdentityId || !identityIds.includes(assignedIdentityId))
+    return identityIds.slice(0, 10);
+  return [
+    assignedIdentityId,
+    ...identityIds.filter((identityId) => identityId !== assignedIdentityId),
+  ].slice(0, 10);
 }
 
 function humanize(value: string): string {

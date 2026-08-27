@@ -36,4 +36,12 @@ describe('product application composition', () => {
       );
     }
   });
+
+  it('composes Harness management with the production Identity catalog', () => {
+    const source = readFileSync(resolve('src/bootstrap/productApplicationComposition.ts'), 'utf8');
+
+    expect(source).toMatch(
+      /createCanonicalConversationHarnessManagementSource\([\s\S]*tauriAgentSessionClient,[\s\S]*tauriHarnessManagementClient,[\s\S]*tauriIdentityManagementClient,[\s\S]*\)/,
+    );
+  });
 });

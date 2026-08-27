@@ -20,6 +20,7 @@ import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrati
 import { createCanonicalConversationHarnessManagementSource } from '../infrastructure/conversationHarnesses/canonicalConversationHarnessManagementSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 import { tauriHarnessManagementClient } from '../infrastructure/harnesses/tauriHarnessManagementClient';
+import { tauriIdentityManagementClient } from '../infrastructure/identities';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
@@ -42,6 +43,7 @@ export function createProductApplicationComposition(): AppProps {
     agentSessionHarnessManagementSource: createCanonicalConversationHarnessManagementSource(
       tauriAgentSessionClient,
       tauriHarnessManagementClient,
+      tauriIdentityManagementClient,
     ),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
