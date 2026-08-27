@@ -11,23 +11,30 @@ import type {
   HarnessConfiguration,
   HarnessDetails,
   HarnessManagementClient,
+  SessionHarnessOverrideDraft,
+  SessionHarnessOverrideDraftCache,
   HarnessVersionRef,
   PublishedHarnessVersion,
 } from '../../application/harnesses';
-import { createHarnessVersionNumber, createHarnessVersionRef } from '../../application/harnesses';
+import {
+  createHarnessVersionNumber,
+  createHarnessVersionRef,
+  InMemorySessionHarnessOverrideDraftCache,
+} from '../../application/harnesses';
 
 export function createCanonicalConversationHarnessManagementSource(
   sessions: AgentSessionClient,
   harnesses: HarnessManagementClient,
+  sessionOverrideDrafts: SessionHarnessOverrideDraftCache = new InMemorySessionHarnessOverrideDraftCache(),
 ): ConversationHarnessManagementSource {
   const load = async ({ sessionId }: { readonly sessionId: string }) =>
-    loadSessionHarness(sessions, harnesses, sessionId);
+    loadSessionHarness(sessions, harnesses, sessionOverrideDrafts, sessionId);
 
   return {
     load,
     async dispatch({ sessionId, command }) {
       const context = await availableContext(sessions, harnesses, sessionId);
-      await dispatchCommand(sessions, harnesses, context, command);
+      await dispatchCommand(sessions, harnesses, sessionOverrideDrafts, context, command);
       return load({ sessionId });
     },
   };
@@ -43,11 +50,15 @@ interface AvailableContext {
 async function loadSessionHarness(
   sessions: AgentSessionClient,
   harnesses: HarnessManagementClient,
+  sessionOverrideDrafts: SessionHarnessOverrideDraftCache,
   sessionId: string,
 ): Promise<ConversationHarnessManagementRead> {
   try {
     const context = await availableContext(sessions, harnesses, sessionId);
-    return { kind: 'available', snapshot: snapshot(context) };
+    return {
+      kind: 'available',
+      snapshot: snapshot(context, sessionOverrideDrafts.get(sessionId)),
+    };
   } catch (error) {
     if (error instanceof UnboundSessionHarness)
       return {
@@ -79,6 +90,7 @@ async function availableContext(
 async function dispatchCommand(
   sessions: AgentSessionClient,
   harnesses: HarnessManagementClient,
+  sessionOverrideDrafts: SessionHarnessOverrideDraftCache,
   context: AvailableContext,
   command: ConversationHarnessManagementCommand,
 ): Promise<void> {
@@ -101,6 +113,47 @@ async function dispatchCommand(
       });
       return;
     }
+    case 'start_session_edit': {
+      const baseHarnessRef = versionRef(context, command.baseRevision);
+      const base = configurationForVersion(context, baseHarnessRef);
+      sessionOverrideDrafts.save(context.session.id, baseHarnessRef, base);
+      return;
+    }
+    case 'save_session_working_copy': {
+      const draft = requireSessionOverrideDraft(sessionOverrideDrafts, context.session.id);
+      const baseline = configurationForVersion(context, draft.baseHarnessRef);
+      sessionOverrideDrafts.save(
+        context.session.id,
+        draft.baseHarnessRef,
+        toCanonicalConfiguration(command.configuration, baseline),
+      );
+      return;
+    }
+    case 'publish_session_override': {
+      if (!sessions.updateHarness)
+        throw new Error('This Agent Session client cannot update Harness ownership.');
+      const draft = requireSessionOverrideDraft(sessionOverrideDrafts, context.session.id);
+      if (draft.baseHarnessRef.harnessId !== harnessId)
+        throw new Error('The Session now uses a different Harness than this customization.');
+      if (draft.baseHarnessRef.version !== command.expectedBaseRevision)
+        throw new Error('The Session Harness customization changed while it was being published.');
+      const publication = {
+        harnessId,
+        sessionId: context.session.id,
+        baseHarnessRef: draft.baseHarnessRef,
+        configuration: draft.configuration,
+      };
+      const published = await harnesses.publishSessionOverride(publication);
+      await sessions.updateHarness({
+        sessionId: context.session.id,
+        harnessVersion: published.reference,
+      });
+      sessionOverrideDrafts.discard(context.session.id);
+      return;
+    }
+    case 'discard_session_working_copy':
+      sessionOverrideDrafts.discard(context.session.id);
+      return;
     case 'commit':
       await harnesses.publishDraft({ harnessId });
       return;
@@ -158,7 +211,10 @@ async function dispatchCommand(
   }
 }
 
-function snapshot(context: AvailableContext): ConversationHarnessManagementSnapshot {
+function snapshot(
+  context: AvailableContext,
+  sessionOverrideDraft: SessionHarnessOverrideDraft | null,
+): ConversationHarnessManagementSnapshot {
   const { session, details, requested, resolved } = context;
   const pushedVersions = new Set(details.replacements.map(({ target }) => target.version));
   const replacedVersions = new Set(details.replacements.map(({ source }) => source.version));
@@ -193,7 +249,8 @@ function snapshot(context: AvailableContext): ConversationHarnessManagementSnaps
           resolved.configuration.identityAssignment.kind === 'allow_list'
             ? resolved.configuration.identityAssignment.identityIds
             : [],
-        reason: 'Reusable Identity definitions are application-owned; this Harness stores IDs only.',
+        reason:
+          'Reusable Identity definitions are application-owned; this Harness stores IDs only.',
       },
       agentVisualIdentities: {
         source: 'not_connected',
@@ -227,6 +284,16 @@ function snapshot(context: AvailableContext): ConversationHarnessManagementSnaps
           draftRevision: (details.draft.basedOn?.version ?? 0) + 1,
           dirty: true,
           configuration: toEditorConfiguration(details.harness.name, details.draft.configuration),
+        }
+      : null,
+    sessionWorkingCopy: sessionOverrideDraft
+      ? {
+          baseRevision: sessionOverrideDraft.baseHarnessRef.version,
+          dirty: true,
+          configuration: toEditorConfiguration(
+            details.harness.name,
+            sessionOverrideDraft.configuration,
+          ),
         }
       : null,
     versionControl: {
@@ -294,6 +361,28 @@ function versionRef(context: AvailableContext, version: number): HarnessVersionR
   if (!context.details.versions.some((candidate) => candidate.reference.version === version))
     throw new Error(`Harness version ${version} does not exist.`);
   return reference;
+}
+
+function configurationForVersion(
+  context: AvailableContext,
+  reference: HarnessVersionRef,
+): HarnessConfiguration {
+  const version = context.details.versions.find(
+    (candidate) =>
+      candidate.reference.harnessId === reference.harnessId &&
+      candidate.reference.version === reference.version,
+  );
+  if (!version) throw new Error(`Harness version ${reference.version} does not exist.`);
+  return version.configuration;
+}
+
+function requireSessionOverrideDraft(
+  drafts: SessionHarnessOverrideDraftCache,
+  sessionId: string,
+): SessionHarnessOverrideDraft {
+  const draft = drafts.get(sessionId);
+  if (!draft) throw new Error('Customize this Session before saving or publishing.');
+  return draft;
 }
 
 function toEditorConfiguration(

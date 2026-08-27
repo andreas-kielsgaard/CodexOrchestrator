@@ -157,6 +157,12 @@ export interface ConversationHarnessManagementSnapshot {
     readonly dirty: boolean;
     readonly configuration: HarnessEffectiveConfiguration;
   } | null;
+  /** Process-local customization owned by this Session; never a persistent Harness draft. */
+  readonly sessionWorkingCopy?: {
+    readonly baseRevision: number;
+    readonly dirty: true;
+    readonly configuration: HarnessEffectiveConfiguration;
+  } | null;
   readonly versionControl: {
     readonly support: 'recorded_preview' | 'not_connected';
     readonly pushedRevision: number | null;
@@ -228,6 +234,21 @@ export type ConversationHarnessManagementCommand =
   | {
       readonly kind: 'save_working_copy';
       readonly configuration: HarnessEffectiveConfiguration;
+    }
+  | {
+      readonly kind: 'start_session_edit';
+      readonly baseRevision: number;
+    }
+  | {
+      readonly kind: 'save_session_working_copy';
+      readonly configuration: HarnessEffectiveConfiguration;
+    }
+  | {
+      readonly kind: 'publish_session_override';
+      readonly expectedBaseRevision: number;
+    }
+  | {
+      readonly kind: 'discard_session_working_copy';
     }
   | {
       readonly kind: 'commit';

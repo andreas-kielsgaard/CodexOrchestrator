@@ -233,7 +233,7 @@ describe('HarnessAwareAgentSessionPane', () => {
       </HarnessAwareAgentSessionPane>,
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Manage harness' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit harness' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Harness' }));
     await waitFor(() => expect(screen.getByLabelText('Harness name')).toBeEnabled());
     expect(screen.getByRole('region', { name: 'Prompt prefix rendered Markdown' })).toBeVisible();
     expect(screen.queryByRole('toolbar')).toBeNull();
@@ -268,7 +268,7 @@ describe('HarnessAwareAgentSessionPane', () => {
 
     expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
     expect(screen.getByText('Working draft has uncommitted changes')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Edit draft' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit Harness' })).toBeVisible();
     fireEvent.change(screen.getByLabelText('Viewed harness version'), {
       target: { value: 'draft' },
     });
@@ -412,7 +412,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     expect(screen.queryByLabelText(/Harness allows/)).toBeNull();
     expect(screen.queryByText(/delegated|shared policy|version specific/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Harness' }));
     await waitFor(() => expect(screen.getByLabelText('Harness preferred model')).toBeEnabled());
     expect(
       within(screen.getByLabelText('Harness preferred model')).getByRole('option', {
@@ -454,7 +454,7 @@ describe('HarnessAwareAgentSessionPane', () => {
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByText('Queued for next prompt')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit harness' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Harness' }));
     await waitFor(() => expect(screen.getByLabelText('Harness name')).toBeEnabled());
     fireEvent.change(screen.getByLabelText('Harness name'), {
       target: { value: 'Epic Plan Builder Plus' },

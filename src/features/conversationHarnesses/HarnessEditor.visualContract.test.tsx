@@ -22,7 +22,7 @@ describe('HarnessEditor visual contract', () => {
     expect(screen.getByLabelText('Harness Management controls')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Back to conversation' })).toBeVisible();
     expect(screen.getByLabelText('Viewed harness version')).toHaveValue('version:3');
-    expect(screen.getByRole('button', { name: 'Edit harness' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit Harness' })).toBeVisible();
 
     const sectionTitles = [
       ...container.querySelectorAll('.harness-management__card > header h2'),
@@ -120,6 +120,65 @@ describe('HarnessEditor visual contract', () => {
         accent: '#2456aa',
         shape: 'square',
       },
+    });
+  });
+
+  it('separates reusable Harness editing from in-memory Session customization', async () => {
+    const read = await createRecordedHarnessManagementSource().load({
+      sessionId: recordedHarnessInspectorSessionId,
+    });
+    if (read.kind !== 'available') throw new Error('Expected the recorded Harness to load.');
+    const onCommand = vi.fn();
+    const { rerender } = render(
+      <HarnessEditor read={read} onBack={vi.fn()} onCommand={onCommand} />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Edit Harness' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Customize this Session' }));
+    expect(onCommand).toHaveBeenCalledWith({ kind: 'start_session_edit', baseRevision: 3 });
+
+    const base = read.snapshot.versionControl.versions.find(({ revision }) => revision === 3);
+    if (!base) throw new Error('Expected Harness version 3.');
+    const sessionRead = {
+      ...read,
+      snapshot: {
+        ...read.snapshot,
+        sessionWorkingCopy: {
+          baseRevision: 3,
+          dirty: true as const,
+          configuration: base.configuration,
+        },
+      },
+    };
+    rerender(<HarnessEditor read={sessionRead} onBack={vi.fn()} onCommand={onCommand} />);
+
+    expect(screen.getByLabelText('Viewed harness version')).toHaveValue('session-draft');
+    expect(screen.getByText('Session draft · in memory · based on v3')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Publish for this Session' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    let confirmation = screen.getByRole('alertdialog', {
+      name: 'Discard this Session customization?',
+    });
+    expect(within(confirmation).getByText(/removes the in-memory Session draft/i)).toBeVisible();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Discard Session draft' }));
+    expect(onCommand).toHaveBeenCalledWith({ kind: 'discard_session_working_copy' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customize this Session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish for this Session' }));
+    confirmation = screen.getByRole('alertdialog', {
+      name: 'Publish this Session customization?',
+    });
+    expect(
+      within(confirmation).getByText(
+        /creates a Session-specific immutable Harness version.*updates only this Session/i,
+      ),
+    ).toBeVisible();
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Publish for this Session' }));
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'publish_session_override',
+      expectedBaseRevision: 3,
     });
   });
 });

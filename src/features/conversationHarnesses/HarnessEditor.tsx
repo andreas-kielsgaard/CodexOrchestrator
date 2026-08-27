@@ -44,7 +44,8 @@ interface Confirmation {
   readonly command: ConversationHarnessManagementCommand;
 }
 
-type VersionSelection = `version:${number}` | 'draft';
+type VersionSelection = `version:${number}` | 'draft' | 'session-draft';
+type EditMode = 'none' | 'harness' | 'session';
 type CatalogDialog = 'names' | 'skills' | 'tools' | null;
 
 export function HarnessEditor({
@@ -103,7 +104,7 @@ function AvailableHarnessManagement({
     snapshot.versionControl.versions.at(-1)?.revision ??
     0;
   const [selected, setSelected] = useState<VersionSelection>(`version:${initialRevision}`);
-  const [editMode, setEditMode] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>('none');
   const [catalogDialog, setCatalogDialog] = useState<CatalogDialog>(null);
   const [identityDialogOpen, setIdentityDialogOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
@@ -146,7 +147,7 @@ function AvailableHarnessManagement({
   }, [highestRevision]);
 
   useEffect(() => {
-    if (selected === 'draft' && !snapshot.workingCopy && !editMode)
+    if (selected === 'draft' && !snapshot.workingCopy && editMode !== 'harness')
       setSelected(`version:${snapshot.sessionBinding.appliedRevision ?? highestRevision}`);
   }, [
     editMode,
@@ -156,8 +157,23 @@ function AvailableHarnessManagement({
     snapshot.workingCopy,
   ]);
 
+  useEffect(() => {
+    if (selected !== 'session-draft' || snapshot.sessionWorkingCopy || editMode === 'session')
+      return;
+    setEditMode('none');
+    setSelected(`version:${snapshot.sessionBinding.appliedRevision ?? highestRevision}`);
+  }, [
+    editMode,
+    highestRevision,
+    selected,
+    snapshot.sessionBinding.appliedRevision,
+    snapshot.sessionWorkingCopy,
+  ]);
+
   const selectedRevision =
-    selected === 'draft' ? null : Number.parseInt(selected.replace('version:', ''), 10);
+    selected === 'draft' || selected === 'session-draft'
+      ? null
+      : Number.parseInt(selected.replace('version:', ''), 10);
   const selectedVersion = snapshot.versionControl.versions.find(
     (version) => version.revision === selectedRevision,
   );
@@ -168,7 +184,9 @@ function AvailableHarnessManagement({
   const configuration =
     selected === 'draft' && snapshot.workingCopy
       ? snapshot.workingCopy.configuration
-      : (selectedVersion?.configuration ?? fallbackVersion?.configuration);
+      : selected === 'session-draft' && snapshot.sessionWorkingCopy
+        ? snapshot.sessionWorkingCopy.configuration
+        : (selectedVersion?.configuration ?? fallbackVersion?.configuration);
   const skillAlwaysCount =
     configuration?.skills.items.filter((item) => item.policy === 'always_applicable').length ?? 0;
   const skillInitialCount =
@@ -212,20 +230,39 @@ function AvailableHarnessManagement({
       </ManagementShell>
     );
 
-  const editable = Boolean(editMode && selected === 'draft' && snapshot.workingCopy && onCommand);
+  const editable = Boolean(
+    onCommand &&
+    ((editMode === 'harness' && selected === 'draft' && snapshot.workingCopy) ||
+      (editMode === 'session' && selected === 'session-draft' && snapshot.sessionWorkingCopy)),
+  );
   const saveConfiguration = (next: HarnessEffectiveConfiguration) => {
-    if (!snapshot.workingCopy || !editable) return;
+    if (!editable) return;
     onCommand?.({
-      kind: 'save_working_copy',
+      kind: editMode === 'session' ? 'save_session_working_copy' : 'save_working_copy',
       configuration: next,
     });
   };
-  const beginEdit = (dialog: CatalogDialog = null) => {
-    setEditMode(true);
+  const beginHarnessEdit = (dialog: CatalogDialog = null) => {
+    setEditMode('harness');
     setSelected('draft');
     setCatalogDialog(dialog);
     if (!snapshot.workingCopy && selectedRevision !== null)
       onCommand?.({ kind: 'start_edit', baseRevision: selectedRevision });
+  };
+  const beginSessionEdit = (dialog: CatalogDialog = null) => {
+    const baseRevision =
+      selectedRevision ??
+      snapshot.sessionWorkingCopy?.baseRevision ??
+      snapshot.sessionBinding.appliedRevision ??
+      highestRevision;
+    setEditMode('session');
+    setSelected('session-draft');
+    setCatalogDialog(dialog);
+    if (!snapshot.sessionWorkingCopy) onCommand?.({ kind: 'start_session_edit', baseRevision });
+  };
+  const beginEdit = (dialog: CatalogDialog = null) => {
+    if (editMode === 'session') beginSessionEdit(dialog);
+    else beginHarnessEdit(dialog);
   };
   const openConfirmation = (next: Confirmation) => setConfirmation(next);
   const sessionIdentity = assignedIdentityForManagement(snapshot);
@@ -247,7 +284,7 @@ function AvailableHarnessManagement({
       data-harness-editor-layout="reviewed-management"
     >
       <header
-        className={`harness-management__toolbar${editMode ? ' is-editing' : ''}`}
+        className={`harness-management__toolbar${editMode !== 'none' ? ' is-editing' : ''}`}
         aria-label="Harness Management controls"
       >
         <button className="harness-management__back" type="button" onClick={onBack}>
@@ -266,18 +303,27 @@ function AvailableHarnessManagement({
             aria-label="Viewed harness version"
             value={selected}
             onChange={(event) => {
-              setSelected(event.target.value as VersionSelection);
-              setEditMode(event.target.value === 'draft' && editMode);
+              const next = event.target.value as VersionSelection;
+              setSelected(next);
+              if (next === 'draft' && editMode === 'harness') return;
+              if (next === 'session-draft' && editMode === 'session') return;
+              setEditMode('none');
             }}
           >
             {snapshot.workingCopy && (
               <option value="draft">
-                Working draft
+                Harness draft · persistent
                 {snapshot.workingCopy.dirty ? ' · uncommitted' : ''}
               </option>
             )}
             {!snapshot.workingCopy && selected === 'draft' && (
-              <option value="draft">Starting working draft...</option>
+              <option value="draft">Starting Harness draft...</option>
+            )}
+            {snapshot.sessionWorkingCopy && (
+              <option value="session-draft">Session draft · in memory</option>
+            )}
+            {!snapshot.sessionWorkingCopy && selected === 'session-draft' && (
+              <option value="session-draft">Starting Session customization...</option>
             )}
             {[...snapshot.versionControl.versions]
               .sort((left, right) => right.revision - left.revision)
@@ -289,7 +335,7 @@ function AvailableHarnessManagement({
           </select>
         </label>
         <div className="harness-management__toolbar-actions">
-          {onCommand && !editMode && selectedDiffersFromSession && (
+          {onCommand && editMode === 'none' && selectedDiffersFromSession && (
             <button
               className="is-primary"
               type="button"
@@ -313,15 +359,21 @@ function AvailableHarnessManagement({
                 : `Use v${selectedRevision} for this Session`}
             </button>
           )}
-          {onCommand && !editMode && (
-            <button type="button" onClick={() => beginEdit()}>
+          {onCommand && editMode === 'none' && (
+            <button type="button" onClick={() => beginHarnessEdit()}>
               <Pencil size={15} aria-hidden="true" />
-              {snapshot.workingCopy ? 'Edit draft' : 'Edit harness'}
+              Edit Harness
             </button>
           )}
-          {onCommand && editMode && (
+          {onCommand && editMode === 'none' && (
+            <button type="button" onClick={() => beginSessionEdit()}>
+              <Pencil size={15} aria-hidden="true" />
+              Customize this Session
+            </button>
+          )}
+          {onCommand && editMode === 'harness' && (
             <>
-              <button type="button" onClick={() => setEditMode(false)}>
+              <button type="button" onClick={() => setEditMode('none')}>
                 Finish editing
               </button>
               <button
@@ -367,6 +419,47 @@ function AvailableHarnessManagement({
               </button>
             </>
           )}
+          {onCommand && editMode === 'session' && snapshot.sessionWorkingCopy && (
+            <>
+              <button type="button" onClick={() => setEditMode('none')}>
+                Finish editing
+              </button>
+              <button
+                type="button"
+                disabled={commandPending}
+                onClick={() =>
+                  openConfirmation({
+                    title: 'Discard this Session customization?',
+                    body: 'This removes the in-memory Session draft. It does not change the reusable Harness, its draft, or this Session’s current Harness version.',
+                    confirmLabel: 'Discard Session draft',
+                    command: { kind: 'discard_session_working_copy' },
+                  })
+                }
+              >
+                <X size={15} aria-hidden="true" />
+                Discard
+              </button>
+              <button
+                className="is-primary"
+                type="button"
+                disabled={commandPending}
+                onClick={() =>
+                  openConfirmation({
+                    title: 'Publish this Session customization?',
+                    body: `Publishing creates a Session-specific immutable Harness version based on v${snapshot.sessionWorkingCopy?.baseRevision}, updates only this Session to that exact version, and leaves the reusable Harness and its draft unchanged.`,
+                    confirmLabel: 'Publish for this Session',
+                    command: {
+                      kind: 'publish_session_override',
+                      expectedBaseRevision: snapshot.sessionWorkingCopy?.baseRevision ?? 0,
+                    },
+                  })
+                }
+              >
+                <Upload size={15} aria-hidden="true" />
+                Publish for this Session
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -383,6 +476,13 @@ function AvailableHarnessManagement({
               {selected === 'draft'
                 ? 'Working draft · uncommitted'
                 : 'Working draft has uncommitted changes'}
+            </StateBadge>
+          )}
+          {snapshot.sessionWorkingCopy && (
+            <StateBadge tone="caution">
+              {selected === 'session-draft'
+                ? `Session draft · in memory · based on v${snapshot.sessionWorkingCopy.baseRevision}`
+                : 'This Session has an in-memory customization draft'}
             </StateBadge>
           )}
           {pushedVersion && pushedVersion.revision !== selectedRevision && (
@@ -729,6 +829,11 @@ function AvailableHarnessManagement({
           onCancel={() => setConfirmation(null)}
           onConfirm={() => {
             onCommand?.(confirmation.command);
+            if (
+              confirmation.command.kind === 'publish_session_override' ||
+              confirmation.command.kind === 'discard_session_working_copy'
+            )
+              setEditMode('none');
             setConfirmation(null);
           }}
         />

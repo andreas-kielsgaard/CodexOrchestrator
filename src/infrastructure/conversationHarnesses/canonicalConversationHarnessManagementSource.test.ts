@@ -8,6 +8,7 @@ import {
   createHarnessId,
   createHarnessVersionNumber,
   createHarnessVersionRef,
+  InMemorySessionHarnessOverrideDraftCache,
   type HarnessDetails,
   type HarnessManagementClient,
   type HarnessVersionRef,
@@ -33,7 +34,10 @@ function publishedVersion(version: number): PublishedHarnessVersion {
   };
 }
 
-function harnessDetails(replacements: HarnessDetails['replacements'] = []): HarnessDetails {
+function harnessDetails(
+  replacements: HarnessDetails['replacements'] = [],
+  draft: HarnessDetails['draft'] = null,
+): HarnessDetails {
   return {
     harness: {
       harnessId,
@@ -41,7 +45,7 @@ function harnessDetails(replacements: HarnessDetails['replacements'] = []): Harn
       createdAt,
       updatedAt: createdAt,
     },
-    draft: null,
+    draft,
     versions: [publishedVersion(1), publishedVersion(2)],
     replacements,
   };
@@ -146,9 +150,12 @@ function createHarnessClient(
       savedAt: createdAt,
     })),
     publishDraft: vi.fn(async () => resolved),
-    publishSessionOverride: vi.fn(async () => {
-      throw new Error('not used');
-    }),
+    publishSessionOverride: vi.fn(async ({ sessionId, configuration }) => ({
+      reference: reference(3),
+      scope: { kind: 'session_specific' as const, sessionId },
+      configuration,
+      createdAt,
+    })),
     orderReplacement: vi.fn(async ({ source, target }) => ({ source, target })),
     resolveVersion: vi.fn(async ({ requested }) => ({
       requested,
@@ -232,11 +239,126 @@ describe('canonical Conversation Harness Management source', () => {
       }),
     );
     expect(harnesses.publishDraft).toHaveBeenCalledWith({ harnessId });
+    expect(harnesses.publishSessionOverride).not.toHaveBeenCalled();
     expect(harnesses.orderReplacement).toHaveBeenCalledTimes(1);
     expect(harnesses.orderReplacement).toHaveBeenCalledWith({
       source: reference(1),
       target: reference(2),
     });
+  });
+
+  it('keeps Session customization in memory and publishes it from the exact base reference', async () => {
+    const sessions = createSessionClient([session('session-current', reference(2))]);
+    const harnesses = createHarnessClient(harnessDetails());
+    const drafts = new InMemorySessionHarnessOverrideDraftCache();
+    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'start_session_edit', baseRevision: 1 },
+    });
+    const started = drafts.get('session-current');
+    expect(started?.baseHarnessRef).toEqual(reference(1));
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
+
+    const reopened = await source.load({ sessionId: 'session-current' });
+    expect(reopened).toMatchObject({
+      kind: 'available',
+      snapshot: { sessionWorkingCopy: { baseRevision: 1, dirty: true } },
+    });
+    if (reopened.kind !== 'available' || !reopened.snapshot.sessionWorkingCopy)
+      throw new Error('Expected an in-memory Session working copy.');
+    const edited = {
+      ...reopened.snapshot.sessionWorkingCopy.configuration,
+      promptPrefix: {
+        ...reopened.snapshot.sessionWorkingCopy.configuration.promptPrefix,
+        content: 'Only this Session receives this context.',
+      },
+    };
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'save_session_working_copy', configuration: edited },
+    });
+
+    expect(drafts.get('session-current')).toMatchObject({
+      baseHarnessRef: reference(1),
+      configuration: { promptPrefix: { content: 'Only this Session receives this context.' } },
+    });
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'publish_session_override', expectedBaseRevision: 1 },
+    });
+
+    expect(harnesses.publishSessionOverride).toHaveBeenCalledWith({
+      harnessId,
+      sessionId: 'session-current',
+      baseHarnessRef: reference(1),
+      configuration: expect.objectContaining({
+        promptPrefix: expect.objectContaining({
+          content: 'Only this Session receives this context.',
+        }),
+      }),
+    });
+    expect(sessions.updateHarness).toHaveBeenCalledWith({
+      sessionId: 'session-current',
+      harnessVersion: reference(3),
+    });
+    expect(drafts.get('session-current')).toBeNull();
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('discards only the in-memory Session customization', async () => {
+    const sessions = createSessionClient([session('session-current', reference(2))]);
+    const harnesses = createHarnessClient(harnessDetails());
+    const drafts = new InMemorySessionHarnessOverrideDraftCache();
+    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'start_session_edit', baseRevision: 2 },
+    });
+    expect(drafts.get('session-current')).not.toBeNull();
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'discard_session_working_copy' },
+    });
+
+    expect(drafts.get('session-current')).toBeNull();
+    expect(harnesses.publishSessionOverride).not.toHaveBeenCalled();
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
+    expect(sessions.updateHarness).not.toHaveBeenCalled();
+  });
+
+  it('exposes independent reusable Harness and Session drafts at the same time', async () => {
+    const persistentDraft = {
+      harnessId,
+      basedOn: reference(2),
+      configuration: exampleHarnessConfiguration(),
+      savedAt: createdAt,
+    };
+    const sessions = createSessionClient([session('session-current', reference(2))]);
+    const harnesses = createHarnessClient(harnessDetails([], persistentDraft));
+    const drafts = new InMemorySessionHarnessOverrideDraftCache();
+    const source = createCanonicalConversationHarnessManagementSource(sessions, harnesses, drafts);
+
+    await source.dispatch?.({
+      sessionId: 'session-current',
+      command: { kind: 'start_session_edit', baseRevision: 1 },
+    });
+    const read = await source.load({ sessionId: 'session-current' });
+
+    expect(read).toMatchObject({
+      kind: 'available',
+      snapshot: {
+        workingCopy: { baseRevision: 2 },
+        sessionWorkingCopy: { baseRevision: 1 },
+      },
+    });
+    expect(harnesses.saveDraft).not.toHaveBeenCalled();
   });
 
   it('updates presentation identity on the Agent Session rather than on the Harness', async () => {

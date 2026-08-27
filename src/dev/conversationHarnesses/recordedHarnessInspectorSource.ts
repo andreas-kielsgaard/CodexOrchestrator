@@ -549,6 +549,8 @@ function reduceRecordedCommand(
       'The pushed version is queued for every relevant Session at its next prompt.',
     );
   }
+  if (command.kind !== 'queue_version')
+    throw new Error('Session Harness customization is available from the application source.');
   return queueRecordedVersion(
     snapshot,
     command.revision,
