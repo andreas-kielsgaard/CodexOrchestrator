@@ -5,12 +5,13 @@ pub(crate) mod observation;
 mod update_sink;
 
 pub(crate) use lifecycle::{
-    AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,
+    AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier, AgentSessionOwnership,
     ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand, CreateAgentSessionCommand,
     CreateApplicationAgentSessionCommand, NativeProfileLaunchAuthority,
-    SessionHarnessLaunchAuthority,
     SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
-    SendIdempotentApplicationAgentSessionMessageCommand, SystemAgentSessionProviders,
+    SendIdempotentApplicationAgentSessionMessageCommand, SessionHarnessLaunchAuthority,
+    SystemAgentSessionProviders, UpdateAgentSessionHarnessCommand,
+    UpdateAgentSessionIdentityCommand,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
 

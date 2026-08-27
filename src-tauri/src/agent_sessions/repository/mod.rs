@@ -5,8 +5,8 @@ mod schema;
 mod tests;
 
 pub(crate) use schema::{
-    quarantine_archived_prototype_tables, AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA,
-    AGENT_SESSION_SCHEMA,
+    ensure_agent_session_ownership_schema, quarantine_archived_prototype_tables,
+    AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA, AGENT_SESSION_SCHEMA,
 };
 
 use self::mapping::*;
@@ -23,6 +23,7 @@ use super::{
         ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
     },
 };
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{path::Path, sync::Mutex};
@@ -35,6 +36,8 @@ impl SqliteAgentSessionRepository {
     pub(crate) fn new(connection: Connection) -> Result<Self, RepositoryError> {
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(sql_unavailable("configure Agent Session database"))?;
+        ensure_agent_session_ownership_schema(&connection)
+            .map_err(|error| RepositoryError::new(RepositoryErrorKind::Unavailable, error))?;
         let foreign_keys_enabled = connection
             .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
             .map_err(sql_unavailable("verify Agent Session foreign keys"))?;
@@ -250,6 +253,68 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         transaction
             .commit()
             .map_err(sql_unavailable("commit runtime binding update"))?;
+        Ok(candidate)
+    }
+
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin session Harness update"))?;
+        let current = required_session(&transaction, session_id)?;
+        let mut candidate = current.clone();
+        candidate.harness_version = harness_version;
+        candidate.updated_at = updated_at;
+        validate_session_update(&current, &candidate).map_err(contract_error)?;
+        transaction
+            .execute(
+                "UPDATE agent_sessions SET harness_version_ref_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    candidate.harness_version.as_ref().map(to_json).transpose()?,
+                    timestamp(updated_at),
+                    session_id.as_str()
+                ],
+            )
+            .map_err(sql_unavailable("update session Harness"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit session Harness update"))?;
+        Ok(candidate)
+    }
+
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin assigned Agent identity update"))?;
+        let current = required_session(&transaction, session_id)?;
+        let mut candidate = current.clone();
+        candidate.assigned_identity = assigned_identity;
+        candidate.updated_at = updated_at;
+        validate_session_update(&current, &candidate).map_err(contract_error)?;
+        transaction
+            .execute(
+                "UPDATE agent_sessions SET assigned_identity_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    candidate.assigned_identity.as_ref().map(to_json).transpose()?,
+                    timestamp(updated_at),
+                    session_id.as_str()
+                ],
+            )
+            .map_err(sql_unavailable("update assigned Agent identity"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit assigned Agent identity update"))?;
         Ok(candidate)
     }
 

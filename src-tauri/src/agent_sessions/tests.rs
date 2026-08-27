@@ -527,6 +527,38 @@ impl AgentSessionRepository for FakeRepository {
         Ok(session.clone())
     }
 
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<crate::harness_engine::domain::HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
+        session.harness_version = harness_version;
+        session.updated_at = updated_at;
+        Ok(session.clone())
+    }
+
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<crate::identities::AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
+        session.assigned_identity = assigned_identity;
+        session.updated_at = updated_at;
+        Ok(session.clone())
+    }
+
     fn create_pending_invocation(
         &self,
         invocation: AgentInvocation,
@@ -660,7 +692,9 @@ impl AgentSessionRepository for FakeRepository {
         })?;
         let updated = invocation
             .recover_pre_acceptance_interruption(updated_at)
-            .map_err(|error| repository_error(RepositoryErrorKind::InvalidState, error.to_string()))?;
+            .map_err(|error| {
+                repository_error(RepositoryErrorKind::InvalidState, error.to_string())
+            })?;
         *invocation = updated.clone();
         Ok(updated)
     }
@@ -830,6 +864,8 @@ fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
         runtime_binding: binding(external_context_id),
         working_directory: Some(format!("C:/work/{id}")),
         requested_options: runtime_options(),
+        harness_version: None,
+        assigned_identity: None,
         created_at: at(0),
         updated_at: at(0),
     }

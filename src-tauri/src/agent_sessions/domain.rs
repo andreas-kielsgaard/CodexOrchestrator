@@ -1,3 +1,4 @@
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -84,6 +85,10 @@ pub(crate) struct AgentSession {
     pub(crate) runtime_binding: AgentRuntimeBinding,
     pub(crate) working_directory: Option<String>,
     pub(crate) requested_options: AgentRuntimeOptions,
+    /// Exact reusable or Session-specific Harness version currently owned by this Session.
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+    /// Session-owned snapshot; it is independent of later Harness or identity-definition edits.
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
 }
@@ -247,9 +252,10 @@ impl AgentInvocation {
         updated_at: DateTime<Utc>,
     ) -> Result<Self, ContractViolation> {
         let recoverable = self.status == AgentInvocationStatus::Interrupted
-            && self.runtime_error.as_ref().is_some_and(|error| {
-                error.code == "runtime_startup_without_launch_acceptance"
-            });
+            && self
+                .runtime_error
+                .as_ref()
+                .is_some_and(|error| error.code == "runtime_startup_without_launch_acceptance");
         if !recoverable {
             return Err(ContractViolation::InvalidInvocationTransition {
                 from: self.status,
@@ -461,6 +467,15 @@ pub(crate) fn validate_session(session: &AgentSession) -> Result<(), ContractVio
     if session.updated_at < session.created_at {
         return Err(ContractViolation::InvalidSessionRecord {
             reason: "session update time cannot precede creation time",
+        });
+    }
+    if session
+        .assigned_identity
+        .as_ref()
+        .is_some_and(|identity| identity.validate().is_err())
+    {
+        return Err(ContractViolation::InvalidSessionRecord {
+            reason: "assigned Agent identity is invalid",
         });
     }
     Ok(())

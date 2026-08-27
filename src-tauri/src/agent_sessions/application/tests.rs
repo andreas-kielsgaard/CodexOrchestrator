@@ -1,9 +1,10 @@
 use super::lifecycle::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
-    AgentSessionNotifier, ApplicationInvocationLaunchEvidence, CancelAgentInvocationCommand,
-    CreateAgentSessionCommand, NativeProfileLaunchAuthority, SendAgentSessionMessageCommand,
-    SessionHarnessLaunchAuthority,
-    SendIdempotentApplicationAgentSessionMessageCommand,
+    AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
+    CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
+    SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
+    SessionHarnessLaunchAuthority, UpdateAgentSessionHarnessCommand,
+    UpdateAgentSessionIdentityCommand,
 };
 use crate::agent_sessions::{
     domain::{
@@ -23,6 +24,10 @@ use crate::agent_sessions::{
     },
     repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
 };
+use crate::{
+    harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
+    identities::{AssignedAgentIdentity, IdentityId, IdentityShape},
+};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use rusqlite::Connection;
 use serde_json::json;
@@ -32,9 +37,81 @@ use std::sync::{
 };
 
 #[test]
+fn application_creates_and_updates_session_owned_harness_and_identity() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
+    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
+    let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+    let providers = Arc::new(DeterministicProviders::default());
+    let application = AgentSessionApplication::new(
+        repository,
+        runtime,
+        notifier,
+        providers.clone(),
+        providers,
+        Some("codex-test".into()),
+    );
+    let first_ref = HarnessVersionRef::new(
+        HarnessId::new("planning").unwrap(),
+        HarnessVersionNumber::new(1).unwrap(),
+    );
+    let first_identity = AssignedAgentIdentity::new(
+        Some(IdentityId::new("avery").unwrap()),
+        "Avery",
+        "#39745a",
+        IdentityShape::Circle,
+    )
+    .unwrap();
+    let session = application
+        .create_session_with_ownership(
+            CreateAgentSessionCommand {
+                title: Some("Owned session".into()),
+                working_directory: None,
+                requested_options: AgentRuntimeOptions {
+                    model: Some("session-model".into()),
+                    sandbox: None,
+                },
+            },
+            AgentSessionOwnership {
+                harness_version: Some(first_ref),
+                assigned_identity: Some(first_identity),
+            },
+        )
+        .expect("create owned Session");
+    assert_eq!(
+        session.requested_options.model.as_deref(),
+        Some("session-model")
+    );
+
+    let replacement = HarnessVersionRef::new(
+        HarnessId::new("planning").unwrap(),
+        HarnessVersionNumber::new(2).unwrap(),
+    );
+    let migrated = application
+        .update_session_harness(UpdateAgentSessionHarnessCommand {
+            session_id: session.id.clone(),
+            harness_version: Some(replacement.clone()),
+        })
+        .expect("update Harness reference");
+    assert_eq!(migrated.harness_version, Some(replacement));
+    let cleared = application
+        .update_session_identity(UpdateAgentSessionIdentityCommand {
+            session_id: session.id,
+            assigned_identity: None,
+        })
+        .expect("clear Session identity");
+    assert!(cleared.assigned_identity.is_none());
+}
+
+#[test]
 fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation() {
     let connection = Connection::open_in_memory().expect("memory database");
-    connection.execute_batch(AGENT_SESSION_SCHEMA).expect("schema");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
     let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
@@ -57,8 +134,12 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         })
         .unwrap();
 
-    application.send_message(message(&session.id, "fresh")).unwrap();
-    application.send_message(message(&session.id, "resume")).unwrap();
+    application
+        .send_message(message(&session.id, "fresh"))
+        .unwrap();
+    application
+        .send_message(message(&session.id, "resume"))
+        .unwrap();
 
     assert_eq!(authority.invocations.lock().unwrap().len(), 2);
     let requests = runtime
@@ -67,17 +148,19 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         .unwrap()
         .iter()
         .filter_map(|call| match call {
-            RuntimeCall::Start(request) | RuntimeCall::Resume(request, _) => {
-                Some(request.clone())
-            }
+            RuntimeCall::Start(request) | RuntimeCall::Resume(request, _) => Some(request.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(requests.len(), 2);
-    assert!(requests.iter().all(|request| request
-        .launch_extension
-        .as_ref()
-        .is_some_and(|extension| extension.additional_args.contains(&"mcp_servers={}".to_string()))));
+    assert!(requests
+        .iter()
+        .all(|request| request
+            .launch_extension
+            .as_ref()
+            .is_some_and(|extension| extension
+                .additional_args
+                .contains(&"mcp_servers={}".to_string()))));
 }
 
 #[test]
@@ -159,22 +242,45 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
 #[test]
 fn managed_profile_authority_failure_is_durable_and_prevents_provider_preflight_and_spawn() {
     let connection = Connection::open_in_memory().expect("memory database");
-    connection.execute_batch(AGENT_SESSION_SCHEMA).expect("schema");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
     let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
     let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
     let providers = Arc::new(DeterministicProviders::default());
     let application = AgentSessionApplication::new(
-        repository.clone(), runtime.clone(), notifier, providers.clone(), providers, None,
-    ).with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
-    let session = application.create_session(CreateAgentSessionCommand {
-        title: None, working_directory: None, requested_options: AgentRuntimeOptions::default(),
-    }).expect("session");
+        repository.clone(),
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        None,
+    )
+    .with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: None,
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .expect("session");
 
-    let result = application.send_message(message(&session.id, "must not launch")).expect("durable failure");
-    let invocation = repository.get_invocation(&result.invocation_id).expect("read invocation").expect("invocation");
+    let result = application
+        .send_message(message(&session.id, "must not launch"))
+        .expect("durable failure");
+    let invocation = repository
+        .get_invocation(&result.invocation_id)
+        .expect("read invocation")
+        .expect("invocation");
     assert_eq!(invocation.status, AgentInvocationStatus::Failed);
-    assert_eq!(invocation.runtime_error.as_ref().map(|error| error.code.as_str()), Some("runtime_preflight_failed"));
+    assert_eq!(
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("runtime_preflight_failed")
+    );
     assert!(runtime.calls.lock().expect("runtime calls").is_empty());
 }
 
@@ -587,12 +693,12 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
     let invocation_id = application.allocate_application_invocation_id();
     let result = application
         .send_idempotent_application_message_with_launch_observation(
-        SendIdempotentApplicationAgentSessionMessageCommand {
-            invocation_id: invocation_id.clone(),
-            message: message(&session.id, "Accepted externally, marker fails"),
-        },
-        None,
-    )
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: invocation_id.clone(),
+                message: message(&session.id, "Accepted externally, marker fails"),
+            },
+            None,
+        )
         .expect("marker persistence failure is terminalized truthfully");
 
     assert!(!result.launch_accepted);
@@ -602,7 +708,10 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
         .expect("persisted");
     assert_eq!(invocation.status, AgentInvocationStatus::Failed);
     assert_eq!(
-        invocation.runtime_error.as_ref().map(|error| error.code.as_str()),
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
         Some("runtime_launch_acceptance_persistence_failed")
     );
     assert_eq!(
@@ -620,9 +729,12 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
             .expect("conservative launch evidence"),
         ApplicationInvocationLaunchEvidence::PersistedNotAccepted
     );
-    assert!(runtime.calls.lock().expect("runtime calls").iter().any(
-        |call| matches!(call, RuntimeCall::Cancel(id) if id == &invocation_id)
-    ));
+    assert!(runtime
+        .calls
+        .lock()
+        .expect("runtime calls")
+        .iter()
+        .any(|call| matches!(call, RuntimeCall::Cancel(id) if id == &invocation_id)));
 }
 
 #[test]
@@ -798,7 +910,13 @@ fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocat
         )
         .expect("simulate crash after running persistence");
 
-    assert_eq!(harness.application.reconcile_startup().expect("classify gap"), 1);
+    assert_eq!(
+        harness
+            .application
+            .reconcile_startup()
+            .expect("classify gap"),
+        1
+    );
     let interrupted = harness
         .repository
         .get_invocation(&invocation_id)
@@ -806,7 +924,10 @@ fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocat
         .expect("persisted interruption");
     assert_eq!(interrupted.status, AgentInvocationStatus::Interrupted);
     assert_eq!(
-        interrupted.runtime_error.as_ref().map(|error| error.code.as_str()),
+        interrupted
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
         Some("runtime_startup_without_launch_acceptance")
     );
 
@@ -1546,6 +1667,26 @@ impl AgentSessionRepository for FaultInjectingRepository {
         }
         self.inner
             .update_runtime_binding(session_id, binding, updated_at)
+    }
+
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<crate::harness_engine::domain::HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner
+            .update_harness_version(session_id, harness_version, updated_at)
+    }
+
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<crate::identities::AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner
+            .update_assigned_identity(session_id, assigned_identity, updated_at)
     }
 
     fn create_pending_invocation(

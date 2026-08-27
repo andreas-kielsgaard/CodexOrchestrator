@@ -14,6 +14,7 @@ use crate::agent_sessions::{
         RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
     },
 };
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::{error::Error, fmt, sync::Arc};
@@ -30,6 +31,24 @@ pub(crate) struct CreateAgentSessionCommand {
 pub(crate) struct CreateApplicationAgentSessionCommand {
     pub(crate) session_id: AgentSessionId,
     pub(crate) session: CreateAgentSessionCommand,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AgentSessionOwnership {
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionHarnessCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionIdentityCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -203,12 +222,28 @@ impl AgentSessionApplication {
         &self,
         command: CreateAgentSessionCommand,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
-        self.create_session_with_id(command, self.ids.session_id())
+        self.create_session_with_ownership(command, AgentSessionOwnership::default())
+    }
+
+    pub(crate) fn create_session_with_ownership(
+        &self,
+        command: CreateAgentSessionCommand,
+        ownership: AgentSessionOwnership,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.create_session_with_id(command, self.ids.session_id(), ownership)
     }
 
     pub(crate) fn create_application_session(
         &self,
         command: CreateApplicationAgentSessionCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.create_application_session_with_ownership(command, AgentSessionOwnership::default())
+    }
+
+    pub(crate) fn create_application_session_with_ownership(
+        &self,
+        command: CreateApplicationAgentSessionCommand,
+        ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
         if let Some(existing) = self
             .repository
@@ -227,13 +262,14 @@ impl AgentSessionApplication {
             }
             return Ok(existing);
         }
-        self.create_session_with_id(command.session, command.session_id)
+        self.create_session_with_id(command.session, command.session_id, ownership)
     }
 
     fn create_session_with_id(
         &self,
         command: CreateAgentSessionCommand,
         session_id: AgentSessionId,
+        ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
         let now = self.clock.now();
         let session = AgentSession {
@@ -246,11 +282,39 @@ impl AgentSessionApplication {
             },
             working_directory: normalize_optional(command.working_directory),
             requested_options: command.requested_options,
+            harness_version: ownership.harness_version,
+            assigned_identity: ownership.assigned_identity,
             created_at: now,
             updated_at: now,
         };
         self.repository
             .create_session(session)
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn update_session_harness(
+        &self,
+        command: UpdateAgentSessionHarnessCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.repository
+            .update_harness_version(
+                &command.session_id,
+                command.harness_version,
+                self.clock.now(),
+            )
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn update_session_identity(
+        &self,
+        command: UpdateAgentSessionIdentityCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.repository
+            .update_assigned_identity(
+                &command.session_id,
+                command.assigned_identity,
+                self.clock.now(),
+            )
             .map_err(AgentSessionApplicationError::repository)
     }
 
@@ -672,23 +736,21 @@ impl AgentSessionApplication {
             None => launch_extension,
         };
         let launch_extension = match self.session_harness_launch_authority.as_ref() {
-            Some(authority) => match authority.prepare_launch(
-                &session.id,
-                &invocation.id,
-                launch_extension,
-            ) {
-                Ok(extension) => extension,
-                Err(message) => {
-                    self.finish_preflight_failure(
-                        &invocation,
-                        RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
-                    )?;
-                    return Ok(SendAgentSessionMessageLaunchResult {
-                        acknowledgement,
-                        launch_accepted: false,
-                    });
+            Some(authority) => {
+                match authority.prepare_launch(&session.id, &invocation.id, launch_extension) {
+                    Ok(extension) => extension,
+                    Err(message) => {
+                        self.finish_preflight_failure(
+                            &invocation,
+                            RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                        )?;
+                        return Ok(SendAgentSessionMessageLaunchResult {
+                            acknowledgement,
+                            launch_accepted: false,
+                        });
+                    }
                 }
-            },
+            }
             None => launch_extension,
         };
 
@@ -853,7 +915,8 @@ impl AgentSessionApplication {
                 {
                     Some(AgentRuntimeFailure {
                         code: "runtime_startup_without_launch_acceptance".to_string(),
-                        message: "application restarted without durable launch acceptance".to_string(),
+                        message: "application restarted without durable launch acceptance"
+                            .to_string(),
                         details: None,
                     })
                 } else {

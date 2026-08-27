@@ -14,6 +14,7 @@ use uuid::Uuid;
 mod active_app;
 mod agent_sessions;
 mod harness_engine;
+mod identities;
 mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]

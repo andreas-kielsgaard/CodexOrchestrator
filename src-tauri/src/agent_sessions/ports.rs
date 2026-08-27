@@ -4,6 +4,7 @@ use super::domain::{
     AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
     ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
 };
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,6 +83,22 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         session_id: &AgentSessionId,
         binding: AgentRuntimeBinding,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    /// Replaces the exact Harness reference after explicit assignment or Harness-owned migration.
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    /// Assigns a Session-owned identity snapshot or clears the current assignment.
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<AssignedAgentIdentity>,
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError>;
 

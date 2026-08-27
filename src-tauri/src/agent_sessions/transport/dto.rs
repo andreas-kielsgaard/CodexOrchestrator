@@ -252,6 +252,8 @@ mod tests {
                 },
                 working_directory: None,
                 requested_options: AgentRuntimeOptions::default(),
+                harness_version: None,
+                assigned_identity: None,
                 created_at: at,
                 updated_at: at,
             },
