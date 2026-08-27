@@ -212,7 +212,7 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) submitted_text: String,
     pub(crate) working_directory: Option<String>,
     pub(crate) options: AgentRuntimeOptions,
-    /// Opt-in child-process configuration supplied by a role-specific application service.
+    /// Opt-in child-process configuration supplied by an application-owned invocation service.
     /// Ordinary Agent Session sends always leave this absent.
     pub(crate) launch_extension: Option<RuntimeLaunchExtension>,
 }

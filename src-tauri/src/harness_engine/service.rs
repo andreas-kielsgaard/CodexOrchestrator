@@ -281,15 +281,15 @@ impl WorkflowSessionHarnessBinder for HarnessEngineService {
         let harness_snapshot = serde_json::to_string(&request.harness)
             .map_err(|error| format!("Unable to materialize Workflow Harness: {error}"))?;
         let plan = self.compile_plan(&request.harness)?;
-        let canonical = adapt_workflow_harness(
+        let legacy_harness = adapt_workflow_harness(
             &request.workflow_type_id,
             &request.node_id,
             &request.harness,
         )?;
         let harness_version = self.catalog.materialize_workflow_harness(
-            canonical.id,
-            canonical.name,
-            canonical.configuration,
+            legacy_harness.id,
+            legacy_harness.name,
+            legacy_harness.configuration,
         )?;
         let mediation_plan = serde_json::to_string(&plan)
             .map_err(|error| format!("Unable to compile Harness mediation plan: {error}"))?;
@@ -518,7 +518,7 @@ mod tests {
         let service =
             HarnessEngineService::new(repository.clone(), sidecar.clone(), registry, catalog())
                 .unwrap();
-        let canonical_reference = service
+        let catalog_reference = service
             .bind_workflow_session(BindWorkflowSessionHarness {
                 session_id: AgentSessionId::new("session-1").unwrap(),
                 runtime_instance_id: "invocation-1".into(),
@@ -539,9 +539,9 @@ mod tests {
                 },
             })
             .unwrap();
-        assert_eq!(canonical_reference.version().get(), 1);
+        assert_eq!(catalog_reference.version().get(), 1);
         assert_eq!(
-            canonical_reference.harness_id(),
+            catalog_reference.harness_id(),
             &super::super::workflow_adapter::stable_workflow_harness_id(
                 "workflow-type-1",
                 "node-1",

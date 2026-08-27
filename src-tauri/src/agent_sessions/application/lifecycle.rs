@@ -118,7 +118,7 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
 }
 
 /// Application-owned authority for deriving the one native home used by a managed provider
-/// launch. Callers can supply role-specific extensions, but never profile authority.
+/// launch. Callers can supply invocation-specific extensions, but never profile authority.
 pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     fn prepare_launch(
         &self,
@@ -129,9 +129,9 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     ) -> Result<RuntimeLaunchExtension, String>;
 }
 
-/// Session-owned runtime mediation consulted after all role and profile launch configuration has
-/// been resolved. A bound Session can replace only the MCP surface while preserving unrelated
-/// launch settings.
+/// Session-owned runtime mediation consulted after application invocation and profile launch
+/// configuration has been resolved. A bound Session can replace only the MCP surface while
+/// preserving unrelated launch settings.
 pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
     fn prepare_launch(
         &self,
@@ -387,8 +387,8 @@ impl AgentSessionApplication {
         self.send_message_with_launch_extension(command, None)
     }
 
-    /// Explicit opt-in for a role-specific application service. Generic callers cannot acquire
-    /// an extension accidentally because the normal send path always supplies `None`.
+    /// Explicit opt-in for an application-owned invocation service. Generic callers cannot
+    /// acquire an extension accidentally because the normal send path always supplies `None`.
     pub(crate) fn send_message_with_launch_extension(
         &self,
         command: SendAgentSessionMessageCommand,

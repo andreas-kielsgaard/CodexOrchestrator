@@ -1,22 +1,22 @@
-use super::{configuration as canonical, domain::HarnessId};
+use super::{configuration as legacy_catalog, domain::HarnessId};
 use crate::{
     orchestration::conversation_harness_working_copy as legacy,
     workflows::domain::WorkflowHarnessConfig,
 };
 use sha2::{Digest, Sha256};
 
-pub(crate) struct CanonicalWorkflowHarness {
+pub(crate) struct LegacyWorkflowHarness {
     pub(crate) id: HarnessId,
     pub(crate) name: String,
-    pub(crate) configuration: canonical::HarnessConfiguration,
+    pub(crate) configuration: legacy_catalog::HarnessConfiguration,
 }
 
 pub(crate) fn adapt_workflow_harness(
     workflow_type_id: &str,
     node_id: &str,
     harness: &WorkflowHarnessConfig,
-) -> Result<CanonicalWorkflowHarness, String> {
-    Ok(CanonicalWorkflowHarness {
+) -> Result<LegacyWorkflowHarness, String> {
+    Ok(LegacyWorkflowHarness {
         id: stable_workflow_harness_id(workflow_type_id, node_id)?,
         name: harness.name().to_string(),
         configuration: convert_configuration(&harness.0),
@@ -42,28 +42,28 @@ pub(crate) fn stable_workflow_harness_id(
 
 pub(crate) fn convert_configuration(
     source: &legacy::HarnessEffectiveConfiguration,
-) -> canonical::HarnessConfiguration {
-    canonical::HarnessConfiguration {
+) -> legacy_catalog::HarnessConfiguration {
+    legacy_catalog::HarnessConfiguration {
         identity_assignment: match &source.identity.permitted_agent_names {
-            Some(identity_ids) => canonical::HarnessIdentityAssignmentPolicy::AllowList {
+            Some(identity_ids) => legacy_catalog::HarnessIdentityAssignmentPolicy::AllowList {
                 identity_ids: identity_ids.clone(),
             },
-            None => canonical::HarnessIdentityAssignmentPolicy::Unrestricted,
+            None => legacy_catalog::HarnessIdentityAssignmentPolicy::Unrestricted,
         },
-        prompt_prefix: canonical::HarnessPromptPrefixConfiguration {
+        prompt_prefix: legacy_catalog::HarnessPromptPrefixConfiguration {
             content: source.prompt_prefix.content.clone(),
             initial_delivery: map_initial_delivery(source.prompt_prefix.initial_delivery),
             context_compression_delivery: map_compression_delivery(
                 source.prompt_prefix.context_compression_delivery,
             ),
         },
-        skills: canonical::HarnessSkillsConfiguration {
+        skills: legacy_catalog::HarnessSkillsConfiguration {
             available_discovery_policy: map_discovery(source.skills.available_discovery_policy),
             items: source
                 .skills
                 .items
                 .iter()
-                .map(|skill| canonical::HarnessSkillConfiguration {
+                .map(|skill| legacy_catalog::HarnessSkillConfiguration {
                     name: skill.name.clone(),
                     path: skill.path.clone(),
                     purpose: skill.purpose.clone(),
@@ -72,13 +72,13 @@ pub(crate) fn convert_configuration(
                 })
                 .collect(),
         },
-        tools: canonical::HarnessToolsConfiguration {
+        tools: legacy_catalog::HarnessToolsConfiguration {
             available_discovery_policy: map_discovery(source.tools.available_discovery_policy),
             items: source
                 .tools
                 .items
                 .iter()
-                .map(|tool| canonical::HarnessToolConfiguration {
+                .map(|tool| legacy_catalog::HarnessToolConfiguration {
                     name: tool.name.clone(),
                     policy: map_tool_policy(tool.policy),
                 })
@@ -88,14 +88,14 @@ pub(crate) fn convert_configuration(
                 .tools
                 .mcp_servers
                 .iter()
-                .map(|server| canonical::HarnessMcpServerExposure {
+                .map(|server| legacy_catalog::HarnessMcpServerExposure {
                     server_name: server.server_name.clone(),
                     access: match &server.access {
                         legacy::HarnessMcpServerAccess::EntireServer => {
-                            canonical::HarnessMcpServerAccess::EntireServer
+                            legacy_catalog::HarnessMcpServerAccess::EntireServer
                         }
                         legacy::HarnessMcpServerAccess::SelectedTools { tool_names } => {
-                            canonical::HarnessMcpServerAccess::SelectedTools {
+                            legacy_catalog::HarnessMcpServerAccess::SelectedTools {
                                 tool_names: tool_names.clone(),
                             }
                         }
@@ -103,9 +103,9 @@ pub(crate) fn convert_configuration(
                 })
                 .collect(),
         },
-        runtime: canonical::HarnessRuntimeConfiguration {
+        runtime: legacy_catalog::HarnessRuntimeConfiguration {
             preferred_model: source.runtime.default_model.as_ref().map(|model_id| {
-                canonical::HarnessModelPreference {
+                legacy_catalog::HarnessModelPreference {
                     model_id: model_id.clone(),
                     reasoning: source.runtime.default_reasoning.map(map_reasoning),
                 }
@@ -117,7 +117,7 @@ pub(crate) fn convert_configuration(
         hooks: source
             .hooks
             .iter()
-            .map(|hook| canonical::HarnessHookConfiguration {
+            .map(|hook| legacy_catalog::HarnessHookConfiguration {
                 name: hook.name.clone(),
                 status: map_hook_status(hook.status),
                 detail: hook.detail.clone(),
@@ -129,14 +129,14 @@ pub(crate) fn convert_configuration(
                 avoid_duplicate_guidance,
                 notify_removed_items,
                 prompt_reconstruction,
-            } => canonical::HarnessUpdatePolicy::Configured {
+            } => legacy_catalog::HarnessUpdatePolicy::Configured {
                 delivery: map_update_delivery(*delivery),
                 avoid_duplicate_guidance: *avoid_duplicate_guidance,
                 notify_removed_items: *notify_removed_items,
                 prompt_reconstruction: map_prompt_reconstruction(*prompt_reconstruction),
             },
             legacy::HarnessUpdatePolicy::NotConfigured { reason } => {
-                canonical::HarnessUpdatePolicy::NotConfigured {
+                legacy_catalog::HarnessUpdatePolicy::NotConfigured {
                     reason: reason.clone(),
                 }
             }
@@ -155,94 +155,106 @@ fn required_identity<'a>(value: &'a str, label: &str) -> Result<&'a str, String>
 
 fn map_initial_delivery(
     value: legacy::HarnessInitialDelivery,
-) -> canonical::HarnessInitialDelivery {
+) -> legacy_catalog::HarnessInitialDelivery {
     match value {
-        legacy::HarnessInitialDelivery::Prepend => canonical::HarnessInitialDelivery::Prepend,
+        legacy::HarnessInitialDelivery::Prepend => legacy_catalog::HarnessInitialDelivery::Prepend,
     }
 }
 
 fn map_compression_delivery(
     value: legacy::HarnessContextCompressionDelivery,
-) -> canonical::HarnessContextCompressionDelivery {
+) -> legacy_catalog::HarnessContextCompressionDelivery {
     match value {
         legacy::HarnessContextCompressionDelivery::Deferred => {
-            canonical::HarnessContextCompressionDelivery::Deferred
+            legacy_catalog::HarnessContextCompressionDelivery::Deferred
         }
     }
 }
 
-fn map_discovery(value: legacy::HarnessDiscoveryPolicy) -> canonical::HarnessDiscoveryPolicy {
+fn map_discovery(value: legacy::HarnessDiscoveryPolicy) -> legacy_catalog::HarnessDiscoveryPolicy {
     match value {
-        legacy::HarnessDiscoveryPolicy::Whitelist => canonical::HarnessDiscoveryPolicy::Whitelist,
-        legacy::HarnessDiscoveryPolicy::Blacklist => canonical::HarnessDiscoveryPolicy::Blacklist,
+        legacy::HarnessDiscoveryPolicy::Whitelist => {
+            legacy_catalog::HarnessDiscoveryPolicy::Whitelist
+        }
+        legacy::HarnessDiscoveryPolicy::Blacklist => {
+            legacy_catalog::HarnessDiscoveryPolicy::Blacklist
+        }
     }
 }
 
-fn map_skill_policy(value: legacy::HarnessSkillPolicy) -> canonical::HarnessSkillPolicy {
+fn map_skill_policy(value: legacy::HarnessSkillPolicy) -> legacy_catalog::HarnessSkillPolicy {
     match value {
         legacy::HarnessSkillPolicy::AlwaysApplicable => {
-            canonical::HarnessSkillPolicy::AlwaysApplicable
+            legacy_catalog::HarnessSkillPolicy::AlwaysApplicable
         }
         legacy::HarnessSkillPolicy::InitialIngestion => {
-            canonical::HarnessSkillPolicy::InitialIngestion
+            legacy_catalog::HarnessSkillPolicy::InitialIngestion
         }
-        legacy::HarnessSkillPolicy::Available => canonical::HarnessSkillPolicy::Available,
+        legacy::HarnessSkillPolicy::Available => legacy_catalog::HarnessSkillPolicy::Available,
     }
 }
 
-fn map_tool_policy(value: legacy::HarnessToolPolicy) -> canonical::HarnessToolPolicy {
+fn map_tool_policy(value: legacy::HarnessToolPolicy) -> legacy_catalog::HarnessToolPolicy {
     match value {
-        legacy::HarnessToolPolicy::EveryInvocation => canonical::HarnessToolPolicy::EveryInvocation,
+        legacy::HarnessToolPolicy::EveryInvocation => {
+            legacy_catalog::HarnessToolPolicy::EveryInvocation
+        }
         legacy::HarnessToolPolicy::InitialInvocation => {
-            canonical::HarnessToolPolicy::InitialInvocation
+            legacy_catalog::HarnessToolPolicy::InitialInvocation
         }
-        legacy::HarnessToolPolicy::Available => canonical::HarnessToolPolicy::Available,
+        legacy::HarnessToolPolicy::Available => legacy_catalog::HarnessToolPolicy::Available,
     }
 }
 
-fn map_reasoning(value: legacy::HarnessReasoningLevel) -> canonical::HarnessReasoningLevel {
+fn map_reasoning(value: legacy::HarnessReasoningLevel) -> legacy_catalog::HarnessReasoningLevel {
     match value {
-        legacy::HarnessReasoningLevel::Low => canonical::HarnessReasoningLevel::Low,
-        legacy::HarnessReasoningLevel::Medium => canonical::HarnessReasoningLevel::Medium,
-        legacy::HarnessReasoningLevel::High => canonical::HarnessReasoningLevel::High,
-        legacy::HarnessReasoningLevel::Xhigh => canonical::HarnessReasoningLevel::Xhigh,
+        legacy::HarnessReasoningLevel::Low => legacy_catalog::HarnessReasoningLevel::Low,
+        legacy::HarnessReasoningLevel::Medium => legacy_catalog::HarnessReasoningLevel::Medium,
+        legacy::HarnessReasoningLevel::High => legacy_catalog::HarnessReasoningLevel::High,
+        legacy::HarnessReasoningLevel::Xhigh => legacy_catalog::HarnessReasoningLevel::Xhigh,
     }
 }
 
-fn map_sandbox(value: legacy::HarnessSandbox) -> canonical::HarnessSandbox {
+fn map_sandbox(value: legacy::HarnessSandbox) -> legacy_catalog::HarnessSandbox {
     match value {
-        legacy::HarnessSandbox::ReadOnly => canonical::HarnessSandbox::ReadOnly,
-        legacy::HarnessSandbox::WorkspaceWrite => canonical::HarnessSandbox::WorkspaceWrite,
-        legacy::HarnessSandbox::DangerFullAccess => canonical::HarnessSandbox::DangerFullAccess,
+        legacy::HarnessSandbox::ReadOnly => legacy_catalog::HarnessSandbox::ReadOnly,
+        legacy::HarnessSandbox::WorkspaceWrite => legacy_catalog::HarnessSandbox::WorkspaceWrite,
+        legacy::HarnessSandbox::DangerFullAccess => {
+            legacy_catalog::HarnessSandbox::DangerFullAccess
+        }
     }
 }
 
-fn map_approval(value: legacy::HarnessApprovalPolicy) -> canonical::HarnessApprovalPolicy {
+fn map_approval(value: legacy::HarnessApprovalPolicy) -> legacy_catalog::HarnessApprovalPolicy {
     match value {
-        legacy::HarnessApprovalPolicy::Never => canonical::HarnessApprovalPolicy::Never,
+        legacy::HarnessApprovalPolicy::Never => legacy_catalog::HarnessApprovalPolicy::Never,
     }
 }
 
-fn map_hook_status(value: legacy::HarnessHookStatus) -> canonical::HarnessHookStatus {
+fn map_hook_status(value: legacy::HarnessHookStatus) -> legacy_catalog::HarnessHookStatus {
     match value {
-        legacy::HarnessHookStatus::Exposed => canonical::HarnessHookStatus::Exposed,
-        legacy::HarnessHookStatus::Proposed => canonical::HarnessHookStatus::Proposed,
-        legacy::HarnessHookStatus::NotConnected => canonical::HarnessHookStatus::NotConnected,
+        legacy::HarnessHookStatus::Exposed => legacy_catalog::HarnessHookStatus::Exposed,
+        legacy::HarnessHookStatus::Proposed => legacy_catalog::HarnessHookStatus::Proposed,
+        legacy::HarnessHookStatus::NotConnected => legacy_catalog::HarnessHookStatus::NotConnected,
     }
 }
 
-fn map_update_delivery(value: legacy::HarnessUpdateDelivery) -> canonical::HarnessUpdateDelivery {
+fn map_update_delivery(
+    value: legacy::HarnessUpdateDelivery,
+) -> legacy_catalog::HarnessUpdateDelivery {
     match value {
-        legacy::HarnessUpdateDelivery::NextPrompt => canonical::HarnessUpdateDelivery::NextPrompt,
+        legacy::HarnessUpdateDelivery::NextPrompt => {
+            legacy_catalog::HarnessUpdateDelivery::NextPrompt
+        }
     }
 }
 
 fn map_prompt_reconstruction(
     value: legacy::HarnessPromptReconstruction,
-) -> canonical::HarnessPromptReconstruction {
+) -> legacy_catalog::HarnessPromptReconstruction {
     match value {
         legacy::HarnessPromptReconstruction::Deferred => {
-            canonical::HarnessPromptReconstruction::Deferred
+            legacy_catalog::HarnessPromptReconstruction::Deferred
         }
     }
 }
@@ -298,7 +310,7 @@ mod tests {
 
         assert_eq!(
             adapted.configuration.identity_assignment,
-            canonical::HarnessIdentityAssignmentPolicy::AllowList {
+            legacy_catalog::HarnessIdentityAssignmentPolicy::AllowList {
                 identity_ids: vec!["identity-avery".into(), "identity-riley".into()]
             }
         );

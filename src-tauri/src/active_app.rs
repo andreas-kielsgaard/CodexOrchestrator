@@ -191,6 +191,9 @@ pub(crate) fn run() {
                 )?),
                 application.clone(),
                 harness_engine.clone(),
+                Arc::new(
+                    crate::workflows::legacy_node_configuration::LegacyWorkflowNodeConfigurationSource,
+                ),
             ));
             let (workflow_mcp, workflow_mcp_owner) =
                 crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;

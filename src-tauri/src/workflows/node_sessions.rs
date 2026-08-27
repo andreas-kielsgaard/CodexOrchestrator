@@ -1,9 +1,7 @@
 use super::{
-    application::{
-        launch_extension, BindWorkflowSessionHarness, WorkflowRepository,
-        WorkflowSessionHarnessBinder,
-    },
+    application::{BindWorkflowSessionHarness, WorkflowRepository, WorkflowSessionHarnessBinder},
     domain::{EffectiveWorkflowNodeConfig, WorkflowCompletedTurnTrigger},
+    legacy_node_configuration::WorkflowNodeConfigurationSource,
 };
 use crate::agent_sessions::{
     application::{
@@ -11,7 +9,7 @@ use crate::agent_sessions::{
         SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
         SendIdempotentApplicationAgentSessionMessageCommand, UpdateAgentSessionHarnessCommand,
     },
-    domain::{AgentRuntimeOptions, AgentSessionId},
+    domain::AgentSessionId,
 };
 use chrono::Utc;
 use std::{
@@ -29,6 +27,7 @@ pub(crate) struct WorkflowNodeSessions {
     repository: Arc<dyn WorkflowRepository>,
     sessions: Arc<AgentSessionApplication>,
     harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
+    node_configuration: Arc<dyn WorkflowNodeConfigurationSource>,
     receiver_lanes: Mutex<HashMap<(String, String), Arc<Mutex<()>>>>,
 }
 
@@ -37,11 +36,13 @@ impl WorkflowNodeSessions {
         repository: Arc<dyn WorkflowRepository>,
         sessions: Arc<AgentSessionApplication>,
         harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
+        node_configuration: Arc<dyn WorkflowNodeConfigurationSource>,
     ) -> Self {
         Self {
             repository,
             sessions,
             harnesses,
+            node_configuration,
             receiver_lanes: Mutex::new(HashMap::new()),
         }
     }
@@ -110,12 +111,12 @@ impl WorkflowNodeSessions {
         &self,
         request: Delivery<'_>,
     ) -> Result<SendAgentSessionMessageResult, (&'static str, String)> {
-        let requested_options = AgentRuntimeOptions {
-            model: nonempty(request.node.harness.default_model()),
-            sandbox: None,
-        };
-        let extension = launch_extension(&request.node.harness)
+        let launch_configuration = self
+            .node_configuration
+            .resolve(&request.node.harness)
             .map_err(|reason| ("receiver_harness", reason))?;
+        let requested_options = launch_configuration.requested_options;
+        let extension = launch_configuration.extension;
         let lane = self
             .receiver_lane(request.workflow_instance_id, &request.node.id)
             .map_err(|reason| ("receiver_session_resolution", reason))?;
@@ -318,8 +319,4 @@ struct Delivery<'a> {
     prompt: String,
     title: Option<String>,
     connection_activation_id: Option<&'a str>,
-}
-
-fn nonempty(value: &str) -> Option<String> {
-    (!value.trim().is_empty()).then(|| value.trim().to_string())
 }

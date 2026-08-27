@@ -13,6 +13,9 @@ use uuid::Uuid;
 
 mod active_app;
 mod agent_sessions;
+// Replacement contracts remain deliberately uncomposed until the bounded slice is reviewed.
+#[allow(dead_code)]
+mod execution_configuration;
 mod harness_engine;
 mod identities;
 mod native_profiles;

@@ -200,8 +200,8 @@ pub(crate) enum HarnessPromptReconstruction {
     Deferred,
 }
 
-/// Versioned Harness behavior. Product metadata, provider details, model catalogs, Session
-/// choices, and revision evidence intentionally live outside this value.
+/// Retained composite configuration for the current Harness catalog and Session binding path.
+/// New capability-exposure and node-invocation contracts live in `execution_configuration`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HarnessConfiguration {
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_configuration_has_no_machine_or_provider_identity() {
+    fn legacy_catalog_configuration_has_no_machine_or_provider_identity() {
         let value = serde_json::to_value(configuration()).unwrap();
 
         assert!(value.get("machineKey").is_none());

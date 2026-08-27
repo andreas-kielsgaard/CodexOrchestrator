@@ -11,6 +11,7 @@ use super::instance_domain::{
     WorkflowInstanceRecord, WorkflowInstanceSession, WorkflowInstanceSummary,
     WorkflowSessionActivity,
 };
+use super::legacy_node_configuration::WorkflowNodeConfigurationSource;
 use super::node_sessions::{WorkflowHumanMessage, WorkflowNodeSessions};
 use crate::agent_sessions::{
     application::{
@@ -20,7 +21,6 @@ use crate::agent_sessions::{
         AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentSessionId,
         NormalizedRuntimeEventKind,
     },
-    ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use chrono::Utc;
 use globset::Glob;
@@ -33,8 +33,6 @@ use std::{
     time::SystemTime,
 };
 use uuid::Uuid;
-
-const SUPPORTED_CODEX_MODELS: [&str; 2] = ["gpt-5.6-sol", "gpt-5.6-terra"];
 
 pub(crate) trait WorkflowRepository: Send + Sync {
     fn list_workflow_types(&self) -> Result<Vec<WorkflowTypeSummary>, String>;
@@ -207,9 +205,14 @@ impl WorkflowApplication {
         repository: Arc<dyn WorkflowRepository>,
         sessions: Arc<AgentSessionApplication>,
         harnesses: Arc<dyn WorkflowSessionHarnessBinder>,
+        node_configuration: Arc<dyn WorkflowNodeConfigurationSource>,
     ) -> Self {
-        let node_sessions =
-            WorkflowNodeSessions::new(repository.clone(), sessions.clone(), harnesses);
+        let node_sessions = WorkflowNodeSessions::new(
+            repository.clone(),
+            sessions.clone(),
+            harnesses,
+            node_configuration,
+        );
         Self {
             repository,
             sessions,
@@ -887,39 +890,6 @@ fn project_connection_activation(
     }
 }
 
-pub(super) fn launch_extension(
-    harness: &WorkflowHarnessConfig,
-) -> Result<Option<RuntimeLaunchExtension>, String> {
-    if !harness.skills().is_empty() {
-        return Err("Workflow launch does not support Harness skills yet.".to_string());
-    }
-    if !harness.hooks().is_empty() {
-        return Err("Workflow launch does not support Harness hooks yet.".to_string());
-    }
-    validate_supported_codex_model(harness.default_model())?;
-    let reasoning = harness.default_reasoning().unwrap_or_default();
-    if harness.prompt_prefix().contains('\0') || harness.prompt_prefix().len() > 65_536 {
-        return Err(
-            "Workflow Harness instructions are invalid for direct prompt delivery.".to_string(),
-        );
-    }
-    let mut extension = RuntimeLaunchExtension::default();
-    if !reasoning.is_empty() {
-        extension.additional_args = vec![
-            "-c".to_string(),
-            format!("model_reasoning_effort=\"{reasoning}\""),
-        ];
-    }
-    if let Some(instructions) = nonempty(harness.prompt_prefix()) {
-        extension.initial_prompt_prefix = Some(InitialPromptPrefix {
-            source: "workflow_recipe_node_instructions".to_string(),
-            version: 1,
-            content: instructions,
-        });
-    }
-    Ok((extension != RuntimeLaunchExtension::default()).then_some(extension))
-}
-
 fn validate_target(target: &ResolvedRepoBranchWorktreeTarget) -> Result<(), String> {
     for (value, label) in [
         (&target.repository.id, "repository ID"),
@@ -938,32 +908,6 @@ fn validate_target(target: &ResolvedRepoBranchWorktreeTarget) -> Result<(), Stri
         }
     }
     Ok(())
-}
-
-fn validate_runtime_literal(value: &str, label: &str) -> Result<(), String> {
-    if value != value.trim()
-        || value.len() > 128
-        || value.chars().any(|character| character.is_control())
-    {
-        return Err(format!("Workflow Harness {label} is invalid."));
-    }
-    Ok(())
-}
-
-fn validate_supported_codex_model(value: &str) -> Result<(), String> {
-    validate_runtime_literal(value, "model")?;
-    let model = value.trim();
-    if !model.is_empty() && !SUPPORTED_CODEX_MODELS.contains(&model) {
-        return Err(format!(
-            "Unsupported Codex model {model}; use {}.",
-            SUPPORTED_CODEX_MODELS.join(" or ")
-        ));
-    }
-    Ok(())
-}
-
-fn nonempty(value: &str) -> Option<String> {
-    (!value.trim().is_empty()).then(|| value.trim().to_string())
 }
 
 fn summarize(value: &str) -> String {
@@ -1292,7 +1236,14 @@ mod tests {
             .with_session_harness_version_resolver(Arc::new(RecordingHarnessResolver)),
         );
         let workflows = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
-        let application = WorkflowApplication::new(workflows.clone(), sessions, harnesses);
+        let application = WorkflowApplication::new(
+            workflows.clone(),
+            sessions,
+            harnesses,
+            Arc::new(
+                super::super::legacy_node_configuration::LegacyWorkflowNodeConfigurationSource,
+            ),
+        );
         (directory, workflows, runtime, application)
     }
 
@@ -1588,8 +1539,14 @@ mod tests {
         workflow_repository
             .activate_changes(&workflow_type_id, &elements)
             .unwrap();
-        let application =
-            WorkflowApplication::new(workflow_repository.clone(), sessions, harnesses);
+        let application = WorkflowApplication::new(
+            workflow_repository.clone(),
+            sessions,
+            harnesses,
+            Arc::new(
+                super::super::legacy_node_configuration::LegacyWorkflowNodeConfigurationSource,
+            ),
+        );
         ExecutionFixture {
             _directory: directory,
             agent_repository,

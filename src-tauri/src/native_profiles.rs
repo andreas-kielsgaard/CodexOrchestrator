@@ -2425,6 +2425,7 @@ impl NativeProfileService {
             profile_id: profile.id,
             filesystem_identity: profile.identity,
             home: profile.home,
+            execution_mode: profile.execution.selected_mode,
             readiness: readiness.clone(),
         })
     }
@@ -3800,6 +3801,7 @@ pub(crate) struct ResolvedNativeCodexHome {
     pub(crate) profile_id: String,
     pub(crate) filesystem_identity: String,
     pub(crate) home: PathBuf,
+    pub(crate) execution_mode: ExecutionMode,
     pub(crate) readiness: NativeProfileReadiness,
 }
 
@@ -4917,6 +4919,11 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution_configuration::{
+        CapabilitySet, NativeCodexCapabilityExposure,
+        NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
+        SelectedRuntimeProfileSource,
+    };
     use std::sync::Barrier;
     use std::thread;
 
@@ -5190,6 +5197,39 @@ mod tests {
             "UPDATE native_codex_profile_readiness SET mcp_reporting='ready' WHERE profile_id=?1",
             params![profile_id],
         ).unwrap();
+    }
+
+    #[test]
+    fn selected_profile_adapter_exposes_only_opaque_identity_and_locked_execution_mode() {
+        let (_directory, service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        mark_mcp_ready(&service, &profile.id);
+        let source = NativeCodexSelectedRuntimeProfileSource::new(
+            Arc::new(service),
+            NativeCodexCapabilityExposure {
+                capabilities: CapabilitySet {
+                    sandbox_modes: [SandboxMode::ReadOnly, SandboxMode::DangerFullAccess]
+                        .into_iter()
+                        .collect(),
+                    ..CapabilitySet::default()
+                },
+                locked: RuntimeSelections::default(),
+            },
+        );
+
+        let snapshot = source.selected_runtime_profile().unwrap();
+        assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
+        assert_eq!(
+            snapshot.exposure.sandbox_modes,
+            [SandboxMode::WorkspaceWrite].into_iter().collect()
+        );
+        assert_eq!(
+            snapshot.locked.sandbox_mode,
+            Some(SandboxMode::WorkspaceWrite)
+        );
+        let encoded = serde_json::to_value(snapshot).unwrap();
+        assert!(encoded.get("home").is_none());
+        assert!(encoded.get("filesystemIdentity").is_none());
     }
 
     fn claim_mcp_reporting_for_current_reconciliation(

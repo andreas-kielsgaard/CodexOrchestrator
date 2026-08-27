@@ -13,8 +13,8 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 pub(crate) type WorkflowMcpServerExposure = HarnessMcpServerExposure;
 pub(crate) type WorkflowMcpServerAccess = HarnessMcpServerAccess;
 
-/// A Workflow Role owns the same detached Harness definition used by Harness Management. Session,
-/// version, binding, recipe, and token identity are deliberately stored elsewhere.
+/// Retained Workflow persistence for the legacy composite node configuration. Session, version,
+/// binding, recipe, and token identity are deliberately stored elsewhere.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub(crate) struct WorkflowHarnessConfig(pub(crate) HarnessEffectiveConfiguration);
@@ -238,7 +238,7 @@ mod harness_definition_tests {
     use super::WorkflowHarnessConfig;
 
     #[test]
-    fn legacy_workflow_harness_reopens_as_the_canonical_detached_definition() {
+    fn legacy_workflow_harness_reopens_as_the_materialized_workflow_definition() {
         let harness: WorkflowHarnessConfig = serde_json::from_value(serde_json::json!({
             "harnessName": "Security Review",
             "roleIdentity": "Review trust boundaries.",
@@ -265,11 +265,11 @@ mod harness_definition_tests {
         );
         assert_eq!(harness.0.tools.mcp_servers.len(), 1);
 
-        let canonical = serde_json::to_value(harness).expect("canonical Harness");
-        assert_eq!(canonical["identity"]["name"], "Security Review");
-        assert!(canonical.get("harnessName").is_none());
+        let materialized = serde_json::to_value(harness).expect("materialized Workflow definition");
+        assert_eq!(materialized["identity"]["name"], "Security Review");
+        assert!(materialized.get("harnessName").is_none());
         assert_eq!(
-            canonical["tools"]["mcpServers"][0]["serverName"],
+            materialized["tools"]["mcpServers"][0]["serverName"],
             "workflow"
         );
     }
