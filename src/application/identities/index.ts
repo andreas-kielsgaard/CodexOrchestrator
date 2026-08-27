@@ -8,3 +8,11 @@ export {
   assignedIdentityFromLegacyAgentIdentity,
   legacyHarnessRoleLabel,
 } from './legacyAgentIdentityAdapter';
+export type {
+  CreateIdentityInput,
+  DeleteIdentityInput,
+  IdentityCatalogEntry,
+  IdentityManagementClient,
+  UpdateIdentityInput,
+} from './management';
+export { identityDefinitionFromCatalog } from './management';
