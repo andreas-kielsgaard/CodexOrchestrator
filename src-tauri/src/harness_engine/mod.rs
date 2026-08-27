@@ -1,6 +1,7 @@
 pub(crate) mod domain;
 pub(crate) mod proxy;
 pub(crate) mod repository;
+pub(crate) mod resolution;
 pub(crate) mod service;
 pub(crate) mod sidecar;
 

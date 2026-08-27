@@ -1,9 +1,364 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::{error::Error, fmt};
 
 pub(crate) const BINDING_CONTRACT_VERSION: &str = "harness-binding/v1";
 pub(crate) const MEDIATION_PLAN_VERSION: &str = "harness-mediation-plan/v1";
 pub(crate) const CONTROL_PROTOCOL_VERSION: &str = "harness-control/v1";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HarnessDomainError {
+    EmptyHarnessId,
+    InvalidVersionNumber,
+    EmptySessionId,
+    CrossHarnessReplacement,
+    SameVersionReplacement,
+}
+
+impl fmt::Display for HarnessDomainError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::EmptyHarnessId => "harness ID must be a non-empty opaque identifier",
+            Self::InvalidVersionNumber => "Harness version number must be greater than zero",
+            Self::EmptySessionId => "session-scoped Harness version requires a session ID",
+            Self::CrossHarnessReplacement => {
+                "Harness version replacement must remain within one Harness"
+            }
+            Self::SameVersionReplacement => {
+                "Harness version replacement must target a different version"
+            }
+        })
+    }
+}
+
+impl Error for HarnessDomainError {}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub(crate) struct HarnessId(String);
+
+impl HarnessId {
+    pub(crate) fn new(value: impl Into<String>) -> Result<Self, HarnessDomainError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(HarnessDomainError::EmptyHarnessId);
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for HarnessId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for HarnessId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub(crate) struct HarnessVersionNumber(u64);
+
+impl HarnessVersionNumber {
+    pub(crate) fn new(value: u64) -> Result<Self, HarnessDomainError> {
+        if value == 0 {
+            return Err(HarnessDomainError::InvalidVersionNumber);
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl fmt::Display for HarnessVersionNumber {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.get())
+    }
+}
+
+impl<'de> Deserialize<'de> for HarnessVersionNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HarnessVersionRef {
+    harness_id: HarnessId,
+    version: HarnessVersionNumber,
+}
+
+impl HarnessVersionRef {
+    pub(crate) fn new(harness_id: HarnessId, version: HarnessVersionNumber) -> Self {
+        Self {
+            harness_id,
+            version,
+        }
+    }
+
+    pub(crate) fn harness_id(&self) -> &HarnessId {
+        &self.harness_id
+    }
+
+    pub(crate) fn version(&self) -> HarnessVersionNumber {
+        self.version
+    }
+}
+
+impl fmt::Display for HarnessVersionRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}@v{}", self.harness_id, self.version)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum HarnessVersionScope {
+    Reusable,
+    SessionSpecific { session_id: String },
+}
+
+impl HarnessVersionScope {
+    pub(crate) fn session_specific(
+        session_id: impl Into<String>,
+    ) -> Result<Self, HarnessDomainError> {
+        let session_id = session_id.into();
+        if session_id.trim().is_empty() {
+            return Err(HarnessDomainError::EmptySessionId);
+        }
+        Ok(Self::SessionSpecific { session_id })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), HarnessDomainError> {
+        match self {
+            Self::Reusable => Ok(()),
+            Self::SessionSpecific { session_id } if session_id.trim().is_empty() => {
+                Err(HarnessDomainError::EmptySessionId)
+            }
+            Self::SessionSpecific { .. } => Ok(()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HarnessVersionScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(
+            tag = "kind",
+            rename_all = "snake_case",
+            rename_all_fields = "camelCase"
+        )]
+        enum SerializedScope {
+            Reusable,
+            SessionSpecific { session_id: String },
+        }
+
+        let scope = match SerializedScope::deserialize(deserializer)? {
+            SerializedScope::Reusable => Self::Reusable,
+            SerializedScope::SessionSpecific { session_id } => Self::SessionSpecific { session_id },
+        };
+        scope.validate().map_err(serde::de::Error::custom)?;
+        Ok(scope)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HarnessVersionReplacement {
+    source: HarnessVersionRef,
+    target: HarnessVersionRef,
+}
+
+impl HarnessVersionReplacement {
+    pub(crate) fn new(
+        source: HarnessVersionRef,
+        target: HarnessVersionRef,
+    ) -> Result<Self, HarnessDomainError> {
+        let replacement = Self { source, target };
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    pub(crate) fn source(&self) -> &HarnessVersionRef {
+        &self.source
+    }
+
+    pub(crate) fn target(&self) -> &HarnessVersionRef {
+        &self.target
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), HarnessDomainError> {
+        if self.source.harness_id() != self.target.harness_id() {
+            return Err(HarnessDomainError::CrossHarnessReplacement);
+        }
+        if self.source.version() == self.target.version() {
+            return Err(HarnessDomainError::SameVersionReplacement);
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for HarnessVersionReplacement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SerializedReplacement {
+            source: HarnessVersionRef,
+            target: HarnessVersionRef,
+        }
+
+        let serialized = SerializedReplacement::deserialize(deserializer)?;
+        Self::new(serialized.source, serialized.target).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum HarnessMigrationOutcome {
+    Current,
+    ReplacementApplied { path: Vec<HarnessVersionRef> },
+}
+
+impl HarnessMigrationOutcome {
+    pub(crate) fn was_replaced(&self) -> bool {
+        matches!(self, Self::ReplacementApplied { .. })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HarnessResolution {
+    requested: HarnessVersionRef,
+    resolved: HarnessVersionRef,
+    outcome: HarnessMigrationOutcome,
+}
+
+impl HarnessResolution {
+    pub(crate) fn current(reference: HarnessVersionRef) -> Self {
+        Self {
+            requested: reference.clone(),
+            resolved: reference,
+            outcome: HarnessMigrationOutcome::Current,
+        }
+    }
+
+    pub(crate) fn replaced(
+        requested: HarnessVersionRef,
+        resolved: HarnessVersionRef,
+        path: Vec<HarnessVersionRef>,
+    ) -> Self {
+        Self {
+            requested,
+            resolved,
+            outcome: HarnessMigrationOutcome::ReplacementApplied { path },
+        }
+    }
+
+    pub(crate) fn requested(&self) -> &HarnessVersionRef {
+        &self.requested
+    }
+
+    pub(crate) fn resolved(&self) -> &HarnessVersionRef {
+        &self.resolved
+    }
+
+    pub(crate) fn outcome(&self) -> &HarnessMigrationOutcome {
+        &self.outcome
+    }
+}
+
+#[cfg(test)]
+mod harness_version_tests {
+    use super::*;
+
+    fn reference(harness_id: &str, version: u64) -> HarnessVersionRef {
+        HarnessVersionRef::new(
+            HarnessId::new(harness_id).unwrap(),
+            HarnessVersionNumber::new(version).unwrap(),
+        )
+    }
+
+    #[test]
+    fn opaque_id_and_version_reject_empty_product_identity() {
+        assert_eq!(
+            HarnessId::new("  ").unwrap_err(),
+            HarnessDomainError::EmptyHarnessId
+        );
+        assert_eq!(
+            HarnessVersionNumber::new(0).unwrap_err(),
+            HarnessDomainError::InvalidVersionNumber
+        );
+    }
+
+    #[test]
+    fn session_scope_requires_an_opaque_session_id() {
+        assert_eq!(
+            HarnessVersionScope::session_specific("\t").unwrap_err(),
+            HarnessDomainError::EmptySessionId
+        );
+        assert_eq!(
+            HarnessVersionScope::session_specific("session-1").unwrap(),
+            HarnessVersionScope::SessionSpecific {
+                session_id: "session-1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn replacement_must_remain_within_one_harness() {
+        let error = HarnessVersionReplacement::new(
+            reference("epic-plan-builder", 1),
+            reference("work-unit-implementer", 2),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, HarnessDomainError::CrossHarnessReplacement);
+    }
+
+    #[test]
+    fn replacement_must_advance_to_a_different_version() {
+        let error = HarnessVersionReplacement::new(
+            reference("epic-plan-builder", 1),
+            reference("epic-plan-builder", 1),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, HarnessDomainError::SameVersionReplacement);
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
