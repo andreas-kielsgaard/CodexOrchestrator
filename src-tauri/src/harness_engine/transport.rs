@@ -20,8 +20,10 @@ impl HarnessCatalogTauriState {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HarnessDraftView {
-    based_on_version: Option<HarnessVersionRef>,
+    harness_id: HarnessId,
+    based_on_version: Option<HarnessVersionNumber>,
     configuration: HarnessConfiguration,
+    draft_revision: u64,
     saved_at: String,
 }
 
@@ -57,7 +59,7 @@ pub(crate) struct RenameHarnessInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveHarnessDraftInput {
     harness_id: HarnessId,
-    based_on_version: Option<HarnessVersionRef>,
+    based_on: Option<HarnessVersionRef>,
     configuration: HarnessConfiguration,
 }
 
@@ -79,7 +81,7 @@ pub(crate) struct HarnessReplacementInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ResolveHarnessVersionInput {
-    reference: HarnessVersionRef,
+    requested: HarnessVersionRef,
 }
 
 #[tauri::command]
@@ -101,48 +103,45 @@ pub(crate) fn load_harness(
 pub(crate) fn create_harness(
     state: State<'_, HarnessCatalogTauriState>,
     input: CreateHarnessInput,
-) -> Result<HarnessManagementView, String> {
-    let harness = state
+) -> Result<HarnessRecord, String> {
+    state
         .service
-        .create_harness(input.name, input.initial_configuration)?;
-    management_view(&state.service, &harness.id)
+        .create_harness(input.name, input.initial_configuration)
 }
 
 #[tauri::command]
 pub(crate) fn rename_harness(
     state: State<'_, HarnessCatalogTauriState>,
     input: RenameHarnessInput,
-) -> Result<HarnessManagementView, String> {
-    state.service.rename(&input.harness_id, input.name)?;
-    management_view(&state.service, &input.harness_id)
+) -> Result<HarnessRecord, String> {
+    state.service.rename(&input.harness_id, input.name)
 }
 
 #[tauri::command]
 pub(crate) fn save_harness_draft(
     state: State<'_, HarnessCatalogTauriState>,
     input: SaveHarnessDraftInput,
-) -> Result<HarnessManagementView, String> {
+) -> Result<HarnessDraftView, String> {
     let (_, current_draft, _) = state.service.load(&input.harness_id)?;
     let expected_current_revision = current_draft
         .as_ref()
         .map(|draft| draft.draft_revision)
         .unwrap_or(0);
-    state.service.save_draft(
+    let draft = state.service.save_draft(
         &input.harness_id,
-        input.based_on_version.as_ref(),
+        input.based_on.as_ref(),
         input.configuration,
         expected_current_revision,
     )?;
-    management_view(&state.service, &input.harness_id)
+    Ok(draft_view(draft))
 }
 
 #[tauri::command]
 pub(crate) fn publish_harness_draft(
     state: State<'_, HarnessCatalogTauriState>,
     input: HarnessQuery,
-) -> Result<HarnessManagementView, String> {
-    state.service.publish_draft(&input.harness_id)?;
-    management_view(&state.service, &input.harness_id)
+) -> Result<HarnessVersion, String> {
+    state.service.publish_draft(&input.harness_id)
 }
 
 #[tauri::command]
@@ -161,12 +160,10 @@ pub(crate) fn publish_session_harness_override(
 pub(crate) fn order_harness_version_replacement(
     state: State<'_, HarnessCatalogTauriState>,
     input: HarnessReplacementInput,
-) -> Result<HarnessManagementView, String> {
-    let harness_id = input.source.harness_id().clone();
+) -> Result<super::domain::HarnessVersionReplacement, String> {
     state
         .service
-        .order_replacement(input.source, input.target)?;
-    management_view(&state.service, &harness_id)
+        .order_replacement(input.source, input.target)
 }
 
 #[tauri::command]
@@ -174,7 +171,7 @@ pub(crate) fn resolve_harness_version(
     state: State<'_, HarnessCatalogTauriState>,
     input: ResolveHarnessVersionInput,
 ) -> Result<ResolvedHarnessVersion, String> {
-    state.service.resolve(&input.reference)
+    state.service.resolve(&input.requested)
 }
 
 fn management_view(
@@ -182,13 +179,7 @@ fn management_view(
     harness_id: &HarnessId,
 ) -> Result<HarnessManagementView, String> {
     let (harness, draft, versions) = service.load(harness_id)?;
-    let draft = draft.map(|draft| HarnessDraftView {
-        based_on_version: draft.based_on_version.map(|version: HarnessVersionNumber| {
-            HarnessVersionRef::new(harness_id.clone(), version)
-        }),
-        configuration: draft.configuration,
-        saved_at: draft.saved_at.to_rfc3339(),
-    });
+    let draft = draft.map(draft_view);
     Ok(HarnessManagementView {
         harness,
         draft,
@@ -196,3 +187,12 @@ fn management_view(
     })
 }
 
+fn draft_view(draft: super::catalog::HarnessDraft) -> HarnessDraftView {
+    HarnessDraftView {
+        harness_id: draft.harness_id,
+        based_on_version: draft.based_on_version,
+        configuration: draft.configuration,
+        draft_revision: draft.draft_revision,
+        saved_at: draft.saved_at.to_rfc3339(),
+    }
+}
