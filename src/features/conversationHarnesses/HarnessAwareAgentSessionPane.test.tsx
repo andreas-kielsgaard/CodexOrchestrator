@@ -371,22 +371,15 @@ describe('HarnessAwareAgentSessionPane', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Agent identity for Avery' }));
     const dialog = await screen.findByRole('dialog', { name: 'Current Agent identity' });
-    expect(within(dialog).getByText('Agent name')).toBeVisible();
-    expect(within(dialog).getByText('Available names')).toBeVisible();
-    expect(
-      within(within(dialog).getByLabelText('Available Agent names')).getAllByRole('button'),
-    ).toHaveLength(100);
-    fireEvent.change(within(dialog).getByLabelText('Search available Agent names'), {
-      target: { value: 'grcehpr' },
-    });
-    expect(await within(dialog).findByRole('button', { name: 'Grace Hopper' })).toBeVisible();
-    fireEvent.change(within(dialog).getByLabelText('Agent name'), {
+    expect(within(dialog).getByText(/apply to this Agent Session/i)).toBeVisible();
+    expect(within(dialog).queryByLabelText('Available Agent names')).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Identity display name'), {
       target: { value: 'Mildred Plot Twist' },
     });
-    fireEvent.change(within(dialog).getByLabelText('Agent identity color'), {
+    fireEvent.change(within(dialog).getByLabelText('Identity color'), {
       target: { value: '#6f4ab5' },
     });
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'hexagon' }));
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Hexagon' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply to this Session' }));
 
     expect(

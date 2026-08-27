@@ -79,16 +79,45 @@ describe('HarnessEditor visual contract', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Agent color and shape' }));
     const identity = screen.getByRole('dialog', { name: 'Current Agent identity' });
-    expect(within(identity).getByLabelText('Agent identity color')).toHaveValue('#39745a');
-    expect(within(identity).getByRole('radio', { name: 'circle' })).toBeChecked();
-    expect(within(identity).getByRole('radio', { name: 'square' })).not.toBeChecked();
-    expect(within(identity).getByRole('radio', { name: 'hexagon' })).not.toBeChecked();
-    fireEvent.click(within(identity).getByRole('button', { name: 'Close current Agent identity' }));
+    expect(within(identity).getByLabelText('Identity color')).toHaveValue('#39745a');
+    expect(within(identity).getByRole('radio', { name: 'Circle' })).toBeChecked();
+    expect(within(identity).getByRole('radio', { name: 'Square' })).not.toBeChecked();
+    expect(within(identity).getByRole('radio', { name: 'Hexagon' })).not.toBeChecked();
+    fireEvent.click(within(identity).getByRole('button', { name: 'Close Current Agent identity' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit skills' }));
     const skills = screen.getByRole('dialog', { name: 'Edit skills' });
     expect(within(skills).getByLabelText('Search all skills')).toBeVisible();
     expect(within(skills).getByRole('heading', { name: 'Selected skills' })).toBeVisible();
     expect(within(skills).getByRole('heading', { name: 'Skill catalog' })).toBeVisible();
+  });
+
+  it('maps the shared Session identity picker back to the legacy management command', async () => {
+    const read = await createRecordedHarnessManagementSource().load({
+      sessionId: recordedHarnessInspectorSessionId,
+    });
+    const onCommand = vi.fn();
+    render(<HarnessEditor read={read} onBack={vi.fn()} onCommand={onCommand} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Agent identity for Avery' }));
+    const identity = screen.getByRole('dialog', { name: 'Current Agent identity' });
+    fireEvent.change(within(identity).getByLabelText('Identity display name'), {
+      target: { value: 'Avery Stone' },
+    });
+    fireEvent.change(within(identity).getByLabelText('Identity color'), {
+      target: { value: '#2456aa' },
+    });
+    fireEvent.click(within(identity).getByRole('radio', { name: 'Square' }));
+    fireEvent.click(within(identity).getByRole('button', { name: 'Apply to this Session' }));
+
+    expect(onCommand).toHaveBeenCalledWith({
+      kind: 'update_session_identity',
+      name: 'Avery Stone',
+      visualIdentity: {
+        token: 'drafting_compass',
+        accent: '#2456aa',
+        shape: 'square',
+      },
+    });
   });
 });

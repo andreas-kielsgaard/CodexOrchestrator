@@ -21,12 +21,14 @@ import type {
   HarnessReasoningLevel,
   HarnessSkillPolicy,
   HarnessToolPolicy,
-  HarnessVisualIdentity,
 } from '../../application/conversationHarnesses';
+import type { AssignedAgentIdentity } from '../../application/identities';
+import { assignedIdentityFromLegacyAgentIdentity } from '../../application/identities';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { MarkdownEditor } from '../../components/MarkdownEditor';
 import { AgentMarkdown } from '../agentSessions/AgentMarkdown';
+import { IdentityPickerDialog } from '../identities';
 
 export interface HarnessEditorProps {
   readonly read: ConversationHarnessManagementRead | null;
@@ -227,6 +229,7 @@ function AvailableHarnessManagement({
       onCommand?.({ kind: 'start_edit', baseRevision: selectedRevision });
   };
   const openConfirmation = (next: Confirmation) => setConfirmation(next);
+  const sessionIdentity = assignedIdentityForManagement(snapshot);
 
   const selectedIsCurrentPushed =
     selectedRevision !== null && selectedRevision === snapshot.versionControl.pushedRevision;
@@ -670,15 +673,13 @@ function AvailableHarnessManagement({
         </div>
       </div>
 
-      {identityDialogOpen && snapshot.agentIdentity && (
-        <SessionIdentityDialog
-          snapshot={snapshot}
-          onApply={(name, visualIdentity) => {
-            onCommand?.({
-              kind: 'update_session_identity',
-              name,
-              visualIdentity,
-            });
+      {identityDialogOpen && sessionIdentity && (
+        <IdentityPickerDialog
+          identity={sessionIdentity}
+          title="Current Agent identity"
+          confirmLabel="Apply to this Session"
+          onSave={(identity) => {
+            onCommand?.(legacySessionIdentityCommand(snapshot, identity));
             setIdentityDialogOpen(false);
           }}
           onClose={() => setIdentityDialogOpen(false)}
@@ -1444,163 +1445,37 @@ function VersionHistory({
   );
 }
 
-function SessionIdentityDialog({
-  snapshot,
-  onApply,
-  onClose,
-}: {
-  readonly snapshot: ConversationHarnessManagementSnapshot;
-  onApply(name: string, visualIdentity: HarnessVisualIdentity): void;
-  onClose(): void;
-}) {
+function assignedIdentityForManagement(
+  snapshot: ConversationHarnessManagementSnapshot,
+): AssignedAgentIdentity | null {
   const identity = snapshot.agentIdentity;
-  const [search, setSearch] = useState('');
-  const [name, setName] = useState(identity?.name ?? '');
-  const [visualIdentity, setVisualIdentity] = useState<HarnessVisualIdentity | null>(
-    identity?.visualIdentityAccent && identity.visualIdentityShape
-      ? {
-          token: identity.visualIdentityToken,
-          accent: identity.visualIdentityAccent,
-          shape: identity.visualIdentityShape,
-        }
-      : (snapshot.catalogs.agentVisualIdentities.items.find(
-          (entry) => entry.identity.token === identity?.visualIdentityToken,
-        )?.identity ??
-          snapshot.catalogs.agentVisualIdentities.items[0]?.identity ??
-          null),
-  );
-  const names = snapshot.catalogs.agentNames.items.filter((candidate) =>
-    fuzzyMatch(candidate, '', search),
-  );
-  return (
-    <div className="harness-management__modal-backdrop">
-      <section
-        className="harness-management__modal is-identity"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="harness-session-identity-title"
-      >
-        <header>
-          <div>
-            <h2 id="harness-session-identity-title">Current Agent identity</h2>
-            <p>
-              This changes only this Agent Session after confirmation. Harness name pools are
-              unchanged.
-            </p>
-          </div>
-          <button type="button" aria-label="Close current Agent identity" onClick={onClose}>
-            <X size={18} aria-hidden="true" />
-          </button>
-        </header>
-        <div className="harness-management__identity-dialog-fields">
-          <ManagementField label="Agent name">
-            <input
-              aria-label="Agent name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </ManagementField>
-          <ManagementField label="Available names">
-            <div className="harness-management__catalog-search">
-              <Search size={15} aria-hidden="true" />
-              <input
-                aria-label="Search available Agent names"
-                placeholder="Search available names"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-          </ManagementField>
-        </div>
-        <div className="harness-management__modal-scroll">
-          {identity && visualIdentity && (
-            <div
-              className="harness-management__identity-preview"
-              aria-label="Agent identity preview"
-            >
-              <AgentIdentityBadge
-                identity={{
-                  ...identity,
-                  name: name.trim() || identity.name,
-                  visualIdentityToken: visualIdentity.token,
-                  visualIdentityAccent: visualIdentity.accent,
-                  visualIdentityShape: visualIdentity.shape,
-                }}
-              />
-            </div>
-          )}
-          <div
-            className="harness-management__identity-name-results"
-            aria-label="Available Agent names"
-          >
-            {names.map((candidate) => (
-              <button
-                type="button"
-                aria-pressed={candidate === name}
-                key={candidate}
-                onClick={() => setName(candidate)}
-              >
-                {candidate}
-              </button>
-            ))}
-            {names.length === 0 && <p>No product names match this search.</p>}
-          </div>
-          <fieldset className="harness-management__visual-choices">
-            <legend>Color and shape</legend>
-            <label className="harness-management__color-picker">
-              <span>Color</span>
-              <input
-                type="color"
-                aria-label="Agent identity color"
-                value={visualIdentity?.accent ?? '#39745a'}
-                onChange={(event) =>
-                  setVisualIdentity((current) => ({
-                    token: current?.token ?? 'custom_identity',
-                    accent: event.target.value,
-                    shape: current?.shape ?? 'circle',
-                  }))
-                }
-              />
-              <output>{visualIdentity?.accent ?? '#39745a'}</output>
-            </label>
-            <div className="harness-management__shape-choices" aria-label="Agent identity shape">
-              {(['circle', 'square', 'hexagon'] as const).map((shape) => (
-                <label key={shape}>
-                  <input
-                    type="radio"
-                    name="session-visual-identity-shape"
-                    value={shape}
-                    checked={visualIdentity?.shape === shape}
-                    onChange={() =>
-                      setVisualIdentity((current) => ({
-                        token: current?.token ?? 'custom_identity',
-                        accent: current?.accent ?? '#39745a',
-                        shape,
-                      }))
-                    }
-                  />
-                  <span>{humanize(shape)}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        </div>
-        <div className="harness-management__modal-actions">
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="is-primary"
-            type="button"
-            disabled={!name.trim() || !visualIdentity}
-            onClick={() => visualIdentity && onApply(name.trim(), visualIdentity)}
-          >
-            Apply to this Session
-          </button>
-        </div>
-      </section>
-    </div>
-  );
+  if (!identity) return null;
+  const assigned = assignedIdentityFromLegacyAgentIdentity(identity);
+  const offeredAppearance = snapshot.catalogs.agentVisualIdentities.items.find(
+    (entry) => entry.identity.token === identity.visualIdentityToken,
+  )?.identity;
+  return {
+    ...assigned,
+    color: identity.visualIdentityAccent ?? offeredAppearance?.accent ?? assigned.color,
+    shape: identity.visualIdentityShape ?? offeredAppearance?.shape ?? assigned.shape,
+  };
+}
+
+function legacySessionIdentityCommand(
+  snapshot: ConversationHarnessManagementSnapshot,
+  identity: AssignedAgentIdentity,
+): Extract<ConversationHarnessManagementCommand, { kind: 'update_session_identity' }> {
+  if (!snapshot.agentIdentity)
+    throw new Error('The current Agent Session has no identity to update.');
+  return {
+    kind: 'update_session_identity',
+    name: identity.displayName,
+    visualIdentity: {
+      token: snapshot.agentIdentity.visualIdentityToken,
+      accent: identity.color,
+      shape: identity.shape,
+    },
+  };
 }
 
 function NamePoolDialog({
