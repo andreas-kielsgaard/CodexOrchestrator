@@ -1756,6 +1756,7 @@ mod tests {
     use super::*;
     use crate::workflows::{
         application::WorkflowRepository,
+        domain::WorkflowReceiverSessionPolicy,
         instance_domain::{
             ResolvedRepoBranchWorktreeTarget, WorkflowBranchTarget, WorkflowRepositoryTarget,
             WorkflowWorktreeTarget,
@@ -1936,6 +1937,7 @@ mod tests {
             name: id.to_string(),
             sender_node_id: sender.to_string(),
             receiver_node_id: receiver.map(str::to_string),
+            receiver_session_policy: WorkflowReceiverSessionPolicy::ContinueLatest,
             mechanism: Some(WorkflowConnectionMechanism::TurnFinishedExpectedFile {
                 file_selector: WorkflowExpectedFileSelector::FolderFilenamePattern {
                     folder: "handoffs".to_string(),
@@ -2043,6 +2045,7 @@ mod tests {
                         name: edge.to_string(),
                         sender_node_id: "sender".to_string(),
                         receiver_node_id: Some(receiver.to_string()),
+                        receiver_session_policy: WorkflowReceiverSessionPolicy::ContinueLatest,
                         mechanism: Some(WorkflowConnectionMechanism::McpNativePromptAgent {
                             server_name: "workflow_handoff".to_string(),
                             tool_name: "handoff_to_agent".to_string(),
@@ -2631,5 +2634,25 @@ mod tests {
             legacy,
             WorkflowConnectionMechanism::TurnFinishedExpectedFile { .. }
         ));
+        let legacy_connection: WorkflowConnectionConfig =
+            serde_json::from_value(serde_json::json!({
+                "id":"edge",
+                "name":"Edge",
+                "senderNodeId":"sender",
+                "receiverNodeId":"receiver",
+                "mechanism":null
+            }))
+            .unwrap();
+        assert_eq!(
+            legacy_connection.receiver_session_policy,
+            WorkflowReceiverSessionPolicy::ContinueLatest
+        );
+        let fresh = WorkflowConnectionConfig {
+            receiver_session_policy: WorkflowReceiverSessionPolicy::Fresh,
+            ..legacy_connection
+        };
+        let value = serde_json::to_value(fresh).unwrap();
+        assert_eq!(value["receiverSessionPolicy"], "fresh");
+        assert!(value.get("receiver_session_policy").is_none());
     }
 }

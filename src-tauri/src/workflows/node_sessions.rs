@@ -3,7 +3,9 @@ use super::{
         launch_extension, BindWorkflowSessionHarness, WorkflowRepository,
         WorkflowSessionHarnessBinder,
     },
-    domain::{EffectiveWorkflowNodeConfig, WorkflowCompletedTurnTrigger},
+    domain::{
+        EffectiveWorkflowNodeConfig, WorkflowCompletedTurnTrigger, WorkflowReceiverSessionPolicy,
+    },
 };
 use crate::agent_sessions::{
     application::{
@@ -70,6 +72,7 @@ impl WorkflowNodeSessions {
             prompt: message.submitted_text,
             title: message.title,
             connection_activation_id: None,
+            receiver_session_policy: None,
         })
         .map_err(|(_, reason)| reason)
     }
@@ -79,6 +82,7 @@ impl WorkflowNodeSessions {
         activation_id: &str,
         trigger: &WorkflowCompletedTurnTrigger,
         receiver_node_id: &str,
+        receiver_session_policy: WorkflowReceiverSessionPolicy,
         prompt: String,
     ) -> Result<(), (&'static str, String)> {
         let node = trigger
@@ -100,6 +104,7 @@ impl WorkflowNodeSessions {
             prompt,
             title: None,
             connection_activation_id: Some(activation_id),
+            receiver_session_policy: Some(receiver_session_policy),
         })?;
         Ok(())
     }
@@ -123,11 +128,11 @@ impl WorkflowNodeSessions {
                 "The receiver Session lane is unavailable.".to_string(),
             )
         })?;
-        let existing = if request.connection_activation_id.is_some() {
-            self.most_recent_session(request.workflow_instance_id, &request.node.id)
-                .map_err(|reason| ("receiver_session_resolution", reason))?
-        } else {
-            None
+        let existing = match request.receiver_session_policy {
+            Some(WorkflowReceiverSessionPolicy::ContinueLatest) => self
+                .most_recent_session(request.workflow_instance_id, &request.node.id)
+                .map_err(|reason| ("receiver_session_resolution", reason))?,
+            Some(WorkflowReceiverSessionPolicy::Fresh) | None => None,
         };
         let create_association = existing.is_none();
         let session = match existing {
@@ -307,6 +312,7 @@ struct Delivery<'a> {
     prompt: String,
     title: Option<String>,
     connection_activation_id: Option<&'a str>,
+    receiver_session_policy: Option<WorkflowReceiverSessionPolicy>,
 }
 
 fn nonempty(value: &str) -> Option<String> {

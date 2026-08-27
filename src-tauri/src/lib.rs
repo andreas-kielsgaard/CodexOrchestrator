@@ -816,6 +816,11 @@ pub fn run_harness_engine_sidecar_if_requested() -> bool {
     harness_engine::sidecar::run_if_requested()
 }
 
+/// Runs the headless Workflow authoring and demonstration surface before Tauri initializes.
+pub fn run_workflow_cli_if_requested() -> Option<Result<(), String>> {
+    workflows::cli::run_if_requested()
+}
+
 fn ensure_legacy_tasks_available() -> Result<(), String> {
     Err("Legacy Tasks are quarantined in the Agent Session reset baseline".to_string())
 }

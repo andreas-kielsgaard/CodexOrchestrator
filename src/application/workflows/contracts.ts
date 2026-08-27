@@ -107,8 +107,12 @@ export interface WorkflowConnectionConfig {
   readonly name: string;
   readonly senderNodeId: string;
   readonly receiverNodeId: string | null;
+  /** Missing only on definitions written before receiver placement became configurable. */
+  readonly receiverSessionPolicy?: WorkflowReceiverSessionPolicy;
   readonly mechanism: WorkflowConnectionMechanism | null;
 }
+
+export type WorkflowReceiverSessionPolicy = 'fresh' | 'continue_latest';
 
 export type WorkflowConnectionMechanism =
   | {

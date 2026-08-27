@@ -425,7 +425,17 @@ pub(crate) struct WorkflowConnectionConfig {
     pub(crate) sender_node_id: String,
     pub(crate) receiver_node_id: Option<String>,
     #[serde(default)]
+    pub(crate) receiver_session_policy: WorkflowReceiverSessionPolicy,
+    #[serde(default)]
     pub(crate) mechanism: Option<WorkflowConnectionMechanism>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowReceiverSessionPolicy {
+    Fresh,
+    #[default]
+    ContinueLatest,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

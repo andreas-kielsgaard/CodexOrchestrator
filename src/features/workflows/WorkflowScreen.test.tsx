@@ -729,6 +729,10 @@ describe('WorkflowScreen', () => {
     expect(client.saveConnectionDraft).toHaveBeenCalledOnce();
     expect(within(dialog).queryByRole('button', { name: 'Activate connection' })).toBeNull();
 
+    expect(within(dialog).getByLabelText('Receiving Session')).toHaveValue('continue_latest');
+    fireEvent.change(within(dialog).getByLabelText('Receiving Session'), {
+      target: { value: 'fresh' },
+    });
     fireEvent.change(within(dialog).getByLabelText('Connecting mechanism'), {
       target: { value: 'turn_finished_expected_file' },
     });
@@ -749,6 +753,7 @@ describe('WorkflowScreen', () => {
       expect(vi.mocked(client.saveConnectionDraft).mock.calls.at(-1)?.[1]).toMatchObject({
         senderNodeId: 'sender',
         receiverNodeId: 'receiver',
+        receiverSessionPolicy: 'fresh',
         mechanism: {
           kind: 'turn_finished_expected_file',
           fileSelector: {

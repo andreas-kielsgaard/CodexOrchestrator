@@ -1,4 +1,5 @@
 pub(crate) mod application;
+pub(crate) mod cli;
 pub(crate) mod domain;
 pub(crate) mod instance_domain;
 pub(crate) mod mcp;

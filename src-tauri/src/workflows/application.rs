@@ -569,7 +569,13 @@ impl WorkflowApplication {
             )
             .map_err(|reason| ("resolution_recording", reason))?;
         let prompt = format!("{relative_file_path}\n{description_text}\n{prompt_text}");
-        self.deliver_connection_prompt(activation_id, trigger, receiver_node_id, prompt)
+        self.deliver_connection_prompt(
+            activation_id,
+            trigger,
+            receiver_node_id,
+            connection.receiver_session_policy,
+            prompt,
+        )
     }
 
     fn deliver_connection_prompt(
@@ -577,12 +583,14 @@ impl WorkflowApplication {
         activation_id: &str,
         trigger: &WorkflowCompletedTurnTrigger,
         receiver_node_id: &str,
+        receiver_session_policy: super::domain::WorkflowReceiverSessionPolicy,
         prompt: String,
     ) -> Result<(), (&'static str, String)> {
         self.node_sessions.deliver_connection_message(
             activation_id,
             trigger,
             receiver_node_id,
+            receiver_session_policy,
             prompt,
         )
     }
@@ -736,6 +744,7 @@ impl WorkflowApplication {
                 &context.activation_id,
                 &context.trigger,
                 &receiver_node_id,
+                connection.receiver_session_policy,
                 prompt_parts.join("\n"),
             )
             .map_err(|(stage, reason)| (stage.to_string(), reason))
@@ -1421,6 +1430,8 @@ mod tests {
             name: id.to_string(),
             sender_node_id: "sender".to_string(),
             receiver_node_id: Some(receiver.to_string()),
+            receiver_session_policy:
+                super::super::domain::WorkflowReceiverSessionPolicy::ContinueLatest,
             mechanism: Some(
                 super::super::domain::WorkflowConnectionMechanism::TurnFinishedExpectedFile {
                     file_selector: selector,
@@ -1439,6 +1450,8 @@ mod tests {
             name: id.to_string(),
             sender_node_id: "sender".to_string(),
             receiver_node_id: Some(receiver.to_string()),
+            receiver_session_policy:
+                super::super::domain::WorkflowReceiverSessionPolicy::ContinueLatest,
             mechanism: Some(
                 super::super::domain::WorkflowConnectionMechanism::McpNativePromptAgent {
                     server_name: super::super::mcp::SERVER_NAME.to_string(),
@@ -2079,6 +2092,65 @@ mod tests {
         assert_ne!(
             activations[0].target_invocation_id,
             activations[1].target_invocation_id
+        );
+    }
+
+    #[test]
+    fn fresh_receiver_policy_creates_a_new_session_for_every_activation() {
+        let mut connection = expected_file_connection(
+            "edge",
+            "receiver",
+            WorkflowExpectedFileSelector::FolderFilenamePattern {
+                folder: "handoffs".to_string(),
+                filename_pattern: "handoff.md".to_string(),
+            },
+            "Review.",
+        );
+        connection.receiver_session_policy =
+            super::super::domain::WorkflowReceiverSessionPolicy::Fresh;
+        let fixture = execution_fixture(vec![connection]);
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+        let notification = completed_notification(session_id, invocation);
+
+        fixture
+            .application
+            .on_agent_notification(&notification)
+            .unwrap();
+        fixture
+            .application
+            .on_agent_notification(&notification)
+            .unwrap();
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 2);
+        assert!(activations
+            .iter()
+            .all(|activation| activation.session_mode.as_deref() == Some("fresh")));
+        assert_ne!(
+            activations[0].target_session_id,
+            activations[1].target_session_id
+        );
+        assert_ne!(
+            activations[0].target_invocation_id,
+            activations[1].target_invocation_id
+        );
+        assert_eq!(
+            fixture
+                .workflow_repository
+                .load_workflow_instance(&instance.summary.id)
+                .unwrap()
+                .session_associations
+                .iter()
+                .filter(|association| association.node_id == "receiver")
+                .count(),
+            2
         );
     }
 

@@ -704,6 +704,7 @@ function WorkflowTypeEditor({
       name: `${sender.name || sender.harnessName || 'Sender'} to ${receiver.name || receiver.harnessName || 'Receiver'}`,
       senderNodeId,
       receiverNodeId,
+      receiverSessionPolicy: 'continue_latest',
       mechanism: null,
     };
     editorControllerRef.current?.changeElement({ kind: 'connection', id }, connection, {
@@ -3149,6 +3150,23 @@ function ConnectionConfiguration({
                     {node.config.name || node.config.harnessName || 'Unnamed node'}
                   </option>
                 ))}
+            </select>
+          </label>
+          <label>
+            Receiving Session
+            <select
+              value={connection.receiverSessionPolicy ?? 'continue_latest'}
+              disabled={busy}
+              onChange={(event) =>
+                onChange({
+                  ...connection,
+                  receiverSessionPolicy:
+                    event.currentTarget.value === 'fresh' ? 'fresh' : 'continue_latest',
+                })
+              }
+            >
+              <option value="continue_latest">Continue latest Session</option>
+              <option value="fresh">Start a new Session for every fire</option>
             </select>
           </label>
           <label>
