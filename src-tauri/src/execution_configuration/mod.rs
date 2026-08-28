@@ -1,26 +1,27 @@
 #![allow(unused_imports)]
 
-mod harness;
+mod capability_profile;
 mod native_codex;
 mod node_profile;
 mod ports;
 mod resolution;
 mod runtime_profile;
+mod session_profile;
 
-pub(crate) use harness::HarnessDefinition;
+pub(crate) use capability_profile::CapabilityProfile;
 pub(crate) use native_codex::{
     NativeCodexCapabilityExposure, NativeCodexSelectedRuntimeProfileSource,
 };
-pub(crate) use node_profile::{InstructionDelivery, NodeProfileDefinition};
+pub(crate) use node_profile::NodeProfile;
 pub(crate) use ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError};
 pub(crate) use resolution::{
-    ExecutionConfigurationResolver, ResolutionContext, ResolutionError, ResolutionRequest,
-    ResolvedExecutionConfiguration, ResolvedExecutionConfigurationContent,
-    ResolvedInstructionDelivery,
+    DirectUserInvocationRequest, DirectUserInvocationResolution, ResolutionError,
+    SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
 };
 pub(crate) use runtime_profile::{
-    CapabilitySet, InvocationPhase, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
+    CapabilitySet, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
 };
+pub(crate) use session_profile::SessionProfile;
 
 #[cfg(test)]
 mod tests;

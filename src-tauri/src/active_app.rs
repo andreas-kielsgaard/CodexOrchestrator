@@ -165,7 +165,7 @@ pub(crate) fn run() {
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
             let application = Arc::new(
                 crate::agent_sessions::application::AgentSessionApplication::new(
-                    repository,
+                    repository.clone(),
                     runtime,
                     notifier,
                     providers.clone(),
@@ -179,6 +179,47 @@ pub(crate) fn run() {
             application
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
+            let selected_runtime_profile = Arc::new(
+                crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
+                    native_profiles.clone(),
+                    crate::execution_configuration::NativeCodexCapabilityExposure {
+                        capabilities: crate::execution_configuration::CapabilitySet {
+                            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
+                                .into_iter()
+                                .collect(),
+                            reasoning_modes: [
+                                "low".to_string(),
+                                "medium".to_string(),
+                                "high".to_string(),
+                                "xhigh".to_string(),
+                                "max".to_string(),
+                                "ultra".to_string(),
+                            ]
+                            .into_iter()
+                            .collect(),
+                            ..crate::execution_configuration::CapabilitySet::default()
+                        },
+                        locked: crate::execution_configuration::RuntimeSelections::default(),
+                    },
+                ),
+            );
+            let session_event_adapter = Arc::new(
+                crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::open(
+                    &database_path,
+                    application.clone(),
+                    repository,
+                    selected_runtime_profile,
+                )?,
+            );
+            let session_event_store = Arc::new(
+                crate::session_events::SqliteSessionEventStore::open(&database_path)
+                    .map_err(|error| error.to_string())?,
+            );
+            app.manage(Arc::new(crate::session_events::SessionEventApplication::new(
+                session_event_adapter.clone(),
+                session_event_adapter,
+                session_event_store,
+            )));
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
@@ -536,8 +577,8 @@ pub(crate) fn run() {
                 }
                 // Agent runtimes stop first, followed by the Harness proxy, then its retained
                 // managed upstreams.
-                if let Some(harness) = app_handle
-                    .try_state::<crate::harness_engine::HarnessEngineTauriState>()
+                if let Some(harness) =
+                    app_handle.try_state::<crate::harness_engine::HarnessEngineTauriState>()
                 {
                     if let Err(error) = harness.service().shutdown() {
                         eprintln!("Harness sidecar shutdown failed: {error}");

@@ -23,6 +23,7 @@ use super::{
         ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
     },
 };
+use crate::session_events::{ReferenceIdentity, SessionLogicalAddress};
 use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -56,6 +57,55 @@ impl SqliteAgentSessionRepository {
         let connection =
             Connection::open(path).map_err(sql_unavailable("open Agent Session database"))?;
         Self::new(connection)
+    }
+
+    /// Persists a newly prepared Agent Session and its generic logical address in one transaction.
+    /// This is the concrete atomic boundary used by the Session Event adapter.
+    pub(crate) fn create_addressed_session(
+        &self,
+        session: AgentSession,
+        logical_address: &SessionLogicalAddress,
+        created_by_event: &ReferenceIdentity,
+        created_by_session: Option<&ReferenceIdentity>,
+    ) -> Result<(AgentSession, u64), RepositoryError> {
+        validate_session(&session).map_err(contract_error)?;
+        let created_by_event_json = to_json(created_by_event)?;
+        let created_by_session_json = created_by_session.map(to_json).transpose()?;
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(sql_unavailable("begin addressed Agent Session create"))?;
+        insert_session(&transaction, &session)?;
+        transaction
+            .execute("INSERT INTO agent_session_address_clock DEFAULT VALUES", [])
+            .map_err(sql_unavailable("allocate Session address sequence"))?;
+        let created_sequence = u64::try_from(transaction.last_insert_rowid()).map_err(|_| {
+            RepositoryError::new(
+                RepositoryErrorKind::InvalidState,
+                "Invalid Session address sequence",
+            )
+        })?;
+        transaction
+            .execute(
+                "INSERT INTO agent_session_addresses(session_id,scope_namespace,scope_kind,scope_id,subject_namespace,subject_kind,subject_id,created_by_event_json,created_by_session_json,created_sequence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![
+                    session.id.as_str(),
+                    logical_address.scope.namespace(),
+                    logical_address.scope.kind(),
+                    logical_address.scope.id(),
+                    logical_address.subject.namespace(),
+                    logical_address.subject.kind(),
+                    logical_address.subject.id(),
+                    created_by_event_json,
+                    created_by_session_json,
+                    created_sequence,
+                ],
+            )
+            .map_err(sql_write("store Agent Session address"))?;
+        transaction
+            .commit()
+            .map_err(sql_unavailable("commit addressed Agent Session create"))?;
+        Ok((session, created_sequence))
     }
 
     fn load_session_history_snapshot(

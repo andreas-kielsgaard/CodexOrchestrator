@@ -1,4 +1,7 @@
-use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
+use crate::{
+    execution_configuration::SessionCreationResolution, harness_engine::domain::HarnessVersionRef,
+    identities::AssignedAgentIdentity,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -85,6 +88,9 @@ pub(crate) struct AgentSession {
     pub(crate) runtime_binding: AgentRuntimeBinding,
     pub(crate) working_directory: Option<String>,
     pub(crate) requested_options: AgentRuntimeOptions,
+    /// Immutable execution configuration pinned by the replacement Session Event path at
+    /// creation. Legacy Sessions may remain unprofiled until their concepts are retired.
+    pub(crate) session_profile: Option<SessionCreationResolution>,
     /// Exact reusable or Session-specific Harness version currently owned by this Session.
     pub(crate) harness_version: Option<HarnessVersionRef>,
     /// Session-owned snapshot; it is independent of later Harness or identity-definition edits.
@@ -367,6 +373,7 @@ pub(crate) enum ContractViolation {
         kind: &'static str,
     },
     SessionIdentityChanged,
+    SessionProfileChanged,
     ExternalRuntimeContextChanged,
     InvalidSessionRecord {
         reason: &'static str,
@@ -398,6 +405,9 @@ impl fmt::Display for ContractViolation {
         match self {
             Self::EmptyIdentifier { kind } => write!(formatter, "{kind} ID cannot be empty"),
             Self::SessionIdentityChanged => formatter.write_str("local session ID cannot change"),
+            Self::SessionProfileChanged => {
+                formatter.write_str("a pinned Session Profile cannot change")
+            }
             Self::ExternalRuntimeContextChanged => formatter
                 .write_str("an established external runtime context cannot be cleared or replaced"),
             Self::InvalidSessionRecord { reason } => formatter.write_str(reason),
@@ -446,6 +456,9 @@ pub(crate) fn validate_session_update(
     if current.id != candidate.id {
         return Err(ContractViolation::SessionIdentityChanged);
     }
+    if current.session_profile != candidate.session_profile {
+        return Err(ContractViolation::SessionProfileChanged);
+    }
     validate_runtime_binding_update(&current.runtime_binding, &candidate.runtime_binding)
 }
 
@@ -477,6 +490,13 @@ pub(crate) fn validate_session(session: &AgentSession) -> Result<(), ContractVio
         return Err(ContractViolation::InvalidSessionRecord {
             reason: "assigned Agent identity is invalid",
         });
+    }
+    if let Some(session_profile) = &session.session_profile {
+        if session_profile.verify_digest().is_err() {
+            return Err(ContractViolation::InvalidSessionRecord {
+                reason: "pinned Session Profile failed integrity validation",
+            });
+        }
     }
     Ok(())
 }

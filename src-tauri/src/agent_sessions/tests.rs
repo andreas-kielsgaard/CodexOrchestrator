@@ -880,6 +880,7 @@ fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
         runtime_binding: binding(external_context_id),
         working_directory: Some(format!("C:/work/{id}")),
         requested_options: runtime_options(),
+        session_profile: None,
         harness_version: None,
         assigned_identity: None,
         created_at: at(0),

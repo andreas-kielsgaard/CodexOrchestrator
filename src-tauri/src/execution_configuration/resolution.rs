@@ -1,72 +1,58 @@
 use super::{
-    harness::HarnessDefinition,
-    node_profile::{InstructionDelivery, NodeProfileDefinition},
+    capability_profile::CapabilityProfile,
+    node_profile::NodeProfile,
     ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
     runtime_profile::{
-        validate_selection_availability, CapabilitySet, InvocationPhase, RuntimeProfileSnapshot,
-        RuntimeSelections,
+        validate_identifier, validate_selection_availability, CapabilitySet,
+        RuntimeProfileSnapshot, RuntimeSelections,
     },
+    session_profile::SessionProfile,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt};
 
-pub(crate) const RESOLUTION_REQUEST_CONTRACT_VERSION: u32 = 1;
-pub(crate) const RESOLVED_CONFIGURATION_CONTRACT_VERSION: u32 = 1;
+pub(crate) const SESSION_CREATION_REQUEST_CONTRACT_VERSION: u32 = 1;
+pub(crate) const SESSION_CREATION_RESOLUTION_CONTRACT_VERSION: u32 = 1;
+pub(crate) const DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION: u32 = 1;
+pub(crate) const DIRECT_USER_INVOCATION_RESOLUTION_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolutionContext {
-    pub(crate) phase: InvocationPhase,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolutionRequest {
+pub(crate) struct SessionCreationRequest {
     pub(crate) contract_version: u32,
-    pub(crate) harness: HarnessDefinition,
-    pub(crate) node_profile: NodeProfileDefinition,
-    pub(crate) context: ResolutionContext,
+    pub(crate) capability_profile: CapabilityProfile,
+    pub(crate) node_profile: NodeProfile,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolvedInstructionDelivery {
-    pub(crate) recurring: Option<String>,
-    pub(crate) start_only: Option<String>,
+pub(crate) struct SessionCreationResolution {
+    contract_version: u32,
+    session_profile: SessionProfile,
+    digest: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolvedExecutionConfigurationContent {
-    pub(crate) profile_ref: String,
-    pub(crate) harness_id: String,
-    pub(crate) harness_revision: u64,
-    pub(crate) node_profile_id: String,
-    pub(crate) node_profile_revision: u64,
-    pub(crate) phase: InvocationPhase,
-    pub(crate) capabilities: CapabilitySet,
-    pub(crate) selections: RuntimeSelections,
-    pub(crate) instructions: ResolvedInstructionDelivery,
-}
+impl SessionCreationResolution {
+    pub(crate) fn session_profile(&self) -> &SessionProfile {
+        &self.session_profile
+    }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ResolvedExecutionConfiguration {
-    pub(crate) contract_version: u32,
-    pub(crate) content: ResolvedExecutionConfigurationContent,
-    pub(crate) digest: String,
-}
+    pub(crate) fn digest(&self) -> &str {
+        &self.digest
+    }
 
-impl ResolvedExecutionConfiguration {
     pub(crate) fn verify_digest(&self) -> Result<(), ResolutionError> {
-        if self.contract_version != RESOLVED_CONFIGURATION_CONTRACT_VERSION {
+        if self.contract_version != SESSION_CREATION_RESOLUTION_CONTRACT_VERSION {
             return Err(ResolutionError::InvalidInput(format!(
-                "Resolved configuration contract version {} is unsupported",
+                "Session creation resolution contract version {} is unsupported",
                 self.contract_version
             )));
         }
-        let expected = content_digest(self.contract_version, &self.content)?;
+        self.session_profile
+            .validate()
+            .map_err(ResolutionError::InvalidInput)?;
+        let expected = session_profile_digest(self.contract_version, &self.session_profile)?;
         if expected == self.digest {
             Ok(())
         } else {
@@ -75,15 +61,33 @@ impl ResolvedExecutionConfiguration {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DirectUserInvocationRequest {
+    pub(crate) contract_version: u32,
+    pub(crate) model: Option<String>,
+    pub(crate) reasoning_mode: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DirectUserInvocationResolution {
+    pub(crate) contract_version: u32,
+    pub(crate) session_profile_digest: String,
+    pub(crate) selections: RuntimeSelections,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ResolutionError {
     SourceUnavailable(String),
     InvalidInput(String),
-    HarnessWidensProfile(String),
-    NodeProfileWidensHarness(String),
+    CapabilityProfileWidensRuntime(String),
+    NodeProfileWidensCapabilityProfile(String),
     LockedCapabilityExcluded(String),
-    SelectionUnavailable(String),
+    PinnedSelectionUnavailable(String),
     SelectionConflictsWithLocked(String),
+    DirectUserSelectionUnavailable(String),
+    RuntimeProfileChanged { expected: String, actual: String },
     Encoding(String),
     DigestMismatch,
 }
@@ -98,33 +102,37 @@ impl fmt::Display for ResolutionError {
                 )
             }
             Self::InvalidInput(message) => formatter.write_str(message),
-            Self::HarnessWidensProfile(capability) => {
-                write!(formatter, "Harness requests unavailable {capability}")
-            }
-            Self::NodeProfileWidensHarness(capability) => {
-                write!(
-                    formatter,
-                    "Node Profile requests {capability} outside its Harness"
-                )
-            }
+            Self::CapabilityProfileWidensRuntime(capability) => write!(
+                formatter,
+                "Capability Profile requests unavailable {capability}"
+            ),
+            Self::NodeProfileWidensCapabilityProfile(capability) => write!(
+                formatter,
+                "Node Profile requests {capability} outside its Capability Profile"
+            ),
             Self::LockedCapabilityExcluded(capability) => write!(
                 formatter,
-                "Resolved capability set excludes profile-locked {capability}"
+                "Session Profile excludes runtime-locked {capability}"
             ),
-            Self::SelectionUnavailable(capability) => {
-                write!(formatter, "Node Profile selects unavailable {capability}")
+            Self::PinnedSelectionUnavailable(capability) => {
+                write!(formatter, "Node Profile pins unavailable {capability}")
             }
             Self::SelectionConflictsWithLocked(capability) => write!(
                 formatter,
-                "Node Profile selection conflicts with profile-locked {capability}"
+                "Pinned selection conflicts with runtime-locked {capability}"
+            ),
+            Self::DirectUserSelectionUnavailable(capability) => write!(
+                formatter,
+                "Direct-user invocation selects unavailable {capability}"
+            ),
+            Self::RuntimeProfileChanged { expected, actual } => write!(
+                formatter,
+                "Session Profile expects runtime profile `{expected}`, but `{actual}` is selected"
             ),
             Self::Encoding(message) => {
-                write!(
-                    formatter,
-                    "Unable to encode resolved configuration: {message}"
-                )
+                write!(formatter, "Unable to encode Session Profile: {message}")
             }
-            Self::DigestMismatch => formatter.write_str("Resolved configuration digest mismatch"),
+            Self::DigestMismatch => formatter.write_str("Session Profile digest mismatch"),
         }
     }
 }
@@ -137,85 +145,171 @@ impl From<SelectedRuntimeProfileSourceError> for ResolutionError {
     }
 }
 
-pub(crate) struct ExecutionConfigurationResolver;
+pub(crate) struct SessionProfileResolver;
 
-impl ExecutionConfigurationResolver {
-    pub(crate) fn resolve(
+impl SessionProfileResolver {
+    pub(crate) fn resolve_creation(
         source: &dyn SelectedRuntimeProfileSource,
-        request: ResolutionRequest,
-    ) -> Result<ResolvedExecutionConfiguration, ResolutionError> {
-        if request.contract_version != RESOLUTION_REQUEST_CONTRACT_VERSION {
-            return Err(ResolutionError::InvalidInput(format!(
-                "Resolution request contract version {} is unsupported",
-                request.contract_version
-            )));
-        }
-        request
-            .harness
+        request: SessionCreationRequest,
+    ) -> Result<SessionCreationResolution, ResolutionError> {
+        validate_creation_request(&request)?;
+        let runtime_profile = source.selected_runtime_profile()?;
+        runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
-        request
-            .node_profile
-            .validate()
-            .map_err(ResolutionError::InvalidInput)?;
-        let profile = source.selected_runtime_profile()?;
-        profile.validate().map_err(ResolutionError::InvalidInput)?;
-        validate_narrowing(&profile, &request.harness, &request.node_profile)?;
-        let selections = resolve_selections(
-            &profile.locked,
-            &request.node_profile.selections,
+        validate_narrowing(
+            &runtime_profile,
+            &request.capability_profile,
+            &request.node_profile,
+        )?;
+        let pinned_defaults = resolve_pinned_defaults(
+            &runtime_profile.locked,
+            &request.node_profile.pinned_defaults,
             &request.node_profile.allowed_capabilities,
         )?;
-        let content = ResolvedExecutionConfigurationContent {
-            profile_ref: profile.profile_ref,
-            harness_id: request.harness.harness_id,
-            harness_revision: request.harness.revision,
-            node_profile_id: request.node_profile.node_profile_id,
-            node_profile_revision: request.node_profile.revision,
-            phase: request.context.phase,
-            capabilities: request.node_profile.allowed_capabilities,
-            selections,
-            instructions: resolve_instructions(
-                request.context.phase,
-                request.node_profile.instructions,
-            ),
-        };
-        Ok(ResolvedExecutionConfiguration {
-            contract_version: RESOLVED_CONFIGURATION_CONTRACT_VERSION,
-            digest: content_digest(RESOLVED_CONFIGURATION_CONTRACT_VERSION, &content)?,
-            content,
+        let session_profile = SessionProfile::resolved(
+            runtime_profile.profile_ref,
+            runtime_profile.exposure,
+            runtime_profile.locked,
+            request.capability_profile.capability_profile_id,
+            request.capability_profile.revision,
+            request.node_profile.allowed_capabilities,
+            pinned_defaults,
+        );
+        let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
+        let digest = session_profile_digest(contract_version, &session_profile)?;
+        Ok(SessionCreationResolution {
+            contract_version,
+            session_profile,
+            digest,
         })
     }
+
+    pub(crate) fn validate_direct_user_invocation(
+        source: &dyn SelectedRuntimeProfileSource,
+        creation: &SessionCreationResolution,
+        request: DirectUserInvocationRequest,
+    ) -> Result<DirectUserInvocationResolution, ResolutionError> {
+        validate_direct_user_request(&request)?;
+        Self::validate_pinned_session(source, creation)?;
+        let session_profile = creation.session_profile();
+        let requested = RuntimeSelections {
+            model: request
+                .model
+                .or_else(|| session_profile.pinned_defaults().model.clone()),
+            reasoning_mode: request
+                .reasoning_mode
+                .or_else(|| session_profile.pinned_defaults().reasoning_mode.clone()),
+            sandbox_mode: session_profile.pinned_defaults().sandbox_mode,
+        };
+        validate_selection_availability(
+            &requested,
+            session_profile.attached_runtime_capabilities(),
+        )
+        .map_err(ResolutionError::DirectUserSelectionUnavailable)?;
+        let selections =
+            resolve_locked_selections(session_profile.attached_runtime_locked(), &requested)?;
+        Ok(DirectUserInvocationResolution {
+            contract_version: DIRECT_USER_INVOCATION_RESOLUTION_CONTRACT_VERSION,
+            session_profile_digest: creation.digest.clone(),
+            selections,
+        })
+    }
+
+    pub(crate) fn validate_pinned_session(
+        source: &dyn SelectedRuntimeProfileSource,
+        creation: &SessionCreationResolution,
+    ) -> Result<(), ResolutionError> {
+        creation.verify_digest()?;
+        let runtime_profile = source.selected_runtime_profile()?;
+        runtime_profile
+            .validate()
+            .map_err(ResolutionError::InvalidInput)?;
+        let session_profile = creation.session_profile();
+        if runtime_profile.profile_ref != session_profile.runtime_profile_ref() {
+            return Err(ResolutionError::RuntimeProfileChanged {
+                expected: session_profile.runtime_profile_ref().to_owned(),
+                actual: runtime_profile.profile_ref,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn validate_creation_request(request: &SessionCreationRequest) -> Result<(), ResolutionError> {
+    if request.contract_version != SESSION_CREATION_REQUEST_CONTRACT_VERSION {
+        return Err(ResolutionError::InvalidInput(format!(
+            "Session creation request contract version {} is unsupported",
+            request.contract_version
+        )));
+    }
+    request
+        .capability_profile
+        .validate()
+        .map_err(ResolutionError::InvalidInput)?;
+    request
+        .node_profile
+        .validate()
+        .map_err(ResolutionError::InvalidInput)
+}
+
+fn validate_direct_user_request(
+    request: &DirectUserInvocationRequest,
+) -> Result<(), ResolutionError> {
+    if request.contract_version != DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION {
+        return Err(ResolutionError::InvalidInput(format!(
+            "Direct-user invocation request contract version {} is unsupported",
+            request.contract_version
+        )));
+    }
+    if let Some(model) = &request.model {
+        validate_identifier("Direct-user invocation", "model", model)
+            .map_err(ResolutionError::InvalidInput)?;
+    }
+    if let Some(reasoning_mode) = &request.reasoning_mode {
+        validate_identifier("Direct-user invocation", "reasoningMode", reasoning_mode)
+            .map_err(ResolutionError::InvalidInput)?;
+    }
+    Ok(())
 }
 
 fn validate_narrowing(
-    profile: &RuntimeProfileSnapshot,
-    harness: &HarnessDefinition,
-    node_profile: &NodeProfileDefinition,
+    runtime_profile: &RuntimeProfileSnapshot,
+    capability_profile: &CapabilityProfile,
+    node_profile: &NodeProfile,
 ) -> Result<(), ResolutionError> {
-    if let Some(capability) = harness
+    if let Some(capability) = capability_profile
         .allowed_capabilities
-        .first_capability_outside(&profile.exposure)
+        .first_capability_outside(&runtime_profile.exposure)
     {
-        return Err(ResolutionError::HarnessWidensProfile(capability));
+        return Err(ResolutionError::CapabilityProfileWidensRuntime(capability));
     }
     if let Some(capability) = node_profile
         .allowed_capabilities
-        .first_capability_outside(&harness.allowed_capabilities)
+        .first_capability_outside(&capability_profile.allowed_capabilities)
     {
-        return Err(ResolutionError::NodeProfileWidensHarness(capability));
+        return Err(ResolutionError::NodeProfileWidensCapabilityProfile(
+            capability,
+        ));
     }
-    validate_selection_availability(&profile.locked, &node_profile.allowed_capabilities)
+    validate_selection_availability(&runtime_profile.locked, &node_profile.allowed_capabilities)
         .map_err(ResolutionError::LockedCapabilityExcluded)
 }
 
-fn resolve_selections(
+fn resolve_pinned_defaults(
     locked: &RuntimeSelections,
-    requested: &RuntimeSelections,
+    pinned: &RuntimeSelections,
     available: &CapabilitySet,
 ) -> Result<RuntimeSelections, ResolutionError> {
-    validate_selection_availability(requested, available)
-        .map_err(ResolutionError::SelectionUnavailable)?;
+    validate_selection_availability(pinned, available)
+        .map_err(ResolutionError::PinnedSelectionUnavailable)?;
+    resolve_locked_selections(locked, pinned)
+}
+
+fn resolve_locked_selections(
+    locked: &RuntimeSelections,
+    requested: &RuntimeSelections,
+) -> Result<RuntimeSelections, ResolutionError> {
     Ok(RuntimeSelections {
         model: select_locked("model", &locked.model, &requested.model)?,
         reasoning_mode: select_locked(
@@ -247,27 +341,14 @@ fn select_locked<T: Clone + Eq + fmt::Debug>(
     }
 }
 
-fn resolve_instructions(
-    phase: InvocationPhase,
-    instructions: InstructionDelivery,
-) -> ResolvedInstructionDelivery {
-    ResolvedInstructionDelivery {
-        recurring: instructions.recurring,
-        start_only: match phase {
-            InvocationPhase::Start => instructions.start_only,
-            InvocationPhase::Resume => None,
-        },
-    }
-}
-
-fn content_digest(
+fn session_profile_digest(
     contract_version: u32,
-    content: &ResolvedExecutionConfigurationContent,
+    session_profile: &SessionProfile,
 ) -> Result<String, ResolutionError> {
-    let bytes = serde_json::to_vec(content)
+    let bytes = serde_json::to_vec(session_profile)
         .map_err(|error| ResolutionError::Encoding(error.to_string()))?;
     let mut digest = Sha256::new();
-    digest.update(b"execution-configuration/resolved\0");
+    digest.update(b"execution-configuration/session-profile\0");
     digest.update(contract_version.to_be_bytes());
     digest.update(bytes);
     Ok(format!("{:x}", digest.finalize()))

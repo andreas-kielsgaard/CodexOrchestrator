@@ -10,6 +10,7 @@ pub(crate) mod application;
 pub(crate) mod domain;
 pub(crate) mod ports;
 pub(crate) mod repository;
+pub(crate) mod session_event_adapter;
 pub(crate) mod transport;
 
 #[cfg(test)]

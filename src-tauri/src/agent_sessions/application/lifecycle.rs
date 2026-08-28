@@ -14,6 +14,7 @@ use crate::agent_sessions::{
         RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
     },
 };
+use crate::execution_configuration::SessionCreationResolution;
 use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -37,6 +38,7 @@ pub(crate) struct CreateApplicationAgentSessionCommand {
 pub(crate) struct AgentSessionOwnership {
     pub(crate) harness_version: Option<HarnessVersionRef>,
     pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+    pub(crate) session_profile: Option<SessionCreationResolution>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -280,6 +282,7 @@ impl AgentSessionApplication {
             if existing.title != expected_title
                 || existing.working_directory != expected_directory
                 || existing.requested_options != command.session.requested_options
+                || existing.session_profile != ownership.session_profile
             {
                 return Err(AgentSessionApplicationError::conflict(
                     "application Agent Session identity was already used for different semantics",
@@ -296,8 +299,20 @@ impl AgentSessionApplication {
         session_id: AgentSessionId,
         ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
+        let session = self.prepare_session_with_id(command, session_id, ownership);
+        self.repository
+            .create_session(session)
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn prepare_session_with_id(
+        &self,
+        command: CreateAgentSessionCommand,
+        session_id: AgentSessionId,
+        ownership: AgentSessionOwnership,
+    ) -> AgentSession {
         let now = self.clock.now();
-        let session = AgentSession {
+        AgentSession {
             id: session_id,
             title: normalize_title(command.title.as_deref(), "Agent Session"),
             availability: AgentSessionAvailability::Available,
@@ -307,14 +322,12 @@ impl AgentSessionApplication {
             },
             working_directory: normalize_optional(command.working_directory),
             requested_options: command.requested_options,
+            session_profile: ownership.session_profile,
             harness_version: ownership.harness_version,
             assigned_identity: ownership.assigned_identity,
             created_at: now,
             updated_at: now,
-        };
-        self.repository
-            .create_session(session)
-            .map_err(AgentSessionApplicationError::repository)
+        }
     }
 
     pub(crate) fn update_session_harness(

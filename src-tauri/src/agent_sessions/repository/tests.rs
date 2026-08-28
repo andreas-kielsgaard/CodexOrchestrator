@@ -500,6 +500,7 @@ fn test_session(id: &str, created_at: DateTime<Utc>) -> AgentSession {
         },
         working_directory: Some("C:/work".into()),
         requested_options: options(),
+        session_profile: None,
         harness_version: None,
         assigned_identity: None,
         created_at,

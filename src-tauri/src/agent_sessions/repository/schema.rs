@@ -9,6 +9,7 @@ CREATE TABLE agent_sessions (
   runtime_version TEXT,
   working_directory TEXT,
   requested_options_json TEXT NOT NULL CHECK (json_valid(requested_options_json)),
+  session_profile_json TEXT CHECK (session_profile_json IS NULL OR json_valid(session_profile_json)),
   harness_version_ref_json TEXT CHECK (harness_version_ref_json IS NULL OR json_valid(harness_version_ref_json)),
   assigned_identity_json TEXT CHECK (assigned_identity_json IS NULL OR json_valid(assigned_identity_json)),
   created_at TEXT NOT NULL,
@@ -85,6 +86,16 @@ pub(crate) fn ensure_agent_session_ownership_schema(conn: &Connection) -> Result
     let columns = table_columns(conn, "agent_sessions")?;
     if columns.is_empty() {
         return Ok(());
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "session_profile_json")
+    {
+        conn.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN session_profile_json TEXT CHECK (session_profile_json IS NULL OR json_valid(session_profile_json))",
+            [],
+        )
+        .map_err(|error| format!("Unable to add pinned Agent Session Profile: {error}"))?;
     }
     if !columns
         .iter()

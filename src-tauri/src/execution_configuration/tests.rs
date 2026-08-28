@@ -1,13 +1,14 @@
 use super::{
-    harness::{HarnessDefinition, HARNESS_DEFINITION_CONTRACT_VERSION},
-    node_profile::{InstructionDelivery, NodeProfileDefinition, NODE_PROFILE_CONTRACT_VERSION},
+    capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
+    node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION},
     ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
     resolution::{
-        ExecutionConfigurationResolver, ResolutionContext, ResolutionError, ResolutionRequest,
-        RESOLUTION_REQUEST_CONTRACT_VERSION,
+        DirectUserInvocationRequest, ResolutionError, SessionCreationRequest,
+        SessionCreationResolution, SessionProfileResolver,
+        DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION, SESSION_CREATION_REQUEST_CONTRACT_VERSION,
     },
     runtime_profile::{
-        CapabilitySet, InvocationPhase, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
+        CapabilitySet, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
         RUNTIME_PROFILE_CONTRACT_VERSION,
     },
 };
@@ -50,7 +51,7 @@ fn capabilities(
     }
 }
 
-fn profile() -> RuntimeProfileSnapshot {
+fn runtime_profile() -> RuntimeProfileSnapshot {
     RuntimeProfileSnapshot {
         contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
         profile_ref: "native-codex:selected".into(),
@@ -69,10 +70,10 @@ fn profile() -> RuntimeProfileSnapshot {
     }
 }
 
-fn harness() -> HarnessDefinition {
-    HarnessDefinition {
-        contract_version: HARNESS_DEFINITION_CONTRACT_VERSION,
-        harness_id: "implementation".into(),
+fn capability_profile() -> CapabilityProfile {
+    CapabilityProfile {
+        contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+        capability_profile_id: "implementation".into(),
         revision: 3,
         allowed_capabilities: capabilities(
             &["codex-a", "codex-b"],
@@ -84,85 +85,78 @@ fn harness() -> HarnessDefinition {
     }
 }
 
-fn node_profile() -> NodeProfileDefinition {
-    NodeProfileDefinition {
+fn node_profile() -> NodeProfile {
+    NodeProfile {
         contract_version: NODE_PROFILE_CONTRACT_VERSION,
-        node_profile_id: "implementation-review".into(),
-        revision: 2,
         allowed_capabilities: capabilities(
-            &["codex-a"],
-            &["high"],
+            &["codex-a", "codex-b"],
+            &["medium", "high"],
             &[SandboxMode::WorkspaceWrite],
             &[("repository", &["read"])],
             &["review"],
         ),
-        selections: RuntimeSelections {
+        pinned_defaults: RuntimeSelections {
             model: Some("codex-a".into()),
             reasoning_mode: Some("high".into()),
             sandbox_mode: None,
         },
-        instructions: InstructionDelivery {
-            recurring: Some("Review the evidence.".into()),
-            start_only: Some("First inspect the proposed plan.".into()),
-        },
     }
 }
 
-fn request(phase: InvocationPhase) -> ResolutionRequest {
-    ResolutionRequest {
-        contract_version: RESOLUTION_REQUEST_CONTRACT_VERSION,
-        harness: harness(),
+fn creation_request() -> SessionCreationRequest {
+    SessionCreationRequest {
+        contract_version: SESSION_CREATION_REQUEST_CONTRACT_VERSION,
+        capability_profile: capability_profile(),
         node_profile: node_profile(),
-        context: ResolutionContext { phase },
     }
 }
 
 #[test]
-fn resolves_the_node_profile_as_a_strict_subset() {
-    let source = FixedProfileSource(Ok(profile()));
-    let resolved =
-        ExecutionConfigurationResolver::resolve(&source, request(InvocationPhase::Start)).unwrap();
+fn creation_resolves_an_immutable_session_profile() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let profile = resolution.session_profile();
 
+    assert_eq!(profile.runtime_profile_ref(), "native-codex:selected");
     assert_eq!(
-        resolved.content.capabilities,
-        node_profile().allowed_capabilities
+        profile.attached_runtime_capabilities(),
+        &runtime_profile().exposure
     );
+    assert_eq!(profile.capability_profile_id(), "implementation");
+    assert_eq!(profile.capability_profile_revision(), 3);
     assert_eq!(
-        resolved.content.selections.model.as_deref(),
-        Some("codex-a")
+        profile.node_capabilities(),
+        &node_profile().allowed_capabilities
     );
+    assert_eq!(profile.pinned_defaults().model.as_deref(), Some("codex-a"));
     assert_eq!(
-        resolved.content.selections.sandbox_mode,
+        profile.pinned_defaults().sandbox_mode,
         Some(SandboxMode::WorkspaceWrite)
     );
-    assert_eq!(
-        resolved.content.instructions.start_only.as_deref(),
-        Some("First inspect the proposed plan.")
-    );
-    resolved.verify_digest().unwrap();
+    resolution.verify_digest().unwrap();
 }
 
 #[test]
-fn harness_cannot_widen_the_selected_profile() {
-    let source = FixedProfileSource(Ok(profile()));
-    let mut request = request(InvocationPhase::Start);
+fn capability_profile_cannot_widen_the_runtime() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut request = creation_request();
     request
-        .harness
+        .capability_profile
         .allowed_capabilities
         .models
         .insert("unavailable".into());
 
     assert!(matches!(
-        ExecutionConfigurationResolver::resolve(&source, request),
-        Err(ResolutionError::HarnessWidensProfile(capability))
+        SessionProfileResolver::resolve_creation(&source, request),
+        Err(ResolutionError::CapabilityProfileWidensRuntime(capability))
             if capability == "model `unavailable`"
     ));
 }
 
 #[test]
-fn node_profile_cannot_widen_its_harness() {
-    let source = FixedProfileSource(Ok(profile()));
-    let mut request = request(InvocationPhase::Start);
+fn node_profile_cannot_widen_its_capability_profile() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut request = creation_request();
     request
         .node_profile
         .allowed_capabilities
@@ -172,36 +166,36 @@ fn node_profile_cannot_widen_its_harness() {
         .insert("admin".into());
 
     assert!(matches!(
-        ExecutionConfigurationResolver::resolve(&source, request),
-        Err(ResolutionError::NodeProfileWidensHarness(capability))
+        SessionProfileResolver::resolve_creation(&source, request),
+        Err(ResolutionError::NodeProfileWidensCapabilityProfile(capability))
             if capability == "MCP tool `repository/admin`"
     ));
 }
 
 #[test]
-fn locked_profile_control_cannot_be_removed_or_changed() {
-    let source = FixedProfileSource(Ok(profile()));
-    let mut excluding = request(InvocationPhase::Start);
+fn runtime_locked_control_cannot_be_removed_or_changed() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut excluding = creation_request();
     excluding
         .node_profile
         .allowed_capabilities
         .sandbox_modes
         .clear();
     assert!(matches!(
-        ExecutionConfigurationResolver::resolve(&source, excluding),
+        SessionProfileResolver::resolve_creation(&source, excluding),
         Err(ResolutionError::LockedCapabilityExcluded(capability))
             if capability.contains("sandbox mode")
     ));
 
-    let mut profile_with_selectable_but_locked_sandbox = profile();
-    profile_with_selectable_but_locked_sandbox
+    let mut selectable_but_locked = runtime_profile();
+    selectable_but_locked
         .exposure
         .sandbox_modes
         .insert(SandboxMode::DangerFullAccess);
-    let source = FixedProfileSource(Ok(profile_with_selectable_but_locked_sandbox));
-    let mut changing = request(InvocationPhase::Start);
+    let source = FixedProfileSource(Ok(selectable_but_locked));
+    let mut changing = creation_request();
     changing
-        .harness
+        .capability_profile
         .allowed_capabilities
         .sandbox_modes
         .insert(SandboxMode::DangerFullAccess);
@@ -210,56 +204,136 @@ fn locked_profile_control_cannot_be_removed_or_changed() {
         .allowed_capabilities
         .sandbox_modes
         .insert(SandboxMode::DangerFullAccess);
-    changing.node_profile.selections.sandbox_mode = Some(SandboxMode::DangerFullAccess);
+    changing.node_profile.pinned_defaults.sandbox_mode = Some(SandboxMode::DangerFullAccess);
     assert!(matches!(
-        ExecutionConfigurationResolver::resolve(&source, changing),
+        SessionProfileResolver::resolve_creation(&source, changing),
         Err(ResolutionError::SelectionConflictsWithLocked(_))
     ));
 }
 
 #[test]
-fn unavailable_selection_fails_without_fallback() {
-    let source = FixedProfileSource(Ok(profile()));
-    let mut request = request(InvocationPhase::Start);
-    request.node_profile.selections.model = Some("codex-b".into());
+fn unavailable_pinned_default_fails_without_fallback() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut request = creation_request();
+    request.node_profile.pinned_defaults.model = Some("unavailable".into());
 
     assert!(matches!(
-        ExecutionConfigurationResolver::resolve(&source, request),
-        Err(ResolutionError::SelectionUnavailable(capability))
-            if capability == "model `codex-b`"
+        SessionProfileResolver::resolve_creation(&source, request),
+        Err(ResolutionError::PinnedSelectionUnavailable(capability))
+            if capability == "model `unavailable`"
     ));
 }
 
 #[test]
-fn start_only_instructions_are_absent_on_resume() {
-    let source = FixedProfileSource(Ok(profile()));
-    let resumed =
-        ExecutionConfigurationResolver::resolve(&source, request(InvocationPhase::Resume)).unwrap();
+fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut request = creation_request();
+    request.node_profile.allowed_capabilities.models = set(&["codex-a"]);
+    request.node_profile.allowed_capabilities.reasoning_modes = set(&["high"]);
+    let creation = SessionProfileResolver::resolve_creation(&source, request).unwrap();
+    let original_digest = creation.digest().to_owned();
+    let original_defaults = creation.session_profile().pinned_defaults().clone();
 
+    let invocation = SessionProfileResolver::validate_direct_user_invocation(
+        &source,
+        &creation,
+        DirectUserInvocationRequest {
+            contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
+            model: Some("codex-b".into()),
+            reasoning_mode: Some("medium".into()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(invocation.selections.model.as_deref(), Some("codex-b"));
     assert_eq!(
-        resumed.content.instructions.recurring.as_deref(),
-        Some("Review the evidence.")
+        invocation.selections.reasoning_mode.as_deref(),
+        Some("medium")
     );
-    assert_eq!(resumed.content.instructions.start_only, None);
+    assert_eq!(creation.digest(), original_digest);
+    assert_eq!(
+        creation.session_profile().pinned_defaults(),
+        &original_defaults
+    );
+    creation.verify_digest().unwrap();
+}
+
+#[test]
+fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let before = creation.clone();
+
+    let result = SessionProfileResolver::validate_direct_user_invocation(
+        &source,
+        &creation,
+        DirectUserInvocationRequest {
+            contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
+            model: Some("unavailable".into()),
+            reasoning_mode: None,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(ResolutionError::DirectUserSelectionUnavailable(capability))
+            if capability == "model `unavailable`"
+    ));
+    assert_eq!(creation, before);
+}
+
+#[test]
+fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let mut changed = runtime_profile();
+    changed.profile_ref = "native-codex:other".into();
+    let changed_source = FixedProfileSource(Ok(changed));
+
+    assert!(matches!(
+        SessionProfileResolver::validate_direct_user_invocation(
+            &changed_source,
+            &creation,
+            DirectUserInvocationRequest {
+                contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
+                model: None,
+                reasoning_mode: None,
+            },
+        ),
+        Err(ResolutionError::RuntimeProfileChanged { .. })
+    ));
+}
+
+#[test]
+fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let mut changed = runtime_profile();
+    changed.profile_ref = "native-codex:other".into();
+    let changed_source = FixedProfileSource(Ok(changed));
+
+    assert!(matches!(
+        SessionProfileResolver::validate_pinned_session(&changed_source, &creation),
+        Err(ResolutionError::RuntimeProfileChanged { .. })
+    ));
 }
 
 #[test]
 fn digest_is_stable_for_equivalent_unordered_inputs() {
-    let source = FixedProfileSource(Ok(profile()));
-    let first =
-        ExecutionConfigurationResolver::resolve(&source, request(InvocationPhase::Start)).unwrap();
-    let mut reordered_profile = profile();
-    reordered_profile.exposure = reverse_insertion_order(&reordered_profile.exposure);
-    let reordered_source = FixedProfileSource(Ok(reordered_profile));
-    let mut reordered_request = request(InvocationPhase::Start);
-    reordered_request.harness.allowed_capabilities =
-        reverse_insertion_order(&reordered_request.harness.allowed_capabilities);
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let first = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let mut reordered_runtime = runtime_profile();
+    reordered_runtime.exposure = reverse_insertion_order(&reordered_runtime.exposure);
+    let reordered_source = FixedProfileSource(Ok(reordered_runtime));
+    let mut reordered_request = creation_request();
+    reordered_request.capability_profile.allowed_capabilities =
+        reverse_insertion_order(&reordered_request.capability_profile.allowed_capabilities);
     reordered_request.node_profile.allowed_capabilities =
         reverse_insertion_order(&reordered_request.node_profile.allowed_capabilities);
     let second =
-        ExecutionConfigurationResolver::resolve(&reordered_source, reordered_request).unwrap();
+        SessionProfileResolver::resolve_creation(&reordered_source, reordered_request).unwrap();
 
-    assert_eq!(first.digest, second.digest);
+    assert_eq!(first.digest(), second.digest());
 }
 
 fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
@@ -279,21 +353,26 @@ fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
 
 #[test]
 fn digest_verification_rejects_a_contract_version_change() {
-    let source = FixedProfileSource(Ok(profile()));
-    let mut resolved =
-        ExecutionConfigurationResolver::resolve(&source, request(InvocationPhase::Start)).unwrap();
-    resolved.contract_version += 1;
+    let source = FixedProfileSource(Ok(runtime_profile()));
+    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let mut value = serde_json::to_value(resolution).unwrap();
+    value["contractVersion"] = serde_json::json!(2);
+    let changed: SessionCreationResolution = serde_json::from_value(value).unwrap();
     assert!(matches!(
-        resolved.verify_digest(),
+        changed.verify_digest(),
         Err(ResolutionError::InvalidInput(_))
     ));
 }
 
 #[test]
-fn strict_contracts_reject_unknown_fields() {
-    let mut value = serde_json::to_value(harness()).unwrap();
+fn strict_contracts_reject_unknown_fields_and_node_identity() {
+    let mut value = serde_json::to_value(capability_profile()).unwrap();
     value["unexpected"] = serde_json::json!(true);
-    assert!(serde_json::from_value::<HarnessDefinition>(value).is_err());
+    assert!(serde_json::from_value::<CapabilityProfile>(value).is_err());
+
+    let mut node_value = serde_json::to_value(node_profile()).unwrap();
+    node_value["nodeProfileId"] = serde_json::json!("reusable-node");
+    assert!(serde_json::from_value::<NodeProfile>(node_value).is_err());
 }
 
 #[test]
@@ -302,7 +381,7 @@ fn source_failure_is_a_typed_resolution_error() {
         "no ready profile",
     )));
     assert_eq!(
-        ExecutionConfigurationResolver::resolve(&source, request(InvocationPhase::Start)),
+        SessionProfileResolver::resolve_creation(&source, creation_request()),
         Err(ResolutionError::SourceUnavailable(
             "no ready profile".into()
         ))

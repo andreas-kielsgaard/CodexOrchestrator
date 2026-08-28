@@ -11,13 +11,6 @@ pub(crate) enum SandboxMode {
     DangerFullAccess,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum InvocationPhase {
-    Start,
-    Resume,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CapabilitySet {

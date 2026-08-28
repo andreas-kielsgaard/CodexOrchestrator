@@ -24,6 +24,7 @@ mod native_profiles;
 mod orchestration;
 mod product_decisions;
 mod runtime;
+mod session_events;
 mod storage;
 mod workflows;
 #[cfg(debug_assertions)]

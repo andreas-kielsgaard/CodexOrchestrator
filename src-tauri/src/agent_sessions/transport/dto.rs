@@ -36,6 +36,7 @@ impl CreateAgentSessionCommandDto {
         crate::agent_sessions::application::AgentSessionOwnership {
             harness_version: self.harness_version.clone(),
             assigned_identity: self.assigned_identity.clone(),
+            session_profile: None,
         }
     }
 }
@@ -339,6 +340,7 @@ mod tests {
                 },
                 working_directory: None,
                 requested_options: AgentRuntimeOptions::default(),
+                session_profile: None,
                 harness_version: None,
                 assigned_identity: None,
                 created_at: at,
