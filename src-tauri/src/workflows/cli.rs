@@ -22,6 +22,8 @@ use crate::{
     },
     harness_engine::{HarnessEngineService, ManagedMcpUpstreamRegistry},
     native_profiles::NativeProfileService,
+    persistence::ActiveDatabase,
+    product_database,
     runtime::codex::CodexCliRuntime,
     storage,
     worktree_targets_temp::DiscoveredWorktreeTargetSource,
@@ -77,7 +79,7 @@ struct CliRuntimeContext {
     workflow: Arc<WorkflowApplication>,
     sessions: Arc<AgentSessionApplication>,
     harnesses: Arc<HarnessEngineService>,
-    database_path: PathBuf,
+    database: Arc<ActiveDatabase>,
 }
 
 impl Drop for CliRuntimeContext {
@@ -105,7 +107,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "import" => {
             let file = absolute_path(required_option(&options, "file")?, "file")?;
             let catalog = read_catalog(&file)?;
-            let installed = import_catalog(&database_path, catalog)?;
+            let database = product_database::open(&database_path)?;
+            let installed = import_catalog(database, catalog)?;
             print_json(json!({
                 "command": "import",
                 "workflowTypes": installed.iter().map(|definition| json!({
@@ -273,10 +276,10 @@ fn validate_catalog(catalog: &WorkflowCatalog) -> Result<(), String> {
 }
 
 fn import_catalog(
-    database_path: &Path,
+    database: Arc<ActiveDatabase>,
     catalog: WorkflowCatalog,
 ) -> Result<Vec<WorkflowDefinition>, String> {
-    let repository = SqliteWorkflowRepository::open(database_path)?;
+    let repository = SqliteWorkflowRepository::from_database(database);
     let existing = repository.list_workflow_types()?;
     for workflow in &catalog.workflows {
         if existing
@@ -328,15 +331,16 @@ fn compose_runtime(app_data_dir: &Path) -> Result<CliRuntimeContext, String> {
         )
     })?;
     let database_path = storage::active_database_path(app_data_dir);
-    let connection = storage::open_active_database(&database_path)?;
-    let session_repository =
-        Arc::new(SqliteAgentSessionRepository::new(connection).map_err(|error| error.to_string())?);
-    let native_profiles = Arc::new(NativeProfileService::open(
-        database_path.clone(),
+    let database = product_database::open(&database_path)?;
+    let session_repository = Arc::new(SqliteAgentSessionRepository::from_database(
+        database.clone(),
+    ));
+    let native_profiles = Arc::new(NativeProfileService::new(
+        database.clone(),
         app_data_dir.to_path_buf(),
-    )?);
+    ));
     let upstreams = Arc::new(ManagedMcpUpstreamRegistry::default());
-    let harnesses = HarnessEngineService::open_system(&database_path, upstreams.clone())?;
+    let harnesses = HarnessEngineService::open_system(database.clone(), upstreams.clone())?;
     let notifier = Arc::new(CliNotifier::default());
     let providers = Arc::new(SystemAgentSessionProviders);
     let sessions = Arc::new(
@@ -352,7 +356,7 @@ fn compose_runtime(app_data_dir: &Path) -> Result<CliRuntimeContext, String> {
         .with_session_harness_launch_authority(harnesses.clone()),
     );
     let workflow = Arc::new(WorkflowApplication::new(
-        Arc::new(SqliteWorkflowRepository::open(&database_path)?),
+        Arc::new(SqliteWorkflowRepository::from_database(database.clone())),
         sessions.clone(),
         harnesses.clone(),
     ));
@@ -372,7 +376,7 @@ fn compose_runtime(app_data_dir: &Path) -> Result<CliRuntimeContext, String> {
         workflow,
         sessions,
         harnesses,
-        database_path,
+        database,
     })
 }
 
@@ -567,7 +571,7 @@ fn instance_report(context: &CliRuntimeContext, instance_id: &str) -> Result<Val
             })).collect::<Vec<_>>(),
         }));
     }
-    let failed_activations = failed_activation_details(&context.database_path, instance_id)?;
+    let failed_activations = failed_activation_details(&context.database, instance_id)?;
     Ok(json!({
         "instanceId": instance.summary.id,
         "instanceName": instance.summary.name,
@@ -582,35 +586,37 @@ fn instance_report(context: &CliRuntimeContext, instance_id: &str) -> Result<Val
 }
 
 fn failed_activation_details(
-    database_path: &Path,
+    database: &ActiveDatabase,
     instance_id: &str,
 ) -> Result<Vec<Value>, String> {
-    let connection = rusqlite::Connection::open(database_path)
-        .map_err(|error| format!("Unable to open Workflow activation storage: {error}"))?;
-    storage::configure_sqlite_connection(&connection)
-        .map_err(|error| format!("Unable to configure Workflow activation storage: {error}"))?;
-    let mut statement = connection
-        .prepare(
-            "SELECT id,connection_id,failure_stage,failure_reason,failed_at
-             FROM workflow_connection_activations
-             WHERE workflow_instance_id=?1 AND failed_at IS NOT NULL
-             ORDER BY requested_at DESC,id DESC",
-        )
-        .map_err(|error| format!("Unable to prepare failed Workflow activation query: {error}"))?;
-    let details = statement
-        .query_map([instance_id], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "connectionId": row.get::<_, String>(1)?,
-                "failureStage": row.get::<_, Option<String>>(2)?,
-                "failureReason": row.get::<_, Option<String>>(3)?,
-                "failedAt": row.get::<_, String>(4)?,
-            }))
+    database
+        .read("query failed Workflow activations", |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id,connection_id,failure_stage,failure_reason,failed_at
+                     FROM workflow_connection_activations
+                     WHERE workflow_instance_id=?1 AND failed_at IS NOT NULL
+                     ORDER BY requested_at DESC,id DESC",
+                )
+                .map_err(|error| {
+                    format!("Unable to prepare failed Workflow activation query: {error}")
+                })?;
+            let details = statement
+                .query_map([instance_id], |row| {
+                    Ok(json!({
+                        "id": row.get::<_, String>(0)?,
+                        "connectionId": row.get::<_, String>(1)?,
+                        "failureStage": row.get::<_, Option<String>>(2)?,
+                        "failureReason": row.get::<_, Option<String>>(3)?,
+                        "failedAt": row.get::<_, String>(4)?,
+                    }))
+                })
+                .map_err(|error| format!("Unable to query failed Workflow activations: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Unable to read failed Workflow activations: {error}"))?;
+            Ok(details)
         })
-        .map_err(|error| format!("Unable to query failed Workflow activations: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read failed Workflow activations: {error}"))?;
-    Ok(details)
+        .map_err(|error| error.into_string())
 }
 
 fn print_json(value: Value) -> Result<(), String> {

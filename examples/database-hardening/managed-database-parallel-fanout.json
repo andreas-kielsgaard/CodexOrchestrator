@@ -1,0 +1,157 @@
+{
+  "contractVersion": "workflow-cli-catalog/v1",
+  "workflows": [
+    {
+      "name": "Demo · Managed Database Parallel Fan-out",
+      "nodes": [
+        {
+          "id": "managed-db-demo-author",
+          "name": "Plan author",
+          "harnessName": "Managed database demonstration author",
+          "roleName": null,
+          "positionX": 100,
+          "positionY": 260,
+          "isStartingPoint": true,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Managed database demonstration author",
+              "roleIdentity": "Create one concise implementation plan for parallel review.",
+              "instructions": "Follow the user's request. Create or overwrite handoffs/managed-database-demo.md with the plan. Do not finish until that exact file exists.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "managed-db-demo-runtime-reviewer",
+          "name": "Runtime reviewer",
+          "harnessName": "Managed database runtime reviewer",
+          "roleName": null,
+          "positionX": 520,
+          "positionY": 80,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Managed database runtime reviewer",
+              "roleIdentity": "Review runtime and concurrency implications.",
+              "instructions": "Open the handed-off file. Identify one concurrency strength and one runtime risk. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "managed-db-demo-boundary-reviewer",
+          "name": "Boundary reviewer",
+          "harnessName": "Managed database boundary reviewer",
+          "roleName": null,
+          "positionX": 520,
+          "positionY": 260,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Managed database boundary reviewer",
+              "roleIdentity": "Review domain ownership and persistence boundaries.",
+              "instructions": "Open the handed-off file. Identify one clear domain boundary and one boundary that needs clarification. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "managed-db-demo-test-reviewer",
+          "name": "Test reviewer",
+          "harnessName": "Managed database test reviewer",
+          "roleName": null,
+          "positionX": 520,
+          "positionY": 440,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Managed database test reviewer",
+              "roleIdentity": "Review how the plan can be verified.",
+              "instructions": "Open the handed-off file. Propose two focused verification checks. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "managed-db-demo-runtime-handoff",
+          "name": "Parallel runtime review",
+          "senderNodeId": "managed-db-demo-author",
+          "receiverNodeId": "managed-db-demo-runtime-reviewer",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_filename_pattern",
+              "folder": "handoffs",
+              "filenamePattern": "managed-database-demo.md"
+            },
+            "descriptionText": "The plan is ready for an independent runtime review.",
+            "promptText": "Review the plan's runtime and concurrency implications.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        },
+        {
+          "id": "managed-db-demo-boundary-handoff",
+          "name": "Parallel boundary review",
+          "senderNodeId": "managed-db-demo-author",
+          "receiverNodeId": "managed-db-demo-boundary-reviewer",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_filename_pattern",
+              "folder": "handoffs",
+              "filenamePattern": "managed-database-demo.md"
+            },
+            "descriptionText": "The plan is ready for an independent boundary review.",
+            "promptText": "Review the plan's domain and persistence boundaries.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        },
+        {
+          "id": "managed-db-demo-test-handoff",
+          "name": "Parallel verification review",
+          "senderNodeId": "managed-db-demo-author",
+          "receiverNodeId": "managed-db-demo-test-reviewer",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_filename_pattern",
+              "folder": "handoffs",
+              "filenamePattern": "managed-database-demo.md"
+            },
+            "descriptionText": "The plan is ready for an independent verification review.",
+            "promptText": "Review how the plan should be verified.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        }
+      ]
+    }
+  ]
+}

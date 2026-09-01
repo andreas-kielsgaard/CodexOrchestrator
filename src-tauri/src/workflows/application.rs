@@ -1253,9 +1253,10 @@ mod tests {
     ) {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("workflow-launch.sqlite");
-        let agent_connection = crate::storage::open_active_database(&database_path).unwrap();
-        let agent_repository =
-            Arc::new(SqliteAgentSessionRepository::new(agent_connection).unwrap());
+        let database = crate::product_database::open(&database_path).unwrap();
+        let agent_repository = Arc::new(SqliteAgentSessionRepository::from_database(
+            database.clone(),
+        ));
         let runtime = Arc::new(RecordingRuntime::default());
         let providers = Arc::new(SystemAgentSessionProviders);
         let sessions = Arc::new(AgentSessionApplication::new(
@@ -1266,7 +1267,7 @@ mod tests {
             providers,
             Some("codex-test".to_string()),
         ));
-        let workflows = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
+        let workflows = Arc::new(SqliteWorkflowRepository::from_database(database));
         let application = WorkflowApplication::new(workflows.clone(), sessions, harnesses);
         (directory, workflows, runtime, application)
     }
@@ -1472,10 +1473,10 @@ mod tests {
     ) -> ExecutionFixture {
         let directory = tempfile::tempdir().unwrap();
         let database_path = directory.path().join("workflow-execution.sqlite");
-        let agent_connection = crate::storage::open_active_database(&database_path).unwrap();
-        let agent_repository = Arc::new(
-            SqliteAgentSessionRepository::new(agent_connection).expect("Agent Session repository"),
-        );
+        let database = crate::product_database::open(&database_path).unwrap();
+        let agent_repository = Arc::new(SqliteAgentSessionRepository::from_database(
+            database.clone(),
+        ));
         let runtime = Arc::new(RecordingRuntime::default());
         let providers = Arc::new(SystemAgentSessionProviders);
         let sessions = Arc::new(AgentSessionApplication::new(
@@ -1486,7 +1487,8 @@ mod tests {
             providers,
             Some("codex-test".to_string()),
         ));
-        let workflow_repository = Arc::new(SqliteWorkflowRepository::open(&database_path).unwrap());
+        let workflow_repository =
+            Arc::new(SqliteWorkflowRepository::from_database(database));
         let definition = workflow_repository
             .create_workflow_type("Connection execution")
             .unwrap();
@@ -2210,6 +2212,75 @@ mod tests {
         assert!(fixture.runtime.launches.lock().unwrap()[1]
             .submitted_text
             .ends_with("New prompt."));
+    }
+
+    #[test]
+    fn different_receiver_fan_out_creates_and_launches_both_invocations() {
+        let fixture = execution_fixture(vec![
+            expected_file_connection(
+                "edge-a",
+                "receiver-a",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "handoff.md".to_string(),
+                },
+                "Continue A.",
+            ),
+            expected_file_connection(
+                "edge-b",
+                "receiver-b",
+                WorkflowExpectedFileSelector::FolderFilenamePattern {
+                    folder: "handoffs".to_string(),
+                    filename_pattern: "handoff.md".to_string(),
+                },
+                "Continue B.",
+            ),
+        ]);
+        let instance = create_started_execution_instance(&fixture);
+        let folder = PathBuf::from(&instance.target.worktree.path).join("handoffs");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("handoff.md"), "handoff").unwrap();
+        let (session_id, invocation) = complete_source_turn(&fixture, &instance, "Done.");
+
+        assert_eq!(
+            fixture
+                .application
+                .on_agent_notification(&completed_notification(session_id, invocation))
+                .unwrap(),
+            2
+        );
+
+        let activations = fixture
+            .workflow_repository
+            .list_connection_activations(&instance.summary.id)
+            .unwrap();
+        assert_eq!(activations.len(), 2);
+        assert!(activations
+            .iter()
+            .all(|activation| activation.launch_accepted_at.is_some()));
+        assert!(activations
+            .iter()
+            .all(|activation| activation.failure_stage.is_none()));
+        assert_eq!(fixture.runtime.launches.lock().unwrap().len(), 3);
+        assert_eq!(
+            fixture
+                .application
+                .load_workflow_instance(&instance.summary.id)
+                .unwrap()
+                .sessions
+                .len(),
+            3
+        );
+        for invocation_id in activations
+            .iter()
+            .map(|activation| activation.target_invocation_id.as_deref().unwrap())
+        {
+            assert!(fixture
+                .agent_repository
+                .get_invocation(&AgentInvocationId::new(invocation_id).unwrap())
+                .unwrap()
+                .is_some());
+        }
     }
 
     #[test]

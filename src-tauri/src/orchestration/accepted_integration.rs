@@ -1,6 +1,7 @@
 //! Application-owned accepted-candidate integration.  It has no transport surface.
 
-use super::accepted_candidate_authority::{revalidate_retained_accepted_candidate, sprint_target_binding_fingerprint};
+use super::accepted_candidate_authority::{reconcile_accepted_candidate_authorities_managed, revalidate_retained_accepted_candidate, sprint_target_binding_fingerprint};
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{fs, fs::{File, OpenOptions}, io::Write, path::{Path, PathBuf}, process::{Command, Stdio}};
@@ -39,6 +40,77 @@ pub(crate) fn reconcile_accepted_integrations(c: &mut Connection) -> Result<(), 
         }
     }
     Ok(())
+}
+
+pub(crate) fn reconcile_accepted_integrations_managed(database: &ActiveDatabase) -> Result<(), String> {
+    reconcile_accepted_candidate_authorities_managed(database)?;
+    database.write("initialize accepted integration", |transaction| initialize_accepted_integration_schema(transaction)).map_err(managed_error)?;
+    let candidates = database.read("load accepted integration candidates", |connection| connection.prepare("SELECT candidate_id FROM accepted_handler_candidates WHERE pinned_at IS NOT NULL AND attention_reason IS NULL ORDER BY work_unit_id")
+        .and_then(|mut statement| statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())).map_err(managed_error)?;
+    for candidate in candidates {
+        let Some(row) = database.read("load accepted integration candidate", |connection| load_row(connection, &candidate)).map_err(managed_error)? else { continue };
+        if let Err(code) = reconcile_one_managed(database, &row) {
+            if !retryable(&code) {
+                attention_managed(database, &row.candidate, &code)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_one_managed(database: &ActiveDatabase, row: &Row) -> Result<(), String> {
+    let target_before_lock = database.read("load accepted integration target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    let _lock = Lock::take(&row.common, &target_before_lock.reference)?;
+    match database.read("load accepted integration", |connection| integration(connection, &row.candidate)).map_err(managed_error)? {
+        Some(integration) if integration.stage == "attention" => return Ok(()),
+        Some(_) => {}
+        None => reserve_managed(database, row)?,
+    }
+    revalidate_managed(database, &row.candidate)?;
+    let mut integration_record = database.read("reload accepted integration", |connection| integration(connection, &row.candidate)).map_err(managed_error)?.ok_or("integration_missing")?;
+    if integration_record.stage == "attention" { return Ok(()) }
+    database.read("validate accepted integration correlations", |connection| validate_integration_correlations(connection, row, &integration_record)).map_err(managed_error)?;
+    let target_record = database.read("reload accepted integration target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    if integration_record.settled.is_some() || integration_record.stage == "settled" {
+        return database.read("verify settled accepted integration", |connection| verify_settled(connection, row, &integration_record, &target_record)).map_err(managed_error);
+    }
+    let commit = match integration_record.commit.clone() {
+        Some(value) => { verify_commit(row, &integration_record, &value)?; value }
+        None => {
+            require_pre_state(row, &target_record, &integration_record)?;
+            let tree = merged_tree(row, &integration_record.pre)?;
+            let (value, fingerprint) = create_commit(row, &integration_record, &tree)?;
+            verify_commit_parts(row, &integration_record, &value, &tree, &fingerprint)?;
+            database.write("record accepted integration object", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET integration_commit_id=?2,integration_tree_id=?3,commit_fingerprint=?4,object_created_at=COALESCE(object_created_at,?5),stage='object_created' WHERE integration_id=?1", params![integration_record.id, value, tree, fingerprint, now()]).map(|_| ()).map_err(|error| error.to_string())).map_err(managed_error)?;
+            integration_record = database.read("reload accepted integration object", |connection| integration(connection, &row.candidate)).map_err(managed_error)?.ok_or("integration_missing")?;
+            value
+        }
+    };
+    recover_and_advance_managed(database, row, &integration_record, &commit)
+}
+
+fn reserve_managed(database: &ActiveDatabase, row: &Row) -> Result<(), String> {
+    let target_record = database.read("load accepted integration reservation target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    validate_identity(row, &target_record)?;
+    let id = stable_id("accepted-work-unit-integration", &row.candidate);
+    let intent = fingerprint(&[POLICY_VERSION,&id,&row.unit,&row.candidate,&row.authority,&target_record.reference,&target_record.current,&target_record.version.to_string(),&row.baseline,&row.commit,&row.tree,&row.evidence]);
+    let recorded_at = database.read("load accepted candidate pin time", |connection| integration_recorded_at(connection, &row.candidate)).map_err(managed_error)?;
+    database.write("reserve accepted integration", |transaction| {
+        match transaction.execute("INSERT INTO accepted_work_unit_integrations(integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,authorization_recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)", params![id,row.unit,row.candidate,row.authority,target_record.reference,target_record.current,target_record.version,row.commit,row.tree,row.baseline,intent,recorded_at]) {
+            Ok(1) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::ConstraintViolation => {
+                let exact:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations WHERE integration_id=?1 AND candidate_id=?2 AND authority_id=?3 AND target_ref_name=?4 AND pre_object_id=?5 AND pre_version=?6 AND candidate_commit_id=?7 AND candidate_tree_id=?8 AND baseline_object_id=?9 AND intent_fingerprint=?10)",params![id,row.candidate,row.authority,target_record.reference,target_record.current,target_record.version,row.commit,row.tree,row.baseline,intent],|value|value.get(0)).map_err(|error|error.to_string())?;
+                if exact { Ok(()) } else { Err("integration_reservation_conflict".into()) }
+            }
+            Ok(_) => Err("integration_reservation_conflict".into()),
+            Err(error) => Err(error.to_string()),
+        }
+    }).map_err(managed_error)
+}
+
+fn revalidate_managed(database: &ActiveDatabase, candidate: &str) -> Result<(), String> {
+    let row: Option<(Option<String>, Option<String>)> = database.read("revalidate retained accepted candidate", |connection| connection.query_row("SELECT pinned_at,attention_reason FROM accepted_handler_candidates WHERE candidate_id=?1", [candidate], |row| Ok((row.get(0)?, row.get(1)?))).optional().map_err(|error| error.to_string())).map_err(managed_error)?;
+    match row { Some((Some(_), None)) => Ok(()), Some((_, Some(reason))) => Err(format!("candidate_revalidation:{reason}")), _ => Err("candidate_revalidation:not_retained".into()) }
 }
 
 pub(crate) fn initialize_accepted_integration_schema(c: &Connection) -> Result<(), String> {
@@ -190,6 +262,57 @@ fn recover_and_advance(c: &mut Connection, r: &Row, i: &Integration, commit: &st
     converge_runtime(c, r, i, commit)
 }
 
+fn recover_and_advance_managed(database: &ActiveDatabase, row: &Row, integration_record: &Integration, commit: &str) -> Result<(), String> {
+    let target_record = database.read("load accepted integration recovery target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    match integration_record.stage.as_str() {
+        "intent_reserved" | "object_created" => {
+            if git(&row.worktree, &["show-ref", "--verify", "--hash", &target_record.reference])? == commit {
+                return adopt_owned_ref_effect_managed(database, row, integration_record, commit, &target_record);
+            }
+            require_pre_state(row, &target_record, integration_record)?;
+        }
+        "ref_advanced" => return adopt_owned_ref_effect_managed(database, row, integration_record, commit, &target_record),
+        "runtime_advanced" => {
+            require_ref_and_runtime(row, integration_record, commit, &target_record, false)?;
+            advance_database_managed(database, row, integration_record, commit)?;
+            return persist_evidence_and_settlement_managed(database, row, integration_record, commit);
+        }
+        "db_advanced" => {
+            require_ref_and_runtime(row, integration_record, commit, &target_record, true)?;
+            return persist_evidence_and_settlement_managed(database, row, integration_record, commit);
+        }
+        _ => return Err("unknown_integration_stage".into()),
+    }
+    let ref_value = git(&row.worktree, &["show-ref", "--verify", "--hash", &target_record.reference])?;
+    if ref_value == integration_record.pre {
+        git(&row.worktree, &["update-ref", &target_record.reference, commit, &integration_record.pre]).map_err(|_| "target_ref_cas_lost".to_owned())?;
+    } else if ref_value != commit { return Err("target_ref_advanced_or_foreign".into()) }
+    database.write("record accepted integration ref advance", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),stage='ref_advanced' WHERE integration_id=?1", params![integration_record.id, now()]).map(|_| ()).map_err(|error|error.to_string())).map_err(managed_error)?;
+    converge_runtime_managed(database, row, integration_record, commit)
+}
+
+fn adopt_owned_ref_effect_managed(database: &ActiveDatabase, row: &Row, integration_record: &Integration, commit: &str, target_record: &Target) -> Result<(), String> {
+    if require_ref_advanced(row, integration_record, commit, target_record).is_ok() {
+        database.write("adopt accepted integration ref effect", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),stage='ref_advanced' WHERE integration_id=?1", params![integration_record.id,now()]).map(|_| ()).map_err(|error|error.to_string())).map_err(managed_error)?;
+        return converge_runtime_managed(database, row, integration_record, commit);
+    }
+    if require_ref_and_runtime(row, integration_record, commit, target_record, false).is_ok() {
+        database.write("adopt accepted integration runtime effect", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET ref_advanced_at=COALESCE(ref_advanced_at,?2),runtime_advanced_at=COALESCE(runtime_advanced_at,?2),stage='runtime_advanced' WHERE integration_id=?1",params![integration_record.id,now()]).map(|_| ()).map_err(|error|error.to_string())).map_err(managed_error)?;
+        advance_database_managed(database, row, integration_record, commit)?;
+        return persist_evidence_and_settlement_managed(database, row, integration_record, commit);
+    }
+    Err("owned_ref_effect_state_ambiguous".into())
+}
+
+fn converge_runtime_managed(database: &ActiveDatabase, row: &Row, integration_record: &Integration, commit: &str) -> Result<(), String> {
+    git(&row.worktree, &["read-tree", "--reset", "-u", commit])?;
+    let target_record = database.read("load accepted integration runtime target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    require_ref_and_runtime(row, integration_record, commit, &target_record, false)?;
+    database.write("record accepted integration runtime advance", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET runtime_advanced_at=COALESCE(runtime_advanced_at,?2),stage='runtime_advanced' WHERE integration_id=?1", params![integration_record.id,now()]).map(|_| ()).map_err(|error|error.to_string())).map_err(managed_error)?;
+    advance_database_managed(database, row, integration_record, commit)?;
+    persist_evidence_and_settlement_managed(database, row, integration_record, commit)
+}
+
 /// Adopt an exact owned ref effect when the effect completed before its durable stage write.
 /// The only recoverable states are the old index/worktree or the clean integration runtime.
 fn adopt_owned_ref_effect(c: &mut Connection, r: &Row, i: &Integration, commit: &str, t: &Target) -> Result<(), String> {
@@ -258,6 +381,20 @@ fn advance_database(c: &mut Connection, r: &Row, i: &Integration, commit: &str) 
     tx.commit().map_err(|e|e.to_string())
 }
 
+fn advance_database_managed(database: &ActiveDatabase, row: &Row, integration_record: &Integration, commit: &str) -> Result<(), String> {
+    let target_record = database.read("load accepted integration database target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    let binding = sprint_target_binding_fingerprint(&row.authority, &target_record.reference, commit);
+    database.write("advance accepted integration database", |transaction| {
+        let changed = transaction.execute("UPDATE sprint_target_currents SET current_object_id=?2,binding_fingerprint=?3,version=version+1,updated_at=?4 WHERE authority_id=?1 AND current_object_id=?5 AND binding_fingerprint=?6 AND version=?7", params![row.authority,commit,binding,now(),integration_record.pre,sprint_target_binding_fingerprint(&row.authority,&target_record.reference,&integration_record.pre),integration_record.version]).map_err(|error|error.to_string())?;
+        if changed == 0 {
+            let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_target_currents WHERE authority_id=?1 AND current_object_id=?2 AND binding_fingerprint=?3 AND version=?4)",params![row.authority,commit,binding,integration_record.version+1],|value|value.get(0)).map_err(|error|error.to_string())?;
+            if !exact { return Err("target_current_cas_lost".into()) }
+        }
+        transaction.execute("UPDATE accepted_work_unit_integrations SET db_advanced_at=COALESCE(db_advanced_at,?2),stage='db_advanced' WHERE integration_id=?1", params![integration_record.id,now()]).map_err(|error|error.to_string())?;
+        Ok(())
+    }).map_err(managed_error)
+}
+
 fn persist_evidence_and_settlement(c: &mut Connection, r: &Row, i: &Integration, commit: &str) -> Result<(), String> {
     let t = target(c, &r.authority)?;
     require_ref_and_runtime(r, i, commit, &t, true)?;
@@ -278,9 +415,35 @@ fn persist_evidence_and_settlement(c: &mut Connection, r: &Row, i: &Integration,
     tx.commit().map_err(|e|e.to_string())
 }
 
+fn persist_evidence_and_settlement_managed(database: &ActiveDatabase, row: &Row, integration_record: &Integration, commit: &str) -> Result<(), String> {
+    let target_record = database.read("load accepted integration settlement target", |connection| target(connection, &row.authority)).map_err(managed_error)?;
+    require_ref_and_runtime(row, integration_record, commit, &target_record, true)?;
+    verify_commit(row, integration_record, commit)?;
+    let tree = git(&row.repo, &["rev-parse", &format!("{commit}^{{tree}}")])?;
+    let evidence = fingerprint(&[POLICY_VERSION,&integration_record.id,&integration_record.intent,&row.candidate,&row.evidence,&integration_record.pre,commit,&tree]);
+    database.write("persist accepted integration settlement", |transaction| {
+        let timestamp = now();
+        let evidence_id = stable_id("accepted-integration-evidence", &integration_record.id);
+        exact_insert(transaction, "INSERT INTO accepted_work_unit_integration_evidence(evidence_id,integration_id,evidence_fingerprint,integration_commit_id,integration_tree_id,parent_object_id,candidate_id,target_ref_name,intent_fingerprint,recorded_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![evidence_id,integration_record.id,evidence,commit,tree,integration_record.pre,row.candidate,target_record.reference,integration_record.intent,timestamp], "SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integration_evidence WHERE evidence_id=?1 AND integration_id=?2 AND evidence_fingerprint=?3 AND integration_commit_id=?4 AND integration_tree_id=?5 AND parent_object_id=?6 AND candidate_id=?7 AND target_ref_name=?8 AND intent_fingerprint=?9)", params![evidence_id,integration_record.id,evidence,commit,tree,integration_record.pre,row.candidate,target_record.reference,integration_record.intent])?;
+        let settlement_id = stable_id("work-unit-settlement", &integration_record.id);
+        exact_insert(transaction, "INSERT INTO work_unit_settlements(settlement_id,work_unit_id,integration_id,settled_at) VALUES(?1,?2,?3,?4)", params![settlement_id,row.unit,integration_record.id,timestamp], "SELECT EXISTS(SELECT 1 FROM work_unit_settlements WHERE settlement_id=?1 AND work_unit_id=?2 AND integration_id=?3)", params![settlement_id,row.unit,integration_record.id])?;
+        let edges = transaction.prepare("SELECT relationship_id,from_id FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1 ORDER BY relationship_id").map_err(|error|error.to_string())?.query_map([&row.unit], |value| Ok((value.get::<_,String>(0)?,value.get::<_,String>(1)?))).map_err(|error|error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())?;
+        for (edge, dependent) in edges {
+            let contribution_id = stable_id("work-unit-prerequisite-contribution", &format!("{}:{edge}", integration_record.id));
+            exact_insert(transaction, "INSERT INTO work_unit_prerequisite_contributions(contribution_id,prerequisite_work_unit_id,dependent_work_unit_id,integration_id,relationship_id,recorded_at) VALUES(?1,?2,?3,?4,?5,?6)", params![contribution_id,row.unit,dependent,integration_record.id,edge,timestamp], "SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions WHERE contribution_id=?1 AND relationship_id=?2 AND prerequisite_work_unit_id=?3 AND dependent_work_unit_id=?4 AND integration_id=?5)", params![contribution_id,edge,row.unit,dependent,integration_record.id])?;
+        }
+        let expected:i64=transaction.query_row("SELECT COUNT(*) FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1",[&row.unit],|value|value.get(0)).map_err(|error|error.to_string())?;
+        let actual:i64=transaction.query_row("SELECT COUNT(*) FROM work_unit_prerequisite_contributions WHERE integration_id=?1",[&integration_record.id],|value|value.get(0)).map_err(|error|error.to_string())?;
+        let divergent:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions p WHERE p.integration_id=?1 AND NOT EXISTS(SELECT 1 FROM work_unit_relationships e WHERE e.relationship_kind='depends_on' AND e.relationship_id=p.relationship_id AND e.to_id=?2 AND e.from_id=p.dependent_work_unit_id AND p.prerequisite_work_unit_id=?2))",params![integration_record.id,row.unit],|value|value.get(0)).map_err(|error|error.to_string())?;
+        if actual != expected || divergent { return Err("durable_replay_conflict".into()) }
+        transaction.execute("UPDATE accepted_work_unit_integrations SET settled_at=COALESCE(settled_at,?2),notification_intent_recorded_at=COALESCE(notification_intent_recorded_at,?2),stage='settled' WHERE integration_id=?1",params![integration_record.id,timestamp]).map_err(|error|error.to_string())?;
+        Ok(())
+    }).map_err(managed_error)
+}
+
 fn exact_insert(tx: &rusqlite::Transaction<'_>, insert: &str, values: impl rusqlite::Params, exact: &str, exact_values: impl rusqlite::Params) -> Result<(), String> { match tx.execute(insert, values) { Ok(_) => Ok(()), Err(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::ConstraintViolation => { let is_exact: bool = tx.query_row(exact, exact_values, |r|r.get(0)).map_err(|e|e.to_string())?; if is_exact { Ok(()) } else { Err("durable_replay_conflict".into()) } }, Err(e) => Err(e.to_string()) } }
 
-fn verify_settled(c: &mut Connection, r: &Row, i: &Integration, t: &Target) -> Result<(), String> {
+fn verify_settled(c: &Connection, r: &Row, i: &Integration, t: &Target) -> Result<(), String> {
     let commit=i.commit.as_deref().ok_or("settled_commit_missing")?;
     validate_integration_correlations(c,r,i)?; validate_identity(r,t)?; verify_commit(r,i,commit)?;
     if t.reference != i.reference || t.binding != sprint_target_binding_fingerprint(&r.authority,&t.reference,&t.current) || git(&r.worktree,&["symbolic-ref","--quiet","HEAD"])? != t.reference || git(&r.worktree,&["show-ref","--verify","--hash",&t.reference])? != t.current || git(&r.worktree,&["rev-parse","HEAD^{commit}"])? != t.current || git(&r.worktree,&["status","--porcelain"])? != "" || git(&r.repo,&["merge-base","--is-ancestor",commit,&t.current]).is_err() { return Err("settled_target_line_mismatch".into()) }
@@ -306,6 +469,9 @@ fn verify_commit(r:&Row,i:&Integration,commit:&str)->Result<(),String>{let tree=
 fn verify_commit_parts(r:&Row,i:&Integration,commit:&str,tree:&str,fingerprint_value:&str)->Result<(),String>{if git(&r.repo,&["rev-list","--parents","-n","1",commit])?!=format!("{commit} {}",i.pre)||git(&r.repo,&["rev-parse",&format!("{commit}^{{tree}}")])?!=tree||tree!=merged_tree(r,&i.pre)?{return Err("integration_object_mismatch".into())}let(name,email,date)=author(r)?;if fingerprint_value!=commit_fingerprint(r,i,tree,&name,&email,&date){return Err("integration_fingerprint_mismatch".into())}let actual=git(&r.repo,&["show","-s","--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B",commit])?;let mut p=actual.split('\0');let fields=[p.next(),p.next(),p.next(),p.next(),p.next(),p.next()];if fields!=[Some(name.as_str()),Some(email.as_str()),Some(date.as_str()),Some(COMMITTER_NAME),Some(COMMITTER_EMAIL),Some(i.recorded.as_str())]{return Err("integration_identity_metadata_mismatch".into())}let expected=commit_message(r,i,tree,fingerprint_value);if p.next().unwrap_or("").trim_end()!=expected.trim_end(){return Err("integration_message_mismatch".into())}Ok(())}
 
 fn attention(c:&mut Connection,candidate:&str,code:&str)->Result<(),String>{c.execute("UPDATE accepted_work_unit_integrations SET attention_code=COALESCE(attention_code,?2),attention_recorded_at=COALESCE(attention_recorded_at,?3),stage='attention' WHERE candidate_id=?1",params![candidate,code,now()]).map_err(|e|e.to_string())?;Ok(())}
+fn attention_managed(database: &ActiveDatabase, candidate: &str, code: &str) -> Result<(), String> {
+    database.write("record accepted integration attention", |transaction| transaction.execute("UPDATE accepted_work_unit_integrations SET stage='attention',attention_code=COALESCE(attention_code,?2),attention_recorded_at=COALESCE(attention_recorded_at,?3) WHERE candidate_id=?1",params![candidate,code,now()]).map(|_| ()).map_err(|error|error.to_string())).map_err(managed_error)
+}
 fn retryable(code:&str)->bool{matches!(code,"target_lock_unavailable"|"database is locked"|"database is busy")||code.contains("database is locked")||code.contains("database is busy")}
 #[cfg(test)] use std::sync::{Arc,Barrier,Mutex,OnceLock};
 #[cfg(test)] struct TestTargetLockQueue{common:PathBuf,entered:Arc<Barrier>}
@@ -326,6 +492,13 @@ fn now() -> String {
         .expect("rounded UTC timestamp")
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 #[cfg(test)] mod tests { use super::*; use std::sync::{Arc,Barrier}; use tempfile::TempDir;

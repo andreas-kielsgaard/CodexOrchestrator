@@ -33,4 +33,7 @@ The sample catalogs are:
 - `examples/workflows/capability-demonstrations.json` for fan-out, output-regex selection, and
   native MCP handoff;
 - `examples/workflows/serial-session-policy-demonstration.json` for fresh versus continuing
-  receiver Sessions without concurrent routes.
+  receiver Sessions without concurrent routes;
+- `examples/database-hardening/managed-database-parallel-fanout.json` for parallel Workflow and
+  cross-process managed-database demonstrations. Its runbook and concurrent runner are in the same
+  directory.

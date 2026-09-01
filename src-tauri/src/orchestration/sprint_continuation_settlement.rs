@@ -1,6 +1,7 @@
 //! Durable, application-owned Sprint continuation decisions.  A decision is neither an Epic
 //! receipt nor any higher-level settlement.
 
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
@@ -168,6 +169,7 @@ pub(crate) fn statuses(
 
 /// Reconcile from authoritative durable rows only.  The function intentionally fails closed:
 /// an incomplete, foreign, or malformed materialization cannot become a settlement.
+#[cfg(test)]
 pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
     let sprint_ids = connection
         .prepare(
@@ -187,10 +189,50 @@ pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn reconcile_managed(database: &ActiveDatabase) -> Result<(), String> {
+    let sprint_ids = database
+        .read("load Sprint continuation settlements", |connection| {
+            connection
+                .prepare(
+                    "SELECT s.id FROM initiated_sprints s
+         JOIN sprint_runner_transitions t ON t.sprint_id=s.id AND t.epic_id=s.epic_id
+         ORDER BY s.id",
+                )
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map_err(|error| error.to_string())
+        })
+        .map_err(managed_error)?;
+    for sprint_id in sprint_ids {
+        database
+            .write("reconcile Sprint dependency routes", |transaction| {
+                reconcile_unbound_dependency_routes_transaction(transaction, &sprint_id)
+            })
+            .map_err(managed_error)?;
+        database
+            .write("reconcile Sprint continuation settlement", |transaction| {
+                reconcile_one_transaction(transaction, &sprint_id)
+            })
+            .map_err(managed_error)?;
+    }
+    Ok(())
+}
+
 fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), String> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
+    reconcile_one_transaction(&transaction, sprint_id)?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn reconcile_one_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    sprint_id: &str,
+) -> Result<(), String> {
     let snapshot = Snapshot::load(&transaction, sprint_id)?;
     let (state, kind) = snapshot.decision();
     let source_attention_id = if state == "attention"
@@ -250,7 +292,6 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
         } else if current_sequence > decision_sequence && current_state == state {
             // A reopen can revisit an already-recorded older snapshot after a later decision
             // of the same semantic state became current. Preserve that later durable pointer.
-            transaction.commit().map_err(|error| error.to_string())?;
             return Ok(());
         } else if current_sequence >= decision_sequence
             || (current_state == "settled" && state != "settled")
@@ -292,7 +333,7 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
             return Err("Sprint upward result conflict".into());
         }
     }
-    transaction.commit().map_err(|error| error.to_string())
+    Ok(())
 }
 
 struct Snapshot {
@@ -510,6 +551,14 @@ fn dependency_wait_state(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result
 
 fn reconcile_unbound_dependency_routes(connection: &mut Connection, sprint: &str) -> Result<(), String> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    reconcile_unbound_dependency_routes_transaction(&transaction, sprint)?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn reconcile_unbound_dependency_routes_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    sprint: &str,
+) -> Result<(), String> {
     let waits = transaction.prepare("SELECT 'handback',d.handback_id,d.details_json FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=d.handback_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' AND route.handback_id IS NULL UNION ALL SELECT 'epic',q.handback_id,q.request_json FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers receiver ON receiver.handback_id=q.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=q.handback_id WHERE receiver.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency' AND route.handback_id IS NULL ORDER BY 1,2").map_err(|error| error.to_string())?.query_map([sprint], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
     for (kind, handback, json) in waits {
         validate_dependency_wait_payload(&json, kind.as_str())?;
@@ -523,7 +572,7 @@ fn reconcile_unbound_dependency_routes(connection: &mut Connection, sprint: &str
             if !exact { return Err("Sprint dependency-route conflict".into()); }
         }
     }
-    transaction.commit().map_err(|error| error.to_string())
+    Ok(())
 }
 
 fn validate_dependency_wait_payload(json: &str, kind: &str) -> Result<(), String> {
@@ -549,6 +598,13 @@ fn digest(value: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(value.as_bytes());
     format!("scs-{:x}", hash.finalize())
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 #[cfg(test)]

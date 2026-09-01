@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
@@ -14,6 +14,7 @@ pub(crate) fn harness_revision_repository_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME)
 }
 
+#[cfg(test)]
 pub(crate) fn open_active_database(path: &Path) -> Result<Connection, String> {
     let connection = Connection::open(path)
         .map_err(|error| format!("Unable to open active SQLite database: {error}"))?;
@@ -31,8 +32,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if active_schema_is_present(connection)? {
             return Ok(());
         }
-        let transaction = connection
-            .unchecked_transaction()
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            TransactionBehavior::Immediate,
+        )
             .map_err(|error| format!("Unable to begin active v45 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
             .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
@@ -64,8 +67,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         return Ok(());
     }
     if (1..=44).contains(&current_version) {
-        let transaction = connection
-            .unchecked_transaction()
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            TransactionBehavior::Immediate,
+        )
             .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
         if current_version == 1 {
             transaction
@@ -379,8 +384,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             "Unsupported active database schema version {current_version}; expected {ACTIVE_SCHEMA_VERSION}"
         ));
     }
-    let transaction = connection
-        .unchecked_transaction()
+    let transaction = rusqlite::Transaction::new_unchecked(
+        connection,
+        TransactionBehavior::Immediate,
+    )
         .map_err(|error| format!("Unable to begin active schema initialization: {error}"))?;
     transaction
         .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
@@ -526,19 +533,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         && workflow_instance_schema_is_present
         && harness_binding_schema_is_present)
 }
-use std::time::Duration;
-
-const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// Applies the app-wide policy to every SQLite connection before it is used. WAL permits readers
 /// while a writer commits, the bounded busy timeout handles brief contention deliberately, and FULL
 /// synchronous mode favors durable commits over write throughput.
 pub(crate) fn configure_sqlite_connection(connection: &Connection) -> rusqlite::Result<()> {
-    connection.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
-    connection.pragma_update(None, "foreign_keys", true)?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
-    connection.pragma_update(None, "synchronous", "FULL")?;
-    Ok(())
+    crate::persistence::configure_writer_connection(connection)
 }
 
 #[cfg(test)]

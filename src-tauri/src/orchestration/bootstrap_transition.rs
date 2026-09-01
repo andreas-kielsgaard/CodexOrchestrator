@@ -14,6 +14,7 @@ use crate::agent_sessions::{
     domain::{AgentInvocationId, AgentInvocationStatus, AgentSessionId},
     ports::RuntimeLaunchExtension,
 };
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use http_body_util::Empty;
@@ -377,17 +378,43 @@ impl TransitionClock for SystemTransitionClock {
     }
 }
 
+fn initialize_bootstrap_transition_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(POST_CONFIRMATION_SCHEMA)
+        .map_err(|error| format!("initialize transition schema: {error}"))?;
+    connection
+        .execute_batch(POST_CONFIRMATION_ATTEMPT_SCHEMA)
+        .map_err(|error| format!("initialize bootstrap attempt schema: {error}"))?;
+    for statement in POST_CONFIRMATION_RUNNER_HARNESS_SCHEMA.split(';') {
+        let statement = statement.trim();
+        if statement.is_empty() {
+            continue;
+        }
+        match connection.execute(statement, []) {
+            Ok(_) => {}
+            Err(error) if error.to_string().contains("duplicate column name") => {}
+            Err(error) => {
+                return Err(format!(
+                    "initialize Epic Runner Harness binding schema: {error}"
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct SqliteBootstrapTransitionRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
     clock: Arc<dyn TransitionClock>,
 }
 
 impl SqliteBootstrapTransitionRepository {
+    #[cfg(test)]
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, TransitionError> {
-        let connection = Connection::open(path).map_err(|error| {
-            TransitionError::Unavailable(format!("open transition database: {error}"))
-        })?;
-        Self::new(connection)
+        let database = ActiveDatabase::open(path, initialize_bootstrap_transition_schema)
+            .map(Arc::new)
+            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        Ok(Self::from_database(database))
     }
 
     pub(crate) fn new(connection: Connection) -> Result<Self, TransitionError> {
@@ -398,44 +425,22 @@ impl SqliteBootstrapTransitionRepository {
         connection: Connection,
         clock: Arc<dyn TransitionClock>,
     ) -> Result<Self, TransitionError> {
-        crate::storage::configure_sqlite_connection(&connection).map_err(|error| {
-            TransitionError::Unavailable(format!("configure transition database: {error}"))
-        })?;
-        connection
-            .execute_batch(POST_CONFIRMATION_SCHEMA)
-            .map_err(|error| {
-                TransitionError::Unavailable(format!("initialize transition schema: {error}"))
-            })?;
-        connection
-            .execute_batch(POST_CONFIRMATION_ATTEMPT_SCHEMA)
-            .map_err(|error| {
-                TransitionError::Unavailable(format!(
-                    "initialize bootstrap attempt schema: {error}"
-                ))
-            })?;
-        for statement in POST_CONFIRMATION_RUNNER_HARNESS_SCHEMA.split(';') {
-            let statement = statement.trim();
-            if statement.is_empty() {
-                continue;
-            }
-            match connection.execute(statement, []) {
-                Ok(_) => {}
-                Err(error) if error.to_string().contains("duplicate column name") => {}
-                Err(error) => {
-                    return Err(TransitionError::Unavailable(format!(
-                        "initialize Epic Runner Harness binding schema: {error}"
-                    )))
-                }
-            }
+        let database =
+            ActiveDatabase::from_connection(connection, initialize_bootstrap_transition_schema)
+                .map(Arc::new)
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        Ok(Self { database, clock })
+    }
+
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self {
+            database,
+            clock: Arc::new(SystemTransitionClock),
         }
-        Ok(Self {
-            connection: Mutex::new(connection),
-            clock,
-        })
     }
 
     fn snapshots(&self) -> Result<Vec<ConfirmedInitiationSnapshot>, TransitionError> {
-        let connection = self.lock()?;
+        self.read("load confirmed initiation snapshots", |connection| {
         let mut statement = connection
             .prepare("SELECT initiation.id, initiation.epic_id, initiation.proposal_revision_id, snapshot.content_hash, snapshot.proposal_json FROM epic_initiations initiation JOIN epic_initiation_material_snapshots snapshot ON snapshot.id = initiation.material_snapshot_id ORDER BY initiation.recorded_at, initiation.id")
             .map_err(sql_unavailable("prepare confirmed initiation query"))?;
@@ -462,6 +467,7 @@ impl SqliteBootstrapTransitionRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql_unavailable("collect confirmed initiations"))?;
         Ok(rows)
+        })
     }
 
     fn snapshot(
@@ -480,7 +486,7 @@ impl SqliteBootstrapTransitionRepository {
         paths: &PreparedPaths,
     ) -> Result<TransitionRecord, TransitionError> {
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("ensure bootstrap transition", |connection| {
         connection
             .execute(
                 "INSERT OR IGNORE INTO epic_bootstrap_transitions (initiation_id,epic_id,proposal_revision_id,material_snapshot_hash,proposal_json,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,runner_session_id,runner_invocation_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?16)",
@@ -504,7 +510,7 @@ impl SqliteBootstrapTransitionRepository {
                 ],
             )
             .map_err(sql_unavailable("create post-confirmation transition"))?;
-        let record = read_transition(&connection, &snapshot.initiation_id)?;
+        let record = read_transition(connection, &snapshot.initiation_id)?;
         if record.epic_id != snapshot.epic_id
             || record.proposal_revision_id != snapshot.proposal_revision_id
             || record.material_snapshot_hash != snapshot.material_snapshot_hash
@@ -532,6 +538,7 @@ impl SqliteBootstrapTransitionRepository {
             )
             .map_err(sql_unavailable("create initial bootstrap attempt"))?;
         Ok(record)
+        })
     }
 
     fn record_stage(&self, initiation_id: &str, column: &str) -> Result<(), TransitionError> {
@@ -550,7 +557,7 @@ impl SqliteBootstrapTransitionRepository {
             ));
         }
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("record bootstrap transition stage", |connection| {
         connection
             .execute(
                 &format!("UPDATE epic_bootstrap_transitions SET {column}=COALESCE({column},?2), updated_at=?2 WHERE initiation_id=?1"),
@@ -558,6 +565,7 @@ impl SqliteBootstrapTransitionRepository {
             )
             .map_err(sql_unavailable("record transition stage"))?;
         Ok(())
+        })
     }
 
     fn record_runner_harness_binding(
@@ -567,7 +575,7 @@ impl SqliteBootstrapTransitionRepository {
         version: u16,
     ) -> Result<(), TransitionError> {
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("record Epic Runner Harness binding", |connection| {
         let changed = connection.execute(
             "UPDATE epic_bootstrap_transitions SET runner_harness_key=COALESCE(runner_harness_key,?2),runner_harness_version=COALESCE(runner_harness_version,?3),runner_harness_requested_at=COALESCE(runner_harness_requested_at,?4),updated_at=?4 WHERE initiation_id=?1 AND (runner_harness_key IS NULL OR (runner_harness_key=?2 AND runner_harness_version=?3))",
             params![initiation_id,key,version,now],
@@ -579,6 +587,7 @@ impl SqliteBootstrapTransitionRepository {
             ));
         }
         Ok(())
+        })
     }
 
     /// The product chooses the first durable Sprint in the initiated Epic.  The Runner receives
@@ -589,7 +598,7 @@ impl SqliteBootstrapTransitionRepository {
         epic_id: &str,
     ) -> Result<String, TransitionError> {
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("bind Epic Runner authorized Sprint", |connection| {
         let sprint_id: String = connection
             .query_row(
                 "SELECT id FROM initiated_sprints WHERE epic_id=?1 ORDER BY ordinal,id LIMIT 1",
@@ -615,6 +624,7 @@ impl SqliteBootstrapTransitionRepository {
             ));
         }
         Ok(sprint_id)
+        })
     }
 
     /// A Sprint transition is the durable semantic acceptance of the Runner's selection.  Any
@@ -623,7 +633,7 @@ impl SqliteBootstrapTransitionRepository {
         let sprint_id = record.runner_authorized_sprint_id.as_ref().ok_or_else(|| {
             TransitionError::IdentityMismatch("Epic Runner has no bound Sprint identity".into())
         })?;
-        let connection = self.lock()?;
+        self.read("check Epic Runner selection", |connection| {
         let selections: Vec<(String, String)> = connection
             .prepare("SELECT sprint_id,epic_id FROM sprint_runner_transitions WHERE epic_runner_invocation_id=?1")
             .map_err(sql_unavailable("prepare Epic Runner selection check"))?
@@ -639,6 +649,7 @@ impl SqliteBootstrapTransitionRepository {
                 "Epic Runner selection does not match its durable Sprint authority".into(),
             )),
         }
+        })
     }
 
     fn bind_runner_recovery(
@@ -649,7 +660,7 @@ impl SqliteBootstrapTransitionRepository {
     ) -> Result<String, TransitionError> {
         let invocation_id = stable_id("epic-runner-unselected-recovery", &record.initiation_id);
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("bind Epic Runner recovery", |connection| {
         let changed = connection.execute(
             "UPDATE epic_bootstrap_transitions SET runner_recovery_invocation_id=COALESCE(runner_recovery_invocation_id,?2),runner_recovery_harness_key=COALESCE(runner_recovery_harness_key,?3),runner_recovery_harness_version=COALESCE(runner_recovery_harness_version,?4),updated_at=?5 WHERE initiation_id=?1 AND runner_lifecycle_status='completed' AND runner_lifecycle_observed_at IS NOT NULL AND runner_authorized_sprint_id IS NOT NULL AND (runner_recovery_invocation_id IS NULL OR (runner_recovery_invocation_id=?2 AND runner_recovery_harness_key=?3 AND runner_recovery_harness_version=?4))",
             params![record.initiation_id,invocation_id,harness_key,harness_version,now],
@@ -660,6 +671,7 @@ impl SqliteBootstrapTransitionRepository {
             ));
         }
         Ok(invocation_id)
+        })
     }
 
     fn record_runner_recovery_stage(
@@ -671,11 +683,13 @@ impl SqliteBootstrapTransitionRepository {
             return Err(TransitionError::Unavailable("invalid Epic Runner recovery stage".into()));
         }
         let now = self.timestamp();
-        self.lock()?.execute(
-            &format!("UPDATE epic_bootstrap_transitions SET {column}=COALESCE({column},?2),updated_at=?2 WHERE initiation_id=?1"),
-            params![initiation_id,now],
-        ).map_err(sql_unavailable("record Epic Runner recovery stage"))?;
+        self.write("record Epic Runner recovery stage", |connection| {
+            connection.execute(
+                &format!("UPDATE epic_bootstrap_transitions SET {column}=COALESCE({column},?2),updated_at=?2 WHERE initiation_id=?1"),
+                params![initiation_id,now],
+            ).map_err(sql_unavailable("record Epic Runner recovery stage"))?;
         Ok(())
+        })
     }
 
     fn record_lifecycle(
@@ -685,7 +699,7 @@ impl SqliteBootstrapTransitionRepository {
         startup_recovery: bool,
     ) -> Result<Option<String>, TransitionError> {
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("record bootstrap lifecycle", |connection| {
         let attempt: Option<(String, i64, bool, String, Option<String>)> = connection
             .query_row(
                 "SELECT transition_id,ordinal,semantic_completion_fact_id IS NOT NULL,retry_disposition,retry_reason FROM epic_bootstrap_attempts WHERE agent_invocation_id=?1",
@@ -740,22 +754,21 @@ impl SqliteBootstrapTransitionRepository {
             )
             .map_err(sql_unavailable("record lifecycle observation"))?;
         Ok(Some(initiation_id))
+        })
     }
 
     fn current_attempt(
         &self,
         initiation_id: &str,
     ) -> Result<BootstrapAttemptRecord, TransitionError> {
-        let connection = self.lock()?;
-        read_current_attempt(&connection, initiation_id)
+        self.read("load current bootstrap attempt", |connection| read_current_attempt(connection, initiation_id))
     }
 
     fn attempts(
         &self,
         initiation_id: &str,
     ) -> Result<Vec<BootstrapAttemptRecord>, TransitionError> {
-        let connection = self.lock()?;
-        read_attempts(&connection, initiation_id)
+        self.read("load bootstrap attempts", |connection| read_attempts(connection, initiation_id))
     }
 
     fn ensure_retry_attempt(
@@ -766,10 +779,7 @@ impl SqliteBootstrapTransitionRepository {
             return Ok(previous.clone());
         }
         let now = self.timestamp();
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_unavailable("begin bootstrap retry"))?;
+        self.write("ensure bootstrap retry attempt", |transaction| {
         let refreshed = read_attempt(&transaction, &previous.id)?;
         if let Some(next_id) = &refreshed.retry_attempt_id {
             return read_attempt(&transaction, next_id);
@@ -795,15 +805,13 @@ impl SqliteBootstrapTransitionRepository {
                 params![refreshed.id, attempt_id, now],
             )
             .map_err(sql_unavailable("link bootstrap retry attempt"))?;
-        transaction
-            .commit()
-            .map_err(sql_unavailable("commit bootstrap retry attempt"))?;
-        read_attempt(&connection, &attempt_id)
+        read_attempt(transaction, &attempt_id)
+        })
     }
 
     fn record_attempt_launched(&self, attempt_id: &str) -> Result<(), TransitionError> {
         let now = self.timestamp();
-        let connection = self.lock()?;
+        self.write("record bootstrap attempt launch", |connection| {
         connection
             .execute(
                 "UPDATE epic_bootstrap_attempts SET launched_at=COALESCE(launched_at,?2),updated_at=?2 WHERE id=?1",
@@ -811,14 +819,12 @@ impl SqliteBootstrapTransitionRepository {
             )
             .map_err(sql_unavailable("record bootstrap attempt launch"))?;
         Ok(())
+        })
     }
 
     fn accept_attempt(&self, attempt_id: &str) -> Result<bool, TransitionError> {
         let now = self.timestamp();
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_unavailable("begin bootstrap material acceptance"))?;
+        self.write("accept bootstrap attempt", |transaction| {
         let attempt = read_attempt(&transaction, attempt_id)?;
         if attempt.lifecycle_status.as_deref() != Some("completed")
             || attempt.semantic_completion_fact_id.is_none()
@@ -853,10 +859,8 @@ impl SqliteBootstrapTransitionRepository {
                 params![attempt.transition_id, now],
             )
             .map_err(sql_unavailable("accept bootstrap material"))?;
-        transaction
-            .commit()
-            .map_err(sql_unavailable("commit bootstrap material acceptance"))?;
         Ok(true)
+        })
     }
 
     fn persist_completion(
@@ -872,10 +876,7 @@ impl SqliteBootstrapTransitionRepository {
         let inventory_json = serde_json::to_string(inventory)
             .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
         let now = self.timestamp();
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_unavailable("begin semantic completion"))?;
+        self.write("persist bootstrap semantic completion", |transaction| {
         let attempt: Option<(String, String)> = transaction
             .query_row(
                 "SELECT attempt.id,attempt.agent_session_id FROM epic_bootstrap_attempts attempt JOIN epic_bootstrap_transitions transition ON transition.initiation_id=attempt.transition_id WHERE attempt.agent_invocation_id=?1 AND transition.prepared_at IS NOT NULL AND transition.bootstrap_session_created_at IS NOT NULL AND attempt.retry_disposition IN ('active','blocked')",
@@ -928,10 +929,8 @@ impl SqliteBootstrapTransitionRepository {
                 params![attempt_id, fact_id, now],
             )
             .map_err(sql_unavailable("record semantic completion"))?;
-        transaction
-            .commit()
-            .map_err(sql_unavailable("commit semantic completion"))?;
         Ok((fact_id, false))
+        })
     }
 
     fn completion_replay(
@@ -942,7 +941,7 @@ impl SqliteBootstrapTransitionRepository {
         let payload_json = serde_json::to_string(input)
             .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
         let payload_hash = sha256(payload_json.as_bytes());
-        let connection = self.lock()?;
+        self.read("load bootstrap completion replay", |connection| {
         let existing: Option<(String, String, String)> = connection
             .query_row(
                 "SELECT command.payload_hash,fact.id,fact.inventory_json FROM epic_bootstrap_attempt_completion_commands command JOIN epic_bootstrap_attempt_completion_facts fact ON fact.command_id=command.id WHERE command.agent_invocation_id=?1",
@@ -965,18 +964,18 @@ impl SqliteBootstrapTransitionRepository {
             inventory,
             idempotent_replay: true,
         }))
+        })
     }
 
     fn transition(&self, initiation_id: &str) -> Result<TransitionRecord, TransitionError> {
-        let connection = self.lock()?;
-        read_transition(&connection, initiation_id)
+        self.read("load bootstrap transition", |connection| read_transition(connection, initiation_id))
     }
 
     fn completion_inventory(
         &self,
         attempt_id: &str,
     ) -> Result<Vec<MaterialInventoryItem>, TransitionError> {
-        let connection = self.lock()?;
+        self.read("load bootstrap completion inventory", |connection| {
         let json: String = connection
             .query_row(
                 "SELECT inventory_json FROM epic_bootstrap_attempt_completion_facts WHERE attempt_id=?1",
@@ -989,10 +988,11 @@ impl SqliteBootstrapTransitionRepository {
         serde_json::from_str(&json).map_err(|error| {
             TransitionError::Unavailable(format!("decode accepted material inventory: {error}"))
         })
+        })
     }
 
     fn query(&self) -> Result<BootstrapTransitionQueryV2, TransitionError> {
-        let connection = self.lock()?;
+        self.read("load bootstrap transition query", |connection| {
         let mut transitions = {
             let mut statement = connection
                 .prepare("SELECT initiation_id,epic_id,preparation_id,prepared_root,approved_plan_path,manifest_path,overview_path,runner_brief_path,bootstrap_session_id,bootstrap_invocation_id,prepared_at,bootstrap_session_created_at,bootstrap_launched_at,bootstrap_lifecycle_status,bootstrap_lifecycle_observed_at,semantic_completion_fact_id,semantic_completed_at,material_accepted_at,runner_session_id,runner_invocation_id,runner_session_created_at,runner_launched_at,runner_lifecycle_status,runner_lifecycle_observed_at FROM epic_bootstrap_transitions ORDER BY created_at, initiation_id")
@@ -1065,16 +1065,41 @@ impl SqliteBootstrapTransitionRepository {
             schema_version: 2,
             transitions,
         })
+        })
     }
 
     fn timestamp(&self) -> String {
         self.clock.now().to_rfc3339()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, TransitionError> {
-        self.connection.lock().map_err(|_| {
-            TransitionError::Unavailable("bootstrap transition database lock is poisoned".into())
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, TransitionError>,
+    ) -> Result<T, TransitionError> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    TransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, TransitionError>,
+    ) -> Result<T, TransitionError> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    TransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 }
 
@@ -6106,7 +6131,7 @@ mod tests {
         let handler_common = handler_repository_root.join(".git").canonicalize().unwrap();
         let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
-        let handler_support = ProductExecutionSupportState::new(
+        let handler_support = ProductExecutionSupportState::open(
             &fixture.database_path,
             handler_workspace_parent.clone(),
             handler_repository,
@@ -6789,7 +6814,7 @@ mod tests {
         ).unwrap();
         let partial_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let partial_handler = Arc::new(WorkUnitExecutionHarnessService::new(
-            ProductExecutionSupportState::new(
+            ProductExecutionSupportState::open(
                 &fixture.database_path,
                 handler_workspace_parent.clone(),
                 partial_repository.clone(),
@@ -6823,7 +6848,7 @@ mod tests {
             let sessions = fixture.sessions.clone();
             let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&path).unwrap());
             let handler_orchestration = Arc::new(OrchestrationApplication::new(handler_repository.clone()));
-            let support = ProductExecutionSupportState::new(
+            let support = ProductExecutionSupportState::open(
                 &path,
                 handler_workspace_parent.clone(),
                 handler_repository,
@@ -7145,7 +7170,7 @@ mod tests {
         };
         let repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).unwrap());
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
-            ProductExecutionSupportState::new(
+            ProductExecutionSupportState::open(
                 &fixture.database_path,
                 fixture._directory.path().join("drain-workspaces"),
                 repository.clone(),
@@ -8240,7 +8265,7 @@ mod tests {
                 | crate::orchestration::repository::StoreInitiatedSprintGitAuthorityResult::IdempotentReplay { authority_id } => authority_id,
             };
             let orchestration = Arc::new(OrchestrationApplication::new(repository.clone()));
-            let support = ProductExecutionSupportState::new(
+            let support = ProductExecutionSupportState::open(
                 &base.database_path,
                 base._directory.path().join("reporting-workspaces"),
                 repository,
@@ -8805,7 +8830,7 @@ mod tests {
         drop(connection);
         let handler_repository = Arc::new(SqliteOrchestrationRepository::open(&fixture.database_path).expect("open owned Handler repository"));
         let handler = Arc::new(WorkUnitExecutionHarnessService::new(
-            ProductExecutionSupportState::new(&fixture.database_path, fixture._directory.path().join("pip01h-live-workspaces"), handler_repository.clone()).expect("compose owned execution support").service(),
+            ProductExecutionSupportState::open(&fixture.database_path, fixture._directory.path().join("pip01h-live-workspaces"), handler_repository.clone()).expect("compose owned execution support").service(),
             sessions.clone(), Arc::new(OrchestrationApplication::new(handler_repository)),
         ));
         notifier.set_sprint(&transition);

@@ -81,10 +81,7 @@ pub(super) fn create_instance(
     connection: &Connection,
     preparation: CreateWorkflowInstancePreparation,
 ) -> Result<WorkflowInstanceRecord, String> {
-    let transaction = connection
-        .unchecked_transaction()
-        .map_err(storage_error("begin Workflow instance creation"))?;
-    let active_recipe_id = transaction
+    let active_recipe_id = connection
         .query_row(
             "SELECT active_recipe_id FROM workflow_types WHERE id=?1",
             [&preparation.workflow_type_id],
@@ -99,8 +96,7 @@ pub(super) fn create_instance(
             "The active Workflow recipe changed before instance creation. Try again.".into(),
         );
     }
-    transaction
-        .execute(
+    connection.execute(
             "INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,repository_id,repository_name,repository_git_common_directory,branch_id,branch_name,worktree_id,worktree_root,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 preparation.instance_id,
@@ -118,9 +114,6 @@ pub(super) fn create_instance(
             ],
         )
         .map_err(storage_error("create Workflow instance"))?;
-    transaction
-        .commit()
-        .map_err(storage_error("commit Workflow instance creation"))?;
     load_instance(connection, &preparation.instance_id)
 }
 

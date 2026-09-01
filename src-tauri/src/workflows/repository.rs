@@ -13,17 +13,21 @@ use super::{
 };
 
 mod instances;
-use crate::orchestration::conversation_harness_working_copy::{
-    HarnessHookConfiguration, HarnessHookStatus, HarnessModelConstraint, HarnessReasoningLevel,
-    HarnessSkillConfiguration, HarnessSkillPolicy,
+use crate::{
+    orchestration::conversation_harness_working_copy::{
+        HarnessHookConfiguration, HarnessHookStatus, HarnessModelConstraint, HarnessReasoningLevel,
+        HarnessSkillConfiguration, HarnessSkillPolicy,
+    },
+    persistence::ActiveDatabase,
 };
 use chrono::Utc;
 pub(crate) use instances::WORKFLOW_INSTANCE_SCHEMA;
 use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(test)]
+use std::path::Path;
 use std::{
     collections::{BTreeMap, HashSet},
-    path::Path,
-    sync::Mutex,
+    sync::Arc,
 };
 use uuid::Uuid;
 
@@ -76,48 +80,71 @@ CREATE INDEX IF NOT EXISTS workflow_effective_recipes_by_type
 ON workflow_effective_recipes(workflow_type_id, ordinal);
 "#;
 
+#[cfg(test)]
+fn initialize_workflow_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(WORKFLOW_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Workflow storage: {error}"))?;
+    initialize_workflow_role_schema(connection)?;
+    connection
+        .execute_batch(WORKFLOW_INSTANCE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Workflow instance storage: {error}"))?;
+    initialize_workflow_mcp_output_schema(connection)
+}
+
 pub(crate) struct SqliteWorkflowRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteWorkflowRepository {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
+    #[cfg(test)]
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
-        let connection = Connection::open(path)
-            .map_err(|error| format!("Unable to open Workflow storage: {error}"))?;
-        crate::storage::configure_sqlite_connection(&connection)
-            .map_err(|error| format!("Unable to configure Workflow storage: {error}"))?;
-        Self::new(connection)
+        ActiveDatabase::open(path, initialize_workflow_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
     }
 
+    #[cfg(test)]
     pub(crate) fn new(connection: Connection) -> Result<Self, String> {
-        connection
-            .execute_batch(WORKFLOW_SCHEMA)
-            .map_err(|error| format!("Unable to initialize Workflow storage: {error}"))?;
-        initialize_workflow_role_schema(&connection)?;
-        connection
-            .execute_batch(WORKFLOW_INSTANCE_SCHEMA)
-            .map_err(|error| format!("Unable to initialize Workflow instance storage: {error}"))?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        ActiveDatabase::from_connection(connection, initialize_workflow_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
-        self.connection
-            .lock()
-            .map_err(|_| "Workflow storage is unavailable.".to_string())
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| error.into_string())
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| error.into_string())
     }
 }
 
 impl WorkflowRepository for SqliteWorkflowRepository {
     fn list_workflow_types(&self) -> Result<Vec<WorkflowTypeSummary>, String> {
-        let connection = self.lock()?;
-        list_workflow_types(&connection)
+        self.read("list Workflow types", list_workflow_types)
     }
 
     fn list_roles(&self) -> Result<Vec<WorkflowRole>, String> {
-        let connection = self.lock()?;
-        list_roles(&connection)
+        self.read("list Workflow Roles", list_roles)
     }
 
     fn create_role(
@@ -127,16 +154,16 @@ impl WorkflowRepository for SqliteWorkflowRepository {
     ) -> Result<WorkflowRole, String> {
         let name = required(name, "Role name")?;
         validate_harness(&harness)?;
-        let connection = self.lock()?;
         let id = format!("workflow-role-{}", Uuid::new_v4());
         let now = Utc::now().to_rfc3339();
-        connection
-            .execute(
+        self.write("create Workflow Role", |transaction| {
+            transaction.execute(
                 "INSERT INTO workflow_roles(id,name,harness_json,created_at,updated_at) VALUES(?1,?2,?3,?4,?4)",
                 params![id, name, json(&harness, "serialize Workflow Role")?, now],
             )
             .map_err(storage_error("create Workflow Role"))?;
-        load_role(&connection, &id)
+            load_role(transaction, &id)
+        })
     }
 
     fn update_role(
@@ -147,48 +174,45 @@ impl WorkflowRepository for SqliteWorkflowRepository {
     ) -> Result<WorkflowRole, String> {
         let name = required(name, "Role name")?;
         validate_harness(&harness)?;
-        let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow Role update"))?;
-        let changed = transaction
-            .execute(
-                "UPDATE workflow_roles SET name=?2,harness_json=?3,updated_at=?4 WHERE id=?1",
-                params![
-                    role_id,
-                    name,
-                    json(&harness, "serialize Workflow Role")?,
-                    Utc::now().to_rfc3339()
-                ],
-            )
-            .map_err(storage_error("update Workflow Role"))?;
-        if changed == 0 {
-            return Err(format!("Workflow Role {role_id} does not exist."));
-        }
-        refresh_role_dependents(&transaction, role_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow Role update"))?;
-        load_role(&connection, role_id)
+        self.write("update Workflow Role", |transaction| {
+            let changed = transaction
+                .execute(
+                    "UPDATE workflow_roles SET name=?2,harness_json=?3,updated_at=?4 WHERE id=?1",
+                    params![
+                        role_id,
+                        name,
+                        json(&harness, "serialize Workflow Role")?,
+                        Utc::now().to_rfc3339()
+                    ],
+                )
+                .map_err(storage_error("update Workflow Role"))?;
+            if changed == 0 {
+                return Err(format!("Workflow Role {role_id} does not exist."));
+            }
+            refresh_role_dependents(transaction, role_id)?;
+            load_role(transaction, role_id)
+        })
     }
 
     fn create_workflow_type(&self, name: &str) -> Result<WorkflowDefinition, String> {
         let name = required(name, "Workflow name")?;
-        let connection = self.lock()?;
         let id = format!("workflow-type-{}", Uuid::new_v4());
         let now = Utc::now().to_rfc3339();
-        connection
-            .execute(
-                "INSERT INTO workflow_types(id,name,created_at,updated_at) VALUES(?1,?2,?3,?3)",
-                params![id, name, now],
-            )
-            .map_err(storage_error("create Workflow type"))?;
-        load_workflow_type(&connection, &id)
+        self.write("create Workflow type", |transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO workflow_types(id,name,created_at,updated_at) VALUES(?1,?2,?3,?3)",
+                    params![id, name, now],
+                )
+                .map_err(storage_error("create Workflow type"))?;
+            load_workflow_type(transaction, &id)
+        })
     }
 
     fn load_workflow_type(&self, workflow_type_id: &str) -> Result<WorkflowDefinition, String> {
-        let connection = self.lock()?;
-        load_workflow_type(&connection, workflow_type_id)
+        self.read("load Workflow type", |connection| {
+            load_workflow_type(connection, workflow_type_id)
+        })
     }
 
     fn update_workflow_type(
@@ -197,17 +221,18 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         name: &str,
     ) -> Result<WorkflowDefinition, String> {
         let name = required(name, "Workflow name")?;
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
-                "UPDATE workflow_types SET name=?2,updated_at=?3 WHERE id=?1",
-                params![workflow_type_id, name, Utc::now().to_rfc3339()],
-            )
-            .map_err(storage_error("update Workflow type"))?;
-        if changed == 0 {
-            return Err(not_found(workflow_type_id));
-        }
-        load_workflow_type(&connection, workflow_type_id)
+        self.write("update Workflow type", |transaction| {
+            let changed = transaction
+                .execute(
+                    "UPDATE workflow_types SET name=?2,updated_at=?3 WHERE id=?1",
+                    params![workflow_type_id, name, Utc::now().to_rfc3339()],
+                )
+                .map_err(storage_error("update Workflow type"))?;
+            if changed == 0 {
+                return Err(not_found(workflow_type_id));
+            }
+            load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn save_node_draft(
@@ -216,19 +241,14 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         node: WorkflowNodeConfig,
     ) -> Result<WorkflowDefinition, String> {
         required(&node.id, "Node id")?;
-        let connection = self.lock()?;
-        ensure_workflow_type(&connection, workflow_type_id)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow node draft save"))?;
-        ensure_element_owner(&transaction, "workflow_nodes", &node.id, workflow_type_id)?;
-        validate_node_harness(&transaction, &node)?;
-        save_node_draft_in_transaction(&transaction, workflow_type_id, &node)?;
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow node draft save"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        self.write("save Workflow node draft", |transaction| {
+            ensure_workflow_type(transaction, workflow_type_id)?;
+            ensure_element_owner(transaction, "workflow_nodes", &node.id, workflow_type_id)?;
+            validate_node_harness(transaction, &node)?;
+            save_node_draft_in_transaction(transaction, workflow_type_id, &node)?;
+            touch(transaction, workflow_type_id)?;
+            load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn delete_node_draft(
@@ -236,11 +256,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         workflow_type_id: &str,
         node_id: &str,
     ) -> Result<WorkflowDefinition, String> {
-        let connection = self.lock()?;
-        ensure_workflow_type(&connection, workflow_type_id)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow node deletion"))?;
+        self.write("delete Workflow node draft", |transaction| {
+        ensure_workflow_type(transaction, workflow_type_id)?;
         let live_json: Option<Option<String>> = transaction
             .query_row(
                 "SELECT live_json FROM workflow_nodes WHERE id=?1 AND workflow_type_id=?2",
@@ -300,11 +317,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 params![node_id, workflow_type_id],
             )
             .map_err(storage_error("retire unused Workflow node"))?;
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow node deletion"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        touch(transaction, workflow_type_id)?;
+        load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn detach_node_role(
@@ -312,25 +327,20 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         workflow_type_id: &str,
         node_id: &str,
     ) -> Result<WorkflowDefinition, String> {
-        let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow Role detach"))?;
-        ensure_workflow_type(&transaction, workflow_type_id)?;
-        let mut node = load_draft_node(&transaction, workflow_type_id, node_id)?;
-        if !matches!(node.harness, Some(WorkflowNodeHarness::Role { .. })) {
-            return Err("Only a Role-backed Workflow node can be detached.".to_string());
-        }
-        let effective = resolve_node_harness(&transaction, &node)?;
-        node.harness_name = effective.name().to_string();
-        node.role_name = None;
-        node.harness = Some(WorkflowNodeHarness::Standalone { config: effective });
-        save_node_draft_in_transaction(&transaction, workflow_type_id, &node)?;
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow Role detach"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        self.write("detach Workflow Role", |transaction| {
+            ensure_workflow_type(transaction, workflow_type_id)?;
+            let mut node = load_draft_node(&transaction, workflow_type_id, node_id)?;
+            if !matches!(node.harness, Some(WorkflowNodeHarness::Role { .. })) {
+                return Err("Only a Role-backed Workflow node can be detached.".to_string());
+            }
+            let effective = resolve_node_harness(&transaction, &node)?;
+            node.harness_name = effective.name().to_string();
+            node.role_name = None;
+            node.harness = Some(WorkflowNodeHarness::Standalone { config: effective });
+            save_node_draft_in_transaction(&transaction, workflow_type_id, &node)?;
+            touch(transaction, workflow_type_id)?;
+            load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn save_node_as_role(
@@ -340,11 +350,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         role_name: &str,
     ) -> Result<WorkflowDefinition, String> {
         let role_name = required(role_name, "Role name")?;
-        let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin save Workflow node as Role"))?;
-        ensure_workflow_type(&transaction, workflow_type_id)?;
+        self.write("save Workflow node as Role", |transaction| {
+        ensure_workflow_type(transaction, workflow_type_id)?;
         let mut node = load_draft_node(&transaction, workflow_type_id, node_id)?;
         let effective = resolve_node_harness(&transaction, &node)?;
         validate_harness(&effective)?;
@@ -367,11 +374,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             overrides: WorkflowHarnessOverrides::default(),
         });
         save_node_draft_in_transaction(&transaction, workflow_type_id, &node)?;
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit save Workflow node as Role"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        touch(transaction, workflow_type_id)?;
+        load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn save_connection_draft(
@@ -380,11 +385,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         connection_config: WorkflowConnectionConfig,
     ) -> Result<WorkflowDefinition, String> {
         required(&connection_config.id, "Connection id")?;
-        let connection = self.lock()?;
-        ensure_workflow_type(&connection, workflow_type_id)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow connection draft save"))?;
+        self.write("save Workflow connection draft", |transaction| {
+        ensure_workflow_type(transaction, workflow_type_id)?;
         ensure_element_owner(
             &transaction,
             "workflow_connections",
@@ -408,11 +410,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 params![connection_config.id, workflow_type_id, draft_json, live_json, changed],
             )
             .map_err(storage_error("save Workflow connection draft"))?;
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow connection draft save"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        touch(transaction, workflow_type_id)?;
+        load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn delete_connection_draft(
@@ -420,11 +420,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         workflow_type_id: &str,
         connection_id: &str,
     ) -> Result<WorkflowDefinition, String> {
-        let connection = self.lock()?;
-        ensure_workflow_type(&connection, workflow_type_id)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow connection draft deletion"))?;
+        self.write("delete Workflow connection draft", |transaction| {
+        ensure_workflow_type(transaction, workflow_type_id)?;
         let live_json: Option<Option<String>> = transaction
             .query_row(
                 "SELECT live_json FROM workflow_connections WHERE id=?1 AND workflow_type_id=?2",
@@ -453,11 +450,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 )
                 .map_err(storage_error("retire unused Workflow connection"))?;
         }
-        touch(&transaction, workflow_type_id)?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow connection draft deletion"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        touch(transaction, workflow_type_id)?;
+        load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn activate_changes(
@@ -468,11 +463,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         if elements.is_empty() {
             return Err("Select at least one edited Workflow element to activate.".to_string());
         }
-        let connection = self.lock()?;
-        ensure_workflow_type(&connection, workflow_type_id)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(storage_error("begin Workflow activation"))?;
+        self.write("activate Workflow changes", |transaction| {
+        ensure_workflow_type(transaction, workflow_type_id)?;
         let mut nodes = read_node_elements(&transaction, workflow_type_id)?
             .into_iter()
             .map(|element| (element.id.clone(), element))
@@ -610,22 +602,21 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 params![workflow_type_id, recipe_id, created_at],
             )
             .map_err(storage_error("publish effective Workflow recipe"))?;
-        transaction
-            .commit()
-            .map_err(storage_error("commit Workflow activation"))?;
-        load_workflow_type(&connection, workflow_type_id)
+        load_workflow_type(transaction, workflow_type_id)
+        })
     }
 
     fn native_query(&self) -> Result<WorkflowNativeQuery, String> {
-        let connection = self.lock()?;
-        let workflow_types = list_workflow_types(&connection)?
-            .into_iter()
-            .map(|summary| load_workflow_type(&connection, &summary.id))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(WorkflowNativeQuery {
-            schema_version: "workflow-native-query/v3",
-            workflow_types,
-            roles: list_roles(&connection)?,
+        self.read("load Workflow native query", |connection| {
+            let workflow_types = list_workflow_types(connection)?
+                .into_iter()
+                .map(|summary| load_workflow_type(connection, &summary.id))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(WorkflowNativeQuery {
+                schema_version: "workflow-native-query/v3",
+                workflow_types,
+                roles: list_roles(connection)?,
+            })
         })
     }
 
@@ -633,8 +624,9 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         &self,
         preparation: CreateWorkflowInstancePreparation,
     ) -> Result<WorkflowInstanceRecord, String> {
-        let connection = self.lock()?;
-        instances::create_instance(&connection, preparation)
+        self.write("create Workflow instance", |transaction| {
+            instances::create_instance(transaction, preparation)
+        })
     }
 
     fn associate_instance_session(
@@ -644,35 +636,37 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         session_id: &str,
         associated_at: &str,
     ) -> Result<WorkflowInstanceRecord, String> {
-        let connection = self.lock()?;
-        instances::associate_session(
-            &connection,
-            workflow_instance_id,
-            node_id,
-            session_id,
-            associated_at,
-        )
+        self.write("associate Workflow instance Session", |transaction| {
+            instances::associate_session(
+                transaction,
+                workflow_instance_id,
+                node_id,
+                session_id,
+                associated_at,
+            )
+        })
     }
 
     fn list_workflow_instances(&self) -> Result<Vec<WorkflowInstanceRecord>, String> {
-        let connection = self.lock()?;
-        instances::list_instances(&connection)
+        self.read("list Workflow instances", instances::list_instances)
     }
 
     fn load_workflow_instance(
         &self,
         workflow_instance_id: &str,
     ) -> Result<WorkflowInstanceRecord, String> {
-        let connection = self.lock()?;
-        instances::load_instance(&connection, workflow_instance_id)
+        self.read("load Workflow instance", |connection| {
+            instances::load_instance(connection, workflow_instance_id)
+        })
     }
 
     fn load_completed_turn_trigger(
         &self,
         source_session_id: &str,
     ) -> Result<Option<WorkflowCompletedTurnTrigger>, String> {
-        let connection = self.lock()?;
-        instances::load_completed_turn_trigger(&connection, source_session_id)
+        self.read("load completed-turn Workflow trigger", |connection| {
+            instances::load_completed_turn_trigger(connection, source_session_id)
+        })
     }
 
     fn load_mcp_prepared_trigger(
@@ -682,23 +676,23 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         sender_node_id: &str,
         source_session_id: &str,
     ) -> Result<WorkflowCompletedTurnTrigger, String> {
-        let connection = self.lock()?;
-        instances::load_mcp_prepared_trigger(
-            &connection,
-            workflow_instance_id,
-            recipe_id,
-            sender_node_id,
-            source_session_id,
-        )
+        self.read("load prepared Workflow MCP trigger", |connection| {
+            instances::load_mcp_prepared_trigger(
+                connection,
+                workflow_instance_id,
+                recipe_id,
+                sender_node_id,
+                source_session_id,
+            )
+        })
     }
 
     fn create_connection_activation(
         &self,
         preparation: WorkflowConnectionActivationPreparation,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        connection
-            .execute(
+        self.write("record Workflow connection activation", |transaction| {
+            transaction.execute(
                 "INSERT INTO workflow_connection_activations(id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,delivery_kind,context_inheritance,compression,requested_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'direct_prompt_runtime_v1','none','none',?9)",
                 params![
                     preparation.id,
@@ -713,7 +707,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 ],
             )
             .map_err(storage_error("record Workflow connection activation"))?;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn mark_connection_activation_resolved(
@@ -722,15 +717,15 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         relative_file_path: &str,
         resolved_at: &str,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
+        self.write("record Workflow connection file resolution", |transaction| {
+        let changed = transaction.execute(
                 "UPDATE workflow_connection_activations SET resolved_file_path=?2,resolved_at=?3 WHERE id=?1 AND resolved_at IS NULL AND failed_at IS NULL",
                 params![activation_id, relative_file_path, resolved_at],
             )
             .map_err(storage_error("record Workflow connection file resolution"))?;
         (changed == 1).then_some(()).ok_or_else(|| {
             "Workflow connection activation is not ready for resolution.".to_string()
+        })
         })
     }
 
@@ -740,15 +735,15 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         resolved_output_json: &str,
         resolved_at: &str,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
+        self.write("record Workflow MCP output resolution", |transaction| {
+        let changed = transaction.execute(
                 "UPDATE workflow_connection_activations SET resolved_output_json=?2,resolved_at=?3 WHERE id=?1 AND resolved_at IS NULL AND failed_at IS NULL",
                 params![activation_id, resolved_output_json, resolved_at],
             )
             .map_err(storage_error("record Workflow MCP output resolution"))?;
         (changed == 1).then_some(()).ok_or_else(|| {
             "Workflow MCP connection activation is not ready for resolution.".to_string()
+        })
         })
     }
 
@@ -764,15 +759,15 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         if !matches!(session_mode, "fresh" | "continued") {
             return Err("Workflow connection Session mode is invalid.".to_string());
         }
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
+        self.write("reserve Workflow connection target", |transaction| {
+        let changed = transaction.execute(
                 "UPDATE workflow_connection_activations SET target_session_id=?2,target_invocation_id=?3,session_mode=?4 WHERE id=?1 AND workflow_instance_id=?5 AND receiver_node_id=?6 AND resolved_at IS NOT NULL AND target_session_id IS NULL AND failed_at IS NULL",
                 params![activation_id, session_id, invocation_id, session_mode, workflow_instance_id, node_id],
             )
             .map_err(storage_error("reserve Workflow connection target"))?;
         (changed == 1).then_some(()).ok_or_else(|| {
             "Workflow connection activation is not ready for target reservation.".to_string()
+        })
         })
     }
 
@@ -785,10 +780,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         associated_at: &str,
         create_association: bool,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let transaction = connection.unchecked_transaction().map_err(storage_error(
-            "begin Workflow connection Session association",
-        ))?;
+        self.write("associate Workflow connection Session", |transaction| {
         if create_association {
             transaction
                 .execute(
@@ -821,10 +813,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 "Workflow connection activation is not ready for Session association.".to_string(),
             );
         }
-        transaction.commit().map_err(storage_error(
-            "commit Workflow connection Session association",
-        ))?;
         Ok(())
+        })
     }
 
     fn mark_connection_activation_launch_requested(
@@ -832,9 +822,8 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         activation_id: &str,
         requested_at: &str,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
+        self.write("record Workflow connection launch request", |transaction| {
+        let changed = transaction.execute(
                 "UPDATE workflow_connection_activations SET launch_requested_at=?2 WHERE id=?1 AND associated_at IS NOT NULL AND launch_requested_at IS NULL AND failed_at IS NULL",
                 params![activation_id, requested_at],
             )
@@ -842,6 +831,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         (changed == 1)
             .then_some(())
             .ok_or_else(|| "Workflow connection activation is not ready for launch.".to_string())
+        })
     }
 
     fn mark_connection_activation_launch_accepted(
@@ -849,15 +839,15 @@ impl WorkflowRepository for SqliteWorkflowRepository {
         activation_id: &str,
         accepted_at: &str,
     ) -> Result<(), String> {
-        let connection = self.lock()?;
-        let changed = connection
-            .execute(
+        self.write("record Workflow connection launch acceptance", |transaction| {
+        let changed = transaction.execute(
                 "UPDATE workflow_connection_activations SET launch_accepted_at=?2 WHERE id=?1 AND launch_requested_at IS NOT NULL AND launch_accepted_at IS NULL AND failed_at IS NULL",
                 params![activation_id, accepted_at],
             )
             .map_err(storage_error("record Workflow connection launch acceptance"))?;
         (changed == 1).then_some(()).ok_or_else(|| {
             "Workflow connection activation is not ready for acceptance.".to_string()
+        })
         })
     }
 
@@ -870,21 +860,21 @@ impl WorkflowRepository for SqliteWorkflowRepository {
     ) -> Result<(), String> {
         let stage = required(stage, "Workflow connection failure stage")?;
         let reason = required(reason, "Workflow connection failure reason")?;
-        let connection = self.lock()?;
-        connection
-            .execute(
+        self.write("record Workflow connection failure", |transaction| {
+        transaction.execute(
                 "UPDATE workflow_connection_activations SET failed_at=COALESCE(failed_at,?2),failure_stage=COALESCE(failure_stage,?3),failure_reason=COALESCE(failure_reason,?4) WHERE id=?1 AND launch_accepted_at IS NULL",
                 params![activation_id, failed_at, stage, reason],
             )
             .map_err(storage_error("record Workflow connection failure"))?;
         Ok(())
+        })
     }
 
     fn list_connection_activations(
         &self,
         workflow_instance_id: &str,
     ) -> Result<Vec<WorkflowConnectionActivationRecord>, String> {
-        let connection = self.lock()?;
+        self.read("list Workflow connection activations", |connection| {
         let mut statement = connection
             .prepare(
                 "SELECT id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,target_session_id,target_invocation_id,delivery_kind,session_mode,context_inheritance,compression,resolved_file_path,resolved_output_json,requested_at,resolved_at,associated_at,launch_requested_at,launch_accepted_at,failed_at,failure_stage,failure_reason FROM workflow_connection_activations WHERE workflow_instance_id=?1 ORDER BY requested_at,id",
@@ -923,6 +913,7 @@ impl WorkflowRepository for SqliteWorkflowRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(storage_error("read Workflow connection activations"))?;
         Ok(activations)
+        })
     }
 }
 
@@ -2286,8 +2277,11 @@ mod tests {
             second.active_recipe.as_ref().unwrap().nodes[0].name,
             "Edited draft"
         );
-        let connection = reopened.lock().unwrap();
-        let retained_first = load_recipe(&connection, &first_recipe_id).unwrap();
+        let retained_first = reopened
+            .read("load retained Workflow recipe", |connection| {
+                load_recipe(connection, &first_recipe_id)
+            })
+            .unwrap();
         assert_eq!(retained_first.ordinal, 1);
         assert_eq!(retained_first.nodes[0].name, "start");
     }
@@ -2429,9 +2423,14 @@ mod tests {
                 .authority_summary,
             "Security review"
         );
-        let connection = repository.lock().unwrap();
         assert_eq!(
-            load_recipe(&connection, &first_recipe_id).unwrap().nodes[0]
+            repository
+                .database
+                .read("load original recipe", |connection| {
+                    load_recipe(connection, &first_recipe_id)
+                })
+                .unwrap()
+                .nodes[0]
                 .harness
                 .0
                 .runtime
@@ -2508,13 +2507,16 @@ mod tests {
             )
             .unwrap();
         let repository = SqliteWorkflowRepository::new(connection).unwrap();
-        let connection = repository.lock().unwrap();
-        let has_column = connection
-            .prepare("PRAGMA table_info(workflow_nodes)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .any(|column| column.unwrap() == "live_effective_json");
+        let has_column = repository
+            .database
+            .read("inspect Workflow node schema", |connection| {
+                let mut statement = connection.prepare("PRAGMA table_info(workflow_nodes)")?;
+                let has_column = statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .any(|column| column.unwrap() == "live_effective_json");
+                Ok::<_, rusqlite::Error>(has_column)
+            })
+            .unwrap();
         assert!(has_column);
     }
 
