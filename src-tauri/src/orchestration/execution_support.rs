@@ -817,9 +817,13 @@ impl ExecutionSupportService {
         let attempt = self
             .repository
             .load_authorized_attempt_for_role(attempt_id, role)?;
-        let existing = map_managed(self.repository.database.read("load execution support grant", |connection| {
-            load_grant(connection, attempt_id, role.as_str())
-        }))?;
+        let existing = map_managed(
+            self.repository
+                .database
+                .read("load execution support grant", |connection| {
+                    load_grant(connection, attempt_id, role.as_str())
+                }),
+        )?;
         let binding = self
             .resolver
             .resolve(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
@@ -884,13 +888,16 @@ impl ExecutionSupportService {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let grant = map_managed(self.repository.database.read("load implementer execution support grant", |connection| {
-            load_grant(
-                connection,
-                attempt_id,
-                WorkUnitExecutionRole::Implementer.as_str(),
-            )
-        }))?
+        let grant = map_managed(self.repository.database.read(
+            "load implementer execution support grant",
+            |connection| {
+                load_grant(
+                    connection,
+                    attempt_id,
+                    WorkUnitExecutionRole::Implementer.as_str(),
+                )
+            },
+        ))?
         .ok_or(ExecutionSupportError::Denied)?;
         let attempt = self
             .repository
@@ -910,9 +917,13 @@ impl ExecutionSupportService {
         if !bounded_id(capability_ref) {
             return Err(ExecutionSupportError::Denied);
         }
-        let grant = map_managed(self.repository.database.read("load execution support capability", |connection| {
-            load_grant_for_capability(connection, capability_ref)
-        }))?
+        let grant = map_managed(
+            self.repository
+                .database
+                .read("load execution support capability", |connection| {
+                    load_grant_for_capability(connection, capability_ref)
+                }),
+        )?
         .ok_or(ExecutionSupportError::Denied)?;
         let role = match grant.role_id.as_str() {
             "work_unit_handler" => WorkUnitExecutionRole::Handler,
@@ -1330,8 +1341,7 @@ mod tests {
             );
             ExecutionSupportService::new(
                 Arc::new(
-                    SqliteExecutionSupportRepository::new(database, orchestration.clone())
-                        .unwrap(),
+                    SqliteExecutionSupportRepository::new(database, orchestration.clone()).unwrap(),
                 ),
                 Arc::new(ProductExecutionWorkspaceResolver::new(
                     orchestration,
@@ -1785,10 +1795,14 @@ mod tests {
 
         let reopened = fixture.service();
         let reference = reopened.grant("attempt-1").unwrap();
-        let stored = reopened.repository.database.read("inspect execution support grant", |connection| {
-            load_grant_for_capability(connection, &reference.capability_ref)
-        }).unwrap()
-        .unwrap();
+        let stored = reopened
+            .repository
+            .database
+            .read("inspect execution support grant", |connection| {
+                load_grant_for_capability(connection, &reference.capability_ref)
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.binding, binding);
         assert!(matches!(
             reopened.consume(

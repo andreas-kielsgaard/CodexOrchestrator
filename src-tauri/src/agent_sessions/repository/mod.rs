@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 #[cfg(any(test, feature = "live-tests"))]
 use std::path::Path;
-use std:: sync::Arc;
+use std::sync::Arc;
 
 use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
@@ -48,13 +48,12 @@ impl SqliteAgentSessionRepository {
             .map_err(persistence_unavailable)
     }
 
-    # [cfg(any(test, feature = "live-tests"))]
+    #[cfg(any(test, feature = "live-tests"))]
 
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, RepositoryError> {
         ActiveDatabase::open(path, initialize_agent_session_storage)
             .map(Arc::new)
-            .map(
-        Self::from_database)
+            .map(Self::from_database)
             .map_err(persistence_unavailable)
     }
 
@@ -62,42 +61,42 @@ impl SqliteAgentSessionRepository {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
-        self.read("load Agent Session history", | connection| {
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(sql_unavailable("begin Agent Session history load"))?;
-        let session = match get_session_from(&transaction, session_id)? {
-            Some(session) => session,
-            None => return Ok(None),
-        };
-        let invocations = list_invocations_from(&transaction, session_id)?
-            .into_iter()
-            .map(|invocation| {
-                let launch_accepted_at =
-                    invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
-                let events = list_events_from(&transaction, &invocation.id)?;
-                Ok(AgentInvocationHistory {
-                    invocation,
-                    launch_accepted_at,
-                    events,
+        self.read("load Agent Session history", |connection| {
+            let transaction = connection
+                .unchecked_transaction()
+                .map_err(sql_unavailable("begin Agent Session history load"))?;
+            let session = match get_session_from(&transaction, session_id)? {
+                Some(session) => session,
+                None => return Ok(None),
+            };
+            let invocations = list_invocations_from(&transaction, session_id)?
+                .into_iter()
+                .map(|invocation| {
+                    let launch_accepted_at =
+                        invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
+                    let events = list_events_from(&transaction, &invocation.id)?;
+                    Ok(AgentInvocationHistory {
+                        invocation,
+                        launch_accepted_at,
+                        events,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, RepositoryError>>()?;
-        transaction
-            .commit()
-            .map_err(sql_unavailable("commit Agent Session history load"))?;
-        Ok(Some(AgentSessionHistory {
-            session,
-            invocations,
-        }))
-    })
+                .collect::<Result<Vec<_>, RepositoryError>>()?;
+            transaction
+                .commit()
+                .map_err(sql_unavailable("commit Agent Session history load"))?;
+            Ok(Some(AgentSessionHistory {
+                session,
+                invocations,
+            }))
+        })
     }
 
     fn list_session_summaries_snapshot(
         &self,
         query: ListAgentSessionsQuery,
     ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
-        self.read("list Agent Session summaries", | connection| {
+        self.read("list Agent Session summaries", |connection| {
         let transaction = connection
             .unchecked_transaction()
             .map_err(sql_unavailable("begin Agent Session summary list"))?;
@@ -160,8 +159,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError> {
         validate_session(&session).map_err(contract_error)?;
         self.write("create Agent Session", |transaction| {
-        insert_session(transaction, &session)?;
-        Ok(session)
+            insert_session(transaction, &session)?;
+            Ok(session)
         })
     }
 
@@ -169,8 +168,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<AgentSession>, RepositoryError> {
-        self.read("load Agent Session", | connection| {
-        get_session_from(connection, session_id)
+        self.read("load Agent Session", |connection| {
+            get_session_from(connection, session_id)
         })
     }
 
@@ -178,8 +177,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         query: ListAgentSessionsQuery,
     ) -> Result<Vec<AgentSession>, RepositoryError> {
-        self.read("list Agent Sessions", | connection| {
-        list_sessions_from(connection, query)
+        self.read("list Agent Sessions", |connection| {
+            list_sessions_from(connection, query)
         })
     }
 
@@ -204,22 +203,22 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError> {
         self.write("update Agent Session availability", |transaction| {
-        let current = required_session(transaction, session_id)?;
-        let mut candidate = current.clone();
-        candidate.availability = availability;
-        candidate.updated_at = updated_at;
-        validate_session_update(&current, &candidate).map_err(contract_error)?;
-        transaction
-            .execute(
-                "UPDATE agent_sessions SET availability = ?1, updated_at = ?2 WHERE id = ?3",
-                params![
-                    availability_text(availability),
-                    timestamp(updated_at),
-                    session_id.as_str()
-                ],
-            )
-            .map_err(sql_unavailable("update session availability"))?;
-        Ok(candidate)
+            let current = required_session(transaction, session_id)?;
+            let mut candidate = current.clone();
+            candidate.availability = availability;
+            candidate.updated_at = updated_at;
+            validate_session_update(&current, &candidate).map_err(contract_error)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET availability = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        availability_text(availability),
+                        timestamp(updated_at),
+                        session_id.as_str()
+                    ],
+                )
+                .map_err(sql_unavailable("update session availability"))?;
+            Ok(candidate)
         })
     }
 
@@ -257,20 +256,21 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         invocation: AgentInvocation,
     ) -> Result<AgentInvocation, RepositoryError> {
         self.write("create pending Agent Session invocation", |transaction| {
-        let session = required_session(transaction, &invocation.session_id)?;
-        let active = active_invocation(transaction, &invocation.session_id)?;
-        validate_new_invocation(&session, active.as_ref(), &invocation).map_err(contract_error)?;
-        insert_invocation(transaction, &invocation)?;
-        transaction
-            .execute(
-                "UPDATE agent_sessions SET updated_at = MAX(updated_at, ?1) WHERE id = ?2",
-                params![
-                    timestamp(invocation.updated_at),
-                    invocation.session_id.as_str()
-                ],
-            )
-            .map_err(sql_unavailable("touch Agent Session"))?;
-        Ok(invocation)
+            let session = required_session(transaction, &invocation.session_id)?;
+            let active = active_invocation(transaction, &invocation.session_id)?;
+            validate_new_invocation(&session, active.as_ref(), &invocation)
+                .map_err(contract_error)?;
+            insert_invocation(transaction, &invocation)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET updated_at = MAX(updated_at, ?1) WHERE id = ?2",
+                    params![
+                        timestamp(invocation.updated_at),
+                        invocation.session_id.as_str()
+                    ],
+                )
+                .map_err(sql_unavailable("touch Agent Session"))?;
+            Ok(invocation)
         })
     }
 
@@ -278,8 +278,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         invocation_id: &AgentInvocationId,
     ) -> Result<Option<AgentInvocation>, RepositoryError> {
-        self.read("load Agent Session invocation", | connection| {
-        get_invocation_from(connection, invocation_id)
+        self.read("load Agent Session invocation", |connection| {
+            get_invocation_from(connection, invocation_id)
         })
     }
 
@@ -287,8 +287,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Vec<AgentInvocation>, RepositoryError> {
-        self.read("list Agent Session invocations", | connection| {
-        list_invocations_from(connection, session_id)
+        self.read("list Agent Session invocations", |connection| {
+            list_invocations_from(connection, session_id)
         })
     }
 
@@ -300,13 +300,13 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError> {
         self.write("start Agent Session invocation", |transaction| {
-        let current = required_invocation(transaction, invocation_id)?;
-        let updated = current
-            .mark_running(started_at, effective_options, updated_at)
-            .map_err(contract_error)?;
-        update_invocation(transaction, &updated)?;
-        touch_session(transaction, &updated.session_id, updated_at)?;
-        Ok(updated)
+            let current = required_invocation(transaction, invocation_id)?;
+            let updated = current
+                .mark_running(started_at, effective_options, updated_at)
+                .map_err(contract_error)?;
+            update_invocation(transaction, &updated)?;
+            touch_session(transaction, &updated.session_id, updated_at)?;
+            Ok(updated)
         })
     }
 
@@ -330,8 +330,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         invocation_id: &AgentInvocationId,
     ) -> Result<Option<DateTime<Utc>>, RepositoryError> {
-        self.read("load invocation launch acceptance", | connection| {
-        invocation_launch_accepted_at_from(connection, invocation_id)
+        self.read("load invocation launch acceptance", |connection| {
+            invocation_launch_accepted_at_from(connection, invocation_id)
         })
     }
 
@@ -341,19 +341,19 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError> {
         self.write("recover pre-acceptance invocation", |transaction| {
-        if invocation_launch_accepted_at_from(transaction, invocation_id)?.is_some() {
-            return Err(RepositoryError::new(
-                RepositoryErrorKind::Conflict,
-                "launch-accepted invocation cannot return to pre-acceptance state",
-            ));
-        }
-        let current = required_invocation(transaction, invocation_id)?;
-        let updated = current
-            .recover_pre_acceptance_interruption(updated_at)
-            .map_err(contract_error)?;
-        update_invocation(transaction, &updated)?;
-        touch_session(transaction, &updated.session_id, updated_at)?;
-        Ok(updated)
+            if invocation_launch_accepted_at_from(transaction, invocation_id)?.is_some() {
+                return Err(RepositoryError::new(
+                    RepositoryErrorKind::Conflict,
+                    "launch-accepted invocation cannot return to pre-acceptance state",
+                ));
+            }
+            let current = required_invocation(transaction, invocation_id)?;
+            let updated = current
+                .recover_pre_acceptance_interruption(updated_at)
+                .map_err(contract_error)?;
+            update_invocation(transaction, &updated)?;
+            touch_session(transaction, &updated.session_id, updated_at)?;
+            Ok(updated)
         })
     }
 
@@ -364,22 +364,22 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         updated_at: DateTime<Utc>,
     ) -> Result<AgentInvocation, RepositoryError> {
         self.write("finish Agent Session invocation", |transaction| {
-        let current = required_invocation(transaction, invocation_id)?;
-        let requested_status = AgentInvocationStatus::from(completion.status);
-        if current.status == requested_status
-            && current.completed_at == Some(completion.completed_at)
-            && current.exit_code == completion.exit_code
-            && current.signal == completion.signal
-            && current.runtime_error == completion.runtime_error
-        {
-            return Ok(current);
-        }
-        let updated = current
-            .finish(completion, updated_at)
-            .map_err(contract_error)?;
-        update_invocation(transaction, &updated)?;
-        touch_session(transaction, &updated.session_id, updated_at)?;
-        Ok(updated)
+            let current = required_invocation(transaction, invocation_id)?;
+            let requested_status = AgentInvocationStatus::from(completion.status);
+            if current.status == requested_status
+                && current.completed_at == Some(completion.completed_at)
+                && current.exit_code == completion.exit_code
+                && current.signal == completion.signal
+                && current.runtime_error == completion.runtime_error
+            {
+                return Ok(current);
+            }
+            let updated = current
+                .finish(completion, updated_at)
+                .map_err(contract_error)?;
+            update_invocation(transaction, &updated)?;
+            touch_session(transaction, &updated.session_id, updated_at)?;
+            Ok(updated)
         })
     }
 
@@ -439,9 +439,9 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         invocation_id: &AgentInvocationId,
     ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError> {
-        self.read("list Agent Session runtime events", | connection| {
-        list_events_from(connection, invocation_id)
-    })
+        self.read("list Agent Session runtime events", |connection| {
+            list_events_from(connection, invocation_id)
+        })
     }
 }
 

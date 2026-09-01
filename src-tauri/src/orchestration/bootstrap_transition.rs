@@ -379,15 +379,25 @@ impl TransitionClock for SystemTransitionClock {
 }
 
 fn initialize_bootstrap_transition_schema(connection: &Connection) -> Result<(), String> {
-    connection.execute_batch(POST_CONFIRMATION_SCHEMA).map_err(|error| format!("initialize transition schema: {error}"))?;
-    connection.execute_batch(POST_CONFIRMATION_ATTEMPT_SCHEMA).map_err(|error| format!("initialize bootstrap attempt schema: {error}"))?;
+    connection
+        .execute_batch(POST_CONFIRMATION_SCHEMA)
+        .map_err(|error| format!("initialize transition schema: {error}"))?;
+    connection
+        .execute_batch(POST_CONFIRMATION_ATTEMPT_SCHEMA)
+        .map_err(|error| format!("initialize bootstrap attempt schema: {error}"))?;
     for statement in POST_CONFIRMATION_RUNNER_HARNESS_SCHEMA.split(';') {
         let statement = statement.trim();
-        if statement.is_empty() { continue; }
+        if statement.is_empty() {
+            continue;
+        }
         match connection.execute(statement, []) {
             Ok(_) => {}
             Err(error) if error.to_string().contains("duplicate column name") => {}
-            Err(error) => return Err(format!("initialize Epic Runner Harness binding schema: {error}")),
+            Err(error) => {
+                return Err(format!(
+                    "initialize Epic Runner Harness binding schema: {error}"
+                ))
+            }
         }
     }
     Ok(())
@@ -415,14 +425,18 @@ impl SqliteBootstrapTransitionRepository {
         connection: Connection,
         clock: Arc<dyn TransitionClock>,
     ) -> Result<Self, TransitionError> {
-        let database = ActiveDatabase::from_connection(connection, initialize_bootstrap_transition_schema)
-            .map(Arc::new)
-            .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
+        let database =
+            ActiveDatabase::from_connection(connection, initialize_bootstrap_transition_schema)
+                .map(Arc::new)
+                .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
         Ok(Self { database, clock })
     }
 
     pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
-        Self { database, clock: Arc::new(SystemTransitionClock) }
+        Self {
+            database,
+            clock: Arc::new(SystemTransitionClock),
+        }
     }
 
     fn snapshots(&self) -> Result<Vec<ConfirmedInitiationSnapshot>, TransitionError> {
@@ -1058,18 +1072,34 @@ impl SqliteBootstrapTransitionRepository {
         self.clock.now().to_rfc3339()
     }
 
-    fn read<T>(&self, operation: &'static str, read: impl FnOnce(&Connection) -> Result<T, TransitionError>) -> Result<T, TransitionError> {
-        self.database.read(operation, read).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => TransitionError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, TransitionError>,
+    ) -> Result<T, TransitionError> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    TransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
-    fn write<T>(&self, operation: &'static str, write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, TransitionError>) -> Result<T, TransitionError> {
-        self.database.write(operation, write).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => TransitionError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, TransitionError>,
+    ) -> Result<T, TransitionError> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    TransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 }
 

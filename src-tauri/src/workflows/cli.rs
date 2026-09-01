@@ -332,8 +332,7 @@ fn compose_runtime(app_data_dir: &Path) -> Result<CliRuntimeContext, String> {
     })?;
     let database_path = storage::active_database_path(app_data_dir);
     let database = product_database::open(&database_path)?;
-    let session_repository =
-        Arc::new(SqliteAgentSessionRepository::from_database(
+    let session_repository = Arc::new(SqliteAgentSessionRepository::from_database(
         database.clone(),
     ));
     let native_profiles = Arc::new(NativeProfileService::new(
@@ -353,7 +352,7 @@ fn compose_runtime(app_data_dir: &Path) -> Result<CliRuntimeContext, String> {
             providers,
             None,
         )
-        .with_native_profile_launch_authority( native_profiles)
+        .with_native_profile_launch_authority(native_profiles)
         .with_session_harness_launch_authority(harnesses.clone()),
     );
     let workflow = Arc::new(WorkflowApplication::new(
@@ -591,30 +590,31 @@ fn failed_activation_details(
     instance_id: &str,
 ) -> Result<Vec<Value>, String> {
     database
-        .read("query failed Workflow activations", | connection| {
-    let mut statement = connection
-        .prepare(
+        .read("query failed Workflow activations", |connection| {
+            let mut statement = connection
+                .prepare(
                     "SELECT id,connection_id,failure_stage,failure_reason,failed_at
                      FROM workflow_connection_activations
                      WHERE workflow_instance_id=?1 AND failed_at IS NOT NULL
                      ORDER BY requested_at DESC,id DESC",
-        )
-        .map_err(|error| { format!("Unable to prepare failed Workflow activation query: {error}")
+                )
+                .map_err(|error| {
+                    format!("Unable to prepare failed Workflow activation query: {error}")
                 })?;
-    let details = statement
-        .query_map([instance_id], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "connectionId": row.get::<_, String>(1)?,
-                "failureStage": row.get::<_, Option<String>>(2)?,
-                "failureReason": row.get::<_, Option<String>>(3)?,
-                "failedAt": row.get::<_, String>(4)?,
-            }))
-        })
-        .map_err(|error| format!("Unable to query failed Workflow activations: {error}"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to read failed Workflow activations: {error}"))?;
-    Ok(details)
+            let details = statement
+                .query_map([instance_id], |row| {
+                    Ok(json!({
+                        "id": row.get::<_, String>(0)?,
+                        "connectionId": row.get::<_, String>(1)?,
+                        "failureStage": row.get::<_, Option<String>>(2)?,
+                        "failureReason": row.get::<_, Option<String>>(3)?,
+                        "failedAt": row.get::<_, String>(4)?,
+                    }))
+                })
+                .map_err(|error| format!("Unable to query failed Workflow activations: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Unable to read failed Workflow activations: {error}"))?;
+            Ok(details)
         })
         .map_err(|error| error.into_string())
 }

@@ -505,8 +505,8 @@ pub(crate) fn run() {
                 }
                 // Agent runtimes stop first, followed by the Harness proxy, then its retained
                 // managed upstreams.
-                if let Some(harness) = app_handle
-                    .try_state::<crate::harness_engine::HarnessEngineTauriState>()
+                if let Some(harness) =
+                    app_handle.try_state::<crate::harness_engine::HarnessEngineTauriState>()
                 {
                     if let Err(error) = harness.service().shutdown() {
                         eprintln!("Harness sidecar shutdown failed: {error}");

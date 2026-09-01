@@ -619,7 +619,7 @@ fn git_producer_fails_closed_on_count_size_and_conflicting_replay() {
         },
     )
     .unwrap();
-    mutate_database(&repository, | connection|
+    mutate_database(&repository, |connection|
     connection
         .execute(
             "UPDATE file_review_documents SET payload_fingerprint='tampered' WHERE document_ref_id=?1",
@@ -833,7 +833,7 @@ fn file_review_rejects_a_valid_other_epic_provenance_and_omits_it_from_query() {
         .unwrap()
         .provenance_id
         .clone();
-    mutate_database(&repository, | connection| {
+    mutate_database(&repository, |connection| {
     connection.execute("UPDATE file_review_documents SET provenance_id=?1 WHERE document_ref_id='tamper-document'", [&other]).unwrap();
     connection.execute("UPDATE stored_file_review_artifacts SET provenance_id=?1 WHERE artifact_id='tamper-artifact'", [&other]).unwrap();
     });
@@ -880,7 +880,7 @@ fn initiation_is_atomic_idempotent_and_preserves_the_consumed_revision() {
     ));
     let query = repository.native_query().expect("query");
     assert_eq!(query.planning_drafts[0].status, "initiated");
-    inspect_database(&repository, | connection| {
+    inspect_database(&repository, |connection| {
     for table in [
         "epic_initiation_commands",
         "epic_initiation_results",

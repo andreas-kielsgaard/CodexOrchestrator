@@ -2,7 +2,7 @@ use super::domain::{HarnessBindingRecord, HarnessBindingStage};
 use rusqlite::{params, Connection, OptionalExtension};
 #[cfg(test)]
 use std::path::Path;
-use std:: sync::Arc;
+use std::sync::Arc;
 
 use crate::persistence::ActiveDatabase;
 
@@ -62,14 +62,14 @@ impl SqliteHarnessBindingRepository {
 
     #[cfg(test)]
     pub(crate) fn new(connection: Connection) -> Result<Self, String> {
-        ActiveDatabase::from_connection( connection, initialize_harness_binding_storage)
+        ActiveDatabase::from_connection(connection, initialize_harness_binding_storage)
             .map(Arc::new)
             .map(Self::from_database)
             .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
-    pub( crate) fn open(path: &Path) -> Result<Self, String> {
+    pub(crate) fn open(path: &Path) -> Result<Self, String> {
         ActiveDatabase::open(path, initialize_harness_binding_storage)
             .map(Arc::new)
             .map(Self::from_database)
@@ -144,7 +144,8 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         binding_id: &str,
         harness_token: &str,
         bound_at: &str,
-    ) -> Result<HarnessBindingRecord, String> { self.write("persist bound Harness binding", |transaction| {
+    ) -> Result<HarnessBindingRecord, String> {
+        self.write("persist bound Harness binding", |transaction| {
         let changed = transaction
             .execute(
                 "UPDATE session_harness_bindings SET stage='bound',harness_token=?2,bound_at=?3 WHERE id=?1 AND stage='prepared'",
@@ -162,8 +163,8 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         &self,
         session_id: &str,
     ) -> Result<Option<HarnessBindingRecord>, String> {
-        self.read("load Session Harness binding", | connection| {
-        connection
+        self.read("load Session Harness binding", |connection| {
+            connection
             .query_row(
                 "SELECT id FROM session_harness_bindings WHERE session_id=?1 AND stage!='retired'",
                 [session_id],
@@ -174,11 +175,11 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
             .map(|id| load_binding(&connection, &id))
             .transpose()
             .map(Option::flatten)
-    })
+        })
     }
 
     fn non_retired(&self) -> Result<Vec<HarnessBindingRecord>, String> {
-        self.read("load retained Harness bindings", | connection| {
+        self.read("load retained Harness bindings", |connection| {
         let mut statement = connection
             .prepare("SELECT id FROM session_harness_bindings WHERE stage!='retired' ORDER BY prepared_at,id")
             .map_err(|error| format!("Unable to prepare retained Harness bindings: {error}"))?;

@@ -244,8 +244,8 @@ fn independent_repositories_create_pending_invocations_without_lock_upgrade_fail
     let workers = [("session-a", "invocation-a"), ("session-b", "invocation-b")]
         .into_iter()
         .map(|(session_id, invocation_id)| {
-            let repository = SqliteAgentSessionRepository::open(&path)
-                .expect("open independent repository");
+            let repository =
+                SqliteAgentSessionRepository::open(&path).expect("open independent repository");
             let barrier = barrier.clone();
             std::thread::spawn(move || {
                 barrier.wait();

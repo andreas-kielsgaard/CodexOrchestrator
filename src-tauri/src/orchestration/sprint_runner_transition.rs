@@ -1409,10 +1409,13 @@ impl SprintRunnerTransitionService {
         runtime: Arc<dyn WorktreeRuntimeGitComparison>,
         application_git_authority_required: bool,
     ) -> Result<Arc<Self>, SprintRunnerTransitionError> {
-        let authority_repository = Arc::new(SqliteOrchestrationRepository::from_database(database.clone())
-            .map_err(|error| {
-                SprintRunnerTransitionError::Unavailable(format!("open Sprint Git authority repository: {error}"))
-            })?);
+        let authority_repository = Arc::new(
+            SqliteOrchestrationRepository::from_database(database.clone()).map_err(|error| {
+                SprintRunnerTransitionError::Unavailable(format!(
+                    "open Sprint Git authority repository: {error}"
+                ))
+            })?,
+        );
         let authority_binder = InitiatedSprintGitAuthorityService::new(
             authority_repository.clone(),
             runtime,
@@ -1449,10 +1452,14 @@ impl SprintRunnerTransitionService {
         operation: &'static str,
         read: impl FnOnce(&Connection) -> Result<T, SprintRunnerTransitionError>,
     ) -> Result<T, SprintRunnerTransitionError> {
-        self.database.read(operation, read).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => SprintRunnerTransitionError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+        self.database
+            .read(operation, read)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SprintRunnerTransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     fn write_database<T>(
@@ -1460,10 +1467,14 @@ impl SprintRunnerTransitionService {
         operation: &'static str,
         write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SprintRunnerTransitionError>,
     ) -> Result<T, SprintRunnerTransitionError> {
-        self.database.write(operation, write).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => SprintRunnerTransitionError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+        self.database
+            .write(operation, write)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SprintRunnerTransitionError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     /// Product composition attaches the narrow Handler package only after both the Session

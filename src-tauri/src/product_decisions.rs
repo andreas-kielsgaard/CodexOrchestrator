@@ -13,9 +13,9 @@ use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 #[cfg(test)]
 use std::path::Path;
+use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 

@@ -24,12 +24,9 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
 #[cfg(test)]
 use std::path::Path;
+use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
 
 pub(crate) const ORCHESTRATION_SCHEMA: &str = r#"
@@ -527,10 +524,7 @@ impl SqliteOrchestrationRepository {
         )
     }
 
-    pub(
-        crate) fn from_database(
-        database: Arc<ActiveDatabase>,
-    ) -> Result<Self, SaveProposalError> {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Result<Self, SaveProposalError> {
         Self::from_database_with_clock_and_harness_revision_repository(
             database,
             Arc::new(SystemOrchestrationClock),
@@ -565,7 +559,7 @@ impl SqliteOrchestrationRepository {
             fail_next_context_consume: std::sync::atomic::AtomicBool::new(false),
         })
     }
-            #[cfg(test)]
+    #[cfg(test)]
 
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, SaveProposalError> {
         let path = path.as_ref();
@@ -600,7 +594,8 @@ impl SqliteOrchestrationRepository {
         &self,
         id: &EpicPlanningDraftId,
         created_at: DateTime<Utc>,
-    ) -> Result<(), SaveProposalError> { self.write("create planning draft", |transaction| {
+    ) -> Result<(), SaveProposalError> {
+        self.write("create planning draft", |transaction| {
             transaction
             .execute(
                 "INSERT INTO epic_planning_drafts (id, title, status, created_at, updated_at) VALUES (?1, NULL, 'active', ?2, ?2)",
@@ -614,61 +609,62 @@ impl SqliteOrchestrationRepository {
     pub(crate) fn schedule_button_initiation_context(
         &self,
         initiation: &super::domain::InitiateEpicResult,
-    ) -> Result<(), SaveProposalError> { self.write("schedule button initiation context", | transaction| {
-        let (session_id, epic_id): (String, String) = transaction
-            .query_row(
-                "SELECT association.agent_session_id, initiation.epic_id
+    ) -> Result<(), SaveProposalError> {
+        self.write("schedule button initiation context", |transaction| {
+            let (session_id, epic_id): (String, String) = transaction
+                .query_row(
+                    "SELECT association.agent_session_id, initiation.epic_id
                  FROM epic_initiations initiation
                  JOIN planning_draft_agent_session_associations association
                    ON association.draft_id=initiation.draft_id
                  WHERE initiation.id=?1",
-                params![initiation.initiation_id.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(sql_error(
-                "derive managed Plan Builder session for initiation context",
-            ))?;
-        if epic_id != initiation.epic_id.as_str() {
-            return Err(SaveProposalError::Unavailable(
-                "button initiation context identity does not match durable initiation".into(),
-            ));
-        }
-        let now = timestamp(self.clock.now());
-        let delivery_id = format!("plan-builder-context-{}", initiation.initiation_id.as_str());
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO plan_builder_context_deliveries
+                    params![initiation.initiation_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(sql_error(
+                    "derive managed Plan Builder session for initiation context",
+                ))?;
+            if epic_id != initiation.epic_id.as_str() {
+                return Err(SaveProposalError::Unavailable(
+                    "button initiation context identity does not match durable initiation".into(),
+                ));
+            }
+            let now = timestamp(self.clock.now());
+            let delivery_id = format!("plan-builder-context-{}", initiation.initiation_id.as_str());
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO plan_builder_context_deliveries
                  (id,initiation_id,epic_id,agent_session_id,source_kind,requested_at,pending_at)
                  VALUES (?1,?2,?3,?4,'button_initiation',?5,?5)",
-                params![
-                    delivery_id,
-                    initiation.initiation_id.as_str(),
-                    epic_id,
-                    session_id,
-                    now
-                ],
-            )
-            .map_err(sql_error("record pending button initiation context"))?;
-        let existing: (String, String, String) = transaction
-            .query_row(
-                "SELECT initiation_id,epic_id,agent_session_id
+                    params![
+                        delivery_id,
+                        initiation.initiation_id.as_str(),
+                        epic_id,
+                        session_id,
+                        now
+                    ],
+                )
+                .map_err(sql_error("record pending button initiation context"))?;
+            let existing: (String, String, String) = transaction
+                .query_row(
+                    "SELECT initiation_id,epic_id,agent_session_id
                  FROM plan_builder_context_deliveries WHERE id=?1",
-                params![delivery_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(sql_error("verify pending button initiation context"))?;
-        if existing
-            != (
-                initiation.initiation_id.as_str().to_string(),
-                initiation.epic_id.as_str().to_string(),
-                session_id,
-            )
-        {
-            return Err(SaveProposalError::Unavailable(
-                "button initiation context identity was already used for different semantics"
-                    .into(),
-            ));
-        }
+                    params![delivery_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(sql_error("verify pending button initiation context"))?;
+            if existing
+                != (
+                    initiation.initiation_id.as_str().to_string(),
+                    initiation.epic_id.as_str().to_string(),
+                    session_id,
+                )
+            {
+                return Err(SaveProposalError::Unavailable(
+                    "button initiation context identity was already used for different semantics"
+                        .into(),
+                ));
+            }
             Ok(())
         })
     }
@@ -678,7 +674,8 @@ impl SqliteOrchestrationRepository {
         session_id: &str,
         claim_id: &str,
         target_invocation_id: &str,
-    ) -> Result<Option<PendingPlanBuilderContextDelivery>, SaveProposalError> { self.write("claim Plan Builder context", | transaction| {
+    ) -> Result<Option<PendingPlanBuilderContextDelivery>, SaveProposalError> {
+        self.write("claim Plan Builder context", |transaction| {
         let unresolved_claims: i64 = transaction
             .query_row(
                 "SELECT count(*) FROM plan_builder_context_deliveries
@@ -733,7 +730,7 @@ impl SqliteOrchestrationRepository {
         &self,
         session_id: &str,
     ) -> Result<Option<PendingPlanBuilderContextDelivery>, SaveProposalError> {
-        self.read("load claimed Plan Builder context", | connection| {
+        self.read("load claimed Plan Builder context", |connection| {
         connection
             .query_row(
                 "SELECT id,initiation_id,epic_id,delivery_claim_id,target_invocation_id
@@ -768,7 +765,8 @@ impl SqliteOrchestrationRepository {
                 "injected Plan Builder context consume failure".into(),
             ));
         }
-        let now = timestamp( self.clock. now());self.write("consume Plan Builder context", |transaction| {
+        let now = timestamp(self.clock.now());
+        self.write("consume Plan Builder context", |transaction| {
         let changed = transaction
             .execute(
                 "UPDATE plan_builder_context_deliveries
@@ -800,7 +798,8 @@ impl SqliteOrchestrationRepository {
     pub(crate) fn release_plan_builder_context(
         &self,
         delivery: &PendingPlanBuilderContextDelivery,
-    ) -> Result<(), SaveProposalError> { self.write("release Plan Builder context", |transaction| {
+    ) -> Result<(), SaveProposalError> {
+        self.write("release Plan Builder context", |transaction| {
             transaction
             .execute(
                 "UPDATE plan_builder_context_deliveries
@@ -827,15 +826,16 @@ impl SqliteOrchestrationRepository {
             return Err(SaveProposalError::InvalidInput(
                 "capability profile status is invalid".into(),
             ));
-        } self.write("create capability profile", |transaction| {
+        }
+        self.write("create capability profile", |transaction| {
             transaction
-            .execute(
-                "INSERT INTO capability_profiles (id, status, created_at) VALUES (?1, ?2, ?3)",
-                params![id.as_str(), status, timestamp(created_at)],
-            )
-            .map_err(sql_error("create capability profile"))?;
-        Ok(())
-    })
+                .execute(
+                    "INSERT INTO capability_profiles (id, status, created_at) VALUES (?1, ?2, ?3)",
+                    params![id.as_str(), status, timestamp(created_at)],
+                )
+                .map_err(sql_error("create capability profile"))?;
+            Ok(())
+        })
     }
 
     pub(crate) fn assign_profile(
@@ -845,7 +845,8 @@ impl SqliteOrchestrationRepository {
         association_id: &PlanningDraftAgentSessionAssociationId,
         expires_at: DateTime<Utc>,
         assigned_at: DateTime<Utc>,
-    ) -> Result<(), SaveProposalError> { self.write("assign capability profile", |transaction| {
+    ) -> Result<(), SaveProposalError> {
+        self.write("assign capability profile", |transaction| {
             transaction.execute("INSERT INTO planning_draft_profile_assignments (draft_id, capability_profile_id, agent_session_association_id, expires_at, assigned_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![draft_id.as_str(), profile_id.as_str(), association_id.as_str(), timestamp(expires_at), timestamp(assigned_at)])
             .map_err(sql_error("assign capability profile"))?;
         Ok(())
@@ -859,7 +860,8 @@ impl SqliteOrchestrationRepository {
         session_id: &str,
         actor_id: &str,
         associated_at: DateTime<Utc>,
-    ) -> Result<(), SaveProposalError> { self.write("associate Agent Session", |transaction| {
+    ) -> Result<(), SaveProposalError> {
+        self.write("associate Agent Session", |transaction| {
             transaction.execute("INSERT INTO planning_draft_agent_session_associations (id, draft_id, agent_session_id, actor_id, associated_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![association_id.as_str(), draft_id.as_str(), session_id, actor_id, timestamp(associated_at)])
             .map_err(sql_error("associate Agent Session"))?;
         Ok(())
@@ -882,7 +884,8 @@ impl SqliteOrchestrationRepository {
     > {
         let profile = CapabilityProfileId::new("plan-builder-capability-profile-v1")
             .map_err(SaveProposalError::InvalidInput)?;
-        let now = self.clock.now(); self.write("bootstrap managed Plan Builder", | transaction| {
+        let now = self.clock.now();
+        self.write("bootstrap managed Plan Builder", |transaction| {
         if let Some((draft, profile, association, status, _initiated)) = transaction
             .query_row(
                 "SELECT assignment.draft_id, assignment.capability_profile_id, association.id, draft.status, EXISTS(SELECT 1 FROM initiated_planning_drafts initiated WHERE initiated.draft_id = draft.id) FROM planning_draft_profile_assignments assignment JOIN planning_draft_agent_session_associations association ON association.id = assignment.agent_session_association_id JOIN epic_planning_drafts draft ON draft.id = assignment.draft_id WHERE association.agent_session_id = ?1 AND association.actor_id = 'managed-plan-builder' ORDER BY association.associated_at ASC LIMIT 1",
@@ -930,10 +933,10 @@ impl SqliteOrchestrationRepository {
         &self,
         session_id: &str,
     ) -> Result<Option<ManagedPlanBuilderBinding>, SaveProposalError> {
-        self.read("load managed Plan Builder binding", | connection| {
-        let associated_at = connection
-            .query_row(
-                "SELECT association.associated_at
+        self.read("load managed Plan Builder binding", |connection| {
+            let associated_at = connection
+                .query_row(
+                    "SELECT association.associated_at
                  FROM planning_draft_agent_session_associations association
                  JOIN planning_draft_profile_assignments assignment
                    ON assignment.agent_session_association_id=association.id
@@ -942,24 +945,24 @@ impl SqliteOrchestrationRepository {
                    AND association.actor_id='managed-plan-builder'
                  ORDER BY association.associated_at,association.id
                  LIMIT 1",
-                params![session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(sql_error("load managed Plan Builder binding"))?;
-        associated_at
-            .map(|value| {
-                DateTime::parse_from_rfc3339(&value)
-                    .map(|associated_at| associated_at.with_timezone(&Utc))
-                    .map(|associated_at| ManagedPlanBuilderBinding { associated_at })
-                    .map_err(|error| {
-                        SaveProposalError::Unavailable(format!(
-                            "load managed Plan Builder binding timestamp: {error}"
-                        ))
-                    })
-            })
-            .transpose()
-    })
+                    params![session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(sql_error("load managed Plan Builder binding"))?;
+            associated_at
+                .map(|value| {
+                    DateTime::parse_from_rfc3339(&value)
+                        .map(|associated_at| associated_at.with_timezone(&Utc))
+                        .map(|associated_at| ManagedPlanBuilderBinding { associated_at })
+                        .map_err(|error| {
+                            SaveProposalError::Unavailable(format!(
+                                "load managed Plan Builder binding timestamp: {error}"
+                            ))
+                        })
+                })
+                .transpose()
+        })
     }
 
     pub(crate) fn update_planning_draft_title(
@@ -975,7 +978,8 @@ impl SqliteOrchestrationRepository {
                 "draft title or idempotency key is invalid".into(),
             ));
         }
-        let now = timestamp(self.clock.now()); self.write("update planning draft title", | transaction| {
+        let now = timestamp(self.clock.now());
+        self.write("update planning draft title", |transaction| {
         let existing: Option<String> = transaction
             .query_row(
                 "SELECT draft_id FROM planning_draft_lifecycle_events WHERE idempotency_key = ?1",
@@ -1011,7 +1015,8 @@ impl SqliteOrchestrationRepository {
                 "idempotency key is required".into(),
             ));
         }
-        let now = timestamp(self.clock.now()); self.write("cancel planning draft", | transaction| {
+        let now = timestamp(self.clock.now());
+        self.write("cancel planning draft", |transaction| {
         let existing: Option<String> = transaction
             .query_row(
                 "SELECT draft_id FROM planning_draft_lifecycle_events WHERE idempotency_key = ?1",
@@ -1048,7 +1053,8 @@ impl SqliteOrchestrationRepository {
             .validate()
             .map_err(SaveProposalError::InvalidInput)?;
         let fingerprint = fingerprint(&command)?;
-        let effect_time = self.clock.now(); self.write("save Epic plan proposal", | transaction| {
+        let effect_time = self.clock.now();
+        self.write("save Epic plan proposal", |transaction| {
         let existing = find_command_result(&transaction, &command.idempotency_key)?;
         if let Some((stored_fingerprint, _)) = &existing {
             if stored_fingerprint != &fingerprint {
@@ -1124,7 +1130,7 @@ impl SqliteOrchestrationRepository {
         generated_at: DateTime<Utc>,
     ) -> Result<NativeQueryV2, String> {
         self.database
-            .read("load orchestration native query", | connection| {
+            .read("load orchestration native query", |connection| {
         let mut draft_statement = connection.prepare("SELECT draft.id, draft.title, CASE WHEN initiated.draft_id IS NOT NULL THEN 'initiated' ELSE draft.status END, draft.created_at, draft.updated_at, draft.canceled_at, latest.id FROM epic_planning_drafts draft LEFT JOIN initiated_planning_drafts initiated ON initiated.draft_id = draft.id LEFT JOIN proposal_revisions latest ON latest.id = (SELECT revision.id FROM proposal_revisions revision WHERE revision.draft_id = draft.id ORDER BY revision.recorded_at DESC, revision.id DESC LIMIT 1) ORDER BY draft.created_at, draft.id").map_err(|error| error.to_string())?;
         let planning_drafts = draft_statement
             .query_map([], |row| {
@@ -1648,38 +1654,52 @@ impl SqliteOrchestrationRepository {
     ) -> Result<CreateHarnessRevisionResult, HarnessRevisionError> {
         validate_harness_revision_command(&command)?;
         let fingerprint = harness_revision_command_fingerprint(&command)?;
-        let replay = self.database.read("load Harness revision command replay", |connection| {
-            let Some(recorded) = load_harness_revision_command_record(connection, &command, &fingerprint)? else {
-                return Ok(None);
-            };
-            let verified = load_verified_harness_revision_from_connection(
-                connection,
-                &self.harness_revisions,
-                &recorded.revision_id,
-            )?
-            .ok_or(HarnessRevisionError::InvalidStoredState)?;
-            if verified != recorded {
-                return Err(HarnessRevisionError::InvalidStoredState);
-            }
-            Ok(Some(verified))
-        }).map_err(map_managed_harness_revision_error)?;
+        let replay = self
+            .database
+            .read("load Harness revision command replay", |connection| {
+                let Some(recorded) =
+                    load_harness_revision_command_record(connection, &command, &fingerprint)?
+                else {
+                    return Ok(None);
+                };
+                let verified = load_verified_harness_revision_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &recorded.revision_id,
+                )?
+                .ok_or(HarnessRevisionError::InvalidStoredState)?;
+                if verified != recorded {
+                    return Err(HarnessRevisionError::InvalidStoredState);
+                }
+                Ok(Some(verified))
+            })
+            .map_err(map_managed_harness_revision_error)?;
         if let Some(replay) = replay {
             return Ok(CreateHarnessRevisionResult::IdempotentReplay(replay));
         }
 
-        let (working_copy, current_head) = self.database.read("prepare Harness revision", |connection| {
-            let working_copy = load_harness_working_copy_from_connection(connection, &command.harness_key)?
-                .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
-            let existing = load_verified_harness_revision_history_from_connection(
-                connection,
-                &self.harness_revisions,
-                &command.harness_key,
-            )?;
-            if existing.last().is_some_and(|revision| revision.source_draft_revision >= working_copy.draft_revision) {
-                return Err(HarnessRevisionError::Conflict);
-            }
-            Ok((working_copy, existing.last().map(|revision| revision.revision_id.clone())))
-        }).map_err(map_managed_harness_revision_error)?;
+        let (working_copy, current_head) = self
+            .database
+            .read("prepare Harness revision", |connection| {
+                let working_copy =
+                    load_harness_working_copy_from_connection(connection, &command.harness_key)?
+                        .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
+                let existing = load_verified_harness_revision_history_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &command.harness_key,
+                )?;
+                if existing.last().is_some_and(|revision| {
+                    revision.source_draft_revision >= working_copy.draft_revision
+                }) {
+                    return Err(HarnessRevisionError::Conflict);
+                }
+                Ok((
+                    working_copy,
+                    existing.last().map(|revision| revision.revision_id.clone()),
+                ))
+            })
+            .map_err(map_managed_harness_revision_error)?;
         if working_copy.draft_revision != command.expected_source_draft_revision {
             return Err(HarnessRevisionError::Conflict);
         }
@@ -1790,13 +1810,17 @@ impl SqliteOrchestrationRepository {
             CreateHarnessRevisionResult::Published(revision)
             | CreateHarnessRevisionResult::IdempotentReplay(revision) => revision,
         };
-        let verified = self.database.read("verify published Harness revision", |connection| {
-            load_verified_harness_revision_from_connection(
-                connection,
-                &self.harness_revisions,
-                &result_revision.revision_id,
-            )?.ok_or(HarnessRevisionError::InvalidStoredState)
-        }).map_err(map_managed_harness_revision_error)?;
+        let verified = self
+            .database
+            .read("verify published Harness revision", |connection| {
+                load_verified_harness_revision_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &result_revision.revision_id,
+                )?
+                .ok_or(HarnessRevisionError::InvalidStoredState)
+            })
+            .map_err(map_managed_harness_revision_error)?;
         if verified != *result_revision {
             return Err(HarnessRevisionError::InvalidStoredState);
         }
@@ -1812,11 +1836,13 @@ impl SqliteOrchestrationRepository {
             )
         });
         match result {
-            Err(ManagedOperationError::Infrastructure(_)) => HarnessRevisionReadOutcome::Unavailable,
-            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
-            | Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidLocalCommitEvidence)) => {
-                HarnessRevisionReadOutcome::InvalidLocalCommitEvidence
+            Err(ManagedOperationError::Infrastructure(_)) => {
+                HarnessRevisionReadOutcome::Unavailable
             }
+            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
+            | Err(ManagedOperationError::Domain(
+                HarnessRevisionError::InvalidLocalCommitEvidence,
+            )) => HarnessRevisionReadOutcome::InvalidLocalCommitEvidence,
             Err(ManagedOperationError::Domain(_)) => HarnessRevisionReadOutcome::Unavailable,
             Ok(Some(revision)) => HarnessRevisionReadOutcome::AvailableAndVerified { revision },
             Ok(None) => HarnessRevisionReadOutcome::Missing,
@@ -1830,19 +1856,23 @@ impl SqliteOrchestrationRepository {
         if validate_harness_key(harness_key).is_err() {
             return HarnessRevisionHistoryOutcome::Missing;
         }
-        let result = self.database.read("load Harness revision history", |connection| {
-            load_verified_harness_revision_history_from_connection(
-                connection,
-                &self.harness_revisions,
-                harness_key,
-            )
-        });
+        let result = self
+            .database
+            .read("load Harness revision history", |connection| {
+                load_verified_harness_revision_history_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    harness_key,
+                )
+            });
         match result {
-            Err(ManagedOperationError::Infrastructure(_)) => HarnessRevisionHistoryOutcome::Unavailable,
-            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
-            | Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidLocalCommitEvidence)) => {
-                HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
+            Err(ManagedOperationError::Infrastructure(_)) => {
+                HarnessRevisionHistoryOutcome::Unavailable
             }
+            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
+            | Err(ManagedOperationError::Domain(
+                HarnessRevisionError::InvalidLocalCommitEvidence,
+            )) => HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence,
             Err(ManagedOperationError::Domain(_)) => HarnessRevisionHistoryOutcome::Unavailable,
             Ok(revisions) if revisions.is_empty() => HarnessRevisionHistoryOutcome::Missing,
             Ok(revisions) => HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions },
@@ -2283,10 +2313,14 @@ impl SqliteOrchestrationRepository {
         operation: &'static str,
         read: impl FnOnce(&Connection) -> Result<T, SaveProposalError>,
     ) -> Result<T, SaveProposalError> {
-        self.database.read(operation, read).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => SaveProposalError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+        self.database
+            .read(operation, read)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SaveProposalError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     fn write<T>(
@@ -2294,10 +2328,14 @@ impl SqliteOrchestrationRepository {
         operation: &'static str,
         write: impl FnOnce(&Transaction<'_>) -> Result<T, SaveProposalError>,
     ) -> Result<T, SaveProposalError> {
-        self.database.write(operation, write).map_err(|error| match error {
-            ManagedOperationError::Infrastructure(error) => SaveProposalError::Unavailable(error.to_string()),
-            ManagedOperationError::Domain(error) => error,
-        })
+        self.database
+            .write(operation, write)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SaveProposalError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     #[cfg(test)]
@@ -2712,7 +2750,17 @@ fn load_harness_revision_command_record(
             [&command.idempotency_key],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
         ).optional().map_err(|_| HarnessRevisionError::Unavailable)?;
-    let Some((existing_fingerprint,harness_key,source_draft_revision,expected_predecessor,result_revision_id,result_json,result_digest,recorded_at)) = replay else {
+    let Some((
+        existing_fingerprint,
+        harness_key,
+        source_draft_revision,
+        expected_predecessor,
+        result_revision_id,
+        result_json,
+        result_digest,
+        recorded_at,
+    )) = replay
+    else {
         return Ok(None);
     };
     if existing_fingerprint != fingerprint {
@@ -2725,8 +2773,8 @@ fn load_harness_revision_command_record(
     {
         return Err(HarnessRevisionError::InvalidStoredState);
     }
-    let recorded: HarnessRevision = serde_json::from_str(&result_json)
-        .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+    let recorded: HarnessRevision =
+        serde_json::from_str(&result_json).map_err(|_| HarnessRevisionError::InvalidStoredState)?;
     validate_revision(&recorded)?;
     if recorded.revision_id != result_revision_id
         || recorded.harness_key != command.harness_key
@@ -7215,17 +7263,24 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
             "modified" => ImplementationEvidenceChangeKindDto::Modified,
             "deleted" => ImplementationEvidenceChangeKindDto::Deleted,
             "renamed" => ImplementationEvidenceChangeKindDto::Renamed,
-            _ => { return Err(to_sql_error("invalid Handler review evidence change kind".into(),
+            _ => {
+                return Err(to_sql_error(
+                    "invalid Handler review evidence change kind".into(),
                 ))
             }
         };
         let Some(content_fingerprint) = content.remove(&entry.evidence_ref) else {
-            return Err(to_sql_error("Handler review evidence content is uncorrelated".into(),));
+            return Err(to_sql_error(
+                "Handler review evidence content is uncorrelated".into(),
+            ));
         };
-        if entry.display_name.trim().is_empty() || entry.display_name.len() > 1_000
+        if entry.display_name.trim().is_empty()
+            || entry.display_name.len() > 1_000
             || !references.insert(entry.evidence_ref.clone())
         {
-            return Err(to_sql_error("Handler review evidence references are incoherent".into(),));
+            return Err(to_sql_error(
+                "Handler review evidence references are incoherent".into(),
+            ));
         }
         changed_files.push(WorkUnitHandlerReviewEvidenceFileDto {
             evidence_ref: entry.evidence_ref,
@@ -7235,33 +7290,52 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
         });
     }
     if !content.is_empty() {
-        return Err(to_sql_error("Handler review evidence content has an unknown reference".into(),));
+        return Err(to_sql_error(
+            "Handler review evidence content has an unknown reference".into(),
+        ));
     }
     let semantic_variant: Option<String> = row.get(18)?;
     let semantic_reason: Option<String> = row.get(19)?;
     let semantic_fingerprint: Option<String> = row.get(20)?;
     let semantic_at: Option<String> = row.get(21)?;
-    let semantic_judgment = match (semantic_variant, semantic_reason, semantic_fingerprint, semantic_at,) {
+    let semantic_judgment = match (
+        semantic_variant,
+        semantic_reason,
+        semantic_fingerprint,
+        semantic_at,
+    ) {
         (None, None, None, None) => None,
         (Some(variant), reason, Some(fingerprint), Some(recorded_at)) => {
             let variant = match variant.as_str() {
                 "accept" => WorkUnitHandlerReviewJudgmentVariantDto::Accept,
                 "return" => WorkUnitHandlerReviewJudgmentVariantDto::Return,
-                _ => { return Err(to_sql_error("invalid Handler review judgment variant".into(),
+                _ => {
+                    return Err(to_sql_error(
+                        "invalid Handler review judgment variant".into(),
                     ))
                 }
             };
             let reason = match (&variant, reason) {
                 (WorkUnitHandlerReviewJudgmentVariantDto::Accept, None) => None,
-                (WorkUnitHandlerReviewJudgmentVariantDto::Return, Some(value)) => { Some(parse_handler_review_reason(value)?)
+                (WorkUnitHandlerReviewJudgmentVariantDto::Return, Some(value)) => {
+                    Some(parse_handler_review_reason(value)?)
                 }
-                _ => { return Err(to_sql_error("Handler review judgment reason is incoherent".into(),
+                _ => {
+                    return Err(to_sql_error(
+                        "Handler review judgment reason is incoherent".into(),
                     ))
                 }
             };
-            Some(WorkUnitHandlerReviewJudgmentDto { variant, reason, fingerprint, recorded_at, })
+            Some(WorkUnitHandlerReviewJudgmentDto {
+                variant,
+                reason,
+                fingerprint,
+                recorded_at,
+            })
         }
-        _ => { return Err(to_sql_error("Handler review judgment bundle is partial".into(),
+        _ => {
+            return Err(to_sql_error(
+                "Handler review judgment bundle is partial".into(),
             ))
         }
     };
@@ -7275,13 +7349,17 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
                 "failed" => WorkUnitHandlerReviewLifecycleStatusDto::Failed,
                 "canceled" => WorkUnitHandlerReviewLifecycleStatusDto::Canceled,
                 "interrupted" => WorkUnitHandlerReviewLifecycleStatusDto::Interrupted,
-                _ => { return Err(to_sql_error("invalid Handler review lifecycle status".into(),
+                _ => {
+                    return Err(to_sql_error(
+                        "invalid Handler review lifecycle status".into(),
                     ))
                 }
             },
             observed_at,
         }),
-        _ => { return Err(to_sql_error("Handler review lifecycle bundle is partial".into(),
+        _ => {
+            return Err(to_sql_error(
+                "Handler review lifecycle bundle is partial".into(),
             ))
         }
     };
@@ -7290,39 +7368,70 @@ fn map_handler_review(row: &Row<'_>) -> Result<WorkUnitHandlerReviewDto, rusqlit
     let conflict = match (conflict_at, conflict_reason) {
         (None, None) => None,
         (Some(occurred_at), Some(reason)) if !reason.trim().is_empty() && reason.len() <= 4_000 => {
-            Some(WorkUnitHandlerReviewConflictDto { occurred_at, reason,
+            Some(WorkUnitHandlerReviewConflictDto {
+                occurred_at,
+                reason,
             })
         }
-        _ => { return Err(to_sql_error("Handler review conflict bundle is incoherent".into(),
+        _ => {
+            return Err(to_sql_error(
+                "Handler review conflict bundle is incoherent".into(),
             ))
         }
     };
     let delivered_payload_fingerprint: String = row.get(17)?;
-    if delivered_payload_fingerprint != projection_stable_id("work-unit-handler-review-delivery", &payload_json) {
-        return Err(to_sql_error("Handler review delivered payload fingerprint is incoherent".into(),));
+    if delivered_payload_fingerprint
+        != projection_stable_id("work-unit-handler-review-delivery", &payload_json)
+    {
+        return Err(to_sql_error(
+            "Handler review delivered payload fingerprint is incoherent".into(),
+        ));
     }
     Ok(WorkUnitHandlerReviewDto {
-        attempt_id: row.get(1)?, reporting_invocation_id: row.get(2)?, handler_session_id: row.get(3)?,
-        original_handler_invocation_id: row.get(4)?, action_handler_invocation_id: row.get(5)?,
-        review_invocation_id: row.get(6)?, review_harness_revision_id: row.get(7)?,
-        review_harness_configuration_digest: row.get(8)?, review_harness_repository_commit_ref: row.get(9)?,
-        delivery_requested_at: row.get(10)?, delivery_persisted_at: row.get(11)?, harness_bound_at: row.get(12)?,
-        launch_requested_at: row.get(13)?, launch_accepted_at: row.get(14)?, review_ready_at: row.get(15)?,
+        attempt_id: row.get(1)?,
+        reporting_invocation_id: row.get(2)?,
+        handler_session_id: row.get(3)?,
+        original_handler_invocation_id: row.get(4)?,
+        action_handler_invocation_id: row.get(5)?,
+        review_invocation_id: row.get(6)?,
+        review_harness_revision_id: row.get(7)?,
+        review_harness_configuration_digest: row.get(8)?,
+        review_harness_repository_commit_ref: row.get(9)?,
+        delivery_requested_at: row.get(10)?,
+        delivery_persisted_at: row.get(11)?,
+        harness_bound_at: row.get(12)?,
+        launch_requested_at: row.get(13)?,
+        launch_accepted_at: row.get(14)?,
+        review_ready_at: row.get(15)?,
         delivered: WorkUnitHandlerReviewEvidenceDto {
-            summary_claim: payload.summary, validation_statement_claim: payload.validation_statement,
-            changed_files, comparison_fingerprint: payload.comparison_fingerprint, delivered_payload_fingerprint,
+            summary_claim: payload.summary,
+            validation_statement_claim: payload.validation_statement,
+            changed_files,
+            comparison_fingerprint: payload.comparison_fingerprint,
+            delivered_payload_fingerprint,
         },
-        semantic_judgment, lifecycle, conflict,
+        semantic_judgment,
+        lifecycle,
+        conflict,
     })
 }
 
-fn parse_handler_review_reason(value: String,) -> Result<WorkUnitHandlerReviewReasonDto, rusqlite::Error> {
-    let reason: WorkUnitHandlerReviewReasonDto = serde_json::from_str(&value)
-        .map_err(|error| to_sql_error(error.to_string()))?;
-    let canonical = serde_json::to_string(&reason).map_err(|error| to_sql_error(error.to_string()))?;
-    if canonical != value || reason.code.is_empty() || reason.code.len() > 96
-        || !reason.code.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-        || reason.explanation.trim().is_empty() || reason.explanation.len() > 2_000
+fn parse_handler_review_reason(
+    value: String,
+) -> Result<WorkUnitHandlerReviewReasonDto, rusqlite::Error> {
+    let reason: WorkUnitHandlerReviewReasonDto =
+        serde_json::from_str(&value).map_err(|error| to_sql_error(error.to_string()))?;
+    let canonical =
+        serde_json::to_string(&reason).map_err(|error| to_sql_error(error.to_string()))?;
+    if canonical != value
+        || reason.code.is_empty()
+        || reason.code.len() > 96
+        || !reason
+            .code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        || reason.explanation.trim().is_empty()
+        || reason.explanation.len() > 2_000
     {
         return Err(to_sql_error("Handler review reason is incoherent".into()));
     }
@@ -7333,30 +7442,45 @@ fn map_handler_decision(row: &Row<'_>) -> Result<WorkUnitHandlerDecisionDto, rus
     let variant: String = row.get(2)?;
     let reason: Option<String> = row.get(4)?;
     let variant = match variant.as_str() {
-        "accepted" if reason.is_none() && row.get::<_, Option<String>>(6)?.is_some()
-            && row.get::<_, Option<String>>(7)?.is_none() && row.get::<_, Option<String>>(8)?.is_none() =>
+        "accepted"
+            if reason.is_none()
+                && row.get::<_, Option<String>>(6)?.is_some()
+                && row.get::<_, Option<String>>(7)?.is_none()
+                && row.get::<_, Option<String>>(8)?.is_none() =>
         {
             WorkUnitHandlerDecisionVariantDto::Accepted
         }
-        "returned" if reason.is_some() && row.get::<_, Option<String>>(6)?.is_none()
-            && row.get::<_, Option<String>>(7)?.is_some() =>
+        "returned"
+            if reason.is_some()
+                && row.get::<_, Option<String>>(6)?.is_none()
+                && row.get::<_, Option<String>>(7)?.is_some() =>
         {
             WorkUnitHandlerDecisionVariantDto::Returned
         }
-        "accepted" | "returned" => { return Err(to_sql_error("Handler decision facts contradict their variant".into(),
+        "accepted" | "returned" => {
+            return Err(to_sql_error(
+                "Handler decision facts contradict their variant".into(),
             ))
         }
         _ => return Err(to_sql_error("invalid Handler decision variant".into())),
     };
     let settlement_ready_at: Option<String> = row.get(9)?;
     if settlement_ready_at.is_some() {
-        return Err(to_sql_error("Handler decision has forbidden settlement readiness".into(),));
+        return Err(to_sql_error(
+            "Handler decision has forbidden settlement readiness".into(),
+        ));
     }
     Ok(WorkUnitHandlerDecisionDto {
-        attempt_id: row.get(10)?, review_invocation_id: row.get(1)?, variant, fingerprint: row.get(3)?,
-        return_reason: reason.map(parse_handler_review_reason).transpose()?, recorded_at: row.get(5)?,
-        implementation_accepted_at: row.get(6)?, implementation_returned_at: row.get(7)?,
-        retry_required_at: row.get(8)?, settlement_ready_at,
+        attempt_id: row.get(10)?,
+        review_invocation_id: row.get(1)?,
+        variant,
+        fingerprint: row.get(3)?,
+        return_reason: reason.map(parse_handler_review_reason).transpose()?,
+        recorded_at: row.get(5)?,
+        implementation_accepted_at: row.get(6)?,
+        implementation_returned_at: row.get(7)?,
+        retry_required_at: row.get(8)?,
+        settlement_ready_at,
     })
 }
 #[derive(Debug, PartialEq, Eq, Serialize)]
