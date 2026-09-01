@@ -8,6 +8,7 @@ pub(crate) const CAPABILITY_PROFILE_CONTRACT_VERSION: u32 = 1;
 pub(crate) struct CapabilityProfile {
     pub(crate) contract_version: u32,
     pub(crate) capability_profile_id: String,
+    pub(crate) name: String,
     pub(crate) revision: u64,
     pub(crate) allowed_capabilities: CapabilitySet,
 }
@@ -25,6 +26,7 @@ impl CapabilityProfile {
             "capabilityProfileId",
             &self.capability_profile_id,
         )?;
+        validate_identifier("Capability Profile", "name", &self.name)?;
         if self.revision == 0 {
             return Err("Capability Profile revision must be positive".into());
         }

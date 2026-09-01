@@ -5,4 +5,6 @@ pub(crate) mod repository;
 pub(crate) mod service;
 pub(crate) mod transport;
 
-pub(crate) use domain::{AssignedAgentIdentity, IdentityId, IdentityShape};
+#[cfg(test)]
+pub(crate) use domain::IdentityShape;
+pub(crate) use domain::{AssignedAgentIdentity, IdentityId};

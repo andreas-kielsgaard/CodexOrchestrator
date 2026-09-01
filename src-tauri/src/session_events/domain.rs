@@ -322,6 +322,9 @@ impl TargetSelection {
 pub(crate) struct SessionCreationConfiguration {
     pub(crate) contract: ReferenceIdentity,
     pub(crate) payload: Value,
+    /// Optional presentation identity assigned by the concrete Session directory.
+    /// It does not participate in capability resolution.
+    pub(crate) assigned_identity: Option<ReferenceIdentity>,
 }
 
 impl SessionCreationConfiguration {

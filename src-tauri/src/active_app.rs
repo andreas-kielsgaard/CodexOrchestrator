@@ -203,29 +203,83 @@ pub(crate) fn run() {
                     },
                 ),
             );
+            let capability_profiles = Arc::new(
+                crate::execution_configuration::CapabilityProfileService::new(
+                    Arc::new(
+                        crate::execution_configuration::SqliteCapabilityProfileRepository::open(
+                            &database_path,
+                        )?,
+                    ),
+                    selected_runtime_profile.clone(),
+                ),
+            );
             let session_event_adapter = Arc::new(
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::open(
                     &database_path,
                     application.clone(),
                     repository,
-                    selected_runtime_profile,
+                    selected_runtime_profile.clone(),
+                    identities.clone(),
                 )?,
             );
             let session_event_store = Arc::new(
                 crate::session_events::SqliteSessionEventStore::open(&database_path)
                     .map_err(|error| error.to_string())?,
             );
-            app.manage(Arc::new(crate::session_events::SessionEventApplication::new(
+            let session_events = Arc::new(crate::session_events::SessionEventApplication::new(
                 session_event_adapter.clone(),
                 session_event_adapter,
-                session_event_store,
-            )));
+                session_event_store.clone(),
+            ));
+            let session_event_queries = Arc::new(
+                crate::session_events::SessionEventQueryApplication::new(session_event_store),
+            );
+            app.manage(session_events.clone());
+            app.manage(crate::session_events::transport::SessionEventQueryTauriState::new(
+                session_event_queries,
+            ));
+            app.manage(
+                crate::execution_configuration::transport::CapabilityProfileTauriState::new(
+                    capability_profiles.clone(),
+                ),
+            );
+            app.manage(
+                crate::agent_sessions::transport::AgentSessionProfileTauriState::new(Arc::new(
+                    crate::agent_sessions::application::AgentSessionProfileApplication::new(
+                        application.clone(),
+                        selected_runtime_profile,
+                    ),
+                )),
+            );
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
             app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
                 app_data_dir.join("codex-orchestrator.sqlite"),
             ));
+            let workflow_authoring = Arc::new(
+                crate::workflows::authoring_service::WorkflowAuthoringService::new(
+                    Arc::new(
+                        crate::workflows::authoring_repository::SqliteWorkflowAuthoringRepository::open(
+                            &database_path,
+                        )?,
+                    ),
+                    capability_profiles,
+                ),
+            );
+            app.manage(
+                crate::workflows::authoring_transport::WorkflowAuthoringTauriState::new(
+                    workflow_authoring.clone(),
+                ),
+            );
+            app.manage(
+                crate::workflows::execution_transport::WorkflowExecutionTauriState::new(Arc::new(
+                    crate::workflows::execution::WorkflowExecutionService::new(
+                        workflow_authoring,
+                        session_events,
+                    ),
+                )),
+            );
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
                 Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
                     &database_path,
@@ -431,10 +485,22 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
+            crate::agent_sessions::transport::profile::load_pinned_agent_session_profile,
+            crate::agent_sessions::transport::profile::send_direct_user_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
+            crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::list_capability_profiles,
+            crate::execution_configuration::transport::load_capability_profile,
+            crate::execution_configuration::transport::create_capability_profile,
+            crate::execution_configuration::transport::update_capability_profile,
+            crate::execution_configuration::transport::delete_capability_profile,
+            crate::session_events::transport::load_session_event_group,
+            crate::session_events::transport::load_recorded_session_event,
+            crate::session_events::transport::list_session_event_deliveries_for_group,
+            crate::session_events::transport::list_session_event_deliveries_for_session,
             crate::identities::transport::list_identities,
             crate::identities::transport::create_identity,
             crate::identities::transport::update_identity,
@@ -468,6 +534,14 @@ pub(crate) fn run() {
             crate::workflows::transport::send_workflow_node_message,
             crate::workflows::transport::list_workflow_instances,
             crate::workflows::transport::load_workflow_instance,
+            crate::workflows::authoring_transport::list_workflow_recipes,
+            crate::workflows::authoring_transport::load_workflow_recipe,
+            crate::workflows::authoring_transport::create_workflow_recipe,
+            crate::workflows::authoring_transport::save_workflow_recipe_draft,
+            crate::workflows::authoring_transport::copy_workflow_node_configuration,
+            crate::workflows::authoring_transport::activate_workflow_recipe,
+            crate::workflows::authoring_transport::compile_workflow_recipe_instance,
+            crate::workflows::execution_transport::dispatch_workflow_user_request,
             crate::worktree_targets_temp::list_discovered_worktree_targets,
             crate::native_profiles::load_native_profile_query,
             crate::native_profiles::discover_native_codex_homes,

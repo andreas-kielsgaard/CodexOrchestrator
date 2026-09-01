@@ -1,0 +1,223 @@
+.execution-configuration {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+  color: #1f3026;
+}
+
+.execution-configuration__header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #dce2dc;
+}
+
+.execution-configuration__header > div:first-child {
+  min-width: 0;
+}
+
+.execution-configuration__header span:first-child {
+  color: #647169;
+  font-size: 0.66rem;
+  font-weight: 840;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.execution-configuration__header h1,
+.execution-configuration__header p {
+  margin: 0;
+}
+
+.execution-configuration__header h1 {
+  margin-top: 3px;
+  font-size: 1.15rem;
+}
+
+.execution-configuration__header p {
+  margin-top: 4px;
+  color: #647169;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.execution-configuration__badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #c9d4cb;
+  border-radius: 999px;
+  background: #eff3ee;
+  color: #506057;
+  font-size: 0.63rem;
+  font-weight: 780;
+}
+
+.execution-configuration__section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d5ddd6;
+  border-radius: 10px;
+  background: #fffdf9;
+}
+
+.execution-configuration__section .collapsible-section__heading-group h2,
+.execution-configuration__section .collapsible-section__heading-group p {
+  margin: 0;
+}
+
+.execution-configuration__section .collapsible-section__heading-group h2 {
+  font-size: 0.92rem;
+}
+
+.execution-configuration__section .collapsible-section__heading-group p {
+  margin-top: 3px;
+  color: #6f7b73;
+  font-size: 0.7rem;
+}
+
+.execution-configuration__section > .collapsible-section__content {
+  display: grid;
+  gap: 13px;
+  padding-top: 12px;
+  border-top: 1px solid #e3e7e2;
+}
+
+.execution-configuration__field-grid,
+.execution-configuration__resolved-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.execution-configuration__field {
+  display: grid;
+  gap: 7px;
+  color: #34443a;
+  font-size: 0.78rem;
+  font-weight: 740;
+}
+
+.execution-configuration__field input {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd4cd;
+  border-radius: 8px;
+  background: #fff;
+  color: #17211b;
+  font: inherit;
+}
+
+.execution-configuration__field input:disabled {
+  background: #f0f3ef;
+  color: #647169;
+}
+
+.execution-configuration__field small {
+  color: #748078;
+  font-size: 0.66rem;
+  font-weight: 620;
+}
+
+.execution-configuration__capability-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.execution-configuration__capability-fields > .catalog-field + .catalog-field {
+  padding-top: 13px;
+  border-top: 1px solid #e3e7e2;
+}
+
+.execution-configuration__capability-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.execution-configuration__capability-summary > div {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: #f3f5f1;
+}
+
+.execution-configuration__capability-summary dt {
+  color: #68756d;
+  font-size: 0.62rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.execution-configuration__capability-summary dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.execution-configuration__notes {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.execution-configuration__notes {
+  color: #66736b;
+  font-size: 0.7rem;
+}
+
+.execution-configuration__copy-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.execution-configuration__copy-row button,
+.execution-configuration__actions button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid #bfc9c1;
+  border-radius: 8px;
+  background: #fff;
+  color: #26382e;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.execution-configuration__copy-row button:disabled,
+.execution-configuration__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.execution-configuration__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.execution-configuration__actions button.is-primary {
+  border-color: #285d47;
+  background: #285d47;
+  color: #fff;
+}
+
+@media (max-width: 600px) {
+  .execution-configuration__header,
+  .execution-configuration__copy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .execution-configuration__header {
+    display: grid;
+  }
+}

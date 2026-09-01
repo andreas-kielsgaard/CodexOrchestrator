@@ -117,6 +117,128 @@ impl SessionEventStore for SqliteSessionEventStore {
             ))
         })
     }
+
+    fn event_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Option<EventGroupRecord>, SessionEventStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
+        let mut statement = connection
+            .prepare("SELECT record_json FROM session_event_groups WHERE id = ?1")
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to prepare Session-event group query: {error}"
+                ))
+            })?;
+        let mut rows = statement
+            .query(params![persistence_key(event_group_id)?])
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to query Session-event group {}: {error}",
+                    reference_label(event_group_id)
+                ))
+            })?;
+        let Some(row) = rows.next().map_err(|error| {
+            SessionEventStoreError::new(format!(
+                "Unable to read Session-event group {}: {error}",
+                reference_label(event_group_id)
+            ))
+        })?
+        else {
+            return Ok(None);
+        };
+        let json = row.get::<_, String>(0).map_err(|error| {
+            SessionEventStoreError::new(format!(
+                "Unable to decode stored Session-event group {}: {error}",
+                reference_label(event_group_id)
+            ))
+        })?;
+        deserialize_group(&json).map(Some)
+    }
+
+    fn deliveries_for_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
+        let mut statement = connection
+            .prepare(
+                "SELECT record_json FROM session_event_deliveries \
+                 WHERE event_group_id = ?1 ORDER BY ordinal",
+            )
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to prepare Session-event delivery query: {error}"
+                ))
+            })?;
+        let rows = statement
+            .query_map(params![persistence_key(event_group_id)?], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to query deliveries for Session-event group {}: {error}",
+                    reference_label(event_group_id)
+                ))
+            })?;
+        rows.map(|row| {
+            let json = row.map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to read stored Session-event delivery: {error}"
+                ))
+            })?;
+            deserialize_delivery(&json)
+        })
+        .collect()
+    }
+
+    fn deliveries_for_session(
+        &self,
+        session: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
+        let mut statement = connection
+            .prepare(
+                "SELECT record_json FROM session_event_deliveries \
+                 ORDER BY rowid",
+            )
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to prepare Session-linked delivery query: {error}"
+                ))
+            })?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| {
+                SessionEventStoreError::new(format!(
+                    "Unable to query deliveries for Session {}: {error}",
+                    reference_label(session)
+                ))
+            })?;
+        let deliveries = rows
+            .map(|row| {
+                let json = row.map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to read stored Session-event delivery: {error}"
+                    ))
+                })?;
+                deserialize_delivery(&json)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(deliveries
+            .into_iter()
+            .filter(|delivery| &delivery.target_session == session)
+            .collect())
+    }
 }
 
 #[derive(Default)]
@@ -157,6 +279,64 @@ impl SessionEventStore for InMemorySessionEventStore {
         records.push((group, deliveries));
         Ok(())
     }
+
+    fn event_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Option<EventGroupRecord>, SessionEventStoreError> {
+        Ok(self
+            .records
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event store lock was poisoned"))?
+            .iter()
+            .find(|(group, _)| &group.event_group_id == event_group_id)
+            .map(|(group, _)| group.clone()))
+    }
+
+    fn deliveries_for_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
+        Ok(self
+            .records
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event store lock was poisoned"))?
+            .iter()
+            .find(|(group, _)| &group.event_group_id == event_group_id)
+            .map(|(_, deliveries)| deliveries.clone())
+            .unwrap_or_default())
+    }
+
+    fn deliveries_for_session(
+        &self,
+        session: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
+        Ok(self
+            .records
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Session-event store lock was poisoned"))?
+            .iter()
+            .flat_map(|(_, deliveries)| deliveries)
+            .filter(|delivery| &delivery.target_session == session)
+            .cloned()
+            .collect())
+    }
+}
+
+fn deserialize_group(json: &str) -> Result<EventGroupRecord, SessionEventStoreError> {
+    serde_json::from_str(json).map_err(|error| {
+        SessionEventStoreError::new(format!(
+            "Unable to deserialize stored Session-event group: {error}"
+        ))
+    })
+}
+
+fn deserialize_delivery(json: &str) -> Result<EventDeliveryRecord, SessionEventStoreError> {
+    serde_json::from_str(json).map_err(|error| {
+        SessionEventStoreError::new(format!(
+            "Unable to deserialize stored Session-event delivery: {error}"
+        ))
+    })
 }
 
 fn reference_label(reference: &ReferenceIdentity) -> String {

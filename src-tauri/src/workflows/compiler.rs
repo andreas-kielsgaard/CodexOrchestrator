@@ -172,9 +172,11 @@ fn compile_connection_prompt(
             }
         })
         .collect::<Vec<_>>();
-    sources.push(PromptSourceDefinition::Literal {
-        text: connection.prompt_text.clone(),
-    });
+    if !connection.prompt_text.trim().is_empty() {
+        sources.push(PromptSourceDefinition::Literal {
+            text: connection.prompt_text.clone(),
+        });
+    }
     sources
 }
 
@@ -215,6 +217,7 @@ fn creation_configuration(
                 "Unable to encode Workflow node Session creation request: {error}"
             ))
         })?,
+        assigned_identity: node.assigned_identity.clone(),
     })
 }
 
@@ -438,11 +441,13 @@ mod tests {
         WorkflowCompiledNode {
             reference: WorkflowNodeReference::new(id).unwrap(),
             initial_prompt: initial_prompt.map(str::to_string),
+            assigned_identity: None,
             session_creation: SessionCreationRequest {
                 contract_version: 1,
                 capability_profile: CapabilityProfile {
                     contract_version: 1,
                     capability_profile_id: format!("{id}-capabilities"),
+                    name: format!("{id} capabilities"),
                     revision: 1,
                     allowed_capabilities: CapabilitySet::default(),
                 },

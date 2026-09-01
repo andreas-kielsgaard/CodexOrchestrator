@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { AgentMarkdown } from '../features/agentSessions/AgentMarkdown';
+import { MarkdownContent } from './MarkdownContent';
 import './markdownEditor.css';
 
 export interface MarkdownEditorProps {
@@ -23,7 +23,12 @@ export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEdi
     field.setSelectionRange(Math.min(start, value.length), Math.min(end, value.length));
   }, [editable, mode, value]);
 
-  if (!editable) return <AgentMarkdown className="markdown-editor__preview">{value}</AgentMarkdown>;
+  if (!editable)
+    return (
+      <MarkdownContent className="markdown-content markdown-editor__preview">
+        {value}
+      </MarkdownContent>
+    );
 
   const switchMode = (next: EditorMode) => {
     if (next === mode) return;
@@ -65,7 +70,9 @@ export function MarkdownEditor({ label, value, editable, onChange }: MarkdownEdi
         aria-label={`${label} rendered Markdown`}
         hidden={mode !== 'rendered'}
       >
-        <AgentMarkdown className="markdown-editor__preview">{value}</AgentMarkdown>
+        <MarkdownContent className="markdown-content markdown-editor__preview">
+          {value}
+        </MarkdownContent>
       </div>
       <textarea
         ref={plainEditor}

@@ -16,6 +16,12 @@ Agent Session remains provider- and role-neutral. Agent Control remains the cont
 Orchestration Event remains the capability-wide event category. Document and internal artifact
 remain distinct.
 
+The generic reusable Workflow Role configuration concept is not part of the Session Event model.
+The five role names below belong to the curated Epic/Sprint orchestration feature and should not be
+used to reintroduce Role as a general Workflow-node configuration bucket. New generic Workflow work
+uses Capability Profile, embedded Node Profile, Session Profile and Agent Identity vocabulary; see
+[`docs/session-event-model/`](../session-event-model/README.md).
+
 The orchestration role vocabulary has exactly five names:
 
 | Role                  | Responsibility                                                                           |

@@ -6,6 +6,10 @@ use super::lifecycle::{
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
+use super::session_profile::{
+    AgentSessionProfileApplication, AgentSessionProfileApplicationErrorKind,
+    LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand,
+};
 use crate::agent_sessions::{
     domain::{
         AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
@@ -32,11 +36,13 @@ use crate::{
         SelectedRuntimeProfileSourceError, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
-    identities::{AssignedAgentIdentity, IdentityId, IdentityShape},
+    identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
     session_events::{
-        DirectUserInvocationOptions, ReferenceIdentity, SessionCreationConfiguration,
-        SessionCreationSpec, SessionDirectory, SessionEventSource, SessionInvocationDispatcher,
-        SessionInvocationRequest, SessionLogicalAddress,
+        MissingTargetPolicy, PromptSource, ReferenceIdentity, RunningFilter,
+        SessionCreationConfiguration, SessionEventApplication, SessionEventCommand,
+        SessionEventQueryApplication, SessionEventSource, SessionEventTrigger,
+        SessionLogicalAddress, SessionTarget, SqliteSessionEventStore, TargetCardinality,
+        TargetOrdering, TargetSelection,
     },
 };
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -48,14 +54,13 @@ use std::sync::{
 };
 
 #[test]
-fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() {
+fn pinned_profile_query_and_direct_user_message_preserve_session_configuration() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database_path = directory.path().join("session-events.sqlite");
-    let connection = Connection::open(&database_path).expect("database");
-    connection
-        .execute_batch(AGENT_SESSION_SCHEMA)
-        .expect("schema");
-    let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
+    let identities = IdentityService::open(&database_path).expect("Identity service");
+    let repository = Arc::new(
+        SqliteAgentSessionRepository::open(&database_path).expect("Agent Session repository"),
+    );
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
     let providers = Arc::new(DeterministicProviders::default());
@@ -68,41 +73,96 @@ fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() 
         Some("codex-test".into()),
     ));
     let runtime_profile = test_selected_runtime_profile();
-    let adapter = AgentSessionEventAdapter::open(
-        &database_path,
-        application.clone(),
-        repository,
-        Arc::new(FixedSelectedRuntimeProfileSource(runtime_profile.clone())),
-    )
-    .expect("Session Event adapter");
+    let profile_source = Arc::new(FixedSelectedRuntimeProfileSource(runtime_profile.clone()));
+    let assigned_definition = identities
+        .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
+        .expect("Identity definition");
+    let adapter = Arc::new(
+        AgentSessionEventAdapter::open(
+            &database_path,
+            application.clone(),
+            repository,
+            profile_source.clone(),
+            identities,
+        )
+        .expect("Session Event adapter"),
+    );
+    let event_store =
+        Arc::new(SqliteSessionEventStore::open(&database_path).expect("Session Event store"));
+    let event_queries = SessionEventQueryApplication::new(event_store.clone());
+    let events = SessionEventApplication::new(adapter.clone(), adapter.clone(), event_store);
+    let profile_application =
+        AgentSessionProfileApplication::new(application.clone(), profile_source);
     let logical_address = SessionLogicalAddress::new(
         reference("workflow_instance", "run-1"),
         reference("workflow_node", "review"),
     );
     let event_group_id = reference("event_group", "create-review");
-    let creation_spec = SessionCreationSpec {
-        logical_address: logical_address.clone(),
-        event_group_id: event_group_id.clone(),
-        created_by_event: event_group_id,
-        created_by_session: None,
-        configuration: SessionCreationConfiguration {
-            contract: ReferenceIdentity::new(
-                "orchestrator.execution_configuration",
-                "session_creation_request",
-                "v1",
-            )
-            .unwrap(),
-            payload: serde_json::to_value(test_session_creation_request())
-                .expect("creation request"),
-        },
-    };
-    let created = SessionDirectory::create_session(&adapter, creation_spec.clone())
-        .expect("create addressed Session");
-    let retried = SessionDirectory::create_session(&adapter, creation_spec)
-        .expect("retry addressed Session creation");
-    assert_eq!(retried, created);
-    let session_id = AgentSessionId::new(created.session.id()).unwrap();
+    let user_request = reference("user_request", "request-review");
+    let created = events
+        .dispatch(SessionEventCommand {
+            event_group_id: event_group_id.clone(),
+            definition_ref: reference("event_definition", "review-user-entry"),
+            trigger: SessionEventTrigger::UserRequest {
+                request: user_request.clone(),
+            },
+            source: SessionEventSource::UserRequest {
+                request: user_request.clone(),
+            },
+            prompt_sources: vec![PromptSource::UserRequestText {
+                request: user_request,
+                text: "Review this plan".into(),
+            }],
+            created_session_prompt_sources: vec![PromptSource::literal(
+                "You are the plan reviewer.",
+            )],
+            creation_configuration: Some(SessionCreationConfiguration {
+                contract: ReferenceIdentity::new(
+                    "orchestrator.execution_configuration",
+                    "session_creation_request",
+                    "v1",
+                )
+                .unwrap(),
+                payload: serde_json::to_value(test_session_creation_request())
+                    .expect("creation request"),
+                assigned_identity: Some(
+                    ReferenceIdentity::new(
+                        "orchestrator.identities",
+                        "identity",
+                        assigned_definition.definition.id.as_str(),
+                    )
+                    .unwrap(),
+                ),
+            }),
+            target: TargetSelection {
+                target: SessionTarget::Logical {
+                    address: logical_address.clone(),
+                },
+                cardinality: TargetCardinality::First,
+                ordering: TargetOrdering::Newest,
+                running: RunningFilter::Any,
+                created_by: None,
+                missing: MissingTargetPolicy::Create,
+            },
+            created_by_session: None,
+            direct_user_options: None,
+        })
+        .expect("creation Session Event");
+    assert_eq!(created.deliveries.len(), 1);
+    assert_eq!(
+        created.group.created_session,
+        Some(created.deliveries[0].target_session.clone())
+    );
+    let created_session = created.deliveries[0].target_session.clone();
+    let session_id = AgentSessionId::new(created_session.id()).unwrap();
     let persisted = application.load_session(&session_id).unwrap().session;
+    assert_eq!(
+        persisted
+            .assigned_identity
+            .as_ref()
+            .map(|identity| identity.display_name.as_str()),
+        Some("Avery")
+    );
     let pinned = persisted.session_profile.as_ref().expect("pinned profile");
     assert_eq!(
         pinned.session_profile().node_capabilities().models,
@@ -112,40 +172,105 @@ fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() 
         pinned.session_profile().attached_runtime_capabilities(),
         &runtime_profile.exposure
     );
+    let pinned_before_message = pinned.clone();
 
-    SessionInvocationDispatcher::dispatch(
-        &adapter,
-        SessionInvocationRequest {
-            event_group_id: reference("event_group", "workflow-delivery"),
-            delivery_id: reference("delivery", "workflow-delivery-1"),
-            target_session: created.session.clone(),
-            source: SessionEventSource::Application {
-                component: reference("component", "workflow"),
+    let follow_up_group = reference("event_group", "workflow-delivery");
+    let application_event = reference("application_event", "plan-ready");
+    let follow_up = events
+        .dispatch(SessionEventCommand {
+            event_group_id: follow_up_group.clone(),
+            definition_ref: reference("event_definition", "review-follow-up"),
+            trigger: SessionEventTrigger::ApplicationEvent {
+                event: application_event.clone(),
             },
-            prompt: "Workflow prompt".into(),
-            initial_prompt: Some("Node initial prompt".into()),
+            source: SessionEventSource::ApplicationEvent {
+                event: application_event.clone(),
+            },
+            prompt_sources: vec![PromptSource::ApplicationEventField {
+                event: application_event,
+                field: "plan".into(),
+                text: "Review the completed plan".into(),
+            }],
+            created_session_prompt_sources: Vec::new(),
+            creation_configuration: None,
+            target: TargetSelection {
+                target: SessionTarget::Logical {
+                    address: logical_address,
+                },
+                cardinality: TargetCardinality::First,
+                ordering: TargetOrdering::Newest,
+                running: RunningFilter::Any,
+                created_by: None,
+                missing: MissingTargetPolicy::Fail,
+            },
+            created_by_session: None,
             direct_user_options: None,
-        },
-    )
-    .expect("Workflow delivery");
-    SessionInvocationDispatcher::dispatch(
-        &adapter,
-        SessionInvocationRequest {
-            event_group_id: reference("event_group", "user-delivery"),
-            delivery_id: reference("delivery", "user-delivery-1"),
-            target_session: created.session,
-            source: SessionEventSource::UserRequest {
-                request: reference("user_request", "request-1"),
-            },
-            prompt: "User prompt".into(),
-            initial_prompt: None,
-            direct_user_options: Some(DirectUserInvocationOptions {
-                model: Some("user-only".into()),
-                reasoning_mode: Some("medium".into()),
-            }),
-        },
-    )
-    .expect("direct-user delivery");
+        })
+        .expect("existing Session Event");
+    assert_eq!(follow_up.group.created_session, None);
+    assert_eq!(follow_up.deliveries[0].target_session, created_session);
+    assert!(follow_up.deliveries[0]
+        .included_created_session_contributions
+        .is_empty());
+    assert_eq!(
+        event_queries
+            .recorded_event(&event_group_id)
+            .unwrap()
+            .unwrap(),
+        created
+    );
+    assert_eq!(
+        event_queries
+            .deliveries_for_session(&created_session)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let queried = profile_application
+        .load_pinned_session_profile(LoadPinnedSessionProfileQuery {
+            session_id: session_id.clone(),
+        })
+        .expect("query pinned Session Profile");
+    assert_eq!(queried.session_id, session_id);
+    assert_eq!(queried.creation_resolution, pinned_before_message);
+
+    let direct_user = profile_application
+        .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            session_id: session_id.clone(),
+            submitted_text: "User prompt".into(),
+            model: Some("user-only".into()),
+            reasoning_mode: Some("medium".into()),
+        })
+        .expect("direct-user message");
+    assert_eq!(
+        direct_user
+            .invocation_resolution
+            .selections
+            .model
+            .as_deref(),
+        Some("user-only")
+    );
+    assert_eq!(
+        direct_user
+            .invocation_resolution
+            .selections
+            .reasoning_mode
+            .as_deref(),
+        Some("medium")
+    );
+    let invalid = profile_application
+        .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            session_id: session_id.clone(),
+            submitted_text: "Invalid selection must not launch".into(),
+            model: Some("not-exposed".into()),
+            reasoning_mode: None,
+        })
+        .expect_err("unavailable direct-user model must fail");
+    assert_eq!(
+        invalid.kind,
+        AgentSessionProfileApplicationErrorKind::InvalidInvocationSelection
+    );
 
     let calls = runtime.calls.lock().unwrap();
     let launches = calls
@@ -155,8 +280,20 @@ fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() 
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(launches.len(), 2);
+    assert_eq!(launches.len(), 3);
+    assert_eq!(
+        launches[0]
+            .launch_extension
+            .as_ref()
+            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
+            .map(|prefix| prefix.content.as_str()),
+        Some("You are the plan reviewer.")
+    );
     assert!(launches[1]
+        .launch_extension
+        .as_ref()
+        .is_none_or(|extension| extension.initial_prompt_prefix.is_none()));
+    assert!(launches[2]
         .launch_extension
         .as_ref()
         .is_some_and(|extension| extension
@@ -165,7 +302,11 @@ fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() 
             .any(|argument| { argument == "model_reasoning_effort=\"medium\"" })));
     drop(calls);
     let history = application.load_session(&session_id).unwrap();
-    assert_eq!(history.invocations.len(), 2);
+    assert_eq!(
+        history.session.session_profile.as_ref(),
+        Some(&pinned_before_message)
+    );
+    assert_eq!(history.invocations.len(), 3);
     assert_eq!(
         history.invocations[0]
             .invocation
@@ -175,7 +316,7 @@ fn session_event_adapter_pins_creation_and_allows_direct_user_runtime_choices() 
         Some("node-default")
     );
     assert_eq!(
-        history.invocations[1]
+        history.invocations[2]
             .invocation
             .requested_options
             .model
@@ -239,6 +380,7 @@ fn test_session_creation_request() -> SessionCreationRequest {
         capability_profile: CapabilityProfile {
             contract_version: 1,
             capability_profile_id: "test-capabilities".into(),
+            name: "Test capabilities".into(),
             revision: 1,
             allowed_capabilities: runtime.exposure,
         },

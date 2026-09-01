@@ -74,6 +74,7 @@ fn capability_profile() -> CapabilityProfile {
     CapabilityProfile {
         contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
         capability_profile_id: "implementation".into(),
+        name: "Implementation".into(),
         revision: 3,
         allowed_capabilities: capabilities(
             &["codex-a", "codex-b"],

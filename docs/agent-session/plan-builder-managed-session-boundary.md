@@ -1,5 +1,10 @@
 # Plan Builder managed Agent Session boundary
 
+Status: description of the existing curated Plan Builder integration. For replacement architecture,
+use [`docs/session-event-model/`](../session-event-model/README.md). In that target, a Workflow node
+and Session creation event replace the mixed Harness/role interpretation; this record remains useful
+for behavior that the later integration may need to preserve or deliberately redesign.
+
 `managedPlanBuilderSessionConfiguration` declares the Plan Builder identity, title derivation, role,
 purpose, durable pre-initiation proposal support, and exactly one MCP tool. It captures the current
 Epic name for the first Agent Session title and falls back to `Epic builder session`; it does not

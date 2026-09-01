@@ -70,6 +70,23 @@ pub(crate) trait SessionEventStore: Send + Sync {
         group: EventGroupRecord,
         deliveries: Vec<EventDeliveryRecord>,
     ) -> Result<(), SessionEventStoreError>;
+
+    fn event_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Option<EventGroupRecord>, SessionEventStoreError>;
+
+    /// Returns deliveries in their recorded ordinal order, or an empty list for an unknown group.
+    fn deliveries_for_group(
+        &self,
+        event_group_id: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError>;
+
+    /// Returns recorded deliveries targeting one Session in persistence order.
+    fn deliveries_for_session(
+        &self,
+        session: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError>;
 }
 
 macro_rules! port_error {

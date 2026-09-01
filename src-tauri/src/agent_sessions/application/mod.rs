@@ -2,6 +2,7 @@
 
 mod lifecycle;
 pub(crate) mod observation;
+mod session_profile;
 mod update_sink;
 
 pub(crate) use lifecycle::{
@@ -14,6 +15,11 @@ pub(crate) use lifecycle::{
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
+pub(crate) use session_profile::{reasoning_launch_extension, runtime_options};
+pub(crate) use session_profile::{
+    AgentSessionProfileApplication, LoadPinnedSessionProfileQuery,
+    SendDirectUserAgentSessionMessageCommand,
+};
 
 #[cfg(test)]
 mod tests;

@@ -9,6 +9,7 @@ use crate::{
         TargetCardinality, TargetOrdering,
     },
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkflowCompilationInput {
@@ -19,16 +20,19 @@ pub(crate) struct WorkflowCompilationInput {
     pub(crate) connections: Vec<WorkflowCompiledConnection>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WorkflowCompiledNode {
     pub(crate) reference: WorkflowNodeReference,
     pub(crate) initial_prompt: Option<String>,
+    pub(crate) assigned_identity: Option<ReferenceIdentity>,
     /// Contains the Capability Profile and the embedded Node Profile that will be resolved only
     /// if the generic Session directory creates this node's Session.
     pub(crate) session_creation: SessionCreationRequest,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WorkflowCompiledConnection {
     pub(crate) reference: WorkflowConnectionReference,
     pub(crate) source_node: WorkflowNodeReference,
@@ -39,7 +43,13 @@ pub(crate) struct WorkflowCompiledConnection {
     pub(crate) target: WorkflowConnectionTargetPlan,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(crate) enum WorkflowConnectionTrigger {
     InvocationCompleted,
     McpCall {
@@ -54,7 +64,13 @@ pub(crate) enum WorkflowConnectionTrigger {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub(crate) enum WorkflowConnectionPromptInput {
     InvocationOutput,
     McpArgument { name: String },
@@ -62,7 +78,8 @@ pub(crate) enum WorkflowConnectionPromptInput {
     ReferencedContent { reference: ReferenceIdentity },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WorkflowConnectionTargetPlan {
     pub(crate) cardinality: TargetCardinality,
     pub(crate) ordering: TargetOrdering,

@@ -1,10 +1,12 @@
 use crate::session_events::{ReferenceIdentity, SessionEventDomainError, SessionLogicalAddress};
+use serde::{Deserialize, Serialize};
 
 const WORKFLOW_REFERENCE_NAMESPACE: &str = "workflow";
 
 macro_rules! workflow_reference {
     ($name:ident, $kind:literal) => {
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        #[serde(transparent)]
         pub(crate) struct $name(ReferenceIdentity);
 
         impl $name {

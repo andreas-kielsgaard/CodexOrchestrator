@@ -330,6 +330,7 @@ fn create_on_missing_pins_configuration_and_uses_initial_prompt_once() {
     create.creation_configuration = Some(SessionCreationConfiguration {
         contract: reference("contract", "session-creation-request-v1"),
         payload: json!({ "capabilityProfile": "capability-v1", "nodeProfile": {} }),
+        assigned_identity: None,
     });
 
     let created = app.dispatch(create).unwrap();
@@ -392,6 +393,7 @@ fn dispatches_a_materialized_application_event_through_the_session_kernel() {
         creation_configuration: Some(SessionCreationConfiguration {
             contract: reference("contract", "session-creation-request-v1"),
             payload: json!({ "capabilityProfile": "capability-v1", "nodeProfile": {} }),
+            assigned_identity: None,
         }),
     };
     let mut fields = BTreeMap::new();
@@ -463,6 +465,110 @@ fn fan_out_retains_contributions_and_partial_delivery_provenance() {
         .iter()
         .all(|request| request.prompt == "one\n\ntwo" && request.initial_prompt.is_none()));
     assert_eq!(store.records().unwrap().len(), 1);
+}
+
+#[test]
+fn query_application_reads_recorded_groups_and_session_linked_deliveries() {
+    let first = entry("first", 2, None, true);
+    let second = entry("second", 1, None, true);
+    let directory = Arc::new(FakeDirectory::with_entries(vec![
+        first.clone(),
+        second.clone(),
+    ]));
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let store = Arc::new(InMemorySessionEventStore::default());
+    let app = application(directory, dispatcher, store.clone());
+
+    app.dispatch(command(
+        "first-group",
+        SessionTarget::Exact {
+            session: first.session.clone(),
+        },
+        MissingTargetPolicy::Fail,
+    ))
+    .unwrap();
+    app.dispatch(command(
+        "second-group",
+        SessionTarget::Exact {
+            session: second.session.clone(),
+        },
+        MissingTargetPolicy::Fail,
+    ))
+    .unwrap();
+
+    let queries = SessionEventQueryApplication::new(store);
+    let group_id = reference("event_group", "first-group");
+    let recorded = queries.recorded_event(&group_id).unwrap().unwrap();
+
+    assert_eq!(recorded.group.event_group_id, group_id);
+    assert_eq!(recorded.deliveries.len(), 1);
+    assert_eq!(recorded.deliveries[0].target_session, first.session);
+    assert_eq!(queries.deliveries_for_group(&group_id).unwrap().len(), 1);
+    assert_eq!(
+        queries
+            .event_group(&reference("event_group", "missing"))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        queries
+            .deliveries_for_session(&second.session)
+            .unwrap()
+            .into_iter()
+            .map(|delivery| delivery.event_group_id)
+            .collect::<Vec<_>>(),
+        vec![reference("event_group", "second-group")]
+    );
+}
+
+#[test]
+fn sqlite_query_application_round_trips_a_fan_out_record() {
+    let temporary = tempfile::tempdir().unwrap();
+    let first = entry("sqlite-first", 2, None, true);
+    let second = entry("sqlite-second", 1, None, true);
+    let directory = Arc::new(FakeDirectory::with_entries(vec![
+        first.clone(),
+        second.clone(),
+    ]));
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let store = Arc::new(
+        SqliteSessionEventStore::open(temporary.path().join("session-events.sqlite")).unwrap(),
+    );
+    let app = SessionEventApplication::new(directory, dispatcher, store.clone());
+    let mut event = command(
+        "sqlite-fanout",
+        SessionTarget::Logical { address: address() },
+        MissingTargetPolicy::Fail,
+    );
+    event.target.cardinality = TargetCardinality::All;
+
+    let dispatched = app.dispatch(event).unwrap();
+    let queries = SessionEventQueryApplication::new(store);
+    let recorded = queries
+        .recorded_event(&reference("event_group", "sqlite-fanout"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(recorded, dispatched);
+    assert_eq!(
+        recorded
+            .deliveries
+            .iter()
+            .map(|delivery| delivery.ordinal)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(
+        queries
+            .deliveries_for_session(&first.session)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(queries
+        .deliveries_for_session(&reference("session", "unrelated"))
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

@@ -1,0 +1,57 @@
+.resolved-value-field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid #dce2dc;
+  border-radius: 8px;
+  background: #f8f9f6;
+}
+
+.resolved-value-field dt {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+  color: #657269;
+  font-size: 0.67rem;
+  font-weight: 820;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.resolved-value-field dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #1f3026;
+  font-size: 0.8rem;
+  font-weight: 720;
+}
+
+.resolved-value-field dd.is-empty {
+  color: #78837c;
+  font-style: italic;
+  font-weight: 620;
+}
+
+.resolved-value-field__states {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.resolved-value-field__states small {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #e5ebe5;
+  font-size: 0.56rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.resolved-value-field__source {
+  color: #7a857e;
+  font-size: 0.64rem;
+}

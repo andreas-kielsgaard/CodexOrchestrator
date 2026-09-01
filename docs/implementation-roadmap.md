@@ -1,9 +1,21 @@
 # Codex Orchestrator Implementation Roadmap
 
-Date: 2026-07-02
+Original date: 2026-07-02
+
+Target update: 2026-09-01
 
 This roadmap describes the product direction and the next implementation layers. For the detailed
 near-term worker sequence, use `docs/first-slice-completion-plan.md`.
+
+## Current execution-configuration target
+
+The working direction for Capability Profiles, Workflow-owned Node Profiles, immutable Session
+Profiles and Session Events is maintained in
+[`docs/session-event-model/`](session-event-model/README.md). Its
+[`delivery sequence`](session-event-model/delivery-sequence.md) supersedes the broad Workflow Engine
+paragraph below when work concerns this overhaul. It is suggestive about implementation mechanics:
+agents should use targeted code evidence to refine the route while preserving the recorded domain
+distinctions and functional-before-UI order.
 
 ## Product Goal
 
@@ -121,8 +133,10 @@ boundary for interactive sessions, approvals, steering, interrupts, and live tur
 
 ### Workflow Engine
 
-Add editable workflows for branch naming, worktree strategy, Codex profile/sandbox settings,
-preflight commands, post-run validation, attention-state transitions, and cleanup policies.
+Develop editable Workflow authoring as an abstraction over Session Event definitions. Nodes embed
+Node Profiles and reference Capability Profiles; connections describe triggers, ordered prompt
+sources and Session target selection. Add further workflow operations only when a concrete product
+use requires them rather than treating this paragraph as a complete feature list.
 
 ### Thread Orientation Metadata
 

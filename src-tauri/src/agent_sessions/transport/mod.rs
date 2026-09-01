@@ -1,6 +1,9 @@
 //! Tauri state, commands, DTO mapping, and persisted update notifications.
 
 mod dto;
+pub(crate) mod profile;
+
+pub(crate) use profile::AgentSessionProfileTauriState;
 
 use self::dto::{
     AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionSummaryDto,

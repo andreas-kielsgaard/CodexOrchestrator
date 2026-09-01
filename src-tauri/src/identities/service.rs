@@ -1,5 +1,5 @@
 use super::{
-    domain::{IdentityDefinition, IdentityId, IdentityShape},
+    domain::{AssignedAgentIdentity, IdentityDefinition, IdentityId, IdentityShape},
     repository::{IdentityCatalogEntry, IdentityRepository, SqliteIdentityRepository},
 };
 use chrono::Utc;
@@ -24,6 +24,17 @@ impl IdentityService {
 
     pub(crate) fn list(&self) -> Result<Vec<IdentityCatalogEntry>, String> {
         self.repository.list()
+    }
+
+    /// Resolves a reusable definition into the immutable value assigned to a Session.
+    pub(crate) fn assignment(
+        &self,
+        identity_id: &IdentityId,
+    ) -> Result<AssignedAgentIdentity, String> {
+        self.repository
+            .find(identity_id)?
+            .map(|entry| entry.definition.assign())
+            .ok_or_else(|| "Identity definition does not exist.".to_string())
     }
 
     pub(crate) fn create(

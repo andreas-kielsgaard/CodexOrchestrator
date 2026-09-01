@@ -2,7 +2,9 @@ mod addressing;
 mod domain;
 mod materialization;
 mod ports;
+mod queries;
 mod repository;
+pub(crate) mod transport;
 
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt, sync::Arc};
@@ -24,7 +26,10 @@ pub(crate) use ports::{
     SessionEventStoreError, SessionInvocationDispatcher, SessionInvocationError,
     SessionInvocationReceipt, SessionInvocationRequest,
 };
-pub(crate) use repository::{InMemorySessionEventStore, SqliteSessionEventStore};
+pub(crate) use queries::SessionEventQueryApplication;
+#[cfg(test)]
+pub(crate) use repository::InMemorySessionEventStore;
+pub(crate) use repository::SqliteSessionEventStore;
 
 pub(crate) struct SessionEventApplication {
     directory: Arc<dyn SessionDirectory>,

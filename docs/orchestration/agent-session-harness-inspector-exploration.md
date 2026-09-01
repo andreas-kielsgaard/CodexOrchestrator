@@ -1,7 +1,12 @@
 # Session-owned Harness Management architecture
 
-Status: recorded product prototype plus a read-only production inspection boundary. Harness
-persistence and runtime enforcement remain deferred.
+Status: historical prototype record, superseded as target architecture by
+[`docs/session-event-model/`](../session-event-model/README.md). This file remains useful for visual
+review history and extraction candidates; its session-owned editable Harness, revision and update
+model should not guide new domain work.
+
+Previously recorded status: recorded product prototype plus a read-only production inspection
+boundary. Harness persistence and runtime enforcement remain deferred.
 
 ## Decision
 

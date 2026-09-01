@@ -1,8 +1,14 @@
 pub(crate) mod address_references;
 pub(crate) mod application;
+pub(crate) mod authoring;
+pub(crate) mod authoring_repository;
+pub(crate) mod authoring_service;
+pub(crate) mod authoring_transport;
 pub(crate) mod compiled_plan;
 pub(crate) mod compiler;
 pub(crate) mod domain;
+pub(crate) mod execution;
+pub(crate) mod execution_transport;
 pub(crate) mod instance_domain;
 pub(crate) mod legacy_node_configuration;
 pub(crate) mod mcp;

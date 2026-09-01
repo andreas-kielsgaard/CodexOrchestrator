@@ -1,17 +1,19 @@
 use super::{
     application::{
-        AgentSessionApplication, AgentSessionOwnership, CreateAgentSessionCommand,
-        SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
+        reasoning_launch_extension, runtime_options, AgentSessionApplication,
+        AgentSessionOwnership, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
+        SendIdempotentApplicationAgentSessionMessageCommand,
     },
-    domain::{AgentInvocationId, AgentRuntimeOptions, AgentSessionId, RuntimeSandboxMode},
+    domain::{AgentInvocationId, AgentSessionId},
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
     repository::SqliteAgentSessionRepository,
 };
 use crate::{
     execution_configuration::{
-        DirectUserInvocationRequest, RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
-        SessionCreationRequest, SessionProfileResolver,
+        DirectUserInvocationRequest, SelectedRuntimeProfileSource, SessionCreationRequest,
+        SessionProfileResolver,
     },
+    identities::{service::IdentityService, IdentityId},
     session_events::{
         ReferenceIdentity, SessionCreationSpec, SessionDirectory, SessionDirectoryEntry,
         SessionDirectoryError, SessionEventSource, SessionInvocationDispatcher,
@@ -56,6 +58,8 @@ const SESSION_REF_KIND: &str = "session";
 const CREATION_REQUEST_NAMESPACE: &str = "orchestrator.execution_configuration";
 const CREATION_REQUEST_KIND: &str = "session_creation_request";
 const CREATION_REQUEST_VERSION: &str = "v1";
+const IDENTITY_REF_NAMESPACE: &str = "orchestrator.identities";
+const IDENTITY_REF_KIND: &str = "identity";
 
 /// The concrete application boundary between generic Session addressing and managed Agent
 /// Sessions. Workflow identities remain opaque references on this side of the port.
@@ -63,6 +67,7 @@ pub(crate) struct AgentSessionEventAdapter {
     application: Arc<AgentSessionApplication>,
     repository: Arc<SqliteAgentSessionRepository>,
     profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    identities: IdentityService,
     connection: Mutex<Connection>,
 }
 
@@ -72,6 +77,7 @@ impl AgentSessionEventAdapter {
         application: Arc<AgentSessionApplication>,
         repository: Arc<SqliteAgentSessionRepository>,
         profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        identities: IdentityService,
     ) -> Result<Self, String> {
         let connection = Connection::open(path)
             .map_err(|error| format!("Unable to open Agent Session address storage: {error}"))?;
@@ -87,6 +93,7 @@ impl AgentSessionEventAdapter {
             application,
             repository,
             profile_source,
+            identities,
             connection: Mutex::new(connection),
         })
     }
@@ -213,6 +220,25 @@ impl SessionDirectory for AgentSessionEventAdapter {
             creation_request,
         )
         .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+        let assigned_identity = request
+            .configuration
+            .assigned_identity
+            .as_ref()
+            .map(|reference| {
+                if reference.namespace() != IDENTITY_REF_NAMESPACE
+                    || reference.kind() != IDENTITY_REF_KIND
+                {
+                    return Err(SessionDirectoryError::new(
+                        "Session creation identity reference has an unsupported contract",
+                    ));
+                }
+                let identity_id = IdentityId::new(reference.id().to_string())
+                    .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+                self.identities
+                    .assignment(&identity_id)
+                    .map_err(SessionDirectoryError::new)
+            })
+            .transpose()?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         let session_id = session_id_for_creation(&request.event_group_id)?;
         let session = self.application.prepare_session_with_id(
@@ -224,7 +250,7 @@ impl SessionDirectory for AgentSessionEventAdapter {
             session_id.clone(),
             AgentSessionOwnership {
                 harness_version: None,
-                assigned_identity: None,
+                assigned_identity,
                 session_profile: Some(resolution.clone()),
             },
         );
@@ -364,13 +390,7 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
             }
         };
         let requested_options = runtime_options(&selections);
-        let mut extension = RuntimeLaunchExtension::default();
-        if let Some(reasoning) = &selections.reasoning_mode {
-            extension.additional_args = vec![
-                "-c".to_string(),
-                format!("model_reasoning_effort=\"{reasoning}\""),
-            ];
-        }
+        let mut extension = reasoning_launch_extension(&selections).unwrap_or_default();
         if let Some(initial_prompt) = initial_prompt {
             extension.initial_prompt_prefix = Some(InitialPromptPrefix {
                 source: format!("session_event:{event_group_id}"),
@@ -550,17 +570,6 @@ fn invocation_id_for_delivery(
         delivery.id().len(),
         delivery.id(),
     ))
-}
-
-fn runtime_options(selections: &RuntimeSelections) -> AgentRuntimeOptions {
-    AgentRuntimeOptions {
-        model: selections.model.clone(),
-        sandbox: selections.sandbox_mode.map(|sandbox| match sandbox {
-            SandboxMode::ReadOnly => RuntimeSandboxMode::ReadOnly,
-            SandboxMode::WorkspaceWrite => RuntimeSandboxMode::WorkspaceWrite,
-            SandboxMode::DangerFullAccess => RuntimeSandboxMode::DangerFullAccess,
-        }),
-    }
 }
 
 #[cfg(test)]
