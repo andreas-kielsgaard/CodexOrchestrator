@@ -18,6 +18,8 @@ mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;
+mod persistence;
+mod product_database;
 mod product_decisions;
 mod runtime;
 mod storage;

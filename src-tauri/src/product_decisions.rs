@@ -9,11 +9,13 @@ use crate::agent_sessions::{
     },
     domain::{AgentInvocationId, AgentRuntimeOptions, AgentSessionId},
 };
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::{path::Path, sync::Mutex};
+#[cfg(test)]
+use std::path::Path;
 use tauri::State;
 use uuid::Uuid;
 
@@ -230,7 +232,7 @@ impl ProductDecisionError {
 }
 
 pub(crate) struct ProductDecisionRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 pub(crate) struct ProductDecisionTauriState {
     repository: Arc<ProductDecisionRepository>,
@@ -557,16 +559,19 @@ fn ensure_correction_initialization(
     }
 }
 impl ProductDecisionRepository {
-    pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, ProductDecisionError> {
-        let connection = Connection::open(path).map_err(|_| ProductDecisionError::Unavailable)?;
-        crate::storage::configure_sqlite_connection(&connection)
-            .map_err(|_| ProductDecisionError::Unavailable)?;
-        connection
-            .execute_batch(PRODUCT_DECISION_SCHEMA)
-            .map_err(|_| ProductDecisionError::Unavailable)?;
-        Ok(Self {
-            connection: Mutex::new(connection),
+    pub(crate) fn new(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
+    #[cfg(test)]
+    fn open(path: impl AsRef<std::path::Path>) -> Result<Self, ProductDecisionError> {
+        let database = ActiveDatabase::open(path, |connection| {
+            connection
+                .execute_batch(PRODUCT_DECISION_SCHEMA)
+                .map_err(|error| error.to_string())
         })
+        .map_err(|_| ProductDecisionError::Unavailable)?;
+        Ok(Self::new(Arc::new(database)))
     }
 
     pub(crate) fn accept(
@@ -576,20 +581,14 @@ impl ProductDecisionRepository {
         validate_input(&input)?;
         let fingerprint =
             serde_json::to_string(&input).map_err(|_| ProductDecisionError::InvalidInput)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.write("accept product decision version", |transaction| {
         if let Some((existing_fingerprint, version_id)) = transaction.query_row("SELECT payload_fingerprint,version_id FROM product_decision_acceptance_commands WHERE idempotency_key=?1", [&input.idempotency_key], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|_| ProductDecisionError::Unavailable)? {
-            return if existing_fingerprint == fingerprint { load_version(&transaction, &version_id) } else { Err(ProductDecisionError::IdempotencyConflict) };
+            return if existing_fingerprint == fingerprint { load_version(transaction, &version_id) } else { Err(ProductDecisionError::IdempotencyConflict) };
         }
-        validate_acceptance_provenance(&transaction, &input.acceptance_provenance)?;
+        validate_acceptance_provenance(transaction, &input.acceptance_provenance)?;
         for evidence in &input.current_actionable_evidence {
             validate_origin(&evidence.origin_reference)?;
-            validate_passage(&transaction, &evidence.destination)?;
+            validate_passage(transaction, &evidence.destination)?;
         }
         for evidence in &input.historical_unresolved_evidence {
             validate_origin(&evidence.origin_reference)?;
@@ -622,7 +621,7 @@ impl ProductDecisionRepository {
         transaction.execute("INSERT INTO product_decision_versions(version_id,decision_id,version,title,statement,intent,acceptance_provenance_json,accepted_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![version_id,input.decision_id,next_version,input.title,input.statement,input.intent,provenance,accepted_at]).map_err(|_| ProductDecisionError::Unavailable)?;
         for evidence in &input.current_actionable_evidence {
             insert_evidence(
-                &transaction,
+                transaction,
                 &version_id,
                 &evidence.evidence_id,
                 "current_agent_passage",
@@ -631,7 +630,7 @@ impl ProductDecisionRepository {
         }
         for evidence in &input.historical_unresolved_evidence {
             insert_evidence(
-                &transaction,
+                transaction,
                 &version_id,
                 &evidence.evidence_id,
                 "historical_unresolved",
@@ -640,11 +639,9 @@ impl ProductDecisionRepository {
         }
         transaction.execute("UPDATE product_decisions SET current_version=?2,updated_at=?3 WHERE decision_id=?1", params![input.decision_id,next_version,accepted_at]).map_err(|_| ProductDecisionError::Unavailable)?;
         transaction.execute("INSERT INTO product_decision_acceptance_commands(idempotency_key,payload_fingerprint,version_id) VALUES(?1,?2,?3)", params![input.idempotency_key,fingerprint,version_id]).map_err(|_| ProductDecisionError::Unavailable)?;
-        let version = load_version(&transaction, &version_id)?;
-        transaction
-            .commit()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        let version = load_version(transaction, &version_id)?;
         Ok(version)
+        }))
     }
 
     pub(crate) fn query(
@@ -654,10 +651,7 @@ impl ProductDecisionRepository {
         if epic_id.trim().is_empty() {
             return Err(ProductDecisionError::InvalidInput);
         }
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.read("query current product decisions", |connection| {
         let mut statement = connection.prepare("SELECT d.decision_id,d.epic_id,v.version_id FROM product_decisions d JOIN product_decision_versions v ON v.decision_id=d.decision_id AND v.version=d.current_version WHERE d.epic_id=?1 ORDER BY d.decision_id").map_err(|_| ProductDecisionError::Unavailable)?;
         let rows = statement
             .query_map([epic_id], |r| {
@@ -675,7 +669,7 @@ impl ProductDecisionRepository {
             decisions.push(ProductDecisionCurrent {
                 decision_id,
                 epic_id,
-                current_version: load_version(&connection, &version_id)?,
+                current_version: load_version(connection, &version_id)?,
                 application_state: "not_applied",
             });
         }
@@ -683,6 +677,7 @@ impl ProductDecisionRepository {
             epic_id: epic_id.into(),
             decisions,
         })
+        }))
     }
 
     pub(crate) fn history(
@@ -690,10 +685,7 @@ impl ProductDecisionRepository {
         epic_id: &str,
         decision_id: &str,
     ) -> Result<Vec<ProductDecisionVersion>, ProductDecisionError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.read("load product decision history", |connection| {
         let exists: Option<()> = connection
             .query_row(
                 "SELECT 1 FROM product_decisions WHERE decision_id=?1 AND epic_id=?2",
@@ -711,11 +703,12 @@ impl ProductDecisionRepository {
             .map_err(|_| ProductDecisionError::Unavailable)?;
         ids.map(|id| {
             load_version(
-                &connection,
+                connection,
                 &id.map_err(|_| ProductDecisionError::Unavailable)?,
             )
         })
         .collect()
+        }))
     }
 
     fn start_correction(
@@ -736,13 +729,7 @@ impl ProductDecisionRepository {
         {
             return Err(ProductDecisionError::InvalidInput);
         }
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.write("start product decision correction", |transaction| {
         let current: Option<i64> = transaction
             .query_row(
                 "SELECT current_version FROM product_decisions WHERE epic_id=?1 AND decision_id=?2",
@@ -763,7 +750,7 @@ impl ProductDecisionRepository {
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?
         {
-            existing.latest_proposal = load_latest_correction_proposal(&transaction, &existing.correction_id)?;
+            existing.latest_proposal = load_latest_correction_proposal(transaction, &existing.correction_id)?;
             return Ok(existing);
         }
         let correction = ProductDecisionCorrectionConversation {
@@ -786,20 +773,16 @@ impl ProductDecisionRepository {
                 params![correction.correction_id, initial_invocation_id, initial_prompt],
             )
             .map_err(|_| ProductDecisionError::Unavailable)?;
-        transaction
-            .commit()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
         Ok(correction)
+        }))
     }
 
     fn load_correction(
         &self,
         correction_id: &str,
     ) -> Result<ProductDecisionCorrectionConversation, ProductDecisionError> {
-        self.connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?
-            .query_row(
+        map_managed(self.database.read("load product decision correction", |connection| {
+            connection.query_row(
                 "SELECT correction_id,epic_id,decision_id,base_version,session_id FROM product_decision_correction_conversations WHERE correction_id=?1",
                 [correction_id],
                 correction_from_row,
@@ -807,16 +790,15 @@ impl ProductDecisionRepository {
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?
             .ok_or(ProductDecisionError::NotFound)
+        }))
     }
 
     fn correction_initialization(
         &self,
         correction_id: &str,
     ) -> Result<ProductDecisionCorrectionInitialization, ProductDecisionError> {
-        self.connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?
-            .query_row(
+        map_managed(self.database.read("load product decision correction initialization", |connection| {
+            connection.query_row(
                 "SELECT initial_invocation_id,initial_prompt FROM product_decision_correction_initializations WHERE correction_id=?1",
                 [correction_id],
                 |row| Ok(ProductDecisionCorrectionInitialization { initial_invocation_id: row.get(0)?, initial_prompt: row.get(1)? }),
@@ -824,16 +806,15 @@ impl ProductDecisionRepository {
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?
             .ok_or(ProductDecisionError::Unavailable)
+        }))
     }
 
     fn correction_acceptance(
         &self,
         proposal_id: &str,
     ) -> Result<ProductDecisionCorrectionAcceptance, ProductDecisionError> {
-        self.connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?
-            .query_row(
+        map_managed(self.database.read("load product decision correction acceptance", |connection| {
+            connection.query_row(
                 "SELECT human_interaction_id,idempotency_key FROM product_decision_correction_acceptances WHERE proposal_id=?1",
                 [proposal_id],
                 |row| Ok(ProductDecisionCorrectionAcceptance { human_interaction_id: row.get(0)?, idempotency_key: row.get(1)? }),
@@ -841,6 +822,7 @@ impl ProductDecisionRepository {
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?
             .ok_or(ProductDecisionError::Unavailable)
+        }))
     }
 
     fn save_correction_proposal(
@@ -858,13 +840,7 @@ impl ProductDecisionRepository {
         {
             return Err(ProductDecisionError::InvalidInput);
         }
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.write("save product decision correction proposal", |transaction| {
         let session_id: String = transaction
             .query_row(
                 "SELECT session_id FROM product_decision_correction_conversations WHERE correction_id=?1",
@@ -877,7 +853,7 @@ impl ProductDecisionRepository {
         if input.proposal_passage.session_id != session_id {
             return Err(ProductDecisionError::InvalidInput);
         }
-        validate_passage(&transaction, &input.proposal_passage)?;
+        validate_passage(transaction, &input.proposal_passage)?;
         let proposal = ProductDecisionCorrectionProposal {
             proposal_id: format!("product-decision-correction-proposal-{}", Uuid::new_v4()),
             correction_id: input.correction_id,
@@ -902,10 +878,8 @@ impl ProductDecisionRepository {
                 ],
             )
             .map_err(|_| ProductDecisionError::Unavailable)?;
-        transaction
-            .commit()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
         Ok(proposal)
+        }))
     }
 
     fn accept_correction_proposal(
@@ -965,10 +939,7 @@ impl ProductDecisionRepository {
         acceptance: &ProductDecisionCorrectionAcceptance,
         proposal: &ProductDecisionCorrectionProposal,
     ) -> Result<Option<ProductDecisionVersion>, ProductDecisionError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.read("replay product decision correction acceptance", |connection| {
         let version_id: Option<String> = connection
             .query_row(
                 "SELECT version_id FROM product_decision_acceptance_commands WHERE idempotency_key=?1",
@@ -980,7 +951,7 @@ impl ProductDecisionRepository {
         let Some(version_id) = version_id else {
             return Ok(None);
         };
-        let version = load_version(&connection, &version_id)?;
+        let version = load_version(connection, &version_id)?;
         match &version.acceptance_provenance {
             AcceptanceProvenance::AgentAssisted {
                 human_interaction_origin:
@@ -1000,6 +971,7 @@ impl ProductDecisionRepository {
             }
             _ => Err(ProductDecisionError::IdempotencyConflict),
         }
+        }))
     }
 
     fn load_correction_proposal(
@@ -1012,10 +984,7 @@ impl ProductDecisionRepository {
         ),
         ProductDecisionError,
     > {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ProductDecisionError::Unavailable)?;
+        map_managed(self.database.read("load product decision correction proposal", |connection| {
         connection
             .query_row(
                 "SELECT p.proposal_id,p.correction_id,p.title,p.statement,p.intent,p.proposal_passage_json,c.correction_id,c.epic_id,c.decision_id,c.base_version,c.session_id FROM product_decision_correction_proposals p JOIN product_decision_correction_conversations c ON c.correction_id=p.correction_id WHERE p.proposal_id=?1",
@@ -1045,6 +1014,17 @@ impl ProductDecisionRepository {
             .optional()
             .map_err(|_| ProductDecisionError::Unavailable)?
             .ok_or(ProductDecisionError::NotFound)
+        }))
+    }
+}
+
+fn map_managed<T>(
+    result: Result<T, ManagedOperationError<ProductDecisionError>>,
+) -> Result<T, ProductDecisionError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(ManagedOperationError::Domain(error)) => Err(error),
+        Err(ManagedOperationError::Infrastructure(_)) => Err(ProductDecisionError::Unavailable),
     }
 }
 

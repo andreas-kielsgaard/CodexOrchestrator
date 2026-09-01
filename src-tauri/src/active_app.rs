@@ -98,36 +98,36 @@ pub(crate) fn run() {
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
-            let connection = crate::storage::open_active_database(&database_path)?;
-            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::open(
-                database_path.clone(),
+            let database = crate::product_database::open(&database_path)?;
+            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::new(
+                database.clone(),
                 app_data_dir.clone(),
-            )?);
+            ));
             let repository = Arc::new(
-                crate::agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
-                    .map_err(|error| error.to_string())?,
+                crate::agent_sessions::repository::SqliteAgentSessionRepository::from_database(
+                    database.clone(),
+                ),
             );
             let orchestration_repository = Arc::new(
-                crate::orchestration::repository::SqliteOrchestrationRepository::open_with_harness_revision_repository(
-                    &database_path,
+                crate::orchestration::repository::SqliteOrchestrationRepository::from_database_with_harness_revision_repository(
+                    database.clone(),
                     crate::storage::harness_revision_repository_path(&app_data_dir),
                 )
                 .map_err(|error| error.to_string())?,
             );
             let product_decisions = Arc::new(
-                crate::product_decisions::ProductDecisionRepository::open(&database_path)
-                    .map_err(|_| "Unable to open Product Decision storage.".to_string())?,
+                crate::product_decisions::ProductDecisionRepository::new(database.clone()),
             );
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
-                &database_path,
+                database.clone(),
                 managed_mcp_upstreams.clone(),
             )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
-                &database_path,
+                database.clone(),
                 app_data_dir.join("execution-workspaces"),
                 orchestration_repository.clone(),
             )
@@ -179,9 +179,11 @@ pub(crate) fn run() {
                 app_data_dir.join("codex-orchestrator.sqlite"),
             ));
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
-                Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
-                    &database_path,
-                )?),
+                Arc::new(
+                    crate::workflows::repository::SqliteWorkflowRepository::from_database(
+                        database.clone(),
+                    ),
+                ),
                 application.clone(),
                 harness_engine.clone(),
             ));
@@ -242,10 +244,9 @@ pub(crate) fn run() {
                     ),
                 );
             let transition_repository = Arc::new(
-                crate::orchestration::bootstrap_transition::SqliteBootstrapTransitionRepository::open(
-                    &database_path,
-                )
-                .map_err(|error| error.to_string())?,
+                crate::orchestration::bootstrap_transition::SqliteBootstrapTransitionRepository::from_database(
+                    database.clone(),
+                ),
             );
             let transition =
                 crate::orchestration::bootstrap_transition::PostConfirmationTransitionService::new(
@@ -253,8 +254,8 @@ pub(crate) fn run() {
                     application.clone(),
                     app_data_dir.join("orchestration-materials"),
                 );
-            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open_with_application_git_authority(
-                &database_path,
+            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::from_database_with_application_git_authority(
+                database.clone(),
                 application.clone(),
             )
             .map_err(|error| error.to_string())?;

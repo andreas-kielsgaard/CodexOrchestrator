@@ -18,11 +18,11 @@ use crate::{
         application::{BindWorkflowSessionHarness, WorkflowSessionHarnessBinder},
         domain::{WorkflowHarnessConfig, WorkflowMcpServerAccess},
     },
+    persistence::ActiveDatabase,
 };
 use chrono::Utc;
 use std::{
     collections::{BTreeMap, HashSet},
-    path::Path,
     sync::{Arc, Mutex},
 };
 use uuid::Uuid;
@@ -143,10 +143,10 @@ pub(crate) struct HarnessEngineService {
 
 impl HarnessEngineService {
     pub(crate) fn open_system(
-        database_path: &Path,
+        database: Arc<ActiveDatabase>,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
     ) -> Result<Arc<Self>, String> {
-        let repository = Arc::new(SqliteHarnessBindingRepository::open(database_path)?);
+        let repository = Arc::new(SqliteHarnessBindingRepository::from_database(database));
         let sidecar = ProcessHarnessSidecar::start_system()?;
         Self::new(repository, sidecar, upstreams)
     }

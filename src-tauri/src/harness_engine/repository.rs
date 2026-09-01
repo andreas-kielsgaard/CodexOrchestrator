@@ -1,6 +1,10 @@
 use super::domain::{HarnessBindingRecord, HarnessBindingStage};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{path::Path, sync::Mutex};
+#[cfg(test)]
+use std::path::Path;
+use std:: sync::Arc;
+
+use crate::persistence::ActiveDatabase;
 
 pub(crate) const HARNESS_BINDING_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS session_harness_bindings (
@@ -48,21 +52,48 @@ pub(crate) trait HarnessBindingRepository: Send + Sync {
 }
 
 pub(crate) struct SqliteHarnessBindingRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteHarnessBindingRepository {
-    pub(crate) fn open(path: &Path) -> Result<Self, String> {
-        let connection = crate::storage::open_active_database(path)?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
-        self.connection
-            .lock()
-            .map_err(|_| "Harness binding storage is unavailable.".to_string())
+    #[cfg(test)]
+    pub(crate) fn new(connection: Connection) -> Result<Self, String> {
+        ActiveDatabase::from_connection( connection, initialize_harness_binding_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub( crate) fn open(path: &Path) -> Result<Self, String> {
+        ActiveDatabase::open(path, initialize_harness_binding_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
+    }
+
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| error.into_string())
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| error.into_string())
     }
 }
 
@@ -75,7 +106,8 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
             return Err("Only a prepared immutable Harness binding can be inserted.".to_string());
         }
         binding.verify_digest()?;
-        self.lock()?
+        self.write("persist prepared Harness binding", |transaction| {
+            transaction
             .execute(
                 "INSERT INTO session_harness_bindings(id,contract_version,session_id,runtime_instance_id,session_instance_token,stage,harness_snapshot,mediation_plan,configuration_digest,harness_token,source_workflow_instance_id,source_recipe_id,source_node_id,prepared_at,bound_at,retired_at) VALUES(?1,'harness-binding/v1',?2,?3,?4,'prepared',?5,?6,?7,NULL,?8,?9,?10,?11,NULL,NULL)",
                 params![
@@ -104,6 +136,7 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
                 }
             })?;
         Ok(())
+    })
     }
 
     fn mark_bound(
@@ -111,9 +144,8 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         binding_id: &str,
         harness_token: &str,
         bound_at: &str,
-    ) -> Result<HarnessBindingRecord, String> {
-        let connection = self.lock()?;
-        let changed = connection
+    ) -> Result<HarnessBindingRecord, String> { self.write("persist bound Harness binding", |transaction| {
+        let changed = transaction
             .execute(
                 "UPDATE session_harness_bindings SET stage='bound',harness_token=?2,bound_at=?3 WHERE id=?1 AND stage='prepared'",
                 params![binding_id, harness_token, bound_at],
@@ -122,14 +154,15 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         if changed != 1 {
             return Err("Harness binding was not in the prepared stage.".to_string());
         }
-        load_binding(&connection, binding_id)?.ok_or_else(|| "Harness binding disappeared.".into())
+        load_binding(transaction, binding_id)?.ok_or_else(|| "Harness binding disappeared.".into())
+    })
     }
 
     fn current_for_session(
         &self,
         session_id: &str,
     ) -> Result<Option<HarnessBindingRecord>, String> {
-        let connection = self.lock()?;
+        self.read("load Session Harness binding", | connection| {
         connection
             .query_row(
                 "SELECT id FROM session_harness_bindings WHERE session_id=?1 AND stage!='retired'",
@@ -141,10 +174,11 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
             .map(|id| load_binding(&connection, &id))
             .transpose()
             .map(Option::flatten)
+    })
     }
 
     fn non_retired(&self) -> Result<Vec<HarnessBindingRecord>, String> {
-        let connection = self.lock()?;
+        self.read("load retained Harness bindings", | connection| {
         let mut statement = connection
             .prepare("SELECT id FROM session_harness_bindings WHERE stage!='retired' ORDER BY prepared_at,id")
             .map_err(|error| format!("Unable to prepare retained Harness bindings: {error}"))?;
@@ -156,15 +190,16 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         drop(statement);
         ids.into_iter()
             .map(|id| {
-                load_binding(&connection, &id)?
+                load_binding(connection, &id)?
                     .ok_or_else(|| "Retained Harness binding disappeared.".to_string())
             })
             .collect()
+    })
     }
 
     fn retire(&self, binding_id: &str, retired_at: &str) -> Result<(), String> {
-        let changed = self
-            .lock()?
+        self.write("retire Harness binding", |transaction| {
+        let changed = transaction
             .execute(
                 "UPDATE session_harness_bindings SET stage='retired',retired_at=?2 WHERE id=?1 AND stage='bound'",
                 params![binding_id, retired_at],
@@ -175,7 +210,15 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
         } else {
             Err("Only a bound Harness binding can be retired.".to_string())
         }
+    })
     }
+}
+
+#[cfg(test)]
+fn initialize_harness_binding_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(HARNESS_BINDING_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness binding storage: {error}"))
 }
 
 fn load_binding(
