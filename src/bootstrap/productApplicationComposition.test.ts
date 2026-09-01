@@ -37,11 +37,14 @@ describe('product application composition', () => {
     }
   });
 
-  it('composes Harness management with the production Identity catalog', () => {
-    const source = readFileSync(resolve('src/bootstrap/productApplicationComposition.ts'), 'utf8');
+  it('mounts replacement execution, Workflow, identity, Session Profile, and event boundaries', () => {
+    const composition = createProductApplicationComposition();
 
-    expect(source).toMatch(
-      /createCanonicalConversationHarnessManagementSource\([\s\S]*tauriAgentSessionClient,[\s\S]*tauriHarnessManagementClient,[\s\S]*tauriIdentityManagementClient,[\s\S]*\)/,
-    );
+    expect(composition.executionConfigurationClient).toBeDefined();
+    expect(composition.workflowAuthoringClient).toBeDefined();
+    expect(composition.identityManagementClient).toBeDefined();
+    expect(composition.agentSessionProfileClient).toBeDefined();
+    expect(composition.sessionEventQueryClient).toBeDefined();
+    expect(composition.agentSessionHarnessManagementSource).toBeUndefined();
   });
 });

@@ -48,3 +48,7 @@ export {
   type PerMessageRuntimeOption,
   type PerMessageRuntimeSelection,
 } from './PerMessageRuntimeControls';
+export {
+  AgentSessionExecutionSettings,
+  type AgentSessionExecutionSettingsProps,
+} from './AgentSessionExecutionSettings';

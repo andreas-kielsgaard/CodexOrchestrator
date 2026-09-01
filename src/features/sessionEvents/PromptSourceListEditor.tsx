@@ -9,6 +9,7 @@ export interface PromptSourceListEditorProps {
   readonly label?: string;
   readonly description?: string;
   readonly disabled?: boolean;
+  readonly allowedKinds?: readonly PromptSourceDefinition['kind'][];
   readonly onChange: (value: PromptSourceDefinition[]) => void;
 }
 
@@ -52,8 +53,17 @@ export function PromptSourceListEditor({
   label = 'Prompt sources',
   description,
   disabled,
+  allowedKinds,
   onChange,
 }: PromptSourceListEditorProps) {
+  const kinds = allowedKinds ?? [
+    'literal',
+    'user_request_text',
+    'invocation_output',
+    'mcp_argument',
+    'application_event_field',
+    'referenced_content',
+  ];
   const updateAt = (index: number, source: PromptSourceDefinition) => {
     onChange(value.map((current, position) => (position === index ? source : current)));
   };
@@ -113,12 +123,11 @@ export function PromptSourceListEditor({
                   updateAt(index, promptSourceForKind(event.target.value as PromptSourceKind))
                 }
               >
-                <option value="literal">Fixed text</option>
-                <option value="user_request_text">User request text</option>
-                <option value="invocation_output">Invocation output</option>
-                <option value="mcp_argument">MCP argument</option>
-                <option value="application_event_field">Application event field</option>
-                <option value="referenced_content">Referenced content</option>
+                {kinds.map((kind) => (
+                  <option value={kind} key={kind}>
+                    {promptSourceName(kind)}
+                  </option>
+                ))}
               </select>
             </label>
             {source.kind === 'literal' && (
@@ -162,8 +171,11 @@ export function PromptSourceListEditor({
       <button
         className="session-event-editor__add"
         type="button"
-        disabled={disabled}
-        onClick={() => onChange([...value, promptSourceForKind('literal')])}
+        onClick={() => {
+          const firstKind = kinds[0];
+          if (firstKind) onChange([...value, promptSourceForKind(firstKind)]);
+        }}
+        disabled={disabled || kinds.length === 0}
       >
         <Plus size={15} aria-hidden="true" />
         Add prompt source

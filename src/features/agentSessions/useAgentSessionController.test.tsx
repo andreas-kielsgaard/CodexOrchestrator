@@ -120,6 +120,28 @@ describe('extracted Agent Session boundaries', () => {
     expect(client.calls).not.toContain('list');
   });
 
+  it('delegates an existing Session message through the injected replacement boundary', async () => {
+    const client = new FakeAgentSessionClient();
+    const sendExistingMessage = vi.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      invocationId: 'profiled-invocation-1',
+    });
+    const { result } = renderHook(() =>
+      useAgentSession(client, { selectedSessionId: 'session-1', sendExistingMessage }),
+    );
+    await waitFor(() => expect(result.current.details).not.toBeNull());
+
+    act(() => result.current.setDraft('Use the pinned profile'));
+    await act(() => result.current.send());
+
+    expect(sendExistingMessage).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      submittedText: 'Use the pinned profile',
+    });
+    expect(client.sent).toEqual([]);
+    expect(client.calls).toContain('reload:session-1');
+  });
+
   it('attributes collection reload failures to the collection without session work', async () => {
     const client = new FakeAgentSessionClient({ listError: new Error('list unavailable') });
     const { result } = renderHook(() => useAgentSessionCollection(client));

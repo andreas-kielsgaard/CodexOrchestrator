@@ -13,6 +13,8 @@ import './sessionEvents.css';
 export interface TargetSelectionEditorProps {
   readonly value: TargetSelection;
   readonly disabled?: boolean;
+  /** Higher-level editors may derive the logical target and expose only matching policy. */
+  readonly hideTargetAddress?: boolean;
   readonly onChange: (value: TargetSelection) => void;
 }
 
@@ -22,7 +24,12 @@ function targetForKind(kind: SessionTarget['kind']): SessionTarget {
     : { kind, session: emptyReference('session') };
 }
 
-export function TargetSelectionEditor({ value, disabled, onChange }: TargetSelectionEditorProps) {
+export function TargetSelectionEditor({
+  value,
+  disabled,
+  hideTargetAddress = false,
+  onChange,
+}: TargetSelectionEditorProps) {
   const setTargetKind = (kind: SessionTarget['kind']) => {
     onChange({
       ...value,
@@ -35,16 +42,18 @@ export function TargetSelectionEditor({ value, disabled, onChange }: TargetSelec
     <fieldset className="session-event-editor" disabled={disabled}>
       <legend>Target Session</legend>
       <div className="session-event-editor__grid">
-        <label className="session-event-editor__field">
-          <span>Address type</span>
-          <select
-            value={value.target.kind}
-            onChange={(event) => setTargetKind(event.target.value as SessionTarget['kind'])}
-          >
-            <option value="logical">Logical address</option>
-            <option value="exact">Exact Session</option>
-          </select>
-        </label>
+        {!hideTargetAddress ? (
+          <label className="session-event-editor__field">
+            <span>Address type</span>
+            <select
+              value={value.target.kind}
+              onChange={(event) => setTargetKind(event.target.value as SessionTarget['kind'])}
+            >
+              <option value="logical">Logical address</option>
+              <option value="exact">Exact Session</option>
+            </select>
+          </label>
+        ) : null}
         <label className="session-event-editor__field">
           <span>Match</span>
           <select
@@ -84,19 +93,19 @@ export function TargetSelectionEditor({ value, disabled, onChange }: TargetSelec
         </label>
       </div>
 
-      {value.target.kind === 'logical' ? (
+      {!hideTargetAddress && value.target.kind === 'logical' ? (
         <LogicalAddressFields
           legend="Logical Session address"
           value={value.target.address}
           onChange={(address) => onChange({ ...value, target: { kind: 'logical', address } })}
         />
-      ) : (
+      ) : !hideTargetAddress && value.target.kind === 'exact' ? (
         <ReferenceIdentityFields
           legend="Exact Session"
           value={value.target.session}
           onChange={(session) => onChange({ ...value, target: { kind: 'exact', session } })}
         />
-      )}
+      ) : null}
 
       <div className="session-event-editor__nested">
         <label className="session-event-editor__check">

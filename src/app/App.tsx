@@ -1,5 +1,10 @@
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
+import type { AgentSessionProfileClient } from '../application/agentSessionProfiles';
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
+import type { ExecutionConfigurationClient } from '../application/executionConfiguration';
+import type { IdentityManagementClient } from '../application/identities';
+import type { SessionEventQueryClient } from '../application/sessionEvents';
+import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -87,10 +92,13 @@ import type {
 import type { WorkflowApplicationClient } from '../application/workflows';
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
 import { WorkflowScreen } from '../features/workflows';
+import { ExecutionConfigurationScreen } from '../features/executionConfiguration';
+import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
 
 export type ApplicationSurface =
   | 'epics'
   | 'workflows'
+  | 'capability-profiles'
   | 'agent-sessions'
   | 'harness-inspector'
   | 'file-review'
@@ -106,6 +114,11 @@ export interface AppProps {
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly workflowClient?: WorkflowApplicationClient;
+  readonly workflowAuthoringClient?: WorkflowAuthoringClient;
+  readonly executionConfigurationClient?: ExecutionConfigurationClient;
+  readonly identityManagementClient?: IdentityManagementClient;
+  readonly agentSessionProfileClient?: AgentSessionProfileClient;
+  readonly sessionEventQueryClient?: SessionEventQueryClient;
   readonly workflowTargetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -157,6 +170,11 @@ export function App({
   managedPlanBuilderAgentIdentity,
   orchestrationClient,
   workflowClient,
+  workflowAuthoringClient,
+  executionConfigurationClient,
+  identityManagementClient,
+  agentSessionProfileClient,
+  sessionEventQueryClient,
   workflowTargetSelector,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
@@ -185,7 +203,8 @@ export function App({
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
-    (initialSurface === 'workflows' && !workflowClient) ||
+    (initialSurface === 'workflows' && !workflowClient && !workflowAuthoringClient) ||
+    (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
     (initialSurface === 'worktree-review' && !humanReviewLauncherView)
@@ -217,7 +236,7 @@ export function App({
         case 'agent_sessions':
           return true;
         case 'workflow':
-          return Boolean(workflowClient);
+          return Boolean(workflowAuthoringClient || workflowClient);
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
           return sameFileReviewNavigationTarget(
@@ -238,6 +257,7 @@ export function App({
       humanReviewLauncherView,
       productDecisionClient,
       workflowClient,
+      workflowAuthoringClient,
     ],
   );
   const initialNavigationDestination: ProductNavigationDestination =
@@ -876,7 +896,7 @@ export function App({
           >
             Orchestration
           </button>
-          {workflowClient ? (
+          {workflowAuthoringClient || workflowClient ? (
             <button
               className={surface === 'workflows' ? 'active' : undefined}
               type="button"
@@ -896,6 +916,19 @@ export function App({
               }}
             >
               Workflow
+            </button>
+          ) : null}
+          {executionConfigurationClient ? (
+            <button
+              className={surface === 'capability-profiles' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'capability-profiles' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                setSurface('capability-profiles');
+              }}
+            >
+              Capability Profiles
             </button>
           ) : null}
           <button
@@ -1060,6 +1093,17 @@ export function App({
           onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
           onPublishProductDecision={openProductDecisionPublish}
         />
+      ) : surface === 'capability-profiles' && executionConfigurationClient ? (
+        <ExecutionConfigurationScreen client={executionConfigurationClient} />
+      ) : surface === 'workflows' &&
+        workflowAuthoringClient &&
+        executionConfigurationClient &&
+        currentProductDestination.kind === 'workflow' ? (
+        <WorkflowAuthoringScreen
+          client={workflowAuthoringClient}
+          executionConfigurationClient={executionConfigurationClient}
+          identityClient={identityManagementClient}
+        />
       ) : surface === 'workflows' &&
         workflowClient &&
         currentProductDestination.kind === 'workflow' ? (
@@ -1106,6 +1150,8 @@ export function App({
         <StandaloneAgentSessionScreen
           client={agentSessionClient}
           harnessManagementSource={agentSessionHarnessManagementSource}
+          profileClient={agentSessionProfileClient}
+          sessionEventQueryClient={sessionEventQueryClient}
           agentIdentityForSession={agentIdentityForSession}
           orchestrations={
             orchestrationLoad.kind === 'ready' ? orchestrationLoad.readModels : undefined

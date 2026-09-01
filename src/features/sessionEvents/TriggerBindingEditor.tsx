@@ -6,6 +6,9 @@ import './sessionEvents.css';
 export interface TriggerBindingEditorProps {
   readonly value: SessionEventTriggerBinding;
   readonly disabled?: boolean;
+  /** Workflow connections derive this address from their source node. */
+  readonly hideInvocationSourceAddress?: boolean;
+  readonly allowedKinds?: readonly SessionEventTriggerBinding['kind'][];
   readonly onChange: (value: SessionEventTriggerBinding) => void;
 }
 
@@ -30,7 +33,20 @@ function triggerForKind(kind: TriggerKind): SessionEventTriggerBinding {
   }
 }
 
-export function TriggerBindingEditor({ value, disabled, onChange }: TriggerBindingEditorProps) {
+export function TriggerBindingEditor({
+  value,
+  disabled,
+  hideInvocationSourceAddress = false,
+  allowedKinds,
+  onChange,
+}: TriggerBindingEditorProps) {
+  const kinds = allowedKinds ?? [
+    'user_request',
+    'invocation_completed',
+    'mcp_call',
+    'application_event',
+    'event_group_completed',
+  ];
   return (
     <fieldset className="session-event-editor" disabled={disabled}>
       <legend>Trigger</legend>
@@ -40,15 +56,15 @@ export function TriggerBindingEditor({ value, disabled, onChange }: TriggerBindi
           value={value.kind}
           onChange={(event) => onChange(triggerForKind(event.target.value as TriggerKind))}
         >
-          <option value="user_request">User request</option>
-          <option value="invocation_completed">Invocation completed</option>
-          <option value="mcp_call">MCP call</option>
-          <option value="application_event">Application event</option>
-          <option value="event_group_completed">Event group completed</option>
+          {kinds.map((kind) => (
+            <option value={kind} key={kind}>
+              {triggerKindLabel(kind)}
+            </option>
+          ))}
         </select>
       </label>
 
-      {value.kind === 'invocation_completed' && (
+      {value.kind === 'invocation_completed' && !hideInvocationSourceAddress && (
         <div className="session-event-editor__nested">
           <label className="session-event-editor__check">
             <input
@@ -105,4 +121,19 @@ export function TriggerBindingEditor({ value, disabled, onChange }: TriggerBindi
       )}
     </fieldset>
   );
+}
+
+function triggerKindLabel(kind: TriggerKind): string {
+  switch (kind) {
+    case 'user_request':
+      return 'User request';
+    case 'invocation_completed':
+      return 'Invocation completed';
+    case 'mcp_call':
+      return 'MCP call';
+    case 'application_event':
+      return 'Application event';
+    case 'event_group_completed':
+      return 'Event group completed';
+  }
 }

@@ -1004,6 +1004,36 @@
     transform 120ms ease;
 }
 
+.agent-session-execution-settings {
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dde2dc;
+  background: #f5f7f3;
+}
+
+.agent-session-execution-settings > .collapsible-section > .collapsible-section__content {
+  display: grid;
+  gap: 14px;
+  max-height: min(68vh, 680px);
+  padding: 12px 2px 4px;
+  overflow: auto;
+}
+
+.agent-session-execution-settings__unavailable {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid #dde2dc;
+  background: #f5f7f3;
+  color: #5f6d65;
+  font-size: 0.72rem;
+}
+
+.agent-session-execution-settings__unavailable small {
+  color: #7a6e67;
+}
+
 .composer-send-action:hover .composer-keyboard-tooltip,
 .composer-send-action:focus-within .composer-keyboard-tooltip {
   opacity: 1;

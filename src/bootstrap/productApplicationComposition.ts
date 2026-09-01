@@ -17,33 +17,33 @@ import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/o
 import { createTauriEpicInitiationConfirmationClient } from '../infrastructure/orchestrations/tauriEpicInitiationConfirmation';
 import { tauriEpicBootstrapTransitionClient } from '../infrastructure/orchestrations/tauriEpicBootstrapTransition';
 import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrations/tauriSprintRunnerTransition';
-import { createCanonicalConversationHarnessManagementSource } from '../infrastructure/conversationHarnesses/canonicalConversationHarnessManagementSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
-import { tauriHarnessManagementClient } from '../infrastructure/harnesses/tauriHarnessManagementClient';
 import { tauriIdentityManagementClient } from '../infrastructure/identities';
+import { tauriExecutionConfigurationClient } from '../infrastructure/executionConfiguration/tauriExecutionConfigurationClient';
+import { tauriWorkflowAuthoringClient } from '../infrastructure/workflowAuthoring/tauriWorkflowAuthoringClient';
+import { tauriAgentSessionProfileClient } from '../infrastructure/agentSessionProfiles/tauriAgentSessionProfileClient';
+import { tauriSessionEventQueryClient } from '../infrastructure/sessionEvents/tauriSessionEventQueryClient';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
-import { tauriWorkflowClient } from '../infrastructure/workflows/tauriWorkflowClient';
 import { DiscoveredWorktreeTargetSelector } from '../features/worktreeTargetsTemp/DiscoveredWorktreeTargetSelector';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
-    workflowClient: tauriWorkflowClient,
+    workflowAuthoringClient: tauriWorkflowAuthoringClient,
+    executionConfigurationClient: tauriExecutionConfigurationClient,
+    identityManagementClient: tauriIdentityManagementClient,
+    agentSessionProfileClient: tauriAgentSessionProfileClient,
+    sessionEventQueryClient: tauriSessionEventQueryClient,
     workflowTargetSelector: DiscoveredWorktreeTargetSelector,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
-    ),
-    agentSessionHarnessManagementSource: createCanonicalConversationHarnessManagementSource(
-      tauriAgentSessionClient,
-      tauriHarnessManagementClient,
-      tauriIdentityManagementClient,
     ),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
