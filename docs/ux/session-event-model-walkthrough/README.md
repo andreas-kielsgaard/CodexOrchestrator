@@ -1,24 +1,31 @@
 # Session Event model UI walkthrough
 
-Review status: the first deck was rejected for unclear text and incomplete UI coverage. The
-rewrite paused after review exposed the missing flow canvas and Workflow instance controls.
-Screenshots 11 and 12 are additional captures and are not yet in the deck. This folder preserves
-the work in progress; it does not record UI acceptance.
+The current walkthrough is `output/Session Event UI Demo Walkthrough v7.pptx`.
+It covers the merged UI screen by screen, using captures from the local browser fixture.
 
-This folder contains a screenshot-led presentation of the mounted replacement UI.
+The merged branch now shows:
 
-Suggested walkthrough order:
+1. Capability Profile list, details, and allowed capabilities.
+2. The Workflow flow canvas with node and connection editing.
+3. Node copy, prompt, capability, and pinned default sections.
+4. Connection triggers, ordered prompt sources, and Session addressing.
+5. Workflow instance creation, saved instances, and Sessions inside an instance.
+6. Per-message model and reasoning controls.
+7. Session Profile details, delivery records, and Agent identity editing.
+8. The older Harness Management screen that still remains in the product.
 
-1. Capability Profile and selected runtime exposure.
-2. Workflow node prompt, restrictions, and pinned defaults.
-3. Connection trigger, prompt materialization, and Session addressing.
-4. Explicit compile-versus-dispatch boundary.
-5. Pinned Session Profile, message-local model/reasoning controls, and delivery provenance.
+The deck also marks the main visible problems:
 
-Evidence labels matter:
+- Some connection checkboxes are too large and sit too far from their labels.
+- Open Session settings are covered by the fixed conversation and composer layers.
+- Long delivery IDs wrap badly in the narrow instance column.
+- Harness Management still overlaps in purpose with the new profile screens.
 
-- `LIVE AUTHORING STATE` was captured from ordinary authoring data in the isolated desktop demo.
-- `SEEDED FIXTURE` was captured from one fictional persisted Session record created only to exercise the inspection UI without invoking a provider.
-- No Workflow request or Agent Session message was dispatched while producing the captures.
+Evidence limits:
 
-The presentation speaker notes contain a concise talk track for each slide.
+- The screenshots use the real React screens with local fake clients.
+- No live provider call was made.
+- The desktop-native window and real persistence were not tested in this walkthrough.
+
+The source captures are in `screenshots/merged-2026-09-07`. The presentation speaker notes
+give a short description for each slide.
