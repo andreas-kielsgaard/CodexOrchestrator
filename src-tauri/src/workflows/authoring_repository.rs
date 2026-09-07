@@ -22,6 +22,11 @@ pub(crate) trait WorkflowAuthoringRepository: Send + Sync {
     fn create(&self, draft: &WorkflowRecipeDraft) -> Result<WorkflowRecipeState, String>;
     fn save_draft(&self, draft: &WorkflowRecipeDraft) -> Result<WorkflowRecipeState, String>;
     fn activate(&self, recipe_id: &str) -> Result<WorkflowRecipeState, String>;
+    fn activate_revision(
+        &self,
+        recipe_id: &str,
+        expected_revision: u64,
+    ) -> Result<WorkflowRecipeState, String>;
 }
 
 pub(crate) struct SqliteWorkflowAuthoringRepository {
@@ -124,30 +129,49 @@ impl WorkflowAuthoringRepository for SqliteWorkflowAuthoringRepository {
         let changed = connection
             .execute(
                 "UPDATE workflow_recipe_authoring \
-                 SET draft_json=?2,updated_at=?3 WHERE recipe_id=?1",
+                 SET draft_json=?2,updated_at=?3 WHERE recipe_id=?1 AND json_extract(draft_json,'$.revision')=?4",
                 params![
                     draft.recipe_id,
                     encode_draft(draft)?,
-                    Utc::now().to_rfc3339()
+                    Utc::now().to_rfc3339(), draft.revision - 1
                 ],
             )
             .map_err(storage_error("save Workflow recipe draft"))?;
-        expect_one(changed, "Workflow recipe does not exist")?;
+        expect_one(
+            changed,
+            "Workflow recipe changed or was removed. Reload before saving again.",
+        )?;
         load_state(&connection, &draft.recipe_id)?.ok_or_else(|| {
             "Workflow recipe disappeared immediately after its draft was saved".to_string()
         })
     }
 
     fn activate(&self, recipe_id: &str) -> Result<WorkflowRecipeState, String> {
+        let revision = self
+            .load(recipe_id)?
+            .ok_or("Workflow recipe is missing")?
+            .draft
+            .revision;
+        self.activate_revision(recipe_id, revision)
+    }
+
+    fn activate_revision(
+        &self,
+        recipe_id: &str,
+        expected_revision: u64,
+    ) -> Result<WorkflowRecipeState, String> {
         let connection = self.lock()?;
         let changed = connection
             .execute(
                 "UPDATE workflow_recipe_authoring \
-                 SET active_json=draft_json,updated_at=?2 WHERE recipe_id=?1",
-                params![recipe_id, Utc::now().to_rfc3339()],
+                 SET active_json=draft_json,updated_at=?2 WHERE recipe_id=?1 AND json_extract(draft_json,'$.revision')=?3",
+                params![recipe_id, Utc::now().to_rfc3339(), expected_revision],
             )
             .map_err(storage_error("activate Workflow recipe"))?;
-        expect_one(changed, "Workflow recipe does not exist")?;
+        expect_one(
+            changed,
+            "Saved Workflow draft changed or was removed. Reload before activating.",
+        )?;
         load_state(&connection, recipe_id)?
             .ok_or_else(|| "Workflow recipe disappeared immediately after activation".to_string())
     }

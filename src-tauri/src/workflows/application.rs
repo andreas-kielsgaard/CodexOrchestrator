@@ -891,23 +891,7 @@ fn project_connection_activation(
 }
 
 fn validate_target(target: &ResolvedRepoBranchWorktreeTarget) -> Result<(), String> {
-    for (value, label) in [
-        (&target.repository.id, "repository ID"),
-        (&target.repository.name, "repository name"),
-        (
-            &target.repository.git_common_directory,
-            "repository Git identity",
-        ),
-        (&target.branch.id, "branch ID"),
-        (&target.branch.name, "branch name"),
-        (&target.worktree.id, "worktree ID"),
-        (&target.worktree.path, "worktree path"),
-    ] {
-        if value.trim().is_empty() {
-            return Err(format!("A Workflow instance target {label} is required."));
-        }
-    }
-    Ok(())
+    target.validate()
 }
 
 fn summarize(value: &str) -> String {

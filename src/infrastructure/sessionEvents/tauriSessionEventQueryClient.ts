@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   EventDeliveryRecordDto,
   EventGroupRecordDto,
@@ -12,6 +13,7 @@ export function createTauriSessionEventQueryClient(
   invokeCommand: SessionEventInvoke = invoke,
 ): SessionEventQueryClient {
   return {
+    subscribeRecorded: (listener) => listen('session-event-recorded', listener),
     loadEventGroup: (eventGroupId) =>
       invokeCommand<EventGroupRecordDto | null>('load_session_event_group', {
         query: { eventGroupId },

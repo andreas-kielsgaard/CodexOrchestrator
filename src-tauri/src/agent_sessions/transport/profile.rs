@@ -37,6 +37,38 @@ pub(crate) struct SendDirectUserAgentSessionMessageInput {
     reasoning_mode: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StartDirectUserAgentSessionInput {
+    submitted_text: String,
+    title: Option<String>,
+    working_directory: Option<String>,
+    model: Option<String>,
+    reasoning_mode: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) fn start_direct_user_agent_session(
+    state: State<'_, AgentSessionProfileTauriState>,
+    input: StartDirectUserAgentSessionInput,
+) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
+    let result = state
+        .application
+        .start_direct_user_session(
+            input.submitted_text,
+            input.title,
+            input.working_directory,
+            input.model,
+            input.reasoning_mode,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(SendDirectUserAgentSessionMessageResultDto {
+        session_id: result.acknowledgement.session_id,
+        invocation_id: result.acknowledgement.invocation_id,
+        invocation_resolution: result.invocation_resolution,
+    })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PinnedAgentSessionProfileDto {

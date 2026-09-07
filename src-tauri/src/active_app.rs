@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 struct ManagedPlanBuilderNotifier {
     inner: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier>,
@@ -25,6 +25,8 @@ struct ManagedPlanBuilderNotifier {
         >,
     >,
     workflow: Arc<Mutex<Option<Weak<crate::workflows::application::WorkflowApplication>>>>,
+    workflow_execution:
+        Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -39,6 +41,16 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
             self.registry.on_terminal(invocation);
         }
         let workflow = self.workflow.lock().ok().and_then(|slot| slot.clone());
+        let execution = self
+            .workflow_execution
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .and_then(|service| service.upgrade());
+        if let Some(execution) = execution {
+            // Handoff failures have their own stored attempt; never relabel the sender's result.
+            let _ = execution.on_agent_notification(&notification);
+        }
         if let Some(workflow) = workflow.and_then(|application| application.upgrade()) {
             // Workflow execution is a best-effort callback after the sender's terminal fact is
             // durable. Its failure must not change or obscure that Agent Session completion.
@@ -149,6 +161,7 @@ pub(crate) fn run() {
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
             let workflow_notification = Arc::new(Mutex::new(None));
+            let workflow_execution_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -160,6 +173,7 @@ pub(crate) fn run() {
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow: workflow_notification.clone(),
+                    workflow_execution: workflow_execution_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
@@ -174,7 +188,9 @@ pub(crate) fn run() {
                 )
                 .with_native_profile_launch_authority(native_profiles.clone())
                 .with_session_harness_version_resolver(Arc::new(harness_catalog.clone()))
-                .with_session_harness_launch_authority(harness_engine.clone()),
+                .with_session_harness_launch_authority(Arc::new(crate::harness_engine::session_binding::SessionProfileHarnessAuthority {
+                    engine: harness_engine.clone(), sessions: repository.clone(),
+                })),
             );
             application
                 .reconcile_startup()
@@ -184,6 +200,8 @@ pub(crate) fn run() {
                     native_profiles.clone(),
                     crate::execution_configuration::NativeCodexCapabilityExposure {
                         capabilities: crate::execution_configuration::CapabilitySet {
+                            // This tool is supplied by the application, not discovered in Codex.
+                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string()].into_iter().collect())].into_iter().collect(),
                             models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
                                 .into_iter()
                                 .collect(),
@@ -217,20 +235,23 @@ pub(crate) fn run() {
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::open(
                     &database_path,
                     application.clone(),
-                    repository,
+                    repository.clone(),
                     selected_runtime_profile.clone(),
                     identities.clone(),
-                )?,
+                )?.with_capability_profiles(capability_profiles.clone()),
             );
             let session_event_store = Arc::new(
                 crate::session_events::SqliteSessionEventStore::open(&database_path)
                     .map_err(|error| error.to_string())?,
             );
+            let event_app_handle = app.handle().clone();
             let session_events = Arc::new(crate::session_events::SessionEventApplication::new(
                 session_event_adapter.clone(),
-                session_event_adapter,
+                session_event_adapter.clone(),
                 session_event_store.clone(),
-            ));
+            ).with_record_observer(Arc::new(move |result| {
+                let _ = event_app_handle.emit("session-event-recorded", &result.group.event_group_id);
+            })));
             let session_event_queries = Arc::new(
                 crate::session_events::SessionEventQueryApplication::new(session_event_store),
             );
@@ -272,14 +293,16 @@ pub(crate) fn run() {
                     workflow_authoring.clone(),
                 ),
             );
-            app.manage(
-                crate::workflows::execution_transport::WorkflowExecutionTauriState::new(Arc::new(
-                    crate::workflows::execution::WorkflowExecutionService::new(
-                        workflow_authoring,
-                        session_events,
-                    ),
-                )),
-            );
+            let instance_app_handle = app.handle().clone();
+            let workflow_execution = Arc::new(crate::workflows::execution::WorkflowExecutionService::new(
+                workflow_authoring, session_events,
+                Arc::new(crate::workflows::instances::WorkflowInstanceStore::open(&database_path)?),
+                session_event_adapter, repository.clone(),
+            ).with_record_observer(Arc::new(move |instance_id| {
+                let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
+            })));
+            *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
+            app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
                 Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
                     &database_path,
@@ -291,7 +314,7 @@ pub(crate) fn run() {
                 ),
             ));
             let (workflow_mcp, workflow_mcp_owner) =
-                crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;
+                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&workflow_execution))?;
             let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
             if let Err(workflow_mcp_owner) = managed_mcp_upstreams
                 .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
@@ -498,6 +521,10 @@ pub(crate) fn run() {
             crate::execution_configuration::transport::update_capability_profile,
             crate::execution_configuration::transport::delete_capability_profile,
             crate::session_events::transport::load_session_event_group,
+            crate::agent_sessions::transport::profile::start_direct_user_agent_session,
+            crate::workflows::execution_transport::create_workflow_recipe_instance,
+            crate::workflows::execution_transport::list_workflow_recipe_instances,
+            crate::workflows::execution_transport::load_workflow_recipe_instance,
             crate::session_events::transport::load_recorded_session_event,
             crate::session_events::transport::list_session_event_deliveries_for_group,
             crate::session_events::transport::list_session_event_deliveries_for_session,

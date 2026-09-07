@@ -206,13 +206,21 @@ fn create_target(
 fn creation_configuration(
     node: &WorkflowCompiledNode,
 ) -> Result<SessionCreationConfiguration, WorkflowCompilationError> {
+    let (kind, payload) = match &node.session_creation {
+        super::compiled_plan::WorkflowSessionCreation::ResolvedInput(request) => {
+            (CREATION_CONFIGURATION_KIND, serde_json::to_value(request))
+        }
+        super::compiled_plan::WorkflowSessionCreation::AtBirth(intent) => {
+            ("session_creation_intent", serde_json::to_value(intent))
+        }
+    };
     Ok(SessionCreationConfiguration {
         contract: ReferenceIdentity::new(
             CREATION_CONFIGURATION_NAMESPACE,
-            CREATION_CONFIGURATION_KIND,
+            kind,
             CREATION_CONFIGURATION_VERSION,
         )?,
-        payload: serde_json::to_value(&node.session_creation).map_err(|error| {
+        payload: payload.map_err(|error| {
             WorkflowCompilationError::Encoding(format!(
                 "Unable to encode Workflow node Session creation request: {error}"
             ))
@@ -442,28 +450,35 @@ mod tests {
             reference: WorkflowNodeReference::new(id).unwrap(),
             initial_prompt: initial_prompt.map(str::to_string),
             assigned_identity: None,
-            session_creation: SessionCreationRequest {
-                contract_version: 1,
-                capability_profile: CapabilityProfile {
+            session_creation: super::super::compiled_plan::WorkflowSessionCreation::ResolvedInput(
+                SessionCreationRequest {
                     contract_version: 1,
-                    capability_profile_id: format!("{id}-capabilities"),
-                    name: format!("{id} capabilities"),
-                    revision: 1,
-                    allowed_capabilities: CapabilitySet::default(),
+                    capability_profile: CapabilityProfile {
+                        contract_version: 1,
+                        capability_profile_id: format!("{id}-capabilities"),
+                        name: format!("{id} capabilities"),
+                        revision: 1,
+                        allowed_capabilities: CapabilitySet::default(),
+                    },
+                    node_profile: NodeProfile {
+                        contract_version: 1,
+                        allowed_capabilities: CapabilitySet::default(),
+                        pinned_defaults: RuntimeSelections::default(),
+                    },
                 },
-                node_profile: NodeProfile {
-                    contract_version: 1,
-                    allowed_capabilities: CapabilitySet::default(),
-                    pinned_defaults: RuntimeSelections::default(),
-                },
-            },
+            ),
         }
     }
 
     fn assert_creation_payload(
         definition: &SessionEventDefinition,
-        expected: &SessionCreationRequest,
+        expected: &super::super::compiled_plan::WorkflowSessionCreation,
     ) {
+        let super::super::compiled_plan::WorkflowSessionCreation::ResolvedInput(expected) =
+            expected
+        else {
+            panic!("expected inline preview")
+        };
         let configuration = definition
             .creation_configuration
             .as_ref()

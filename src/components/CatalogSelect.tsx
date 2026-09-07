@@ -39,6 +39,7 @@ export function CatalogSingleSelect<T extends string>({
   onChange,
 }: CatalogSingleSelectProps<T>) {
   const unavailable = catalog.availability === 'unavailable';
+  const missing = value !== null && !catalog.options.some((option) => option.value === value);
 
   return (
     <label className="catalog-field">
@@ -47,9 +48,15 @@ export function CatalogSingleSelect<T extends string>({
         aria-label={label}
         value={value ?? ''}
         disabled={disabled || unavailable}
+        aria-invalid={missing || undefined}
         onChange={(event) => onChange((event.currentTarget.value || null) as T | null)}
       >
         <option value="">{emptyLabel}</option>
+        {missing ? (
+          <option value={value!} disabled>
+            {value} (unavailable)
+          </option>
+        ) : null}
         {catalog.options.map((option) => (
           <option key={option.value} value={option.value} disabled={option.disabled}>
             {option.label}
@@ -57,6 +64,11 @@ export function CatalogSingleSelect<T extends string>({
         ))}
       </select>
       <CatalogFieldSupport catalog={catalog} hint={hint} />
+      {missing ? (
+        <span className="catalog-field__support is-unavailable" role="alert">
+          {label} is not available. Choose another value.
+        </span>
+      ) : null}
     </label>
   );
 }

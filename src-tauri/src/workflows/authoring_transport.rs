@@ -31,6 +31,13 @@ pub(crate) struct LoadWorkflowRecipeInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ActivateWorkflowRecipeInput {
+    recipe_id: String,
+    expected_revision: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveWorkflowRecipeDraftInput {
     draft: WorkflowRecipeDraft,
 }
@@ -98,9 +105,11 @@ pub(crate) fn copy_workflow_node_configuration(
 #[tauri::command]
 pub(crate) fn activate_workflow_recipe(
     state: State<'_, WorkflowAuthoringTauriState>,
-    input: LoadWorkflowRecipeInput,
+    input: ActivateWorkflowRecipeInput,
 ) -> Result<WorkflowRecipeState, String> {
-    state.service.activate(&input.recipe_id)
+    state
+        .service
+        .activate_revision(&input.recipe_id, input.expected_revision)
 }
 
 #[tauri::command]

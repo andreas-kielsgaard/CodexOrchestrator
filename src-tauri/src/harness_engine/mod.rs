@@ -16,3 +16,4 @@ pub(crate) use service::{
     HarnessEngineService, HarnessEngineTauriState, ManagedMcpUpstreamOwner,
     ManagedMcpUpstreamRegistry,
 };
+pub(crate) mod session_binding;

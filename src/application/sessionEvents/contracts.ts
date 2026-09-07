@@ -177,6 +177,7 @@ export interface SessionEventResultDto {
 }
 
 export interface SessionEventQueryClient {
+  subscribeRecorded?(listener: () => void): Promise<() => void>;
   loadEventGroup(eventGroupId: ReferenceIdentityDto): Promise<EventGroupRecordDto | null>;
   loadRecordedEvent(eventGroupId: ReferenceIdentityDto): Promise<SessionEventResultDto | null>;
   listDeliveriesForGroup(

@@ -103,7 +103,7 @@ export interface WorkflowAuthoringClient {
   createRecipe(name: string): Promise<WorkflowRecipeStateDto>;
   saveDraft(draft: WorkflowRecipeDraftDto): Promise<WorkflowRecipeStateDto>;
   copyNodeConfiguration(input: CopyWorkflowNodeConfigurationInput): Promise<WorkflowRecipeStateDto>;
-  activateRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
+  activateRecipe(recipeId: string, expectedRevision: number): Promise<WorkflowRecipeStateDto>;
   compileRecipeInstance(
     recipeId: string,
     instanceId: string,

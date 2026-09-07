@@ -154,6 +154,14 @@ impl SessionProfileResolver {
     ) -> Result<SessionCreationResolution, ResolutionError> {
         validate_creation_request(&request)?;
         let runtime_profile = source.selected_runtime_profile()?;
+        Self::resolve_snapshot(runtime_profile, request)
+    }
+
+    pub(crate) fn resolve_snapshot(
+        runtime_profile: RuntimeProfileSnapshot,
+        request: SessionCreationRequest,
+    ) -> Result<SessionCreationResolution, ResolutionError> {
+        validate_creation_request(&request)?;
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;

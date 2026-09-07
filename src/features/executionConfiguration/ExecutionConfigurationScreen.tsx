@@ -1,5 +1,7 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DraftWorkspace } from '../../components/draftWorkspace';
+import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
@@ -12,6 +14,7 @@ import './mountedExecutionConfiguration.css';
 
 export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
+  readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
 }
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
@@ -45,11 +48,22 @@ function newDraft(runtime: RuntimeProfileSnapshotDto): CapabilityProfileDraft {
   };
 }
 
-export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationScreenProps) {
+export function ExecutionConfigurationScreen({
+  client,
+  workspace: providedWorkspace,
+}: ExecutionConfigurationScreenProps) {
+  const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
+  const workspace = providedWorkspace ?? localWorkspace;
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
+  const selectedRef = useRef(selectedId);
+  const editDraft = (next: CapabilityProfileDraft) => {
+    workspace.edit(selectedRef.current ?? '$new', next);
+    setDraft(next);
+  };
+  useDraftCloseWarning(() => workspace.dirty());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,17 +78,26 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
       ]);
       setRuntime(nextRuntime);
       setProfiles(nextProfiles);
-      const selected =
-        nextProfiles.find((profile) => profile.capabilityProfileId === selectedId) ??
-        nextProfiles[0];
+      const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
+      const selected = hasNewDraft
+        ? undefined
+        : (nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current) ??
+          nextProfiles[0]);
       setSelectedId(selected?.capabilityProfileId ?? null);
-      setDraft(selected ? draftFromProfile(selected) : newDraft(nextRuntime));
+      selectedRef.current = selected?.capabilityProfileId ?? null;
+      workspace.selectedKey = selectedRef.current;
+      setDraft(
+        workspace.load(
+          selectedRef.current ?? '$new',
+          selected ? draftFromProfile(selected) : newDraft(nextRuntime),
+        ),
+      );
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [client, selectedId]);
+  }, [client, workspace]);
 
   useEffect(() => {
     void load();
@@ -85,12 +108,16 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
   const runtimeView = useMemo(() => runtimeProfileViewModel(runtime), [runtime]);
 
   const selectProfile = (profile: CapabilityProfileDto) => {
+    selectedRef.current = profile.capabilityProfileId;
+    workspace.selectedKey = profile.capabilityProfileId;
     setSelectedId(profile.capabilityProfileId);
-    setDraft(draftFromProfile(profile));
+    setDraft(workspace.load(profile.capabilityProfileId, draftFromProfile(profile)));
     setError(null);
   };
 
   const save = async (next: CapabilityProfileDraft) => {
+    if (saving) return;
+    const key = selectedRef.current ?? '$new';
     setSaving(true);
     setError(null);
     try {
@@ -106,10 +133,28 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
             });
-      const nextProfiles = await client.listCapabilityProfiles();
-      setProfiles(nextProfiles);
-      setSelectedId(saved.capabilityProfileId);
-      setDraft(draftFromProfile(saved));
+      const working = workspace.acceptSave(
+        key,
+        next,
+        draftFromProfile(saved),
+        (current, baseline) => ({
+          ...current,
+          capabilityProfileId: baseline.capabilityProfileId,
+          revision: baseline.revision,
+        }),
+      );
+      if (key !== saved.capabilityProfileId) {
+        workspace.load(saved.capabilityProfileId, draftFromProfile(saved));
+        workspace.edit(saved.capabilityProfileId, working);
+        workspace.discard(key);
+      }
+      if ((selectedRef.current ?? '$new') === key) {
+        selectedRef.current = saved.capabilityProfileId;
+        workspace.selectedKey = saved.capabilityProfileId;
+        setSelectedId(saved.capabilityProfileId);
+        setDraft(working);
+      }
+      setProfiles(await client.listCapabilityProfiles());
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -123,11 +168,19 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
     setError(null);
     try {
       await client.deleteCapabilityProfile(selectedId);
+      workspace.discard(selectedId);
       const nextProfiles = await client.listCapabilityProfiles();
       setProfiles(nextProfiles);
       const next = nextProfiles[0];
       setSelectedId(next?.capabilityProfileId ?? null);
-      setDraft(next ? draftFromProfile(next) : newDraft(runtime));
+      selectedRef.current = next?.capabilityProfileId ?? null;
+      workspace.selectedKey = selectedRef.current;
+      setDraft(
+        workspace.load(
+          selectedRef.current ?? '$new',
+          next ? draftFromProfile(next) : newDraft(runtime),
+        ),
+      );
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -151,8 +204,10 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
           className="execution-configuration-screen__new"
           type="button"
           onClick={() => {
+            selectedRef.current = null;
+            workspace.selectedKey = null;
             setSelectedId(null);
-            setDraft(newDraft(runtime));
+            setDraft(workspace.load('$new', newDraft(runtime)));
             setError(null);
           }}
         >
@@ -188,7 +243,7 @@ export function ExecutionConfigurationScreen({ client }: ExecutionConfigurationS
               profile={draft}
               runtime={runtimeView}
               saving={saving}
-              onChange={setDraft}
+              onChange={editDraft}
               onSave={(next) => void save(next)}
             />
             {selectedId ? (

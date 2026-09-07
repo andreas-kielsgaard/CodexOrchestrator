@@ -1011,6 +1011,22 @@
   background: #f5f7f3;
 }
 
+.agent-session-execution-settings__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.agent-session-execution-settings__identity > button {
+  padding: 5px 9px;
+  border: 1px solid #c4cec4;
+  border-radius: 7px;
+  background: #fffdf8;
+  color: #34483d;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
 .agent-session-execution-settings > .collapsible-section > .collapsible-section__content {
   display: grid;
   gap: 14px;

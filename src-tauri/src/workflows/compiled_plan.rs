@@ -3,7 +3,7 @@ use super::address_references::{
     WorkflowRecipeReference,
 };
 use crate::{
-    execution_configuration::SessionCreationRequest,
+    execution_configuration::{SessionCreationIntent, SessionCreationRequest},
     session_events::{
         MissingTargetPolicy, ReferenceIdentity, RunningFilter, SessionCreationFilter,
         TargetCardinality, TargetOrdering,
@@ -28,7 +28,13 @@ pub(crate) struct WorkflowCompiledNode {
     pub(crate) assigned_identity: Option<ReferenceIdentity>,
     /// Contains the Capability Profile and the embedded Node Profile that will be resolved only
     /// if the generic Session directory creates this node's Session.
-    pub(crate) session_creation: SessionCreationRequest,
+    pub(crate) session_creation: WorkflowSessionCreation,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) enum WorkflowSessionCreation {
+    ResolvedInput(SessionCreationRequest),
+    AtBirth(SessionCreationIntent),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -105,9 +105,22 @@ impl WorkflowAuthoringService {
 
     pub(crate) fn activate(&self, recipe_id: &str) -> Result<WorkflowRecipeState, String> {
         let state = self.load(recipe_id)?;
+        self.activate_revision(recipe_id, state.draft.revision)
+    }
+
+    pub(crate) fn activate_revision(
+        &self,
+        recipe_id: &str,
+        expected_revision: u64,
+    ) -> Result<WorkflowRecipeState, String> {
+        let state = self.load(recipe_id)?;
+        if state.draft.revision != expected_revision {
+            return Err("Saved Workflow changed. Reload before activating.".into());
+        }
         let validation_instance = format!("activation-validation-{}", state.draft.recipe_id);
         self.compile(&state.draft, &validation_instance)?;
-        self.repository.activate(recipe_id)
+        self.repository
+            .activate_revision(recipe_id, expected_revision)
     }
 
     pub(crate) fn compile_active_for_instance(

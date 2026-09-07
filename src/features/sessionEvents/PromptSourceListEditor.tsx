@@ -119,16 +119,25 @@ export function PromptSourceListEditor({
               <span>Source type</span>
               <select
                 value={source.kind}
+                aria-invalid={!kinds.includes(source.kind) || undefined}
                 onChange={(event) =>
                   updateAt(index, promptSourceForKind(event.target.value as PromptSourceKind))
                 }
               >
+                {!kinds.includes(source.kind) ? (
+                  <option value={source.kind} disabled>
+                    {promptSourceName(source.kind)} (not available for this trigger)
+                  </option>
+                ) : null}
                 {kinds.map((kind) => (
                   <option value={kind} key={kind}>
                     {promptSourceName(kind)}
                   </option>
                 ))}
               </select>
+              {!kinds.includes(source.kind) ? (
+                <span role="alert">Change or remove this source to match the trigger.</span>
+              ) : null}
             </label>
             {source.kind === 'literal' && (
               <label className="session-event-editor__field">

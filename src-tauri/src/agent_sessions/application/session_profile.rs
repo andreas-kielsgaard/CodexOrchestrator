@@ -1,6 +1,6 @@
 use super::lifecycle::{
-    AgentSessionApplication, AgentSessionApplicationError, SendAgentSessionMessageCommand,
-    SendAgentSessionMessageResult,
+    AgentSessionApplication, AgentSessionApplicationError, AgentSessionOwnership,
+    CreateAgentSessionCommand, SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
 };
 use crate::{
     agent_sessions::{
@@ -8,9 +8,9 @@ use crate::{
         ports::RuntimeLaunchExtension,
     },
     execution_configuration::{
-        DirectUserInvocationRequest, DirectUserInvocationResolution, ResolutionError,
-        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource, SessionCreationResolution,
-        SessionProfileResolver,
+        CapabilityProfile, DirectUserInvocationRequest, DirectUserInvocationResolution,
+        NodeProfile, ResolutionError, RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
+        SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
     },
 };
 use std::{error::Error, fmt, sync::Arc};
@@ -74,6 +74,80 @@ pub(crate) struct AgentSessionProfileApplication {
 }
 
 impl AgentSessionProfileApplication {
+    /// Standalone defaults are application-owned, not a hidden Workflow node. Resolve before
+    /// persistence, and keep the first message's choices out of the pinned defaults.
+    pub(crate) fn start_direct_user_session(
+        &self,
+        submitted_text: String,
+        title: Option<String>,
+        working_directory: Option<String>,
+        model: Option<String>,
+        reasoning_mode: Option<String>,
+    ) -> Result<SendDirectUserAgentSessionMessageResult, AgentSessionProfileApplicationError> {
+        if submitted_text.trim().is_empty() {
+            return Err(AgentSessionProfileApplicationError::new(
+                AgentSessionProfileApplicationErrorKind::InvalidInvocationSelection,
+                "A message must contain text",
+            ));
+        }
+        let runtime = self
+            .profile_source
+            .selected_runtime_profile()
+            .map_err(|error| AgentSessionProfileApplicationError::resolution(error.into()))?;
+        let resolution = SessionProfileResolver::resolve_snapshot(
+            runtime.clone(),
+            SessionCreationRequest {
+                contract_version: 1,
+                capability_profile: CapabilityProfile {
+                    contract_version: 1,
+                    capability_profile_id: "application:standalone".into(),
+                    name: "Selected runtime defaults".into(),
+                    revision: 1,
+                    allowed_capabilities: runtime.exposure.clone(),
+                },
+                node_profile: NodeProfile {
+                    contract_version: 1,
+                    allowed_capabilities: runtime.exposure,
+                    pinned_defaults: runtime.locked,
+                },
+            },
+        )
+        .map_err(AgentSessionProfileApplicationError::resolution)?;
+        // Reject an invalid first-message selection before creating any Session.
+        SessionProfileResolver::validate_direct_user_invocation(
+            self.profile_source.as_ref(),
+            &resolution,
+            DirectUserInvocationRequest {
+                contract_version: 1,
+                model: model.clone(),
+                reasoning_mode: reasoning_mode.clone(),
+            },
+        )
+        .map_err(AgentSessionProfileApplicationError::resolution)?;
+        let session = self
+            .sessions
+            .create_session_with_ownership(
+                CreateAgentSessionCommand {
+                    title,
+                    working_directory,
+                    requested_options: runtime_options(
+                        resolution.session_profile().pinned_defaults(),
+                    ),
+                },
+                AgentSessionOwnership {
+                    session_profile: Some(resolution),
+                    ..AgentSessionOwnership::default()
+                },
+            )
+            .map_err(AgentSessionProfileApplicationError::agent_session)?;
+        self.send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            session_id: session.id,
+            submitted_text,
+            model,
+            reasoning_mode,
+        })
+    }
+
     pub(crate) fn new(
         sessions: Arc<AgentSessionApplication>,
         profile_source: Arc<dyn SelectedRuntimeProfileSource>,

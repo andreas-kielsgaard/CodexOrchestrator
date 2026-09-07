@@ -293,7 +293,7 @@ h1 {
   margin-bottom: 14px;
 }
 
-input,
+input:not([type='checkbox']):not([type='radio']),
 select,
 textarea {
   width: 100%;
@@ -306,7 +306,7 @@ textarea {
   font-size: 0.84rem;
 }
 
-input,
+input:not([type='checkbox']):not([type='radio']),
 select {
   padding: 0 10px;
 }

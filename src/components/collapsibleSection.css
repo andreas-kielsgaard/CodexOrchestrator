@@ -41,5 +41,6 @@
 }
 
 .collapsible-section__content[hidden] {
-  display: none;
+  /* Feature layouts may set display:grid. Hidden content must still leave the layout. */
+  display: none !important;
 }

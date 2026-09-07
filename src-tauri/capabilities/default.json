@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window-events",
-  "description": "Allows the main application window to subscribe to persisted Agent Session update notifications.",
+  "description": "Allows the main window to receive stored updates and close after its unsaved-draft check.",
   "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-destroy"
+  ]
 }

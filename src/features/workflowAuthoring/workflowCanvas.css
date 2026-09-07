@@ -1,0 +1,58 @@
+.recipe-canvas-workspace {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.recipe-canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+}
+.recipe-canvas-toolbar button {
+  padding: 7px 10px;
+  border: 1px solid #cbd4cd;
+  border-radius: 7px;
+  background: #fff;
+}
+.recipe-canvas-toolbar button[aria-pressed='true'] {
+  background: #dfeee4;
+  border-color: #39745a;
+}
+.recipe-canvas-help {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: #647169;
+  font-size: 0.78rem;
+}
+.recipe-canvas-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.recipe-canvas.workflow-canvas {
+  min-height: 620px;
+  margin: 0;
+  border-radius: 0;
+}
+.recipe-canvas .workflow-node {
+  touch-action: none;
+}
+.recipe-canvas .workflow-canvas__connections text {
+  font-size: 12px;
+  fill: #34443a;
+  stroke: none;
+  text-anchor: middle;
+}
+.recipe-canvas .workflow-canvas__connections {
+  pointer-events: none;
+}
+.recipe-canvas .workflow-canvas__connections g {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.recipe-canvas :focus-visible {
+  outline: 3px solid #477dc0;
+  outline-offset: 3px;
+}

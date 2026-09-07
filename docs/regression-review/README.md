@@ -2,6 +2,8 @@
 
 Reviewed on 7 September 2026. This is a review, not a repair pass.
 
+The later [repair record](repairs/README.md) describes the implementation and new checks. The findings and evidence on this page remain the original baseline.
+
 The replacement UI is mounted, but several basic flows are missing or broken. The missing flow canvas and Workflow instance screens are only part of the problem. Starting a normal Session, sending its next message, handing work to the next node, and keeping the same run selected need attention before another user demo.
 
 ## Checkpoint and scope
@@ -44,6 +46,8 @@ Browser evidence uses the actual React screens and CSS with fake clients. Backen
 Many passing tests still exercise the old Workflow screen or isolated new controls. They do not cover the new mounted screen's draft ownership, run selection or the runtime completion path. See [verification and replay](verification.md) for exact commands, fixtures and limits.
 
 ## Suggested next repair order
+
+The later [repair plan](../session-event-model/repair-plan/README.md) expands this sequence into work packages, a file-level projection and acceptance checks. This report remains the original regression baseline.
 
 1. Give normal Session creation a valid path into the new profile model; prove first and second sends together with a fake runtime.
 2. Restore a stored Workflow instance with its target worktree. Keep the instance selected across navigation and keep its results tied to that instance.

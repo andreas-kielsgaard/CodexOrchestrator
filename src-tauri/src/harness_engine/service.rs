@@ -145,6 +145,69 @@ pub(crate) struct HarnessEngineService {
 }
 
 impl HarnessEngineService {
+    pub(crate) fn bind_session_profile(
+        &self,
+        session_id: &AgentSessionId,
+        profile: &crate::execution_configuration::SessionCreationResolution,
+    ) -> Result<(), String> {
+        profile.verify_digest().map_err(|error| error.to_string())?;
+        let snapshot = serde_json::to_string(profile).map_err(|error| error.to_string())?;
+        if let Some(binding) = self.repository.current_for_session(session_id.as_str())? {
+            binding.verify_digest()?;
+            if binding.harness_snapshot != snapshot {
+                return Err("Session MCP binding does not match its pinned profile".into());
+            }
+            return Ok(());
+        }
+        let mut exposures = Vec::new();
+        for (index, (server, tools)) in profile
+            .session_profile()
+            .node_capabilities()
+            .mcp_tools
+            .iter()
+            .enumerate()
+        {
+            if tools.is_empty() {
+                continue;
+            }
+            exposures.push(HarnessMcpExposurePlan {
+                configured_server_name: server.clone(),
+                proxy_server_name: format!("session_capability_{}", index + 1),
+                upstream: self.upstreams.resolve(server)?,
+                access: HarnessToolAccess::SelectedTools {
+                    tool_names: tools.iter().cloned().collect(),
+                },
+            });
+        }
+        let mediation_plan = serde_json::to_string(&HarnessMediationPlan {
+            contract_version: MEDIATION_PLAN_VERSION.into(),
+            exposures,
+        })
+        .map_err(|error| error.to_string())?;
+        // Keep the existing technical storage/proxy format. Legacy provenance columns are
+        // unused here; source addressing is derived from the trusted Session at the receiver.
+        let binding = HarnessBindingRecord {
+            id: format!("session-capability-binding-{}", Uuid::new_v4()),
+            session_id: session_id.as_str().into(),
+            runtime_instance_id: profile.session_profile().runtime_profile_ref().into(),
+            session_instance_token: Uuid::new_v4().simple().to_string(),
+            stage: HarnessBindingStage::Prepared,
+            configuration_digest: binding_digest(&snapshot, &mediation_plan),
+            harness_snapshot: snapshot,
+            mediation_plan,
+            harness_token: None,
+            source_workflow_instance_id: String::new(),
+            source_recipe_id: String::new(),
+            source_node_id: String::new(),
+            prepared_at: Utc::now().to_rfc3339(),
+            bound_at: None,
+            retired_at: None,
+        };
+        self.repository.insert_prepared(&binding)?;
+        self.complete_prepared_binding(&binding)?;
+        Ok(())
+    }
+
     pub(crate) fn open_system(
         database_path: &Path,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
@@ -155,7 +218,7 @@ impl HarnessEngineService {
         Self::new(repository, sidecar, upstreams, catalog)
     }
 
-    fn new(
+    pub(crate) fn new(
         repository: Arc<dyn HarnessBindingRepository>,
         sidecar: Arc<dyn HarnessSidecarClient>,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,

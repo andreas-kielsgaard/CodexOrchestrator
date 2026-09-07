@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 
 mod capability_profile;
+mod creation_intent;
 mod native_codex;
 mod node_profile;
 mod ports;
@@ -12,6 +13,7 @@ mod session_profile;
 pub(crate) mod transport;
 
 pub(crate) use capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION};
+pub(crate) use creation_intent::SessionCreationIntent;
 pub(crate) use native_codex::{
     NativeCodexCapabilityExposure, NativeCodexSelectedRuntimeProfileSource,
 };

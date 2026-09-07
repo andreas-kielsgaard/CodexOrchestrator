@@ -5,6 +5,11 @@ import type { ExecutionConfigurationClient } from '../application/executionConfi
 import type { IdentityManagementClient } from '../application/identities';
 import type { SessionEventQueryClient } from '../application/sessionEvents';
 import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
+import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
+import type { WorkflowInstanceClient } from '../application/workflowInstances';
+import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
+import { DraftWorkspace } from '../components/draftWorkspace';
+import { useDraftCloseWarning } from '../components/useDraftCloseWarning';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -115,6 +120,8 @@ export interface AppProps {
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly workflowClient?: WorkflowApplicationClient;
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
+  readonly workflowInstanceClient?: WorkflowInstanceClient;
+  readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
   readonly identityManagementClient?: IdentityManagementClient;
   readonly agentSessionProfileClient?: AgentSessionProfileClient;
@@ -171,6 +178,8 @@ export function App({
   orchestrationClient,
   workflowClient,
   workflowAuthoringClient,
+  workflowInstanceClient,
+  draftCloseGuard,
   executionConfigurationClient,
   identityManagementClient,
   agentSessionProfileClient,
@@ -211,6 +220,9 @@ export function App({
       ? 'epics'
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
+  const [workflowDrafts] = useState(() => new DraftWorkspace<WorkflowRecipeDraftDto>());
+  const [capabilityDrafts] = useState(() => new DraftWorkspace<CapabilityProfileDraft>());
+  useDraftCloseWarning(() => workflowDrafts.dirty() || capabilityDrafts.dirty(), draftCloseGuard);
   const productNavigationEpoch = useRef(0);
   type ContextualFileReviewState = {
     readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
@@ -1094,7 +1106,10 @@ export function App({
           onPublishProductDecision={openProductDecisionPublish}
         />
       ) : surface === 'capability-profiles' && executionConfigurationClient ? (
-        <ExecutionConfigurationScreen client={executionConfigurationClient} />
+        <ExecutionConfigurationScreen
+          client={executionConfigurationClient}
+          workspace={capabilityDrafts}
+        />
       ) : surface === 'workflows' &&
         workflowAuthoringClient &&
         executionConfigurationClient &&
@@ -1103,6 +1118,34 @@ export function App({
           client={workflowAuthoringClient}
           executionConfigurationClient={executionConfigurationClient}
           identityClient={identityManagementClient}
+          workspace={workflowDrafts}
+          instanceClient={workflowInstanceClient}
+          targetSelector={workflowTargetSelector}
+          sessionClient={agentSessionClient}
+          profileClient={agentSessionProfileClient}
+          queryClient={sessionEventQueryClient}
+          recipeId={currentProductDestination.workflowTypeId}
+          instanceId={currentProductDestination.workflowInstanceId}
+          onOpenRecipe={(recipeId) => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: { kind: 'workflow', workflowTypeId: recipeId, workflowInstanceId: null },
+            });
+          }}
+          onOpenInstance={(instanceId) => {
+            productNavigationEpoch.current += 1;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: {
+                kind: 'workflow',
+                workflowTypeId: null,
+                workflowInstanceId: instanceId,
+              },
+            });
+          }}
         />
       ) : surface === 'workflows' &&
         workflowClient &&

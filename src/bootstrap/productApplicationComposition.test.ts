@@ -42,6 +42,8 @@ describe('product application composition', () => {
 
     expect(composition.executionConfigurationClient).toBeDefined();
     expect(composition.workflowAuthoringClient).toBeDefined();
+    expect(composition.workflowInstanceClient).toBeDefined();
+    expect(composition.draftCloseGuard).toBeDefined();
     expect(composition.identityManagementClient).toBeDefined();
     expect(composition.agentSessionProfileClient).toBeDefined();
     expect(composition.sessionEventQueryClient).toBeDefined();

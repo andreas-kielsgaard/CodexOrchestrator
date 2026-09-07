@@ -53,11 +53,28 @@ export function runtimeProfileViewModel(
         : inheritedCatalog('Skills'),
   };
 
+  const inheritLock = <T extends string>(
+    catalog: CatalogState<T>,
+    locked: T | null,
+  ): CatalogState<T> => ({
+    ...catalog,
+    options: catalog.options.map((option) =>
+      option.value === locked
+        ? { ...option, disabled: true, description: 'Inherited from runtime' }
+        : option,
+    ),
+  });
+
   return {
     profileRef: runtime.profileRef,
     sourceLabel,
     exposure: runtime.exposure,
-    catalogs,
+    catalogs: {
+      ...catalogs,
+      models: inheritLock(catalogs.models, runtime.locked.model),
+      reasoningModes: inheritLock(catalogs.reasoningModes, runtime.locked.reasoningMode),
+      sandboxModes: inheritLock(catalogs.sandboxModes, runtime.locked.sandboxMode),
+    },
     lockedSelections: runtime.locked,
     notes: [
       'Provider connections remain managed separately; this profile selects from the one active native runtime.',

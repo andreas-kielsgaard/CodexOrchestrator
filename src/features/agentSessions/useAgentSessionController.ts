@@ -116,6 +116,11 @@ export function useAgentSessionCollection(
 }
 
 export interface UseAgentSessionOptions {
+  startSession?(input: {
+    readonly submittedText: string;
+    readonly workingDirectory: string | null;
+    readonly title: string | null;
+  }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   selectedSessionId: string | null;
   onSessionCreated?(sessionId: string): void;
   /** Optional replacement boundary for messages sent to an already-created Session. */
@@ -136,11 +141,13 @@ export function useAgentSession(
     skipCollection: true,
     onSessionCreated: options.onSessionCreated,
     sendExistingMessage: options.sendExistingMessage,
+    startSession: options.startSession,
     sessionTitle: options.sessionTitle,
   });
 }
 
 interface ControllerOptions {
+  startSession?: UseAgentSessionOptions['startSession'];
   controlledSessionId?: string | null;
   skipCollection?: boolean;
   onSessionCreated?(id: string): void;
@@ -330,16 +337,22 @@ export function useAgentSessionController(
                 sessionId: existingSessionId,
                 submittedText,
               })
-            : await client.sendMessage({
-                ...(existingSessionId ? { sessionId: existingSessionId } : {}),
-                submittedText,
-                ...(!existingSessionId && options.sessionTitle
-                  ? { title: options.sessionTitle }
-                  : {}),
-                ...(!existingSessionId && workingDirectory.trim()
-                  ? { workingDirectory: workingDirectory.trim() }
-                  : {}),
-              });
+            : !existingSessionId && options.startSession
+              ? await options.startSession({
+                  submittedText,
+                  workingDirectory: workingDirectory.trim() || null,
+                  title: options.sessionTitle ?? null,
+                })
+              : await client.sendMessage({
+                  ...(existingSessionId ? { sessionId: existingSessionId } : {}),
+                  submittedText,
+                  ...(!existingSessionId && options.sessionTitle
+                    ? { title: options.sessionTitle }
+                    : {}),
+                  ...(!existingSessionId && workingDirectory.trim()
+                    ? { workingDirectory: workingDirectory.trim() }
+                    : {}),
+                });
         selectedIdRef.current = acknowledgement.sessionId;
         invocationIdsRef.current.add(acknowledgement.invocationId);
         setSelectedSessionId(acknowledgement.sessionId);

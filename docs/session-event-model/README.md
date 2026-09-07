@@ -21,13 +21,14 @@ implementation supported by current use over abstractions justified only by poss
 
 ## Read by task
 
-| Work                             | Read first                                        | Then                                                                                   |
-| -------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Domain or backend implementation | [Conceptual model](conceptual-model.md)           | [Functional happy flow](functional-happy-flow.md), [contract rules](contract-rules.md) |
-| Workflow implementation          | [Conceptual model](conceptual-model.md)           | [delivery sequence](delivery-sequence.md), [UI mapping](ui-mapping.md)                 |
-| Agent Session implementation     | [Functional happy flow](functional-happy-flow.md) | [contract rules](contract-rules.md)                                                    |
-| UI implementation                | [UI mapping](ui-mapping.md)                       | [codebase map](codebase-map.md), [contract rules](contract-rules.md)                   |
-| Review or integration            | [Delivery sequence](delivery-sequence.md)         | [codebase map](codebase-map.md), [contract rules](contract-rules.md)                   |
+| Work                             | Read first                                        | Then                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain or backend implementation | [Conceptual model](conceptual-model.md)           | [Functional happy flow](functional-happy-flow.md), [contract rules](contract-rules.md)                                                            |
+| Workflow implementation          | [Conceptual model](conceptual-model.md)           | [delivery sequence](delivery-sequence.md), [UI mapping](ui-mapping.md)                                                                            |
+| Agent Session implementation     | [Functional happy flow](functional-happy-flow.md) | [contract rules](contract-rules.md)                                                                                                               |
+| UI implementation                | [UI mapping](ui-mapping.md)                       | [codebase map](codebase-map.md), [contract rules](contract-rules.md)                                                                              |
+| Review or integration            | [Delivery sequence](delivery-sequence.md)         | [codebase map](codebase-map.md), [contract rules](contract-rules.md)                                                                              |
+| Mounted-model repairs            | [Repair plan](repair-plan/README.md)              | [Work packages](repair-plan/work-packages.md), [codebase projection](repair-plan/codebase-projection.md), [validation](repair-plan/validation.md) |
 
 ## Accepted direction
 
@@ -65,11 +66,15 @@ contracts. Their useful controls are extraction sources, not target domain compo
 
 ## Current checkpoint
 
-The replacement backend services, transport contracts and an SQLite-backed happy-flow proof are
-present on this branch. Browser-safe clients and controlled UI building blocks are also present,
-but they are intentionally not mounted into the product yet. Treat the current checkpoint as the
-functional review gate before Workflow and Agent Session UI composition. The first concrete
-referenced-file source adapter and legacy retirement remain follow-on work.
+The replacement services and controls were mounted by `aaca806`. Review checkpoint `e77a725`
+records missing instance/canvas flows and creation, event-wiring, draft-state and layout failures.
+The earlier unmounted foundation proof did not establish these mounted flows. See the
+[regression review](../regression-review/README.md) for observed evidence and the
+[repair plan](repair-plan/README.md) for the agreed scope. Repairs were implemented in
+`codex/session-event-regression-review` for consolidation into `codex/harness-ux-workflow-convergence`. The [repair record](../regression-review/repairs/README.md)
+maps the changed boundaries and tested flows, including real file-source and local managed-MCP
+integration. A fresh native-window walkthrough and user acceptance remain unverified; broad legacy
+retirement remains later.
 
 ## Documentation authority
 

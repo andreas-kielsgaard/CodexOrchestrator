@@ -6,6 +6,7 @@ export interface AgentSessionComposerProps {
   workingDirectory: string;
   isNewSession: boolean;
   sending: boolean;
+  sendUnavailableReason?: string;
   active: boolean;
   canceling: boolean;
   messageLabel?: string;
@@ -21,7 +22,8 @@ export interface AgentSessionComposerProps {
 export function AgentSessionComposer(props: AgentSessionComposerProps) {
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (props.draft.trim() && !props.sending && !props.active) props.onSend();
+    if (props.draft.trim() && !props.sending && !props.active && !props.sendUnavailableReason)
+      props.onSend();
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -70,7 +72,9 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
             <button
               className="send-agent-button"
               type="submit"
-              disabled={!props.draft.trim() || props.sending}
+              disabled={
+                !props.draft.trim() || props.sending || Boolean(props.sendUnavailableReason)
+              }
               aria-describedby={
                 props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
               }
@@ -91,6 +95,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         )}
       </div>
       <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
+      {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}
     </form>
   );
 }

@@ -86,14 +86,20 @@ export function WorkflowConnectionEditor({
         <TriggerBindingEditor
           value={trigger}
           hideInvocationSourceAddress
-          allowedKinds={[
-            'invocation_completed',
-            'mcp_call',
-            'application_event',
-            'event_group_completed',
-          ]}
+          allowedKinds={['invocation_completed', 'mcp_call', 'application_event']}
           onChange={(next) =>
-            onChange({ ...connection, trigger: eventTriggerToWorkflowTrigger(next) })
+            onChange({
+              ...connection,
+              trigger: eventTriggerToWorkflowTrigger(
+                next.kind === 'mcp_call' && !next.server.id && !next.tool.id
+                  ? {
+                      kind: 'mcp_call',
+                      server: { namespace: 'mcp', kind: 'server', id: 'workflow_handoff' },
+                      tool: { namespace: 'mcp', kind: 'tool', id: 'handoff_to_agent' },
+                    }
+                  : next,
+              ),
+            })
           }
         />
       </CollapsibleSection>
@@ -105,15 +111,23 @@ export function WorkflowConnectionEditor({
         <PromptSourceListEditor
           value={connection.promptInputs}
           allowedKinds={[
-            'invocation_output',
-            'mcp_argument',
-            'application_event_field',
+            ...(connection.trigger.kind === 'invocation_completed'
+              ? ['invocation_output' as const]
+              : []),
+            ...(connection.trigger.kind === 'mcp_call' ? ['mcp_argument' as const] : []),
+            ...(connection.trigger.kind === 'application_event'
+              ? ['application_event_field' as const]
+              : []),
             'referenced_content',
           ]}
           onChange={(value) =>
             onChange({
               ...connection,
-              promptInputs: value as readonly WorkflowConnectionPromptInputDto[],
+              promptInputs: value.map((source) =>
+                source.kind === 'referenced_content' && !source.reference.id
+                  ? { ...source, reference: { namespace: 'file', kind: 'path', id: '' } }
+                  : source,
+              ) as readonly WorkflowConnectionPromptInputDto[],
             })
           }
         />

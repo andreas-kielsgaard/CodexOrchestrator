@@ -50,6 +50,36 @@ pub(crate) fn start_sample_server(
     ),
     String,
 > {
+    start_server(WorkflowMcpApplication::Legacy(application))
+}
+
+pub(crate) fn start_session_event_server(
+    application: Weak<super::execution::WorkflowExecutionService>,
+) -> Result<
+    (
+        ManagedMcpUpstreamDescriptor,
+        Box<dyn ManagedMcpUpstreamOwner>,
+    ),
+    String,
+> {
+    start_server(WorkflowMcpApplication::SessionEvents(application))
+}
+
+#[derive(Clone)]
+enum WorkflowMcpApplication {
+    Legacy(Weak<WorkflowApplication>),
+    SessionEvents(Weak<super::execution::WorkflowExecutionService>),
+}
+
+fn start_server(
+    application: WorkflowMcpApplication,
+) -> Result<
+    (
+        ManagedMcpUpstreamDescriptor,
+        Box<dyn ManagedMcpUpstreamOwner>,
+    ),
+    String,
+> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("Unable to bind Workflow MCP server: {error}"))?;
     listener
@@ -94,7 +124,7 @@ pub(crate) fn start_sample_server(
 
 async fn run(
     listener: tokio::net::TcpListener,
-    application: Weak<WorkflowApplication>,
+    application: WorkflowMcpApplication,
     bearer: String,
     cancellation: CancellationToken,
 ) {
@@ -121,7 +151,7 @@ async fn run(
 
 async fn handle(
     request: Request<hyper::body::Incoming>,
-    application: Weak<WorkflowApplication>,
+    application: WorkflowMcpApplication,
     bearer: &str,
 ) -> Response<Body> {
     let authorized = request
@@ -145,6 +175,17 @@ async fn handle(
                 "Workflow MCP request is unreadable.",
             )
         }
+    };
+    let application = match application {
+        WorkflowMcpApplication::SessionEvents(application) => {
+            return match application.upgrade() {
+                Some(application) => {
+                    handle_session_event_request(&path, &body, &headers, &application)
+                }
+                None => text(StatusCode::SERVICE_UNAVAILABLE, "Workflow is unavailable"),
+            }
+        }
+        WorkflowMcpApplication::Legacy(application) => application,
     };
     let Some(application) = application.upgrade() else {
         return text(
@@ -276,6 +317,166 @@ fn handle_tool_call(
             "isError":false
         }
     }))
+}
+
+fn handle_session_event_request(
+    path: &str,
+    body: &[u8],
+    headers: &hyper::HeaderMap,
+    application: &super::execution::WorkflowExecutionService,
+) -> Response<Body> {
+    let value: Value = match serde_json::from_slice(body) {
+        Ok(value) => value,
+        Err(error) => return rpc_error(Value::Null, error.to_string()),
+    };
+    if path == "/prepare" {
+        let prepared: PrepareRequest = match serde_json::from_value(value) {
+            Ok(value) => value,
+            Err(error) => return text(StatusCode::BAD_REQUEST, &error.to_string()),
+        };
+        return match validate_event_caller(
+            application,
+            &prepared.source_session_id,
+            &prepared.source_invocation_id,
+        ) {
+            Ok(_) if prepared.server_name == SERVER_NAME && prepared.tool_name == TOOL_NAME => {
+                json_response(json!({ "handoff": {
+                    "invocation": { "sourceInvocationId": prepared.source_invocation_id }, "warningText": "This call was delivered through the Workflow connection."
+                }}))
+            }
+            Ok(_) => text(StatusCode::BAD_REQUEST, "Unknown handoff tool"),
+            Err(error) => text(StatusCode::CONFLICT, &error),
+        };
+    }
+    if path != "/mcp" {
+        return text(StatusCode::NOT_FOUND, "Unknown MCP endpoint");
+    }
+    let id = value.get("id").cloned().unwrap_or(Value::Null);
+    match value.get("method").and_then(Value::as_str) {
+        Some("initialize") => json_response(json!({"jsonrpc":"2.0","id":id,"result":{
+            "protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"workflow-handoff","version":"1"}}})),
+        Some("notifications/initialized") => Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .body(Body::empty())
+            .unwrap(),
+        Some("tools/list") => {
+            json_response(json!({"jsonrpc":"2.0","id":id,"result":{"tools":[tool_metadata()]}}))
+        }
+        Some("tools/call") => {
+            let result = (|| -> Result<usize, String> {
+                if value.pointer("/params/name").and_then(Value::as_str) != Some(TOOL_NAME) {
+                    return Err("Unknown handoff tool".into());
+                }
+                let session_id = header_value(headers, "x-workflow-session-id")
+                    .ok_or("Trusted Session context is absent")?;
+                let invocation_id = header_value(headers, "x-workflow-invocation-id")
+                    .ok_or("Trusted invocation context is absent")?;
+                validate_event_caller(application, session_id, invocation_id)?;
+                let arguments = value
+                    .pointer("/params/arguments")
+                    .ok_or("Tool arguments are required")?;
+                if arguments
+                    .pointer("/_workflowInvocation/sourceInvocationId")
+                    .and_then(Value::as_str)
+                    != Some(invocation_id)
+                {
+                    return Err("Handoff context does not match the active invocation".into());
+                }
+                let paths = arguments
+                    .get("filePaths")
+                    .and_then(Value::as_array)
+                    .ok_or("filePaths is required")?
+                    .iter()
+                    .map(|path| {
+                        path.as_str()
+                            .ok_or("File paths must be strings".to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let prompt = arguments
+                    .get("promptText")
+                    .and_then(Value::as_str)
+                    .ok_or("promptText is required")?;
+                let source = crate::session_events::ReferenceIdentity::new(
+                    "orchestrator.agent_sessions",
+                    "session",
+                    session_id,
+                )
+                .map_err(|error| error.to_string())?;
+                let call_id = format!("mcp-call-{}", uuid::Uuid::new_v4());
+                let count = application.receive_source_event(
+                    &source,
+                    &call_id,
+                    crate::session_events::SessionEventOccurrenceTrigger::McpCall {
+                        call: crate::session_events::ReferenceIdentity::new(
+                            "mcp", "call", &call_id,
+                        )
+                        .map_err(|error| error.to_string())?,
+                        server: crate::session_events::ReferenceIdentity::new(
+                            "mcp",
+                            "server",
+                            SERVER_NAME,
+                        )
+                        .map_err(|error| error.to_string())?,
+                        tool: crate::session_events::ReferenceIdentity::new(
+                            "mcp", "tool", TOOL_NAME,
+                        )
+                        .map_err(|error| error.to_string())?,
+                        arguments: [
+                            ("filePaths".into(), paths.join("\n")),
+                            ("promptText".into(), prompt.into()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    },
+                )?;
+                if count == 0 {
+                    return Err("No outgoing connection matches this handoff tool".into());
+                }
+                Ok(count)
+            })();
+            match result {
+                Ok(count) => json_response(
+                    json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":format!("Handoff dispatched to {count} Session(s).") }],
+                    "structuredContent": {"filePaths":value.pointer("/params/arguments/filePaths"), "promptText":value.pointer("/params/arguments/promptText")}, "isError":false}}),
+                ),
+                Err(error) => tool_error(id, &error),
+            }
+        }
+        _ => rpc_error(id, "Unsupported MCP method".into()),
+    }
+}
+
+fn validate_event_caller(
+    application: &super::execution::WorkflowExecutionService,
+    session_id: &str,
+    invocation_id: &str,
+) -> Result<(), String> {
+    let id = crate::agent_sessions::domain::AgentSessionId::new(session_id)
+        .map_err(|error| error.to_string())?;
+    let history = application
+        .sessions
+        .load_session_history(&id)
+        .map_err(|error| error.to_string())?
+        .ok_or("Source Session is missing")?;
+    if !history.invocations.iter().any(|item| {
+        item.invocation.id.as_str() == invocation_id && item.invocation.status.is_active()
+    }) {
+        return Err("Handoff must come from the Session's active invocation".into());
+    }
+    let profile = history
+        .session
+        .session_profile
+        .ok_or("Source Session has no pinned profile")?;
+    if !profile
+        .session_profile()
+        .node_capabilities()
+        .mcp_tools
+        .get(SERVER_NAME)
+        .is_some_and(|tools| tools.contains(TOOL_NAME))
+    {
+        return Err("Handoff tool is not exposed to this Session".into());
+    }
+    Ok(())
 }
 
 fn tool_metadata() -> Value {

@@ -6,6 +6,7 @@ use super::lifecycle::{
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
+mod repair_tests;
 use super::session_profile::{
     AgentSessionProfileApplication, AgentSessionProfileApplicationErrorKind,
     LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand,
@@ -1808,6 +1809,7 @@ fn harness_resolution_application(
 #[derive(Clone, Copy)]
 enum RuntimeBehavior {
     CompleteWithBinding,
+    CompleteWithFinalOutput,
     ConcurrentFastCompletion,
     SpawnFailure,
     LaunchErrorWithoutCallback,
@@ -1960,6 +1962,20 @@ impl FakeRuntime {
         sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
         match self.behavior {
+            RuntimeBehavior::CompleteWithFinalOutput => {
+                deliver(
+                    &sink,
+                    &request.invocation_id,
+                    RuntimeUpdate::Event(context_event()),
+                );
+                let mut event = text_event("Plan from this invocation");
+                let normalized = event.normalized.as_mut().unwrap();
+                normalized.kind = NormalizedRuntimeEventKind::AgentMessage;
+                normalized.details = Some(json!({"role": "final"}));
+                deliver(&sink, &request.invocation_id, RuntimeUpdate::Event(event));
+                deliver(&sink, &request.invocation_id, completed());
+                Ok(())
+            }
             RuntimeBehavior::CompleteWithBinding => {
                 deliver(
                     &sink,

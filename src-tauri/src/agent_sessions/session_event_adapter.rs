@@ -10,8 +10,8 @@ use super::{
 };
 use crate::{
     execution_configuration::{
-        DirectUserInvocationRequest, SelectedRuntimeProfileSource, SessionCreationRequest,
-        SessionProfileResolver,
+        CapabilityProfileService, DirectUserInvocationRequest, SelectedRuntimeProfileSource,
+        SessionCreationIntent, SessionCreationRequest, SessionProfileResolver,
     },
     identities::{service::IdentityService, IdentityId},
     session_events::{
@@ -67,6 +67,7 @@ pub(crate) struct AgentSessionEventAdapter {
     application: Arc<AgentSessionApplication>,
     repository: Arc<SqliteAgentSessionRepository>,
     profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    capability_profiles: Option<Arc<CapabilityProfileService>>,
     identities: IdentityService,
     connection: Mutex<Connection>,
 }
@@ -93,9 +94,18 @@ impl AgentSessionEventAdapter {
             application,
             repository,
             profile_source,
+            capability_profiles: None,
             identities,
             connection: Mutex::new(connection),
         })
+    }
+
+    pub(crate) fn with_capability_profiles(
+        mut self,
+        profiles: Arc<CapabilityProfileService>,
+    ) -> Self {
+        self.capability_profiles = Some(profiles);
+        self
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, SessionDirectoryError> {
@@ -208,13 +218,45 @@ impl SessionDirectory for AgentSessionEventAdapter {
         &self,
         request: SessionCreationSpec,
     ) -> Result<SessionDirectoryEntry, SessionDirectoryError> {
-        validate_creation_contract(&request.configuration.contract)?;
-        let creation_request: SessionCreationRequest =
-            serde_json::from_value(request.configuration.payload).map_err(|error| {
-                SessionDirectoryError::new(format!(
-                    "Pinned Session creation request is invalid: {error}"
-                ))
-            })?;
+        let (creation_request, working_directory, title) =
+            if request.configuration.contract.namespace() == CREATION_REQUEST_NAMESPACE
+                && request.configuration.contract.kind() == "session_creation_intent"
+                && request.configuration.contract.id() == "v1"
+            {
+                let intent: SessionCreationIntent =
+                    serde_json::from_value(request.configuration.payload)
+                        .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+                let profile = self
+                    .capability_profiles
+                    .as_ref()
+                    .ok_or_else(|| {
+                        SessionDirectoryError::new("Capability Profile source is unavailable")
+                    })?
+                    .read(&intent.capability_profile_id)
+                    .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+                (
+                    SessionCreationRequest {
+                        contract_version: 1,
+                        capability_profile: profile,
+                        node_profile: intent.node_profile,
+                    },
+                    Some(intent.working_directory),
+                    Some(intent.title),
+                )
+            } else {
+                validate_creation_contract(&request.configuration.contract)?;
+                let creation_request: SessionCreationRequest =
+                    serde_json::from_value(request.configuration.payload).map_err(|error| {
+                        SessionDirectoryError::new(format!(
+                            "Pinned Session creation request is invalid: {error}"
+                        ))
+                    })?;
+                (
+                    creation_request,
+                    None,
+                    Some(request.logical_address.subject.id().to_string()),
+                )
+            };
         let resolution = SessionProfileResolver::resolve_creation(
             self.profile_source.as_ref(),
             creation_request,
@@ -243,8 +285,8 @@ impl SessionDirectory for AgentSessionEventAdapter {
         let session_id = session_id_for_creation(&request.event_group_id)?;
         let session = self.application.prepare_session_with_id(
             CreateAgentSessionCommand {
-                title: Some(request.logical_address.subject.id().to_string()),
-                working_directory: None,
+                title,
+                working_directory,
                 requested_options,
             },
             session_id.clone(),

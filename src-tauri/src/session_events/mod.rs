@@ -35,6 +35,7 @@ pub(crate) struct SessionEventApplication {
     directory: Arc<dyn SessionDirectory>,
     dispatcher: Arc<dyn SessionInvocationDispatcher>,
     store: Arc<dyn SessionEventStore>,
+    record_observer: Option<Arc<dyn Fn(&SessionEventResult) + Send + Sync>>,
 }
 
 impl SessionEventApplication {
@@ -47,7 +48,16 @@ impl SessionEventApplication {
             directory,
             dispatcher,
             store,
+            record_observer: None,
         }
+    }
+
+    pub(crate) fn with_record_observer(
+        mut self,
+        observer: Arc<dyn Fn(&SessionEventResult) + Send + Sync>,
+    ) -> Self {
+        self.record_observer = Some(observer);
+        self
     }
 
     pub(crate) fn dispatch(
@@ -213,7 +223,11 @@ impl SessionEventApplication {
     ) -> Result<(), SessionEventApplicationError> {
         self.store
             .record(result.group.clone(), result.deliveries.clone())
-            .map_err(SessionEventApplicationError::Store)
+            .map_err(SessionEventApplicationError::Store)?;
+        if let Some(observer) = &self.record_observer {
+            observer(result);
+        }
+        Ok(())
     }
 }
 

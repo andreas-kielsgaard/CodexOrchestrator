@@ -51,7 +51,7 @@ describe('Tauri Workflow Authoring client', () => {
       sourceNodeId: 'reviewer',
       destinationNodeId: 'implementer',
     });
-    await client.activateRecipe('review');
+    await client.activateRecipe('review', 2);
     await client.compileRecipeInstance('review', 'run-1');
     await client.dispatchUserRequest({
       recipeId: 'review',
@@ -75,7 +75,7 @@ describe('Tauri Workflow Authoring client', () => {
           },
         },
       ],
-      ['activate_workflow_recipe', { input: { recipeId: 'review' } }],
+      ['activate_workflow_recipe', { input: { recipeId: 'review', expectedRevision: 2 } }],
       ['compile_workflow_recipe_instance', { input: { recipeId: 'review', instanceId: 'run-1' } }],
       [
         'dispatch_workflow_user_request',

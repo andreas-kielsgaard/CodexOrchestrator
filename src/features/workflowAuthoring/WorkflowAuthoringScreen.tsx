@@ -1,11 +1,17 @@
 import { GitBranch, Plus, RefreshCw, Save } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { DraftWorkspace } from '../../components/draftWorkspace';
+import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
+import type {
+  WorkflowInstanceClient,
+  WorkflowRecipeInstance,
+} from '../../application/workflowInstances';
+import type { RepoBranchWorktreeTargetSelectorProps } from '../../application/worktreeTargets';
+import type { AgentSessionClient } from '../../application/agentSessions';
+import type { AgentSessionProfileClient } from '../../application/agentSessionProfiles';
+import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type { IdentityManagementClient } from '../../application/identities';
-import type {
-  SessionEventDefinitionDto,
-  SessionEventResultDto,
-} from '../../application/sessionEvents';
 import type {
   WorkflowAuthoringClient,
   WorkflowRecipeDraftDto,
@@ -20,9 +26,10 @@ import {
 } from '../executionConfiguration';
 import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
-import { WorkflowOutline } from './WorkflowOutline';
-import { WorkflowRunPanel } from './WorkflowRunPanel';
-import { errorMessage } from './workflowAuthoringPresentation';
+import { WorkflowCanvas } from './WorkflowCanvas';
+import { RecipeInstanceCreationDialog } from './RecipeInstanceCreationDialog';
+import { WorkflowInstancePanel } from './WorkflowInstancePanel';
+import { errorMessage, defaultsWithinCapabilities } from './workflowAuthoringPresentation';
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
 import './workflowAuthoring.css';
 
@@ -30,16 +37,49 @@ export interface WorkflowAuthoringScreenProps {
   readonly client: WorkflowAuthoringClient;
   readonly executionConfigurationClient: ExecutionConfigurationClient;
   readonly identityClient?: IdentityManagementClient;
+  readonly workspace?: DraftWorkspace<WorkflowRecipeDraftDto>;
+  readonly instanceClient?: WorkflowInstanceClient;
+  readonly targetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
+  readonly sessionClient?: AgentSessionClient;
+  readonly profileClient?: AgentSessionProfileClient;
+  readonly queryClient?: SessionEventQueryClient;
+  readonly recipeId?: string | null;
+  readonly instanceId?: string | null;
+  readonly onOpenRecipe?: (id: string) => void;
+  readonly onOpenInstance?: (id: string) => void;
 }
 
 export function WorkflowAuthoringScreen({
   client,
   executionConfigurationClient,
   identityClient,
+  workspace: providedWorkspace,
+  instanceClient,
+  targetSelector: TargetSelector,
+  sessionClient,
+  profileClient,
+  queryClient,
+  recipeId,
+  instanceId,
+  onOpenRecipe,
+  onOpenInstance,
 }: WorkflowAuthoringScreenProps) {
+  const localWorkspace = useMemo(() => new DraftWorkspace<WorkflowRecipeDraftDto>(), []);
+  const workspace = providedWorkspace ?? localWorkspace;
+  const selectedRef = useRef<string | null>(recipeId ?? workspace.selectedKey);
+  const openTicket = useRef(0);
   const [summaries, setSummaries] = useState<readonly WorkflowRecipeSummaryDto[]>([]);
   const [state, setState] = useState<WorkflowRecipeStateDto | null>(null);
   const [draft, setDraft] = useState<WorkflowRecipeDraftDto | null>(null);
+  const [instances, setInstances] = useState<readonly WorkflowRecipeInstance[]>([]);
+  const [creatingInstance, setCreatingInstance] = useState(false);
+  const [localInstanceId, setLocalInstanceId] = useState<string | null>(null);
+  const selectedInstanceId = instanceId === undefined ? localInstanceId : instanceId;
+  const editDraft = (next: WorkflowRecipeDraftDto) => {
+    workspace.edit(next.recipeId, next);
+    setDraft(next);
+  };
+  useDraftCloseWarning(() => workspace.dirty());
   const [runtime, setRuntime] = useState<RuntimeProfileViewModel | null>(null);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileOption[]>([]);
   const [profileValues, setProfileValues] = useState<
@@ -53,8 +93,6 @@ export function WorkflowAuthoringScreen({
   const [creatingName, setCreatingName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [compiled, setCompiled] = useState<readonly SessionEventDefinitionDto[]>([]);
-  const [eventResult, setEventResult] = useState<SessionEventResultDto | null>(null);
 
   const loadCatalogs = useCallback(async () => {
     const [runtimeSnapshot, capabilityProfiles, identityCatalog] = await Promise.all([
@@ -91,25 +129,27 @@ export function WorkflowAuthoringScreen({
 
   const openRecipe = useCallback(
     async (recipeId: string) => {
+      const ticket = ++openTicket.current;
+      selectedRef.current = recipeId;
+      workspace.selectedKey = recipeId;
       setBusy(true);
       setError(null);
       try {
         const next = await client.loadRecipe(recipeId);
+        if (ticket !== openTicket.current) return;
         setState(next);
-        setDraft(next.draft);
+        setDraft(workspace.load(recipeId, next.draft));
         setSelection({
           kind: 'node',
-          id: next.draft.startingNodeId ?? next.draft.nodes[0]?.nodeId ?? null,
+          id: null,
         });
-        setCompiled([]);
-        setEventResult(null);
       } catch (caught) {
-        setError(errorMessage(caught));
+        if (ticket === openTicket.current) setError(errorMessage(caught));
       } finally {
-        setBusy(false);
+        if (ticket === openTicket.current) setBusy(false);
       }
     },
-    [client],
+    [client, workspace],
   );
 
   useEffect(() => {
@@ -118,15 +158,26 @@ export function WorkflowAuthoringScreen({
     setError(null);
     void Promise.all([loadCatalogs(), loadSummaries()])
       .then(([, recipes]) => {
-        if (active && recipes[0]) return openRecipe(recipes[0].recipeId);
+        if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
         return undefined;
       })
       .catch((caught) => active && setError(errorMessage(caught)))
       .finally(() => active && setBusy(false));
     return () => {
       active = false;
+      openTicket.current += 1;
     };
   }, [loadCatalogs, loadSummaries, openRecipe]);
+
+  useEffect(() => {
+    if (recipeId && recipeId !== selectedRef.current) void openRecipe(recipeId);
+  }, [recipeId, openRecipe]);
+  const loadInstances = useCallback(async () => {
+    if (instanceClient) setInstances(await instanceClient.list());
+  }, [instanceClient]);
+  useEffect(() => {
+    void loadInstances().catch((cause) => setError(errorMessage(cause)));
+  }, [loadInstances]);
 
   const createRecipe = async () => {
     if (!creatingName.trim()) return;
@@ -136,7 +187,11 @@ export function WorkflowAuthoringScreen({
       const created = await client.createRecipe(creatingName.trim());
       setCreatingName('');
       setState(created);
-      setDraft(created.draft);
+      selectedRef.current = created.draft.recipeId;
+      workspace.selectedKey = created.draft.recipeId;
+      setDraft(workspace.load(created.draft.recipeId, created.draft));
+      setLocalInstanceId(null);
+      onOpenRecipe?.(created.draft.recipeId);
       setSelection({ kind: 'node', id: null });
       await loadSummaries();
     } catch (caught) {
@@ -147,13 +202,21 @@ export function WorkflowAuthoringScreen({
   };
 
   const saveDraft = async () => {
-    if (!draft) return;
+    if (!draft || busy) return;
     setBusy(true);
     setError(null);
     try {
       const saved = await client.saveDraft(draft);
-      setState(saved);
-      setDraft(saved.draft);
+      const working = workspace.acceptSave(
+        draft.recipeId,
+        draft,
+        saved.draft,
+        (current, baseline) => ({ ...current, revision: baseline.revision }),
+      );
+      if (selectedRef.current === draft.recipeId) {
+        setState(saved);
+        setDraft(working);
+      }
       await loadSummaries();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -163,13 +226,15 @@ export function WorkflowAuthoringScreen({
   };
 
   const activate = async () => {
-    if (!draft) return;
+    if (!draft || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const activated = await client.activateRecipe(draft.recipeId);
-      setState(activated);
-      setDraft(activated.draft);
+      const activated = await client.activateRecipe(
+        draft.recipeId,
+        workspace.baseline(draft.recipeId)?.revision ?? draft.revision,
+      );
+      if (selectedRef.current === draft.recipeId) setState(activated);
       await loadSummaries();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -221,7 +286,11 @@ export function WorkflowAuthoringScreen({
               type="button"
               className={draft?.recipeId === summary.recipeId ? 'is-selected' : undefined}
               key={summary.recipeId}
-              onClick={() => void openRecipe(summary.recipeId)}
+              onClick={() => {
+                setLocalInstanceId(null);
+                onOpenRecipe?.(summary.recipeId);
+                void openRecipe(summary.recipeId);
+              }}
             >
               <strong>{summary.name}</strong>
               <span>Draft v{summary.draftRevision}</span>
@@ -231,6 +300,36 @@ export function WorkflowAuthoringScreen({
             </button>
           ))}
         </nav>
+        {instanceClient ? (
+          <section className="workflow-instance-list">
+            <h2>Instances</h2>
+            <button
+              type="button"
+              disabled={
+                !TargetSelector || !summaries.some((recipe) => recipe.activeRevision !== null)
+              }
+              onClick={() => setCreatingInstance(true)}
+            >
+              Create instance
+            </button>
+            {instances.map((instance) => (
+              <button
+                type="button"
+                key={instance.id}
+                aria-pressed={selectedInstanceId === instance.id}
+                onClick={() => {
+                  setLocalInstanceId(instance.id);
+                  onOpenInstance?.(instance.id);
+                }}
+              >
+                {instance.name}
+                <small>
+                  {instance.recipe.name} · v{instance.recipe.revision}
+                </small>
+              </button>
+            ))}
+          </section>
+        ) : null}
       </aside>
 
       <section className="workflow-authoring-screen__main">
@@ -239,7 +338,16 @@ export function WorkflowAuthoringScreen({
             {error}
           </div>
         ) : null}
-        {!draft ? (
+        {selectedInstanceId && instanceClient ? (
+          <WorkflowInstancePanel
+            key={selectedInstanceId}
+            instanceId={selectedInstanceId}
+            client={instanceClient}
+            sessionClient={sessionClient}
+            profileClient={profileClient}
+            queryClient={queryClient}
+          />
+        ) : !draft ? (
           <div className="workflow-authoring-screen__empty">
             <GitBranch size={28} aria-hidden="true" />
             <h2>Create a Workflow recipe</h2>
@@ -253,11 +361,14 @@ export function WorkflowAuthoringScreen({
                 <input
                   aria-label="Workflow name"
                   value={draft.name}
-                  onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })}
+                  onChange={(event) => editDraft({ ...draft, name: event.currentTarget.value })}
                 />
               </div>
               <div>
                 <span>{state?.active ? `Active v${state.active.revision}` : 'Not active'}</span>
+                {workspace.dirty(draft.recipeId) ? (
+                  <small>Unsaved edits · activation uses the saved draft</small>
+                ) : null}
                 <button type="button" disabled={busy} onClick={() => void saveDraft()}>
                   <Save size={15} aria-hidden="true" /> Save draft
                 </button>
@@ -273,86 +384,227 @@ export function WorkflowAuthoringScreen({
             </header>
 
             <div className="workflow-authoring-screen__body">
-              <WorkflowOutline
-                draft={draft}
+              <WorkflowCanvas
+                key={draft.recipeId}
+                nodes={draft.nodes.map((node) => ({
+                  id: node.nodeId,
+                  name: node.name,
+                  x: node.positionX,
+                  y: node.positionY,
+                  starting: draft.startingNodeId === node.nodeId,
+                }))}
+                connections={draft.connections.map((connection) => ({
+                  id: connection.connectionId,
+                  name: connection.name,
+                  source: connection.sourceNodeId,
+                  destination: connection.destinationNodeId,
+                }))}
                 selection={selection}
-                defaultProfile={profiles[0] ? profileValues.get(profiles[0].id) : undefined}
-                runtimeLockedSelections={runtime?.lockedSelections}
+                canAdd={profiles.length > 0}
+                canUndo={workspace.canUndo(draft.recipeId)}
+                canRedo={workspace.canRedo(draft.recipeId)}
+                onUndo={() => {
+                  const previous = workspace.restore(draft.recipeId, 'undo', (value, saved) => ({
+                    ...value,
+                    revision: saved.revision,
+                  }));
+                  if (previous) setDraft(previous);
+                }}
+                onRedo={() => {
+                  const next = workspace.restore(draft.recipeId, 'redo', (value, saved) => ({
+                    ...value,
+                    revision: saved.revision,
+                  }));
+                  if (next) setDraft(next);
+                }}
                 onSelect={setSelection}
-                onChange={setDraft}
+                onPlace={(x, y, copyFrom) => {
+                  const source = draft.nodes.find((node) => node.nodeId === copyFrom);
+                  const profile = source
+                    ? profileValues.get(source.capabilityProfileId)
+                    : profiles[0]
+                      ? profileValues.get(profiles[0].id)
+                      : undefined;
+                  if (!source && !profile) return;
+                  const nodeId = `node-${crypto.randomUUID()}`;
+                  const node = source
+                    ? {
+                        ...structuredClone(source),
+                        nodeId,
+                        name: `${source.name} copy`,
+                        positionX: x,
+                        positionY: y,
+                      }
+                    : {
+                        nodeId,
+                        name: `Node ${draft.nodes.length + 1}`,
+                        positionX: x,
+                        positionY: y,
+                        capabilityProfileId: profile!.capabilityProfileId,
+                        nodeProfile: {
+                          contractVersion: 1 as const,
+                          allowedCapabilities: profile!.allowedCapabilities,
+                          pinnedDefaults: defaultsWithinCapabilities(
+                            profile!.allowedCapabilities,
+                            runtime?.lockedSelections,
+                          ),
+                        },
+                        initialPrompt: null,
+                        agentIdentityId: null,
+                      };
+                  editDraft({
+                    ...draft,
+                    startingNodeId: draft.startingNodeId ?? nodeId,
+                    nodes: [...draft.nodes, node],
+                  });
+                  setSelection({ kind: 'node', id: nodeId });
+                }}
+                onConnect={(sourceNodeId, destinationNodeId) => {
+                  const connectionId = `connection-${crypto.randomUUID()}`;
+                  editDraft({
+                    ...draft,
+                    connections: [
+                      ...draft.connections,
+                      {
+                        connectionId,
+                        name: `${draft.nodes.find((node) => node.nodeId === sourceNodeId)?.name} → ${draft.nodes.find((node) => node.nodeId === destinationNodeId)?.name}`,
+                        sourceNodeId,
+                        destinationNodeId,
+                        trigger: { kind: 'invocation_completed' },
+                        promptInputs: [{ kind: 'invocation_output' }],
+                        promptText: '',
+                        target: {
+                          cardinality: 'first',
+                          ordering: 'newest',
+                          running: 'any',
+                          createdBy: null,
+                          missing: 'create',
+                        },
+                      },
+                    ],
+                  });
+                  setSelection({ kind: 'connection', id: connectionId });
+                }}
+                onMove={(id, x, y) =>
+                  editDraft({
+                    ...draft,
+                    nodes: draft.nodes.map((node) =>
+                      node.nodeId === id ? { ...node, positionX: x, positionY: y } : node,
+                    ),
+                  })
+                }
+                onStartingNode={(id) => editDraft({ ...draft, startingNodeId: id })}
+                onRemove={() => {
+                  const nodes = draft.nodes.filter(
+                    (node) => selection.kind !== 'node' || node.nodeId !== selection.id,
+                  );
+                  editDraft({
+                    ...draft,
+                    nodes,
+                    startingNodeId: nodes.some((node) => node.nodeId === draft.startingNodeId)
+                      ? draft.startingNodeId
+                      : (nodes[0]?.nodeId ?? null),
+                    connections: draft.connections.filter((edge) =>
+                      selection.kind === 'connection'
+                        ? edge.connectionId !== selection.id
+                        : edge.sourceNodeId !== selection.id &&
+                          edge.destinationNodeId !== selection.id,
+                    ),
+                  });
+                  setSelection({ kind: 'node', id: null });
+                }}
               />
-              <section className="workflow-authoring-screen__editor">
-                {selectedNode && runtime ? (
-                  <WorkflowNodeEditor
-                    node={selectedNode}
-                    draft={draft}
-                    runtime={runtime}
-                    profiles={profiles}
-                    profileValues={profileValues}
-                    identities={identities}
-                    onChange={(node) =>
-                      setDraft({
-                        ...draft,
-                        nodes: draft.nodes.map((candidate) =>
-                          candidate.nodeId === node.nodeId ? node : candidate,
-                        ),
-                      })
-                    }
-                    onCopy={(sourceNodeId) => {
-                      const source = draft.nodes.find((node) => node.nodeId === sourceNodeId);
-                      if (!source) return;
-                      setDraft({
-                        ...draft,
-                        nodes: draft.nodes.map((candidate) =>
-                          candidate.nodeId === selectedNode.nodeId
-                            ? {
-                                ...candidate,
-                                capabilityProfileId: source.capabilityProfileId,
-                                nodeProfile: source.nodeProfile,
-                                initialPrompt: source.initialPrompt,
-                                agentIdentityId: source.agentIdentityId,
-                              }
-                            : candidate,
-                        ),
-                      });
-                    }}
-                  />
-                ) : selectedConnection ? (
-                  <WorkflowConnectionEditor
-                    connection={selectedConnection}
-                    nodes={draft.nodes}
-                    onChange={(connection) =>
-                      setDraft({
-                        ...draft,
-                        connections: draft.connections.map((candidate) =>
-                          candidate.connectionId === connection.connectionId
-                            ? connection
-                            : candidate,
-                        ),
-                      })
-                    }
-                  />
-                ) : selection.kind === 'run' ? (
-                  <WorkflowRunPanel
-                    client={client}
-                    recipeId={draft.recipeId}
-                    compiled={compiled}
-                    eventResult={eventResult}
-                    onCompiled={setCompiled}
-                    onEventResult={setEventResult}
-                    onError={setError}
-                  />
-                ) : (
-                  <div className="workflow-authoring-screen__empty">
-                    <h2>Select or add a node</h2>
-                    <p>Node state is embedded in this recipe and can be copied before editing.</p>
-                  </div>
-                )}
-              </section>
+              {selection.id ? (
+                <section
+                  className="workflow-authoring-screen__editor"
+                  aria-label="Selected flow element"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') setSelection({ kind: 'node', id: null });
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="workflow-authoring-screen__close-editor"
+                    onClick={() => setSelection({ kind: 'node', id: null })}
+                  >
+                    Close editor
+                  </button>
+                  {selectedNode && runtime ? (
+                    <WorkflowNodeEditor
+                      node={selectedNode}
+                      draft={draft}
+                      runtime={runtime}
+                      profiles={profiles}
+                      profileValues={profileValues}
+                      identities={identities}
+                      onChange={(node) =>
+                        editDraft({
+                          ...draft,
+                          nodes: draft.nodes.map((candidate) =>
+                            candidate.nodeId === node.nodeId ? node : candidate,
+                          ),
+                        })
+                      }
+                      onCopy={(sourceNodeId) => {
+                        const source = draft.nodes.find((node) => node.nodeId === sourceNodeId);
+                        if (!source) return;
+                        editDraft({
+                          ...draft,
+                          nodes: draft.nodes.map((candidate) =>
+                            candidate.nodeId === selectedNode.nodeId
+                              ? {
+                                  ...candidate,
+                                  capabilityProfileId: source.capabilityProfileId,
+                                  nodeProfile: source.nodeProfile,
+                                  initialPrompt: source.initialPrompt,
+                                  agentIdentityId: source.agentIdentityId,
+                                }
+                              : candidate,
+                          ),
+                        });
+                      }}
+                    />
+                  ) : selectedConnection ? (
+                    <WorkflowConnectionEditor
+                      connection={selectedConnection}
+                      nodes={draft.nodes}
+                      onChange={(connection) =>
+                        editDraft({
+                          ...draft,
+                          connections: draft.connections.map((candidate) =>
+                            candidate.connectionId === connection.connectionId
+                              ? connection
+                              : candidate,
+                          ),
+                        })
+                      }
+                    />
+                  ) : (
+                    <div className="workflow-authoring-screen__empty">
+                      <h2>Select or add a node</h2>
+                      <p>Node state is embedded in this recipe and can be copied before editing.</p>
+                    </div>
+                  )}
+                </section>
+              ) : null}
             </div>
           </>
         )}
       </section>
+      {creatingInstance && instanceClient && TargetSelector ? (
+        <RecipeInstanceCreationDialog
+          recipes={summaries}
+          TargetSelector={TargetSelector}
+          onClose={() => setCreatingInstance(false)}
+          onSubmit={async (input) => {
+            const instance = await instanceClient.create(input);
+            setCreatingInstance(false);
+            await loadInstances();
+            setLocalInstanceId(instance.id);
+            onOpenInstance?.(instance.id);
+          }}
+        />
+      ) : null}
     </main>
   );
 }

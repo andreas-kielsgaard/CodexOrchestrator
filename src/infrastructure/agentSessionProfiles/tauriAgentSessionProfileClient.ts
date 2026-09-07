@@ -14,6 +14,10 @@ export function createTauriAgentSessionProfileClient(
   invokeCommand: AgentSessionProfileInvoke = invoke,
 ): AgentSessionProfileClient {
   return {
+    startDirectUserSession: (input) =>
+      invokeCommand<SendDirectUserAgentSessionMessageResultDto>('start_direct_user_agent_session', {
+        input,
+      }),
     loadPinnedProfile: (sessionId) =>
       invokeCommand<PinnedAgentSessionProfileDto>('load_pinned_agent_session_profile', {
         input: { sessionId },

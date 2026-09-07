@@ -23,6 +23,12 @@ export interface SendDirectUserAgentSessionMessageResultDto {
 }
 
 export interface AgentSessionProfileClient {
+  startDirectUserSession(
+    input: Omit<SendDirectUserAgentSessionMessageInput, 'sessionId'> & {
+      readonly title: string | null;
+      readonly workingDirectory: string | null;
+    },
+  ): Promise<SendDirectUserAgentSessionMessageResultDto>;
   loadPinnedProfile(sessionId: string): Promise<PinnedAgentSessionProfileDto>;
   sendDirectUserMessage(
     input: SendDirectUserAgentSessionMessageInput,

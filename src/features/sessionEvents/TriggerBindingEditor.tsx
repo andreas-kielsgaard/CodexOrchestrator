@@ -56,6 +56,11 @@ export function TriggerBindingEditor({
           value={value.kind}
           onChange={(event) => onChange(triggerForKind(event.target.value as TriggerKind))}
         >
+          {!kinds.includes(value.kind) ? (
+            <option value={value.kind} disabled>
+              {triggerKindLabel(value.kind)} (not supported)
+            </option>
+          ) : null}
           {kinds.map((kind) => (
             <option value={kind} key={kind}>
               {triggerKindLabel(kind)}

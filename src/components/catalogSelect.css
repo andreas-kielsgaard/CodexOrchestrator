@@ -63,6 +63,11 @@
 }
 
 .catalog-field__option input {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
   margin-top: 2px;
 }
 

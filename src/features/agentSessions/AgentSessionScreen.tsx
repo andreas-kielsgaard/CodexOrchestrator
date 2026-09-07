@@ -6,10 +6,8 @@ import type {
   PinnedAgentSessionProfileDto,
 } from '../../application/agentSessionProfiles';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
-import type {
-  EventDeliveryRecordDto,
-  SessionEventQueryClient,
-} from '../../application/sessionEvents';
+import type { SessionEventQueryClient } from '../../application/sessionEvents';
+import { useSessionDeliveries } from '../sessionEvents/useSessionDeliveries';
 import {
   buildAgentSessionNavigation,
   type AgentSessionNavigationIdentity,
@@ -80,7 +78,7 @@ export function StandaloneAgentSessionScreen({
   const collection = useAgentSessionCollection(client, collectionOptions);
   const [pinnedProfile, setPinnedProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [eventDeliveries, setEventDeliveries] = useState<readonly EventDeliveryRecordDto[]>([]);
+  const deliveryQuery = useSessionDeliveries(sessionEventQueryClient, collection.selectedSessionId);
   const [runtimeSelection, setRuntimeSelection] = useState<PerMessageRuntimeSelection>({
     model: null,
     reasoningMode: null,
@@ -90,7 +88,6 @@ export function StandaloneAgentSessionScreen({
     let active = true;
     setPinnedProfile(null);
     setProfileError(null);
-    setEventDeliveries([]);
     setRuntimeSelection({ model: null, reasoningMode: null });
     if (!sessionId || !profileClient)
       return () => {
@@ -104,18 +101,6 @@ export function StandaloneAgentSessionScreen({
         if (active) setProfileError(errorMessage(caught));
       },
     );
-    if (sessionEventQueryClient) {
-      void sessionEventQueryClient
-        .listDeliveriesForSession({
-          namespace: 'orchestrator.agent_sessions',
-          kind: 'session',
-          id: sessionId,
-        })
-        .then(
-          (deliveries) => active && setEventDeliveries(deliveries),
-          () => undefined,
-        );
-    }
     return () => {
       active = false;
     };
@@ -146,6 +131,20 @@ export function StandaloneAgentSessionScreen({
   const session = useAgentSession(client, {
     selectedSessionId: collection.selectedSessionId,
     onSessionCreated: onCreated,
+    ...(profileClient
+      ? {
+          startSession: (input: {
+            submittedText: string;
+            workingDirectory: string | null;
+            title: string | null;
+          }) =>
+            profileClient.startDirectUserSession({
+              ...input,
+              model: runtimeSelection.model,
+              reasoningMode: runtimeSelection.reasoningMode,
+            }),
+        }
+      : {}),
     ...(profileClient && collection.selectedSessionId ? { sendExistingMessage } : {}),
   });
   const sessionIdentities = useMemo(
@@ -203,12 +202,34 @@ export function StandaloneAgentSessionScreen({
     session.transcript,
     returnOrigin?.sessionId,
   ]);
+  const sendUnavailableReason =
+    profileClient &&
+    collection.selectedSessionId &&
+    pinnedProfile?.sessionId !== collection.selectedSessionId
+      ? profileError
+        ? 'This Session has no available pinned configuration. Its history is still readable.'
+        : 'Loading Session configuration…'
+      : undefined;
   const executionSettings =
     profileClient && collection.selectedSessionId ? (
       <AgentSessionExecutionSettings
         profile={pinnedProfile}
         profileError={profileError}
-        deliveries={eventDeliveries}
+        deliveries={deliveryQuery.deliveries}
+        deliveryError={deliveryQuery.error}
+        onReloadDeliveries={deliveryQuery.reload}
+        identity={session.details?.session.assignedIdentity ?? null}
+        onIdentityChange={
+          client.updateIdentity && session.details
+            ? async (assignedIdentity) => {
+                await client.updateIdentity!({
+                  sessionId: session.details!.session.id,
+                  assignedIdentity,
+                });
+                await session.reload();
+              }
+            : undefined
+        }
         selection={runtimeSelection}
         disabled={session.sending}
         onSelectionChange={setRuntimeSelection}
@@ -234,7 +255,11 @@ export function StandaloneAgentSessionScreen({
             onExpandedNodeIdsChange={updateExpansion}
             onSelect={(id) => void collection.selectSession(id)}
             onNew={collection.startNewSession}
-            onReload={() => void collection.reload()}
+            onReload={() => {
+              void collection.reload();
+              void session.reload();
+              deliveryQuery.reload();
+            }}
           />
         }
         secondary={
@@ -265,6 +290,7 @@ export function StandaloneAgentSessionScreen({
                 <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
                   <AgentSessionWorkspace
                     controller={session}
+                    sendUnavailableReason={sendUnavailableReason}
                     transcriptRange={evidenceRange}
                     inspection={
                       focusEvidence
@@ -297,6 +323,7 @@ export function StandaloneAgentSessionScreen({
               <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
                 <AgentSessionWorkspace
                   controller={session}
+                  sendUnavailableReason={sendUnavailableReason}
                   transcriptRange={evidenceRange}
                   inspection={
                     focusEvidence

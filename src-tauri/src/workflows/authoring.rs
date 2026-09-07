@@ -6,6 +6,7 @@ use super::{
     compiled_plan::{
         WorkflowCompilationInput, WorkflowCompiledConnection, WorkflowCompiledNode,
         WorkflowConnectionPromptInput, WorkflowConnectionTargetPlan, WorkflowConnectionTrigger,
+        WorkflowSessionCreation,
     },
 };
 use crate::{
@@ -123,6 +124,37 @@ impl WorkflowRecipeDraft {
 
         let mut connection_ids = BTreeSet::new();
         for connection in &self.connections {
+            if matches!(
+                connection.trigger,
+                WorkflowConnectionTrigger::EventGroupCompleted { .. }
+            ) {
+                return Err("Group completion is not supported yet".into());
+            }
+            for source in &connection.prompt_inputs {
+                let compatible = match source {
+                    WorkflowConnectionPromptInput::InvocationOutput => matches!(
+                        connection.trigger,
+                        WorkflowConnectionTrigger::InvocationCompleted
+                    ),
+                    WorkflowConnectionPromptInput::McpArgument { .. } => matches!(
+                        connection.trigger,
+                        WorkflowConnectionTrigger::McpCall { .. }
+                    ),
+                    WorkflowConnectionPromptInput::ApplicationEventField { .. } => matches!(
+                        connection.trigger,
+                        WorkflowConnectionTrigger::ApplicationEvent { .. }
+                    ),
+                    WorkflowConnectionPromptInput::ReferencedContent { reference } => {
+                        reference.namespace() == "file" && reference.kind() == "path"
+                    }
+                };
+                if !compatible {
+                    return Err(format!(
+                        "Connection `{}` has a prompt source that does not match its trigger",
+                        connection.name
+                    ));
+                }
+            }
             if !connection_ids.insert(connection.connection_id.as_str()) {
                 return Err(format!(
                     "Workflow recipe contains duplicate connection `{}`",
@@ -150,6 +182,23 @@ impl WorkflowRecipeDraft {
         instance_id: &str,
         capability_profiles: &BTreeMap<String, CapabilityProfile>,
     ) -> Result<WorkflowCompilationInput, String> {
+        self.build_compilation_input(instance_id, Some(capability_profiles), "")
+    }
+
+    pub(crate) fn runtime_compilation_input(
+        &self,
+        instance_id: &str,
+        working_directory: &str,
+    ) -> Result<WorkflowCompilationInput, String> {
+        self.build_compilation_input(instance_id, None, working_directory)
+    }
+
+    fn build_compilation_input(
+        &self,
+        instance_id: &str,
+        capability_profiles: Option<&BTreeMap<String, CapabilityProfile>>,
+        working_directory: &str,
+    ) -> Result<WorkflowCompilationInput, String> {
         self.validate_activatable()?;
         validate_identifier("Workflow instance", "instanceId", instance_id)?;
 
@@ -157,15 +206,31 @@ impl WorkflowRecipeDraft {
             .nodes
             .iter()
             .map(|node| {
-                let capability_profile = capability_profiles
-                    .get(&node.capability_profile_id)
-                    .ok_or_else(|| {
+                let session_creation = if let Some(capability_profiles) = capability_profiles {
+                    let capability_profile = capability_profiles
+                        .get(&node.capability_profile_id)
+                        .ok_or_else(|| {
                         format!(
                             "Workflow node `{}` references unavailable Capability Profile `{}`",
                             node.node_id, node.capability_profile_id
                         )
                     })?;
-                validate_node_capabilities(node, capability_profile)?;
+                    validate_node_capabilities(node, capability_profile)?;
+                    WorkflowSessionCreation::ResolvedInput(SessionCreationRequest {
+                        contract_version: 1,
+                        capability_profile: capability_profile.clone(),
+                        node_profile: node.node_profile.clone(),
+                    })
+                } else {
+                    WorkflowSessionCreation::AtBirth(
+                        crate::execution_configuration::SessionCreationIntent {
+                            capability_profile_id: node.capability_profile_id.clone(),
+                            node_profile: node.node_profile.clone(),
+                            working_directory: working_directory.into(),
+                            title: node.name.clone(),
+                        },
+                    )
+                };
                 Ok(WorkflowCompiledNode {
                     reference: WorkflowNodeReference::new(node.node_id.clone())
                         .map_err(|error| error.to_string())?,
@@ -182,11 +247,7 @@ impl WorkflowRecipeDraft {
                             .map_err(|error| error.to_string())
                         })
                         .transpose()?,
-                    session_creation: SessionCreationRequest {
-                        contract_version: crate::execution_configuration::SESSION_CREATION_REQUEST_CONTRACT_VERSION,
-                        capability_profile: capability_profile.clone(),
-                        node_profile: node.node_profile.clone(),
-                    },
+                    session_creation,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -411,11 +472,12 @@ mod tests {
         let input = draft.compilation_input("instance-1", &profiles).unwrap();
 
         assert_eq!(input.nodes.len(), 1);
+        let WorkflowSessionCreation::ResolvedInput(request) = &input.nodes[0].session_creation
+        else {
+            panic!("expected preview input")
+        };
         assert_eq!(
-            input.nodes[0]
-                .session_creation
-                .capability_profile
-                .capability_profile_id,
+            request.capability_profile.capability_profile_id,
             "capability-default"
         );
         assert_eq!(

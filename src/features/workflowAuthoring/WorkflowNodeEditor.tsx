@@ -11,7 +11,8 @@ import {
   type NodeProfileEditorValue,
   type RuntimeProfileViewModel,
 } from '../executionConfiguration';
-import { defaultsWithinCapabilities } from './workflowAuthoringPresentation';
+import { selectedMcpToolValues } from '../executionConfiguration/types';
+import type { CatalogState } from '../../components/CatalogSelect';
 
 export function WorkflowNodeEditor({
   node,
@@ -43,6 +44,45 @@ export function WorkflowNodeEditor({
     exposedCapabilities: node.nodeProfile.allowedCapabilities,
     pinnedDefaults: node.nodeProfile.pinnedDefaults,
   };
+  const ceiling = profileValues.get(node.capabilityProfileId)?.allowedCapabilities;
+  const restrict = <T extends string>(
+    catalog: CatalogState<T>,
+    allowed: readonly T[],
+  ): CatalogState<T> => ({
+    ...catalog,
+    options: catalog.options.filter((option) => allowed.includes(option.value)),
+  });
+  const catalogs = {
+    models: restrict(runtime.catalogs.models, ceiling?.models ?? []),
+    reasoningModes: restrict(runtime.catalogs.reasoningModes, ceiling?.reasoningModes ?? []),
+    sandboxModes: restrict(runtime.catalogs.sandboxModes, ceiling?.sandboxModes ?? []),
+    mcpTools: restrict(runtime.catalogs.mcpTools, selectedMcpToolValues(ceiling?.mcpTools ?? {})),
+    skills: restrict(runtime.catalogs.skills, ceiling?.skills ?? []),
+  };
+  const errors: string[] = [];
+  if (!ceiling) errors.push('Choose an available Capability Profile.');
+  for (const [label, allowed, selected, pinned] of [
+    ['model', ceiling?.models ?? [], value.exposedCapabilities.models, value.pinnedDefaults.model],
+    [
+      'reasoning mode',
+      ceiling?.reasoningModes ?? [],
+      value.exposedCapabilities.reasoningModes,
+      value.pinnedDefaults.reasoningMode,
+    ],
+    [
+      'sandbox mode',
+      ceiling?.sandboxModes ?? [],
+      value.exposedCapabilities.sandboxModes,
+      value.pinnedDefaults.sandboxMode,
+    ],
+  ] as const) {
+    if (selected.some((choice) => !(allowed as readonly string[]).includes(choice)))
+      errors.push(`An exposed ${label} is outside the selected profile.`);
+    if (pinned && !(selected as readonly string[]).includes(pinned))
+      errors.push(
+        `Default ${label} “${pinned}” is not exposed. Choose another default or expose it.`,
+      );
+  }
   const update = (next: NodeProfileEditorValue) => {
     const profileChanged = next.capabilityProfileId !== value.capabilityProfileId;
     const selectedProfile = next.capabilityProfileId
@@ -52,10 +92,6 @@ export function WorkflowNodeEditor({
       profileChanged && selectedProfile
         ? selectedProfile.allowedCapabilities
         : next.exposedCapabilities;
-    const pinnedDefaults =
-      profileChanged && selectedProfile
-        ? defaultsWithinCapabilities(selectedProfile.allowedCapabilities, runtime.lockedSelections)
-        : next.pinnedDefaults;
     onChange({
       ...node,
       name: next.nodeName,
@@ -65,7 +101,7 @@ export function WorkflowNodeEditor({
       nodeProfile: {
         ...node.nodeProfile,
         allowedCapabilities: exposedCapabilities,
-        pinnedDefaults,
+        pinnedDefaults: next.pinnedDefaults,
       },
     });
   };
@@ -75,7 +111,8 @@ export function WorkflowNodeEditor({
         value={value}
         capabilityProfiles={profiles}
         identities={identities}
-        capabilityCatalogs={runtime.catalogs}
+        capabilityCatalogs={catalogs}
+        validationErrors={errors}
         runtimeLockedSelections={runtime.lockedSelections}
         copySources={draft.nodes
           .filter((candidate) => candidate.nodeId !== node.nodeId)

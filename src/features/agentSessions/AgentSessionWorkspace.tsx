@@ -31,6 +31,7 @@ export interface AgentSessionPresentation {
 
 export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
+  readonly sendUnavailableReason?: string;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
   /** A product-owned exact evidence excerpt; ordinary Session views keep the full transcript. */
@@ -62,6 +63,7 @@ export function AgentSessionHeaderActionsProvider({
 
 export function AgentSessionWorkspace({
   controller,
+  sendUnavailableReason,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
   transcriptRange,
@@ -214,6 +216,7 @@ export function AgentSessionWorkspace({
             draft: controller.draft,
             workingDirectory: controller.workingDirectory,
             sending: controller.sending,
+            sendUnavailableReason,
             active,
             canceling: controller.canceling,
             setDraft: controller.setDraft,

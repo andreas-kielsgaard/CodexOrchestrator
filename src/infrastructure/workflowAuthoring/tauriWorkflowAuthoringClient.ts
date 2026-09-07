@@ -33,9 +33,9 @@ export function createTauriWorkflowAuthoringClient(
       }),
     copyNodeConfiguration: (input) =>
       invokeCommand<WorkflowRecipeStateDto>('copy_workflow_node_configuration', { input }),
-    activateRecipe: (recipeId) =>
+    activateRecipe: (recipeId, expectedRevision) =>
       invokeCommand<WorkflowRecipeStateDto>('activate_workflow_recipe', {
-        input: { recipeId },
+        input: { recipeId, expectedRevision },
       }),
     compileRecipeInstance: (recipeId, instanceId) =>
       invokeCommand<SessionEventDefinitionDto[]>('compile_workflow_recipe_instance', {
