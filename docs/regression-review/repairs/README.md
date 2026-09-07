@@ -1,6 +1,6 @@
 # Regression repairs
 
-7 September 2026. Implemented in `codex/session-event-regression-review`, on top of `e77a725`, for consolidation into `codex/harness-ux-workflow-convergence`. The original review reports and screenshots remain the pre-repair baseline.
+7 September 2026. Repair commit `c1b89b9` was fast-forwarded into `codex/harness-ux-workflow-convergence`; its existing worktree now uses that branch. The original review reports and screenshots remain the pre-repair baseline.
 
 ## What changed
 

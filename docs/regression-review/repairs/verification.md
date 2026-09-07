@@ -29,3 +29,11 @@ The Rust fixture uses the same creation resolver, Session application, directory
 The browser fixture mounts the product App and feature components. Its instance persistence is local fixture storage. Native durability is covered separately by SQLite reopen assertions. Browser drag, connection save, collapse/layout, instance creation, Session opening, Back and saved-instance reopening are checked. Screenshots were also inspected for layout errors.
 
 No live provider request, native-window create/reopen walkthrough, old-data migration, release package, user acceptance or parallel-branch integration was performed. The existing `regression-review` runtime manifest is stale and was not launched as the repaired build.
+
+## Harness UX consolidation
+
+On 7 September 2026, repair commit `c1b89b9` was fast-forwarded into `codex/harness-ux-workflow-convergence` in the existing Harness UX worktree. There were no conflicts or product-code changes during the merge.
+
+Checks repeated from that worktree passed: **997 frontend tests**, **9 joined Rust repair tests**, and the **TypeScript/Vite build**. The old dependency link was refreshed, and relocated Tauri build-cache entries were rebuilt because they contained the previous worktree path. No source fix was needed.
+
+This rerun does not replace the full Rust suite result above or establish a mounted native application. Main and unrelated development branches were not merged.
