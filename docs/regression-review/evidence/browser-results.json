@@ -1,0 +1,76 @@
+[
+  {
+    "id": "node-allows-forbidden-model",
+    "reproduced": true,
+    "allowed": ["gpt-5.6-sol"],
+    "submittedModels": ["gpt-5.6-sol", "gpt-5.6-terra"]
+  },
+  {
+    "id": "default-outside-allowed-models",
+    "reproduced": true,
+    "shownDefault": "",
+    "submittedNode": {
+      "contractVersion": 1,
+      "allowedCapabilities": {
+        "models": [],
+        "reasoningModes": ["high", "low", "max", "medium", "ultra", "xhigh"],
+        "sandboxModes": ["workspace_write"],
+        "mcpTools": {},
+        "skills": []
+      },
+      "pinnedDefaults": {
+        "model": "gpt-5.6-sol",
+        "reasoningMode": "high",
+        "sandboxMode": "workspace_write"
+      }
+    }
+  },
+  {
+    "id": "draft-lost-on-switch",
+    "reproduced": true,
+    "afterSwitch": "Plan Author"
+  },
+  {
+    "id": "activation-discards-edits",
+    "reproduced": true
+  },
+  {
+    "id": "run-id-changes-with-old-compile-count",
+    "reproduced": true,
+    "returnedId": "workflow-instance-261c081c-9801-4405-9d0f-6bc7f1a485c8"
+  },
+  {
+    "id": "workflow-picker-hidden-at-850px",
+    "reproduced": true
+  },
+  {
+    "id": "collapsed-section-still-visible",
+    "reproduced": true,
+    "hidden": true,
+    "display": "grid",
+    "height": 295.796875
+  },
+  {
+    "id": "oversized-checkbox-squeezes-label",
+    "reproduced": true,
+    "checkboxWidth": 154.65625,
+    "labelWidth": 211.65625,
+    "textWidth": 22,
+    "textHeight": 37.4375
+  },
+  {
+    "id": "ordinary-session-second-message-blocked",
+    "reproduced": true,
+    "genericSends": [
+      {
+        "submittedText": "First ordinary Session message"
+      }
+    ],
+    "profileSends": [],
+    "profileLoads": ["session-1"]
+  },
+  {
+    "id": "page-errors",
+    "errors": []
+  }
+]
