@@ -660,7 +660,9 @@ impl AgentSessionRepository for FakeRepository {
         })?;
         let updated = invocation
             .recover_pre_acceptance_interruption(updated_at)
-            .map_err(|error| repository_error(RepositoryErrorKind::InvalidState, error.to_string()))?;
+            .map_err(|error| {
+                repository_error(RepositoryErrorKind::InvalidState, error.to_string())
+            })?;
         *invocation = updated.clone();
         Ok(updated)
     }

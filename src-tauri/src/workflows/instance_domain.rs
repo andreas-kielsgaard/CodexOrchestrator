@@ -1,35 +1,11 @@
 use super::domain::{EffectiveRecipe, WorkflowConnectionActivation};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ResolvedRepoBranchWorktreeTarget {
-    pub(crate) repository: WorkflowRepositoryTarget,
-    pub(crate) branch: WorkflowBranchTarget,
-    pub(crate) worktree: WorkflowWorktreeTarget,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowRepositoryTarget {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) git_common_directory: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowBranchTarget {
-    pub(crate) id: String,
-    pub(crate) name: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowWorktreeTarget {
-    pub(crate) id: String,
-    pub(crate) path: String,
-}
+pub(crate) use crate::repository_catalog::{
+    ResolvedBranchTarget as WorkflowBranchTarget, ResolvedRepoBranchWorktreeTarget,
+    ResolvedRepositoryTarget as WorkflowRepositoryTarget,
+    ResolvedWorktreeTarget as WorkflowWorktreeTarget,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

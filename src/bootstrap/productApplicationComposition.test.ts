@@ -27,6 +27,11 @@ describe('product application composition', () => {
     ).resolves.toMatchObject({ status: 'unsupported' });
     expect(composition.contextualFileReviewClient).toBeDefined();
     expect(composition.productDecisionClient).toBeDefined();
+    expect(composition.workflowClient).toBeDefined();
+    expect(composition.workflowTargetSelector).toBeDefined();
+    expect(composition.repositoryCatalogClient).toBeDefined();
+    expect(composition.worktreeReviewClient).toBeDefined();
+    expect(composition.nativeProfileApplicationConsumer).toBeDefined();
   });
 
   it('keeps product startup free of development fixture authority', () => {
@@ -35,5 +40,8 @@ describe('product application composition', () => {
         /disposableRecordedOrchestrationView|recordedDevelopment|recordedOrchestrationClient/,
       );
     }
+    expect(readFileSync(resolve('src/app/ApplicationRoot.tsx'), 'utf8')).not.toMatch(
+      /VITE_HUMAN_REVIEW_INSTANCE|humanReviewInstance|WorktreeBuildShell/,
+    );
   });
 });

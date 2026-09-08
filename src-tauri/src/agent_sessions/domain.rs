@@ -247,9 +247,10 @@ impl AgentInvocation {
         updated_at: DateTime<Utc>,
     ) -> Result<Self, ContractViolation> {
         let recoverable = self.status == AgentInvocationStatus::Interrupted
-            && self.runtime_error.as_ref().is_some_and(|error| {
-                error.code == "runtime_startup_without_launch_acceptance"
-            });
+            && self
+                .runtime_error
+                .as_ref()
+                .is_some_and(|error| error.code == "runtime_startup_without_launch_acceptance");
         if !recoverable {
             return Err(ContractViolation::InvalidInvocationTransition {
                 from: self.status,

@@ -1,6 +1,6 @@
 # Architecture Notes
 
-Updated: 2026-09-01
+Updated: 2026-09-08
 
 This document describes the current code architecture. It should explain where new work belongs and
 which boundaries should stay intact.
@@ -9,37 +9,59 @@ which boundaries should stay intact.
 
 - Desktop shell: Tauri v2.
 - UI: React, TypeScript, Vite.
+- Product composition mounts Orchestration, Workflow, Agent Sessions, Harness Management,
+  Worktree Review, contextual File Review, Product Decisions, and Native Profile settings through
+  explicit application clients.
 - The legacy task/run model remains as compatibility code and isolated component tests, not as a
   mounted product surface.
 - The core Agent Session lifecycle is Rust-first: durable records, SQLite history, application
   coordination, Codex protocol handling, and process supervision live behind Tauri commands.
-- Rust retains the older command names as fail-closed compatibility stubs plus their migration and
-  unit-test implementation. Every legacy handler rejects before opening another database connection
-  or launching Git, Codex, or validation processes.
-- SQLite infrastructure is written as pure TypeScript over injected SQLite-like interfaces.
+- Rust retains older task command names as fail-closed compatibility stubs. Every legacy handler
+  rejects before opening another database connection or launching Git, Codex, or validation
+  processes.
+- Current product capabilities share one managed ActiveDatabase where cross-feature configuration
+  or runtime facts require it. Worktree Review keeps its build, source, receipt, and cleanup facts
+  in a separate AppData database.
 
 Current limitation: substantial legacy task, repository, Git, validation, and migration code still
 resides in `src-tauri/src/lib.rs`. It is retained to avoid a risky extraction during reset cleanup,
-but it is not an active execution path. Agent Sessions are the only mounted UI and the only Tauri
-commands that can launch a provider process.
+but it is not an active execution path.
+
+## Active product composition
+
+`src-tauri/src/active_app.rs` is the composition root. It opens the managed ActiveDatabase once,
+constructs the current product applications, registers their Tauri states and commands, and owns
+shutdown ordering. `src/bootstrap/productApplicationComposition.ts` is the matching browser-side
+composition root; `src/app/App.tsx` only selects and renders already-constructed feature clients.
+
+The shared repository catalog is a product capability rather than Worktree Review state. It stores
+registered local repositories and disclosure provenance in ActiveDatabase, then derives branch and
+worktree availability from live standard Git reads. Workflow and Worktree Review consume this one
+catalog. Optional Codex and GitHub discovery add registration candidates but do not define Git
+identity.
+
+Worktree Review remains independently responsible for selected review context, worktree/source
+evidence, build attempts, retained outputs, and cleanup receipts. Its reusable
+`worktree_application` dependency owns only physical capture, checkout, compilation, and opening.
 
 ## Boundary Rules
 
 - React should consume application/domain facades, not parse Git, open SQLite, or execute Codex.
-- Git output parsing stays under `src/infrastructure/git/`.
+- Shared Rust Git facts stay under `src-tauri/src/repository_context/`; legacy TypeScript Git
+  parsing remains under `src/infrastructure/git/` until that quarantined surface is retired.
 - SQLite schema/store code stays under `src/infrastructure/sqlite/`.
 - Task lifecycle state changes stay in application services, not UI components.
 - Agent Session execution enters through the provider-neutral `AgentRuntime` port and its current
   Codex-specific adapter; Codex credentials remain owned by Codex.
-- Every process reachable from the active surface is owned through `ProcessSupervisor`; legacy
-  process runners are unreachable behind fail-closed command guards.
+- Agent provider processes are owned through `ProcessSupervisor`. Worktree Review compilation and
+  opening enter through `worktree_application`, which has its own bounded process-effect contract.
 - Persist raw runtime output before deriving transcript presentation. The legacy task-run path
   still stores its raw stream as an artifact; Agent Sessions store ordered raw runtime events.
 
 ## Agent Session Vertical Slice
 
-Agent Sessions are the default application surface and are independent from the legacy task
-dashboard. The responsibility flow is:
+Agent Sessions are a first-class product surface, independent from the legacy task dashboard. The
+responsibility flow is:
 
 ```text
 React Agent Session screen
@@ -309,7 +331,7 @@ task command names remain registered only to return a deliberate quarantine erro
 also guarded the same way. Their implementation and tests remain as cleanup source material, but no
 registered legacy handler reaches database or process work in this baseline.
 
-The independent Agent Session bridge exposes:
+The Agent Session bridge exposes:
 
 - `create_agent_session`
 - `list_agent_sessions`
@@ -323,14 +345,19 @@ application/repository modules rather than the task-run tables. Tauri event list
 permissions are explicitly scoped to the main window. Notifications are correlated by session and
 invocation IDs and are never the only source of terminal truth.
 
+Workflow, Harness, Native Profile, Product Decision, shared repository-catalog, and Worktree Review
+commands are registered by the same composition root. Worktree Review commands are unconditional;
+debug and release profiles expose the same feature operations. Repository discovery and branch
+history commands run blocking Git/provider work away from the UI-facing async executor.
+
 ## UI Layer
 
 Location: `src/app/`, `src/features/`, `src/main.tsx`, `src/styles.css`
 
-The thin app shell mounts only the independent Agent Session screen. Agent Session state is owned by
-its feature controller, not the app shell. Its feature-owned components cover session selection,
-transcript projection, processing/technical disclosures, Markdown final output, composer actions,
-and deliberate follow-to-latest behavior.
+The app shell switches among composed product surfaces and does not construct their domain
+services. Agent Session state is owned by its feature controller, Workflow owns its definition and
+instance UI, and Worktree Review owns its branch/build flow. The shared repository selector remains
+an injected application boundary rather than Workflow or Worktree Review component logic.
 
 The legacy task screen still has isolated component coverage against injected clients, but
 `src/main.tsx` neither imports nor mounts it. This preserves useful implementation evidence without

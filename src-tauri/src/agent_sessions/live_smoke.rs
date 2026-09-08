@@ -654,7 +654,10 @@ impl LiveSmokeDriver {
                         submitted_text: "Reply with only PIP01D_LAUNCH_ACCEPTANCE.".into(),
                         title: Some("PIP-01D launch acceptance smoke".into()),
                         working_directory: Some(
-                            self.environment.workspace_path.to_string_lossy().into_owned(),
+                            self.environment
+                                .workspace_path
+                                .to_string_lossy()
+                                .into_owned(),
                         ),
                         requested_options: None,
                     },
@@ -686,18 +689,23 @@ impl LiveSmokeDriver {
             None,
             None,
         );
-        let external_context = history.session.runtime_binding.external_context_id.ok_or_else(|| {
-            self.record_phase(
-                "external_context",
-                "absent",
-                &session_id,
-                &invocation_id,
-                None,
-                None,
-                None,
-            );
-            "launch-accepted invocation completed without persisted external Codex context".to_string()
-        })?;
+        let external_context = history
+            .session
+            .runtime_binding
+            .external_context_id
+            .ok_or_else(|| {
+                self.record_phase(
+                    "external_context",
+                    "absent",
+                    &session_id,
+                    &invocation_id,
+                    None,
+                    None,
+                    None,
+                );
+                "launch-accepted invocation completed without persisted external Codex context"
+                    .to_string()
+            })?;
         self.record_phase(
             "launch_acceptance_and_external_context",
             if terminal.status == AgentInvocationStatus::Completed {
@@ -712,7 +720,10 @@ impl LiveSmokeDriver {
             None,
         );
         if terminal.status != AgentInvocationStatus::Completed {
-            return Err(classify_terminal_failure("launch-acceptance turn", &terminal));
+            return Err(classify_terminal_failure(
+                "launch-acceptance turn",
+                &terminal,
+            ));
         }
         self.close_current_runtime()?;
         self.evidence.outcome = "passed".into();

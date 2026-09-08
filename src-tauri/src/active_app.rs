@@ -1,11 +1,13 @@
-#[cfg(debug_assertions)]
-use std::path::PathBuf;
 use std::{
     fs,
     sync::{Arc, Mutex, Weak},
 };
 
 use tauri::Manager;
+
+fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
+    app_data_dir.join("worktree-review")
+}
 
 struct ManagedPlanBuilderNotifier {
     inner: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier>,
@@ -99,6 +101,14 @@ pub(crate) fn run() {
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let database = crate::product_database::open(&database_path)?;
+            let repository_catalog = Arc::new(crate::repository_catalog::RepositoryCatalog::new(
+                database.clone(),
+            ));
+            app.manage(
+                crate::repository_catalog::transport::RepositoryCatalogTauriState::new(
+                    repository_catalog.clone(),
+                ),
+            );
             let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::new(
                 database.clone(),
                 app_data_dir.clone(),
@@ -175,9 +185,6 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
-            app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
-                app_data_dir.join("codex-orchestrator.sqlite"),
-            ));
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
                 Arc::new(
                     crate::workflows::repository::SqliteWorkflowRepository::from_database(
@@ -306,53 +313,13 @@ pub(crate) fn run() {
                     ),
                 ),
             );
-            #[cfg(debug_assertions)]
-            {
-                let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .ok_or("Unable to resolve launcher source")?
-                    .to_path_buf();
-                let review_root = std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| {
-                        app_data_dir
-                            .parent()
-                            .unwrap_or(&app_data_dir)
-                            .join("dev.codex-orchestrator.human-review")
-                    });
-                let review = Arc::new(crate::worktree_review::compose(&source, &review_root)?);
-                app.manage(
-                    crate::orchestration::transport::ContextualFileReviewTauriState::available(
-                        orchestration.clone(),
-                        Arc::new(
-                            crate::orchestration::file_review_originating_entry::FileReviewOriginatingEntryService::new(
-                                orchestration_repository.clone(),
-                                review.clone(),
-                            ),
-                        ),
-                    ),
-                );
-                if let Some(controller) =
-                    crate::worktree_review::debug_controller::start_if_enabled(
-                        review.clone(),
-                        &review_root,
-                    )?
-                {
-                    app.manage(controller);
-                }
-                app.manage(
-                    crate::worktree_review::transport::HumanReviewLauncherTauriState::new(
-                        review.clone(),
-                    ),
-                );
-                if std::env::var_os("CODEX_ORCHESTRATOR_REVIEW_RUNTIME_DIR").is_some() {
-                    app.get_webview_window("main")
-                        .ok_or("Unable to identify the isolated review launcher window")?
-                        .set_title("Codex Orchestrator - Worktree Review Launcher")
-                        .map_err(|_| "Unable to identify the isolated review launcher window")?;
-                }
-            }
-            #[cfg(not(debug_assertions))]
+            let review = Arc::new(crate::worktree_review::WorktreeReviewApplication::open(
+                worktree_review_root(&app_data_dir),
+                repository_catalog,
+            ));
+            app.manage(crate::worktree_review::transport::WorktreeReviewTauriState::new(
+                review,
+            ));
             app.manage(
                 crate::orchestration::transport::ContextualFileReviewTauriState::unavailable(
                     orchestration.clone(),
@@ -396,7 +363,10 @@ pub(crate) fn run() {
             crate::workflows::transport::send_workflow_node_message,
             crate::workflows::transport::list_workflow_instances,
             crate::workflows::transport::load_workflow_instance,
-            crate::worktree_targets_temp::list_discovered_worktree_targets,
+            crate::repository_catalog::transport::repository_catalog_overview,
+            crate::repository_catalog::transport::register_repository_directory,
+            crate::repository_catalog::transport::register_codex_repository,
+            crate::repository_catalog::transport::list_registered_repository_worktree_targets,
             crate::native_profiles::load_native_profile_query,
             crate::native_profiles::discover_native_codex_homes,
             crate::native_profiles::register_native_profile,
@@ -435,48 +405,14 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             crate::orchestration::transport::load_sprint_runner_transition_query,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::list_human_review_worktrees,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::list_human_review_instances,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::prepare_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_operation_progress,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::list_human_review_operation_progress,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_instance_detail,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_instance_comparison,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_launcher_proof_navigation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_launcher_detail_navigation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::human_review_launcher_proof_presentation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::mark_worktree_build_ready,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::debug_controller::worktree_review_proof_navigation,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::worktree_build::worktree_build_context,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::detail::worktree_build_detail,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::comparison::worktree_build_comparison,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::build_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::start_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::status_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::focus_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::stop_human_review_instance,
-            #[cfg(debug_assertions)]
-            crate::worktree_review::transport::recover_human_review_instance
+            crate::worktree_review::transport::worktree_review_overview,
+            crate::worktree_review::transport::select_worktree_review_repository,
+            crate::worktree_review::transport::worktree_review_branch_detail,
+            crate::worktree_review::transport::worktree_review_branch_history,
+            crate::worktree_review::transport::associate_worktree_review_worktree,
+            crate::worktree_review::transport::create_worktree_review_worktree,
+            crate::worktree_review::transport::create_worktree_review_build,
+            crate::worktree_review::transport::worktree_review_open_build
         ])
         .build(tauri::generate_context!())
         .expect("error while building Codex Orchestrator");

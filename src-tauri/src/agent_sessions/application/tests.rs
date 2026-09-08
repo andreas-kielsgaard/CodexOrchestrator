@@ -159,22 +159,45 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
 #[test]
 fn managed_profile_authority_failure_is_durable_and_prevents_provider_preflight_and_spawn() {
     let connection = Connection::open_in_memory().expect("memory database");
-    connection.execute_batch(AGENT_SESSION_SCHEMA).expect("schema");
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .expect("schema");
     let repository = Arc::new(SqliteAgentSessionRepository::new(connection).expect("repository"));
     let runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
     let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
     let providers = Arc::new(DeterministicProviders::default());
     let application = AgentSessionApplication::new(
-        repository.clone(), runtime.clone(), notifier, providers.clone(), providers, None,
-    ).with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
-    let session = application.create_session(CreateAgentSessionCommand {
-        title: None, working_directory: None, requested_options: AgentRuntimeOptions::default(),
-    }).expect("session");
+        repository.clone(),
+        runtime.clone(),
+        notifier,
+        providers.clone(),
+        providers,
+        None,
+    )
+    .with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+    let session = application
+        .create_session(CreateAgentSessionCommand {
+            title: None,
+            working_directory: None,
+            requested_options: AgentRuntimeOptions::default(),
+        })
+        .expect("session");
 
-    let result = application.send_message(message(&session.id, "must not launch")).expect("durable failure");
-    let invocation = repository.get_invocation(&result.invocation_id).expect("read invocation").expect("invocation");
+    let result = application
+        .send_message(message(&session.id, "must not launch"))
+        .expect("durable failure");
+    let invocation = repository
+        .get_invocation(&result.invocation_id)
+        .expect("read invocation")
+        .expect("invocation");
     assert_eq!(invocation.status, AgentInvocationStatus::Failed);
-    assert_eq!(invocation.runtime_error.as_ref().map(|error| error.code.as_str()), Some("runtime_preflight_failed"));
+    assert_eq!(
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("runtime_preflight_failed")
+    );
     assert!(runtime.calls.lock().expect("runtime calls").is_empty());
 }
 
@@ -587,12 +610,12 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
     let invocation_id = application.allocate_application_invocation_id();
     let result = application
         .send_idempotent_application_message_with_launch_observation(
-        SendIdempotentApplicationAgentSessionMessageCommand {
-            invocation_id: invocation_id.clone(),
-            message: message(&session.id, "Accepted externally, marker fails"),
-        },
-        None,
-    )
+            SendIdempotentApplicationAgentSessionMessageCommand {
+                invocation_id: invocation_id.clone(),
+                message: message(&session.id, "Accepted externally, marker fails"),
+            },
+            None,
+        )
         .expect("marker persistence failure is terminalized truthfully");
 
     assert!(!result.launch_accepted);
@@ -602,7 +625,10 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
         .expect("persisted");
     assert_eq!(invocation.status, AgentInvocationStatus::Failed);
     assert_eq!(
-        invocation.runtime_error.as_ref().map(|error| error.code.as_str()),
+        invocation
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
         Some("runtime_launch_acceptance_persistence_failed")
     );
     assert_eq!(
@@ -620,9 +646,12 @@ fn launch_acceptance_persistence_failure_does_not_invent_durable_acceptance() {
             .expect("conservative launch evidence"),
         ApplicationInvocationLaunchEvidence::PersistedNotAccepted
     );
-    assert!(runtime.calls.lock().expect("runtime calls").iter().any(
-        |call| matches!(call, RuntimeCall::Cancel(id) if id == &invocation_id)
-    ));
+    assert!(runtime
+        .calls
+        .lock()
+        .expect("runtime calls")
+        .iter()
+        .any(|call| matches!(call, RuntimeCall::Cancel(id) if id == &invocation_id)));
 }
 
 #[test]
@@ -798,7 +827,13 @@ fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocat
         )
         .expect("simulate crash after running persistence");
 
-    assert_eq!(harness.application.reconcile_startup().expect("classify gap"), 1);
+    assert_eq!(
+        harness
+            .application
+            .reconcile_startup()
+            .expect("classify gap"),
+        1
+    );
     let interrupted = harness
         .repository
         .get_invocation(&invocation_id)
@@ -806,7 +841,10 @@ fn classified_pre_acceptance_interruption_recovers_the_exact_application_invocat
         .expect("persisted interruption");
     assert_eq!(interrupted.status, AgentInvocationStatus::Interrupted);
     assert_eq!(
-        interrupted.runtime_error.as_ref().map(|error| error.code.as_str()),
+        interrupted
+            .runtime_error
+            .as_ref()
+            .map(|error| error.code.as_str()),
         Some("runtime_startup_without_launch_acceptance")
     );
 

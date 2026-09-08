@@ -2,9 +2,16 @@
 
 - Date: 2026-08-25
 - Revision: 4
-- Status: Implemented, validated, and checkpointed on the candidate branch
+- Status: Implemented; the temporary repository/worktree source was later replaced by the shared
+  repository catalog
 - Candidate branch: `codex/workflow-engine-v1`
 - Canonical plan file: `docs/orchestration/workflow-instance-execution-plan-2026-08-25.md`
+
+Current convergence note (2026-09-08): this document retains the dated implementation decisions
+and evidence below. Product composition now injects the shared `repository_catalog` target selector
+through the same stable `src/application/worktreeTargets.ts` contract. The temporary
+`worktree_targets_temp` backend and frontend have been removed. Workflow instance persistence and
+execution remain unchanged.
 
 ## Re-ingestion instructions
 

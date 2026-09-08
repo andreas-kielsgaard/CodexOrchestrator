@@ -305,11 +305,8 @@ impl CodexCliRuntime {
         }
         self.coordinator
             .register(request.invocation_id.clone(), update_sink)?;
-        self.coordinator.record_launch_provenance(
-            &request.invocation_id,
-            &spec,
-            invocation_mode,
-        );
+        self.coordinator
+            .record_launch_provenance(&request.invocation_id, &spec, invocation_mode);
         match self
             .supervisor
             .start(request.session_id, request.invocation_id.clone(), spec)
@@ -363,14 +360,18 @@ impl RuntimeCoordinator {
                         .flatten()
                 })
             });
-        let working_directory = spec.working_directory.as_ref().map(|path| {
-            let value = path.to_string_lossy();
-            json!({
-                "provided": true,
-                "extendedLengthPrefix": value.starts_with(r"\\?\"),
-                "absolute": path.is_absolute(),
+        let working_directory = spec
+            .working_directory
+            .as_ref()
+            .map(|path| {
+                let value = path.to_string_lossy();
+                json!({
+                    "provided": true,
+                    "extendedLengthPrefix": value.starts_with(r"\\?\"),
+                    "absolute": path.is_absolute(),
+                })
             })
-        }).unwrap_or_else(|| json!({"provided": false}));
+            .unwrap_or_else(|| json!({"provided": false}));
         let launch_restrictions = json!({
             "strictConfig": spec.args.iter().any(|argument| argument == "--strict-config"),
             "ignoresUserConfig": spec.args.iter().any(|argument| argument == "--ignore-user-config"),
