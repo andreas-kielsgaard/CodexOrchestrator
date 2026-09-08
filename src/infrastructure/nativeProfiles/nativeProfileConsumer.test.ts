@@ -30,6 +30,20 @@ describe('native profile application consumer', () => {
 
   it('loads current durable state before resolving the application boundary', async () => {
     const load = async () => query;
-    await expect(createNativeProfileApplicationConsumer({ load }).resolve('p1')).resolves.toMatchObject({ codexHome: 'C:/codex' });
+    const consumer = createNativeProfileApplicationConsumer({ load });
+    await expect(consumer.resolve('p1')).resolves.toMatchObject({ codexHome: 'C:/codex' });
+    await expect(consumer.currentSelection()).resolves.toEqual({
+      kind: 'selected',
+      profileId: 'p1',
+      codexHome: 'C:/codex',
+    });
+  });
+
+  it('reports that no Codex home is selected without inventing one', async () => {
+    const load = async (): Promise<NativeProfileQuery> => ({
+      ...query,
+      profiles: [{ ...query.profiles[0], selected: false }],
+    });
+    await expect(createNativeProfileApplicationConsumer({ load }).currentSelection()).resolves.toEqual({ kind: 'none' });
   });
 });

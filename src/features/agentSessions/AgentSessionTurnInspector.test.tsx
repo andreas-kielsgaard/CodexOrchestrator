@@ -88,4 +88,17 @@ describe('AgentSessionTurnInspector', () => {
     expect(screen.queryByText('Started')).toBeNull();
     expect(screen.queryByText('Duration')).toBeNull();
   });
+
+  it('labels an active inspected invocation as the current agent turn', () => {
+    render(
+      <AgentSessionTurnInspector
+        sessionId="session-1"
+        invocationId="invocation-1"
+        transcript={projectAgentSessionTranscript(sessionDetails('running'))}
+      />,
+    );
+
+    expect(screen.getByText('Current agent turn')).toBeVisible();
+    expect(screen.queryByText('Complete recorded turn')).toBeNull();
+  });
 });

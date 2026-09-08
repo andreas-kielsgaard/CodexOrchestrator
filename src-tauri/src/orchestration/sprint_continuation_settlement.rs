@@ -1,6 +1,7 @@
 //! Durable, application-owned Sprint continuation decisions.  A decision is neither an Epic
 //! receipt nor any higher-level settlement.
 
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
@@ -168,6 +169,7 @@ pub(crate) fn statuses(
 
 /// Reconcile from authoritative durable rows only.  The function intentionally fails closed:
 /// an incomplete, foreign, or malformed materialization cannot become a settlement.
+#[cfg(test)]
 pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
     let sprint_ids = connection
         .prepare(
@@ -187,10 +189,50 @@ pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn reconcile_managed(database: &ActiveDatabase) -> Result<(), String> {
+    let sprint_ids = database
+        .read("load Sprint continuation settlements", |connection| {
+            connection
+                .prepare(
+                    "SELECT s.id FROM initiated_sprints s
+         JOIN sprint_runner_transitions t ON t.sprint_id=s.id AND t.epic_id=s.epic_id
+         ORDER BY s.id",
+                )
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map_err(|error| error.to_string())
+        })
+        .map_err(managed_error)?;
+    for sprint_id in sprint_ids {
+        database
+            .write("reconcile Sprint dependency routes", |transaction| {
+                reconcile_unbound_dependency_routes_transaction(transaction, &sprint_id)
+            })
+            .map_err(managed_error)?;
+        database
+            .write("reconcile Sprint continuation settlement", |transaction| {
+                reconcile_one_transaction(transaction, &sprint_id)
+            })
+            .map_err(managed_error)?;
+    }
+    Ok(())
+}
+
 fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), String> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
+    reconcile_one_transaction(&transaction, sprint_id)?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn reconcile_one_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    sprint_id: &str,
+) -> Result<(), String> {
     let snapshot = Snapshot::load(&transaction, sprint_id)?;
     let (state, kind) = snapshot.decision();
     let source_attention_id = if state == "attention"
@@ -250,7 +292,6 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
         } else if current_sequence > decision_sequence && current_state == state {
             // A reopen can revisit an already-recorded older snapshot after a later decision
             // of the same semantic state became current. Preserve that later durable pointer.
-            transaction.commit().map_err(|error| error.to_string())?;
             return Ok(());
         } else if current_sequence >= decision_sequence
             || (current_state == "settled" && state != "settled")
@@ -292,7 +333,7 @@ fn reconcile_one(connection: &mut Connection, sprint_id: &str) -> Result<(), Str
             return Err("Sprint upward result conflict".into());
         }
     }
-    transaction.commit().map_err(|error| error.to_string())
+    Ok(())
 }
 
 struct Snapshot {
@@ -481,21 +522,12 @@ fn canonical_rows(
         .map_err(|error| error.to_string())
 }
 #[derive(Default)]
-struct DependencyWaitState {
-    active: bool,
-    unavailable: bool,
-    identity: Vec<String>,
-}
+struct DependencyWaitState { active: bool, unavailable: bool, identity: Vec<String> }
 
-fn dependency_wait_state(
-    tx: &rusqlite::Transaction<'_>,
-    sprint: &str,
-) -> Result<DependencyWaitState, String> {
+fn dependency_wait_state(tx: &rusqlite::Transaction<'_>, sprint: &str) -> Result<DependencyWaitState, String> {
     let rows = tx.prepare("SELECT 'handback',d.handback_id,d.details_json,COALESCE(route.work_unit_id,''),COALESCE(route.route_fingerprint,''),COALESCE(h.sprint_id,''),COALESCE(h.eligibility_state,''),COALESCE(h.handler_ready_at,''),CASE WHEN settled.work_unit_id IS NULL THEN '' ELSE 'settled' END FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=d.handback_id LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=route.work_unit_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=h.work_unit_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' UNION ALL SELECT 'epic',q.handback_id,q.request_json,COALESCE(route.work_unit_id,''),COALESCE(route.route_fingerprint,''),COALESCE(h.sprint_id,''),COALESCE(h.eligibility_state,''),COALESCE(h.handler_ready_at,''),CASE WHEN settled.work_unit_id IS NULL THEN '' ELSE 'settled' END FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers receiver ON receiver.handback_id=q.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=q.handback_id LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=route.work_unit_id LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=h.work_unit_id WHERE receiver.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency' ORDER BY 1,2").map_err(|error| error.to_string())?.query_map([sprint], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?,row.get::<_,String>(6)?,row.get::<_,String>(7)?,row.get::<_,String>(8)?))).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
     let mut state = DependencyWaitState::default();
-    for (kind, handback, json, route, fingerprint, handler_sprint, eligibility, ready, settled) in
-        rows
-    {
+    for (kind, handback, json, route, fingerprint, handler_sprint, eligibility, ready, settled) in rows {
         validate_dependency_wait_payload(&json, kind.as_str())?;
         let route_state = if route.is_empty()
             || fingerprint != dependency_route_fingerprint(&handback, &route)
@@ -517,61 +549,41 @@ fn dependency_wait_state(
     Ok(state)
 }
 
-fn reconcile_unbound_dependency_routes(
-    connection: &mut Connection,
+fn reconcile_unbound_dependency_routes(connection: &mut Connection, sprint: &str) -> Result<(), String> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    reconcile_unbound_dependency_routes_transaction(&transaction, sprint)?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn reconcile_unbound_dependency_routes_transaction(
+    transaction: &rusqlite::Transaction<'_>,
     sprint: &str,
 ) -> Result<(), String> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| error.to_string())?;
     let waits = transaction.prepare("SELECT 'handback',d.handback_id,d.details_json FROM sprint_runner_handback_dispositions d JOIN sprint_runner_handback_deliveries delivery ON delivery.handback_id=d.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=d.handback_id WHERE delivery.sprint_id=?1 AND d.movement_kind='wait_for_agent_dependency' AND route.handback_id IS NULL UNION ALL SELECT 'epic',q.handback_id,q.request_json FROM epic_runner_escalation_downstream_requests q JOIN epic_runner_escalation_receivers receiver ON receiver.handback_id=q.handback_id LEFT JOIN sprint_handback_dependency_routes route ON route.handback_id=q.handback_id WHERE receiver.sprint_id=?1 AND q.request_kind='existing_agent_achievable_dependency' AND route.handback_id IS NULL ORDER BY 1,2").map_err(|error| error.to_string())?.query_map([sprint], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?))).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
     for (kind, handback, json) in waits {
         validate_dependency_wait_payload(&json, kind.as_str())?;
         let routes = transaction.prepare("SELECT h.work_unit_id FROM work_unit_handler_activations h LEFT JOIN work_unit_settlements settled ON settled.work_unit_id=h.work_unit_id WHERE h.sprint_id=?1 AND h.eligibility_state='eligible' AND h.handler_ready_at IS NOT NULL AND settled.work_unit_id IS NULL ORDER BY h.work_unit_id").map_err(|error| error.to_string())?.query_map([sprint], |row| row.get::<_,String>(0)).map_err(|error| error.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|error| error.to_string())?;
-        if routes.len() != 1 {
-            continue;
-        }
+        if routes.len() != 1 { continue; }
         let route = &routes[0];
         let fingerprint = dependency_route_fingerprint(&handback, route);
         let changed = transaction.execute("INSERT OR IGNORE INTO sprint_handback_dependency_routes (handback_id,work_unit_id,route_fingerprint,recorded_at) VALUES (?1,?2,?3,?4)",params![handback,route,fingerprint,chrono::Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         if changed == 0 {
             let exact: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM sprint_handback_dependency_routes WHERE handback_id=?1 AND work_unit_id=?2 AND route_fingerprint=?3)",params![handback,route,fingerprint],|row|row.get(0)).map_err(|error| error.to_string())?;
-            if !exact {
-                return Err("Sprint dependency-route conflict".into());
-            }
+            if !exact { return Err("Sprint dependency-route conflict".into()); }
         }
     }
-    transaction.commit().map_err(|error| error.to_string())
+    Ok(())
 }
 
 fn validate_dependency_wait_payload(json: &str, kind: &str) -> Result<(), String> {
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|_| "malformed agent dependency route".to_owned())?;
-    let has = |key: &str| {
-        value
-            .get(key)
-            .and_then(|item| item.as_str())
-            .is_some_and(|item| !item.trim().is_empty())
-    };
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|_| "malformed agent dependency route".to_owned())?;
+    let has = |key: &str| value.get(key).and_then(|item| item.as_str()).is_some_and(|item| !item.trim().is_empty());
     let valid = match kind {
-        "handback" => {
-            has("dependencyOwner")
-                && has("dependencyOwnerClassification")
-                && has("enablingResult")
-                && has("resumptionPath")
-        }
-        "epic" => {
-            value.get("target").and_then(|item| item.as_str())
-                == Some("existing_agent_achievable_dependency")
-                && has("dependency")
-                && has("request")
-                && has("resumptionPath")
-        }
+        "handback" => has("dependencyOwner") && has("dependencyOwnerClassification") && has("enablingResult") && has("resumptionPath"),
+        "epic" => value.get("target").and_then(|item| item.as_str()) == Some("existing_agent_achievable_dependency") && has("dependency") && has("request") && has("resumptionPath"),
         _ => false,
     };
-    valid
-        .then_some(())
-        .ok_or_else(|| "malformed agent dependency route".to_owned())
+    valid.then_some(()).ok_or_else(|| "malformed agent dependency route".to_owned())
 }
 
 fn dependency_route_fingerprint(handback: &str, route: &str) -> String {
@@ -586,6 +598,13 @@ fn digest(value: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(value.as_bytes());
     format!("scs-{:x}", hash.finalize())
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 #[cfg(test)]
@@ -619,13 +638,11 @@ mod tests {
             "epic_runner_sprint_result_downstream_requests",
             "epic_runner_sprint_result_attentions",
         ] {
-            assert!(connection
-                .query_row::<bool, _, _>(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
-                    [table],
-                    |row| row.get(0),
-                )
-                .unwrap());
+            assert!(connection.query_row::<bool, _, _>(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            ).unwrap());
         }
     }
     fn accepted_materialization(connection: &Connection) {
@@ -635,12 +652,7 @@ mod tests {
         connection.execute_batch("INSERT INTO work_slice_proposal_revisions VALUES('revision-2','point-2','later');INSERT INTO work_slice_planning_episodes VALUES('point-2','sprint');INSERT INTO work_unit_materializations VALUES('materialization-2','point-2','revision-2','epic','sprint');INSERT INTO work_units VALUES('unit-2','materialization-2');").unwrap();
     }
     fn structured_source(connection: &Connection, handback: &str, attention_id: &str) {
-        connection
-            .execute(
-                "INSERT INTO epic_runner_escalation_receivers VALUES(?1,'sprint','epic',?2)",
-                params![handback, format!("correlation-{handback}")],
-            )
-            .unwrap();
+        connection.execute("INSERT INTO epic_runner_escalation_receivers VALUES(?1,'sprint','epic',?2)", params![handback, format!("correlation-{handback}")]).unwrap();
         connection.execute("INSERT INTO epic_runner_escalation_attentions (handback_id,attention_id,attention_json,requested_at) VALUES(?1,?2,?3,?4)", params![handback, attention_id, "{\"reason\":\"A bounded external decision is required.\",\"authorityNeeded\":\"designated authority\",\"evidenceContext\":\"the exact unresolved Sprint concern\",\"resumptionPath\":\"resume this exact Sprint decision\"}", "2030-01-01T00:00:00Z"]).unwrap();
     }
     fn terminal_facts(connection: &Connection) {
@@ -672,11 +684,7 @@ mod tests {
         )
         .unwrap();
         c.execute_batch("INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');").unwrap();
-        c.execute(
-            "INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit',?1,'now')",
-            [dependency_route_fingerprint("handback", "unit")],
-        )
-        .unwrap();
+        c.execute("INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit',?1,'now')", [dependency_route_fingerprint("handback", "unit")]).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1",[],|r|r.get(0)).unwrap(),"wait_for_agent_dependency");
         c.execute("DELETE FROM work_unit_handler_activations", [])
@@ -694,30 +702,14 @@ mod tests {
         c.execute_batch("INSERT INTO work_slice_execution_graph_completions VALUES('materialization-2','revision-2');INSERT INTO work_slice_execution_settlements VALUES('materialization-2','materialization-2');INSERT INTO work_slice_planning_point_execution_settlements VALUES('point-2','materialization-2','materialization-2');INSERT INTO work_unit_settlements VALUES('unit-2');").unwrap();
         c.execute("DELETE FROM work_unit_settlements", []).unwrap();
         c.execute_batch("INSERT INTO work_unit_handler_activations VALUES('unit','sprint','eligible','now');INSERT INTO work_unit_handler_activations VALUES('unit-2','sprint','eligible','now');INSERT INTO sprint_runner_handback_deliveries VALUES('handback','sprint');INSERT INTO sprint_runner_handback_dispositions VALUES('handback','wait_for_agent_dependency','{\"dependencyOwner\":\"handler\",\"dependencyOwnerClassification\":\"work_unit_handler\",\"enablingResult\":\"review\",\"resumptionPath\":\"reassess\"}');INSERT INTO epic_runner_escalation_receivers VALUES('epic-wait','sprint','epic','correlation');INSERT INTO epic_runner_escalation_downstream_requests VALUES('epic-wait','existing_agent_achievable_dependency','{\"target\":\"existing_agent_achievable_dependency\",\"dependency\":\"handler result\",\"request\":\"continue\",\"resumptionPath\":\"reassess\"}');").unwrap();
-        c.execute(
-            "INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit',?1,'now')",
-            [dependency_route_fingerprint("handback", "unit")],
-        )
-        .unwrap();
-        c.execute(
-            "INSERT INTO sprint_handback_dependency_routes VALUES('epic-wait','unit-2',?1,'now')",
-            [dependency_route_fingerprint("epic-wait", "unit-2")],
-        )
-        .unwrap();
+        c.execute("INSERT INTO sprint_handback_dependency_routes VALUES('handback','unit',?1,'now')", [dependency_route_fingerprint("handback", "unit")]).unwrap();
+        c.execute("INSERT INTO sprint_handback_dependency_routes VALUES('epic-wait','unit-2',?1,'now')", [dependency_route_fingerprint("epic-wait", "unit-2")]).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(statuses(&c).unwrap()[0].1.state, "continuing");
         c.execute("UPDATE work_unit_handler_activations SET eligibility_state='ineligible' WHERE work_unit_id='unit'", []).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |r| r.get(0)).unwrap(), "dependency_route_unavailable");
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'",
-                [],
-                |r| r.get(0)
-            )
-            .unwrap(),
-            0
-        );
+        assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |r| r.get(0)).unwrap(), 0);
         c.execute("UPDATE work_unit_handler_activations SET eligibility_state='eligible',handler_ready_at=NULL WHERE work_unit_id='unit'", []).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |r| r.get(0)).unwrap(), "dependency_route_unavailable");
@@ -747,8 +739,7 @@ mod tests {
         let before: (i64, i64) = c.query_row("SELECT (SELECT COUNT(*) FROM sprint_handback_dependency_routes),(SELECT COUNT(*) FROM sprint_continuation_decisions)", [], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<(i64,i64),_,_>("SELECT (SELECT COUNT(*) FROM sprint_handback_dependency_routes),(SELECT COUNT(*) FROM sprint_continuation_decisions)", [], |row| Ok((row.get(0)?,row.get(1)?))).unwrap(), before);
-        c.execute("INSERT INTO work_unit_settlements VALUES('unit')", [])
-            .unwrap();
+        c.execute("INSERT INTO work_unit_settlements VALUES('unit')", []).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(statuses(&c).unwrap()[0].1.state, "settled");
         assert_ne!(c.query_row::<String,_,_>("SELECT input_fingerprint FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |row| row.get(0)).unwrap(), active_input);
@@ -766,15 +757,7 @@ mod tests {
         reconcile(&mut c).unwrap();
         assert_eq!(statuses(&c).unwrap()[0].1.state, "attention");
         assert_eq!(c.query_row::<String,_,_>("SELECT route_fingerprint FROM sprint_handback_dependency_routes WHERE handback_id='conflict-handback'", [], |row| row.get(0)).unwrap(), "conflict");
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            0
-        );
+        assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
@@ -786,27 +769,11 @@ mod tests {
         reconcile(&mut c).unwrap();
         assert_eq!(statuses(&c).unwrap()[0].1.state, "attention");
         assert_eq!(c.query_row::<String,_,_>("SELECT continuation_kind FROM sprint_continuation_decisions ORDER BY decision_sequence DESC LIMIT 1", [], |row| row.get(0)).unwrap(), "dependency_route_unavailable");
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_handback_dependency_routes",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            0
-        );
+        assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_handback_dependency_routes", [], |row| row.get(0)).unwrap(), 0);
         let before: (i64, i64, i64) = c.query_row("SELECT (SELECT COUNT(*) FROM sprint_continuation_decisions),(SELECT COUNT(*) FROM sprint_upward_results),(SELECT COUNT(*) FROM sprint_continuation_attentions)", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
         reconcile(&mut c).unwrap();
         assert_eq!(c.query_row::<(i64,i64,i64),_,_>("SELECT (SELECT COUNT(*) FROM sprint_continuation_decisions),(SELECT COUNT(*) FROM sprint_upward_results),(SELECT COUNT(*) FROM sprint_continuation_attentions)", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap(), before);
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            0
-        );
+        assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 0);
     }
 
     #[test]
@@ -828,19 +795,10 @@ mod tests {
         }
         {
             let mut c = Connection::open(&handback_path).unwrap();
-            c.execute("INSERT INTO work_unit_settlements VALUES('unit')", [])
-                .unwrap();
+            c.execute("INSERT INTO work_unit_settlements VALUES('unit')", []).unwrap();
             reconcile(&mut c).unwrap();
             assert_eq!(statuses(&c).unwrap()[0].1.state, "settled");
-            assert_eq!(
-                c.query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'",
-                    [],
-                    |row| row.get(0)
-                )
-                .unwrap(),
-                1
-            );
+            assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |row| row.get(0)).unwrap(), 1);
         }
 
         let epic_path = directory.path().join("legacy-epic.sqlite");
@@ -855,24 +813,8 @@ mod tests {
             let mut c = Connection::open(&epic_path).unwrap();
             reconcile(&mut c).unwrap();
             assert_eq!(statuses(&c).unwrap()[0].1.state, "attention");
-            assert_eq!(
-                c.query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sprint_handback_dependency_routes",
-                    [],
-                    |row| row.get(0)
-                )
-                .unwrap(),
-                0
-            );
-            assert_eq!(
-                c.query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'",
-                    [],
-                    |row| row.get(0)
-                )
-                .unwrap(),
-                0
-            );
+            assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_handback_dependency_routes", [], |row| row.get(0)).unwrap(), 0);
+            assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |row| row.get(0)).unwrap(), 0);
             assert_eq!(c.query_row::<i64,_,_>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='epic_settlements'", [], |row| row.get(0)).unwrap(), 0);
         }
     }
@@ -933,32 +875,14 @@ mod tests {
         reconcile(&mut c).unwrap();
         second_accepted_materialization(&c);
         reconcile(&mut c).unwrap();
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_continuation_decisions",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            2
-        );
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id='source-attention'", [], |row| row.get(0)).unwrap(), 2);
-        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()])
-            .unwrap();
+        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
         drop(c);
 
         let mut reopened = Connection::open(&path).unwrap();
         reconcile(&mut reopened).unwrap();
-        assert_eq!(
-            reopened
-                .query_row::<i64, _, _>(
-                    "SELECT COUNT(*) FROM sprint_continuation_decisions",
-                    [],
-                    |row| row.get(0)
-                )
-                .unwrap(),
-            2
-        );
+        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id='source-attention'", [], |row| row.get(0)).unwrap(), 2);
     }
     #[test]
@@ -972,18 +896,9 @@ mod tests {
         reconcile(&mut c).unwrap();
         second_accepted_materialization(&c);
         reconcile(&mut c).unwrap();
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_continuation_decisions",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            2
-        );
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_decisions", [], |row| row.get(0)).unwrap(), 2);
         assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_continuation_attentions WHERE source_attention_id IS NULL", [], |row| row.get(0)).unwrap(), 2);
-        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()])
-            .unwrap();
+        c.execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
         drop(c);
 
         let mut reopened = Connection::open(&path).unwrap();
@@ -1002,15 +917,7 @@ mod tests {
         )
         .unwrap();
         assert!(reconcile(&mut c).is_err());
-        assert_eq!(
-            c.query_row::<i64, _, _>(
-                "SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'",
-                [],
-                |row| row.get(0)
-            )
-            .unwrap(),
-            0
-        );
+        assert_eq!(c.query_row::<i64, _, _>("SELECT COUNT(*) FROM sprint_upward_results WHERE result_kind='settled'", [], |row| row.get(0)).unwrap(), 0);
     }
     #[test]
     fn exact_terminal_facts_settle_and_emit_only_sprint_result() {

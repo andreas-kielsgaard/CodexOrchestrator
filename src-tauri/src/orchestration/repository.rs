@@ -19,14 +19,14 @@ use super::domain::{
     ProposalRevisionId, SaveEpicPlanProposalCommand, SaveProposalError, SaveProposalResult,
     NATIVE_QUERY_VERSION,
 };
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
+#[cfg(test)]
+use std::path::Path;
+use std::{path::PathBuf, sync::Arc};
 use uuid::Uuid;
 
 pub(crate) const ORCHESTRATION_SCHEMA: &str = r#"
@@ -472,7 +472,7 @@ pub(crate) struct ManagedPlanBuilderBinding {
 }
 
 pub(crate) struct SqliteOrchestrationRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
     clock: Arc<dyn OrchestrationClock>,
     harness_revisions: LocalHarnessRevisionRepository,
     #[cfg(test)]
@@ -514,16 +514,52 @@ impl SqliteOrchestrationRepository {
         clock: Arc<dyn OrchestrationClock>,
         harness_revision_repository: PathBuf,
     ) -> Result<Self, SaveProposalError> {
-        crate::storage::configure_sqlite_connection(&connection)
-            .map_err(sql_error("configure orchestration database"))?;
+        let database = ActiveDatabase::from_connection(connection, |_| Ok(()))
+            .map(Arc::new)
+            .map_err(|error| SaveProposalError::Unavailable(error.to_string()))?;
+        Self::from_database_with_clock_and_harness_revision_repository(
+            database,
+            clock,
+            harness_revision_repository,
+        )
+    }
+
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Result<Self, SaveProposalError> {
+        Self::from_database_with_clock_and_harness_revision_repository(
+            database,
+            Arc::new(SystemOrchestrationClock),
+            std::env::temp_dir().join(format!(
+                "codex-orchestrator-harness-revisions-{}",
+                Uuid::new_v4()
+            )),
+        )
+    }
+
+    pub(crate) fn from_database_with_harness_revision_repository(
+        database: Arc<ActiveDatabase>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
+        Self::from_database_with_clock_and_harness_revision_repository(
+            database,
+            Arc::new(SystemOrchestrationClock),
+            harness_revision_repository,
+        )
+    }
+
+    fn from_database_with_clock_and_harness_revision_repository(
+        database: Arc<ActiveDatabase>,
+        clock: Arc<dyn OrchestrationClock>,
+        harness_revision_repository: PathBuf,
+    ) -> Result<Self, SaveProposalError> {
         Ok(Self {
-            connection: Mutex::new(connection),
+            database,
             clock,
             harness_revisions: LocalHarnessRevisionRepository::new(harness_revision_repository),
             #[cfg(test)]
             fail_next_context_consume: std::sync::atomic::AtomicBool::new(false),
         })
     }
+    #[cfg(test)]
 
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, SaveProposalError> {
         let path = path.as_ref();
@@ -533,6 +569,8 @@ impl SqliteOrchestrationRepository {
             .join(crate::storage::HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME);
         Self::open_with_harness_revision_repository(path, repository_root)
     }
+
+    #[cfg(test)]
 
     pub(crate) fn open_with_harness_revision_repository(
         path: impl AsRef<Path>,
@@ -557,81 +595,78 @@ impl SqliteOrchestrationRepository {
         id: &EpicPlanningDraftId,
         created_at: DateTime<Utc>,
     ) -> Result<(), SaveProposalError> {
-        let connection = self.lock()?;
-        connection
+        self.write("create planning draft", |transaction| {
+            transaction
             .execute(
                 "INSERT INTO epic_planning_drafts (id, title, status, created_at, updated_at) VALUES (?1, NULL, 'active', ?2, ?2)",
                 params![id.as_str(), timestamp(created_at)],
             )
             .map_err(sql_error("create planning draft"))?;
         Ok(())
+    })
     }
 
     pub(crate) fn schedule_button_initiation_context(
         &self,
         initiation: &super::domain::InitiateEpicResult,
     ) -> Result<(), SaveProposalError> {
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_error("begin button initiation context scheduling"))?;
-        let (session_id, epic_id): (String, String) = transaction
-            .query_row(
-                "SELECT association.agent_session_id, initiation.epic_id
+        self.write("schedule button initiation context", |transaction| {
+            let (session_id, epic_id): (String, String) = transaction
+                .query_row(
+                    "SELECT association.agent_session_id, initiation.epic_id
                  FROM epic_initiations initiation
                  JOIN planning_draft_agent_session_associations association
                    ON association.draft_id=initiation.draft_id
                  WHERE initiation.id=?1",
-                params![initiation.initiation_id.as_str()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(sql_error(
-                "derive managed Plan Builder session for initiation context",
-            ))?;
-        if epic_id != initiation.epic_id.as_str() {
-            return Err(SaveProposalError::Unavailable(
-                "button initiation context identity does not match durable initiation".into(),
-            ));
-        }
-        let now = timestamp(self.clock.now());
-        let delivery_id = format!("plan-builder-context-{}", initiation.initiation_id.as_str());
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO plan_builder_context_deliveries
+                    params![initiation.initiation_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(sql_error(
+                    "derive managed Plan Builder session for initiation context",
+                ))?;
+            if epic_id != initiation.epic_id.as_str() {
+                return Err(SaveProposalError::Unavailable(
+                    "button initiation context identity does not match durable initiation".into(),
+                ));
+            }
+            let now = timestamp(self.clock.now());
+            let delivery_id = format!("plan-builder-context-{}", initiation.initiation_id.as_str());
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO plan_builder_context_deliveries
                  (id,initiation_id,epic_id,agent_session_id,source_kind,requested_at,pending_at)
                  VALUES (?1,?2,?3,?4,'button_initiation',?5,?5)",
-                params![
-                    delivery_id,
-                    initiation.initiation_id.as_str(),
-                    epic_id,
-                    session_id,
-                    now
-                ],
-            )
-            .map_err(sql_error("record pending button initiation context"))?;
-        let existing: (String, String, String) = transaction
-            .query_row(
-                "SELECT initiation_id,epic_id,agent_session_id
+                    params![
+                        delivery_id,
+                        initiation.initiation_id.as_str(),
+                        epic_id,
+                        session_id,
+                        now
+                    ],
+                )
+                .map_err(sql_error("record pending button initiation context"))?;
+            let existing: (String, String, String) = transaction
+                .query_row(
+                    "SELECT initiation_id,epic_id,agent_session_id
                  FROM plan_builder_context_deliveries WHERE id=?1",
-                params![delivery_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(sql_error("verify pending button initiation context"))?;
-        if existing
-            != (
-                initiation.initiation_id.as_str().to_string(),
-                initiation.epic_id.as_str().to_string(),
-                session_id,
-            )
-        {
-            return Err(SaveProposalError::Unavailable(
-                "button initiation context identity was already used for different semantics"
-                    .into(),
-            ));
-        }
-        transaction
-            .commit()
-            .map_err(sql_error("commit button initiation context scheduling"))
+                    params![delivery_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(sql_error("verify pending button initiation context"))?;
+            if existing
+                != (
+                    initiation.initiation_id.as_str().to_string(),
+                    initiation.epic_id.as_str().to_string(),
+                    session_id,
+                )
+            {
+                return Err(SaveProposalError::Unavailable(
+                    "button initiation context identity was already used for different semantics"
+                        .into(),
+                ));
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn claim_pending_plan_builder_context(
@@ -640,10 +675,7 @@ impl SqliteOrchestrationRepository {
         claim_id: &str,
         target_invocation_id: &str,
     ) -> Result<Option<PendingPlanBuilderContextDelivery>, SaveProposalError> {
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_error("begin Plan Builder context claim"))?;
+        self.write("claim Plan Builder context", |transaction| {
         let unresolved_claims: i64 = transaction
             .query_row(
                 "SELECT count(*) FROM plan_builder_context_deliveries
@@ -690,17 +722,15 @@ impl SqliteOrchestrationRepository {
                 )
                 .map_err(sql_error("claim pending Plan Builder context"))?;
         }
-        transaction
-            .commit()
-            .map_err(sql_error("commit Plan Builder context claim"))?;
         Ok(delivery)
+        })
     }
 
     pub(crate) fn load_claimed_plan_builder_context(
         &self,
         session_id: &str,
     ) -> Result<Option<PendingPlanBuilderContextDelivery>, SaveProposalError> {
-        let connection = self.lock()?;
+        self.read("load claimed Plan Builder context", |connection| {
         connection
             .query_row(
                 "SELECT id,initiation_id,epic_id,delivery_claim_id,target_invocation_id
@@ -719,6 +749,7 @@ impl SqliteOrchestrationRepository {
             )
             .optional()
             .map_err(sql_error("load claimed Plan Builder context"))
+    })
     }
 
     pub(crate) fn consume_plan_builder_context(
@@ -734,9 +765,9 @@ impl SqliteOrchestrationRepository {
                 "injected Plan Builder context consume failure".into(),
             ));
         }
-        let connection = self.lock()?;
         let now = timestamp(self.clock.now());
-        let changed = connection
+        self.write("consume Plan Builder context", |transaction| {
+        let changed = transaction
             .execute(
                 "UPDATE plan_builder_context_deliveries
                  SET delivered_to_invocation_id=?3,delivered_at=?4,consumed_at=?4
@@ -755,6 +786,7 @@ impl SqliteOrchestrationRepository {
             ));
         }
         Ok(())
+    })
     }
 
     #[cfg(test)]
@@ -767,8 +799,8 @@ impl SqliteOrchestrationRepository {
         &self,
         delivery: &PendingPlanBuilderContextDelivery,
     ) -> Result<(), SaveProposalError> {
-        let connection = self.lock()?;
-        connection
+        self.write("release Plan Builder context", |transaction| {
+            transaction
             .execute(
                 "UPDATE plan_builder_context_deliveries
                  SET delivery_claim_id=NULL,delivery_claimed_at=NULL,target_invocation_id=NULL
@@ -781,6 +813,7 @@ impl SqliteOrchestrationRepository {
             )
             .map_err(sql_error("release Plan Builder context claim"))?;
         Ok(())
+        })
     }
 
     pub(crate) fn create_capability_profile(
@@ -794,14 +827,15 @@ impl SqliteOrchestrationRepository {
                 "capability profile status is invalid".into(),
             ));
         }
-        let connection = self.lock()?;
-        connection
-            .execute(
-                "INSERT INTO capability_profiles (id, status, created_at) VALUES (?1, ?2, ?3)",
-                params![id.as_str(), status, timestamp(created_at)],
-            )
-            .map_err(sql_error("create capability profile"))?;
-        Ok(())
+        self.write("create capability profile", |transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO capability_profiles (id, status, created_at) VALUES (?1, ?2, ?3)",
+                    params![id.as_str(), status, timestamp(created_at)],
+                )
+                .map_err(sql_error("create capability profile"))?;
+            Ok(())
+        })
     }
 
     pub(crate) fn assign_profile(
@@ -812,10 +846,11 @@ impl SqliteOrchestrationRepository {
         expires_at: DateTime<Utc>,
         assigned_at: DateTime<Utc>,
     ) -> Result<(), SaveProposalError> {
-        let connection = self.lock()?;
-        connection.execute("INSERT INTO planning_draft_profile_assignments (draft_id, capability_profile_id, agent_session_association_id, expires_at, assigned_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![draft_id.as_str(), profile_id.as_str(), association_id.as_str(), timestamp(expires_at), timestamp(assigned_at)])
+        self.write("assign capability profile", |transaction| {
+            transaction.execute("INSERT INTO planning_draft_profile_assignments (draft_id, capability_profile_id, agent_session_association_id, expires_at, assigned_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![draft_id.as_str(), profile_id.as_str(), association_id.as_str(), timestamp(expires_at), timestamp(assigned_at)])
             .map_err(sql_error("assign capability profile"))?;
         Ok(())
+    })
     }
 
     pub(crate) fn associate_agent_session(
@@ -826,10 +861,11 @@ impl SqliteOrchestrationRepository {
         actor_id: &str,
         associated_at: DateTime<Utc>,
     ) -> Result<(), SaveProposalError> {
-        let connection = self.lock()?;
-        connection.execute("INSERT INTO planning_draft_agent_session_associations (id, draft_id, agent_session_id, actor_id, associated_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![association_id.as_str(), draft_id.as_str(), session_id, actor_id, timestamp(associated_at)])
+        self.write("associate Agent Session", |transaction| {
+            transaction.execute("INSERT INTO planning_draft_agent_session_associations (id, draft_id, agent_session_id, actor_id, associated_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![association_id.as_str(), draft_id.as_str(), session_id, actor_id, timestamp(associated_at)])
             .map_err(sql_error("associate Agent Session"))?;
         Ok(())
+        })
     }
 
     /// Resolves the calling session's managed Plan Builder binding, or atomically creates its
@@ -849,10 +885,7 @@ impl SqliteOrchestrationRepository {
         let profile = CapabilityProfileId::new("plan-builder-capability-profile-v1")
             .map_err(SaveProposalError::InvalidInput)?;
         let now = self.clock.now();
-        let connection = self.lock()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(sql_error("begin managed Plan Builder bootstrap"))?;
+        self.write("bootstrap managed Plan Builder", |transaction| {
         if let Some((draft, profile, association, status, _initiated)) = transaction
             .query_row(
                 "SELECT assignment.draft_id, assignment.capability_profile_id, association.id, draft.status, EXISTS(SELECT 1 FROM initiated_planning_drafts initiated WHERE initiated.draft_id = draft.id) FROM planning_draft_profile_assignments assignment JOIN planning_draft_agent_session_associations association ON association.id = assignment.agent_session_association_id JOIN epic_planning_drafts draft ON draft.id = assignment.draft_id WHERE association.agent_session_id = ?1 AND association.actor_id = 'managed-plan-builder' ORDER BY association.associated_at ASC LIMIT 1",
@@ -865,9 +898,6 @@ impl SqliteOrchestrationRepository {
             if status == "canceled" {
                 return Err(SaveProposalError::Forbidden);
             }
-            transaction
-                .commit()
-                .map_err(sql_error("commit managed Plan Builder binding read"))?;
             return Ok((
                 EpicPlanningDraftId::new(draft).map_err(SaveProposalError::InvalidInput)?,
                 CapabilityProfileId::new(profile).map_err(SaveProposalError::InvalidInput)?,
@@ -895,20 +925,18 @@ impl SqliteOrchestrationRepository {
         transaction.execute("INSERT OR IGNORE INTO capability_profiles (id, status, created_at) VALUES (?1, 'active', ?2)", params![profile.as_str(), timestamp(now)]).map_err(sql_error("bootstrap capability profile"))?;
         transaction.execute("INSERT OR IGNORE INTO planning_draft_agent_session_associations (id, draft_id, agent_session_id, actor_id, associated_at) VALUES (?1, ?2, ?3, 'managed-plan-builder', ?4)", params![association.as_str(), draft.as_str(), session_id, timestamp(now)]).map_err(sql_error("bootstrap Agent Session association"))?;
         transaction.execute("INSERT OR IGNORE INTO planning_draft_profile_assignments (draft_id, capability_profile_id, agent_session_association_id, expires_at, assigned_at) VALUES (?1, ?2, ?3, '2100-01-01T00:00:00.000Z', ?4)", params![draft.as_str(), profile.as_str(), association.as_str(), timestamp(now)]).map_err(sql_error("bootstrap capability assignment"))?;
-        transaction
-            .commit()
-            .map_err(sql_error("commit managed Plan Builder bootstrap"))?;
         Ok((draft, profile, association))
+        })
     }
 
     pub(crate) fn load_managed_plan_builder_binding(
         &self,
         session_id: &str,
     ) -> Result<Option<ManagedPlanBuilderBinding>, SaveProposalError> {
-        let connection = self.lock()?;
-        let associated_at = connection
-            .query_row(
-                "SELECT association.associated_at
+        self.read("load managed Plan Builder binding", |connection| {
+            let associated_at = connection
+                .query_row(
+                    "SELECT association.associated_at
                  FROM planning_draft_agent_session_associations association
                  JOIN planning_draft_profile_assignments assignment
                    ON assignment.agent_session_association_id=association.id
@@ -917,23 +945,24 @@ impl SqliteOrchestrationRepository {
                    AND association.actor_id='managed-plan-builder'
                  ORDER BY association.associated_at,association.id
                  LIMIT 1",
-                params![session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(sql_error("load managed Plan Builder binding"))?;
-        associated_at
-            .map(|value| {
-                DateTime::parse_from_rfc3339(&value)
-                    .map(|associated_at| associated_at.with_timezone(&Utc))
-                    .map(|associated_at| ManagedPlanBuilderBinding { associated_at })
-                    .map_err(|error| {
-                        SaveProposalError::Unavailable(format!(
-                            "load managed Plan Builder binding timestamp: {error}"
-                        ))
-                    })
-            })
-            .transpose()
+                    params![session_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(sql_error("load managed Plan Builder binding"))?;
+            associated_at
+                .map(|value| {
+                    DateTime::parse_from_rfc3339(&value)
+                        .map(|associated_at| associated_at.with_timezone(&Utc))
+                        .map(|associated_at| ManagedPlanBuilderBinding { associated_at })
+                        .map_err(|error| {
+                            SaveProposalError::Unavailable(format!(
+                                "load managed Plan Builder binding timestamp: {error}"
+                            ))
+                        })
+                })
+                .transpose()
+        })
     }
 
     pub(crate) fn update_planning_draft_title(
@@ -950,10 +979,7 @@ impl SqliteOrchestrationRepository {
             ));
         }
         let now = timestamp(self.clock.now());
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_error("begin title update"))?;
+        self.write("update planning draft title", |transaction| {
         let existing: Option<String> = transaction
             .query_row(
                 "SELECT draft_id FROM planning_draft_lifecycle_events WHERE idempotency_key = ?1",
@@ -974,10 +1000,8 @@ impl SqliteOrchestrationRepository {
             return Err(SaveProposalError::Forbidden);
         }
         transaction.execute("INSERT INTO planning_draft_lifecycle_events (id, draft_id, event_kind, idempotency_key, actor_id, recorded_at) VALUES (?1, ?2, 'draft_title_updated', ?3, 'application-user', ?4)", params![new_id("draft-event"), draft_id.as_str(), idempotency_key, now]).map_err(sql_error("record title update"))?;
-        transaction
-            .commit()
-            .map_err(sql_error("commit title update"))?;
         Ok(())
+        })
     }
 
     pub(crate) fn cancel_planning_draft(
@@ -992,10 +1016,7 @@ impl SqliteOrchestrationRepository {
             ));
         }
         let now = timestamp(self.clock.now());
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(sql_error("begin draft cancellation"))?;
+        self.write("cancel planning draft", |transaction| {
         let existing: Option<String> = transaction
             .query_row(
                 "SELECT draft_id FROM planning_draft_lifecycle_events WHERE idempotency_key = ?1",
@@ -1020,10 +1041,8 @@ impl SqliteOrchestrationRepository {
             return Err(SaveProposalError::Forbidden);
         }
         transaction.execute("INSERT INTO planning_draft_lifecycle_events (id, draft_id, event_kind, idempotency_key, actor_id, recorded_at) VALUES (?1, ?2, 'draft_canceled', ?3, 'application-user', ?4)", params![new_id("draft-event"), draft_id.as_str(), idempotency_key, now]).map_err(sql_error("record cancellation"))?;
-        transaction
-            .commit()
-            .map_err(sql_error("commit cancellation"))?;
         Ok(())
+        })
     }
 
     pub(crate) fn save_epic_plan_proposal(
@@ -1035,10 +1054,7 @@ impl SqliteOrchestrationRepository {
             .map_err(SaveProposalError::InvalidInput)?;
         let fingerprint = fingerprint(&command)?;
         let effect_time = self.clock.now();
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sql_error("begin proposal save"))?;
+        self.write("save Epic plan proposal", |transaction| {
         let existing = find_command_result(&transaction, &command.idempotency_key)?;
         if let Some((stored_fingerprint, _)) = &existing {
             if stored_fingerprint != &fingerprint {
@@ -1065,9 +1081,6 @@ impl SqliteOrchestrationRepository {
             return Err(SaveProposalError::Forbidden);
         }
         if let Some((_, mut result)) = existing {
-            transaction
-                .commit()
-                .map_err(sql_error("commit authorized idempotent proposal save"))?;
             result.idempotent_replay = true;
             return Ok(result);
         }
@@ -1108,17 +1121,16 @@ impl SqliteOrchestrationRepository {
             provenance_id,
             idempotent_replay: false,
         };
-        transaction
-            .commit()
-            .map_err(sql_error("commit proposal save"))?;
         Ok(result)
+        })
     }
 
     pub(crate) fn native_query_at(
         &self,
         generated_at: DateTime<Utc>,
     ) -> Result<NativeQueryV2, String> {
-        let connection = self.lock().map_err(|error| error.to_string())?;
+        self.database
+            .read("load orchestration native query", |connection| {
         let mut draft_statement = connection.prepare("SELECT draft.id, draft.title, CASE WHEN initiated.draft_id IS NOT NULL THEN 'initiated' ELSE draft.status END, draft.created_at, draft.updated_at, draft.canceled_at, latest.id FROM epic_planning_drafts draft LEFT JOIN initiated_planning_drafts initiated ON initiated.draft_id = draft.id LEFT JOIN proposal_revisions latest ON latest.id = (SELECT revision.id FROM proposal_revisions revision WHERE revision.draft_id = draft.id ORDER BY revision.recorded_at DESC, revision.id DESC LIMIT 1) ORDER BY draft.created_at, draft.id").map_err(|error| error.to_string())?;
         let planning_drafts = draft_statement
             .query_map([], |row| {
@@ -1335,7 +1347,7 @@ impl SqliteOrchestrationRepository {
             .iter()
             .map(work_unit_inspection_projection)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(NativeQueryV2 {
+                Ok(NativeQueryV2 {
             contract_version: NATIVE_QUERY_VERSION,
             generated_at: timestamp(generated_at),
             planning_drafts,
@@ -1366,7 +1378,9 @@ impl SqliteOrchestrationRepository {
             sprint_result_projections,
             epic_settlement_states,
             work_unit_inspections,
-        })
+                })
+            })
+            .map_err(ManagedOperationError::into_string)
     }
 
     /// Product-owned semantic transition. It consumes the current saved proposal atomically and
@@ -1389,12 +1403,8 @@ impl SqliteOrchestrationRepository {
             command.actor_id
         );
         let now = timestamp(self.clock.now());
-        let mut connection = self.connection.lock().map_err(|_| {
-            InitiateEpicError::Unavailable("orchestration database lock is poisoned".into())
-        })?;
-        let tx = connection
-            .transaction()
-            .map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
+        self.database
+            .write("initiate Epic", |tx| {
         let existing: Option<(String, String, String, String, String)> = tx.query_row(
             "SELECT command.payload_fingerprint, initiation.id, initiation.epic_id, initiation.proposal_revision_id, snapshot.content_hash FROM epic_initiation_commands command JOIN epic_initiations initiation ON initiation.command_id = command.id JOIN epic_initiation_material_snapshots snapshot ON snapshot.id = initiation.material_snapshot_id WHERE command.idempotency_key = ?1",
             params![command.idempotency_key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional().map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
@@ -1469,9 +1479,7 @@ impl SqliteOrchestrationRepository {
             tx.execute("INSERT INTO initiated_sprints (id,epic_id,ordinal,title,intended_movement,concern_summaries_json,sprint_plan_id,sprint_plan_revision_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![sprint_id, epic_id, ordinal as i64, sprint.title, sprint.intended_movement, serde_json::to_string(&sprint.concern_summaries).unwrap(), new_id("sprint-plan"), new_id("sprint-plan-revision")]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
         }
         tx.execute("INSERT INTO initiated_planning_drafts (draft_id,initiation_id,initiated_at) VALUES (?1,?2,?3)", params![command.epic_planning_draft_id.as_str(),initiation_id,now]).map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| InitiateEpicError::Unavailable(e.to_string()))?;
-        Ok(InitiateEpicResult {
+                Ok(InitiateEpicResult {
             initiation_id: EpicInitiationId::new(initiation_id)
                 .map_err(InitiateEpicError::InvalidInput)?,
             epic_id: EpicId::new(epic_id).map_err(InitiateEpicError::InvalidInput)?,
@@ -1479,7 +1487,14 @@ impl SqliteOrchestrationRepository {
                 .map_err(InitiateEpicError::InvalidInput)?,
             material_snapshot_hash: hash,
             idempotent_replay: false,
-        })
+                })
+            })
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    InitiateEpicError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     pub(crate) fn native_query(&self) -> Result<NativeQueryV2, String> {
@@ -1494,13 +1509,8 @@ impl SqliteOrchestrationRepository {
     ) -> Result<SaveHarnessWorkingCopyResult, HarnessWorkingCopyError> {
         validate_harness_working_copy_command(&command)?;
         let fingerprint = harness_working_copy_command_fingerprint(&command)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
+        self.database
+            .write("save Harness working copy", |transaction| {
 
         let replay: Option<(String, String, i64, i64, String, String, String)> = transaction
             .query_row(
@@ -1612,10 +1622,12 @@ impl SqliteOrchestrationRepository {
                 ],
             )
             .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
-        transaction
-            .commit()
-            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
-        Ok(SaveHarnessWorkingCopyResult::Stored(working_copy))
+                Ok(SaveHarnessWorkingCopyResult::Stored(working_copy))
+            })
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(_) => HarnessWorkingCopyError::Unavailable,
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     /// Private read for later Harness commit/version work. No transport or NativeQuery exposes it.
@@ -1624,11 +1636,14 @@ impl SqliteOrchestrationRepository {
         harness_key: &str,
     ) -> Result<Option<HarnessWorkingCopy>, HarnessWorkingCopyError> {
         validate_harness_key(harness_key)?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| HarnessWorkingCopyError::Unavailable)?;
-        load_harness_working_copy_from_connection(&connection, harness_key)
+        self.database
+            .read("load Harness working copy", |connection| {
+                load_harness_working_copy_from_connection(connection, harness_key)
+            })
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(_) => HarnessWorkingCopyError::Unavailable,
+                ManagedOperationError::Domain(error) => error,
+            })
     }
 
     /// Publishes the exact current working-copy revision through the application-owned local
@@ -1639,97 +1654,55 @@ impl SqliteOrchestrationRepository {
     ) -> Result<CreateHarnessRevisionResult, HarnessRevisionError> {
         validate_harness_revision_command(&command)?;
         let fingerprint = harness_revision_command_fingerprint(&command)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| HarnessRevisionError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| HarnessRevisionError::Unavailable)?;
-
-        let replay: Option<(String, String, i64, Option<String>, String, String, String, String)> =
-            transaction
-                .query_row(
-                    "SELECT payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at FROM harness_revision_commands WHERE idempotency_key=?1",
-                    [&command.idempotency_key],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get(1)?,
-                            row.get(2)?,
-                            row.get(3)?,
-                            row.get(4)?,
-                            row.get(5)?,
-                            row.get(6)?,
-                            row.get(7)?,
-                        ))
-                    },
-                )
-                .optional()
-                .map_err(|_| HarnessRevisionError::Unavailable)?;
-        if let Some((
-            existing_fingerprint,
-            harness_key,
-            source_draft_revision,
-            expected_predecessor,
-            result_revision_id,
-            result_json,
-            result_digest,
-            recorded_at,
-        )) = replay
-        {
-            if existing_fingerprint != fingerprint {
-                return Err(HarnessRevisionError::Conflict);
-            }
-            if harness_key != command.harness_key
-                || source_draft_revision != command.expected_source_draft_revision as i64
-                || expected_predecessor != command.expected_predecessor_revision_id
-                || result_digest != format!("{:x}", Sha256::digest(result_json.as_bytes()))
-            {
-                return Err(HarnessRevisionError::InvalidStoredState);
-            }
-            let recorded: HarnessRevision = serde_json::from_str(&result_json)
-                .map_err(|_| HarnessRevisionError::InvalidStoredState)?;
-            validate_revision(&recorded)?;
-            if recorded.revision_id != result_revision_id
-                || recorded.harness_key != command.harness_key
-                || recorded.source_draft_revision != command.expected_source_draft_revision
-                || recorded.predecessor_revision_id != command.expected_predecessor_revision_id
-                || recorded.creation_provenance != command.creation_provenance
-                || timestamp(recorded.created_at) != recorded_at
-            {
-                return Err(HarnessRevisionError::InvalidStoredState);
-            }
-            let verified = load_verified_harness_revision_from_connection(
-                &transaction,
-                &self.harness_revisions,
-                &recorded.revision_id,
-            )?
-            .ok_or(HarnessRevisionError::InvalidStoredState)?;
-            if verified != recorded {
-                return Err(HarnessRevisionError::InvalidStoredState);
-            }
-            return Ok(CreateHarnessRevisionResult::IdempotentReplay(verified));
+        let replay = self
+            .database
+            .read("load Harness revision command replay", |connection| {
+                let Some(recorded) =
+                    load_harness_revision_command_record(connection, &command, &fingerprint)?
+                else {
+                    return Ok(None);
+                };
+                let verified = load_verified_harness_revision_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &recorded.revision_id,
+                )?
+                .ok_or(HarnessRevisionError::InvalidStoredState)?;
+                if verified != recorded {
+                    return Err(HarnessRevisionError::InvalidStoredState);
+                }
+                Ok(Some(verified))
+            })
+            .map_err(map_managed_harness_revision_error)?;
+        if let Some(replay) = replay {
+            return Ok(CreateHarnessRevisionResult::IdempotentReplay(replay));
         }
 
-        let working_copy =
-            load_harness_working_copy_from_connection(&transaction, &command.harness_key)?
-                .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
+        let (working_copy, current_head) = self
+            .database
+            .read("prepare Harness revision", |connection| {
+                let working_copy =
+                    load_harness_working_copy_from_connection(connection, &command.harness_key)?
+                        .ok_or(HarnessRevisionError::MissingWorkingCopy)?;
+                let existing = load_verified_harness_revision_history_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &command.harness_key,
+                )?;
+                if existing.last().is_some_and(|revision| {
+                    revision.source_draft_revision >= working_copy.draft_revision
+                }) {
+                    return Err(HarnessRevisionError::Conflict);
+                }
+                Ok((
+                    working_copy,
+                    existing.last().map(|revision| revision.revision_id.clone()),
+                ))
+            })
+            .map_err(map_managed_harness_revision_error)?;
         if working_copy.draft_revision != command.expected_source_draft_revision {
             return Err(HarnessRevisionError::Conflict);
         }
-        let existing = load_verified_harness_revision_history_from_connection(
-            &transaction,
-            &self.harness_revisions,
-            &command.harness_key,
-        )?;
-        if existing
-            .last()
-            .is_some_and(|revision| revision.source_draft_revision >= working_copy.draft_revision)
-        {
-            return Err(HarnessRevisionError::Conflict);
-        }
-        let current_head = existing.last().map(|revision| revision.revision_id.clone());
         if current_head != command.expected_predecessor_revision_id {
             return Err(HarnessRevisionError::Conflict);
         }
@@ -1764,6 +1737,28 @@ impl SqliteOrchestrationRepository {
         let result_json =
             serde_json::to_string(&revision).map_err(|_| HarnessRevisionError::Invalid)?;
         let result_digest = format!("{:x}", Sha256::digest(result_json.as_bytes()));
+        let result = self.database.write("publish Harness revision", |transaction| {
+        if let Some(recorded) = load_harness_revision_command_record(transaction, &command, &fingerprint)? {
+            return Ok(CreateHarnessRevisionResult::IdempotentReplay(recorded));
+        }
+        let source_draft_revision: Option<i64> = transaction.query_row(
+            "SELECT draft_revision FROM harness_working_copies WHERE harness_key=?1",
+            [&command.harness_key],
+            |row| row.get(0),
+        ).optional().map_err(|_| HarnessRevisionError::Unavailable)?;
+        if source_draft_revision != Some(command.expected_source_draft_revision as i64) {
+            return Err(HarnessRevisionError::Conflict);
+        }
+        let stored_head: Option<(String, i64)> = transaction.query_row(
+            "SELECT revision_id,source_draft_revision FROM harness_revisions WHERE harness_key=?1 ORDER BY source_draft_revision DESC,revision_id DESC LIMIT 1",
+            [&command.harness_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|_| HarnessRevisionError::Unavailable)?;
+        if stored_head.as_ref().map(|value| value.0.clone()) != command.expected_predecessor_revision_id
+            || stored_head.is_some_and(|value| value.1 >= command.expected_source_draft_revision as i64)
+        {
+            return Err(HarnessRevisionError::Conflict);
+        }
         transaction
             .execute(
                 "INSERT INTO harness_revisions (revision_id,harness_key,configuration_contract_version,configuration_digest,source_draft_revision,predecessor_revision_id,repository_commit_ref,creation_provenance_kind,creation_provenance_reference,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -1808,29 +1803,49 @@ impl SqliteOrchestrationRepository {
                 ],
             )
             .map_err(|_| HarnessRevisionError::Unavailable)?;
-        transaction
-            .commit()
-            .map_err(|_| HarnessRevisionError::Unavailable)?;
-        Ok(CreateHarnessRevisionResult::Published(revision))
+        Ok(CreateHarnessRevisionResult::Published(revision.clone()))
+        }).map_err(map_managed_harness_revision_error)?;
+
+        let result_revision = match &result {
+            CreateHarnessRevisionResult::Published(revision)
+            | CreateHarnessRevisionResult::IdempotentReplay(revision) => revision,
+        };
+        let verified = self
+            .database
+            .read("verify published Harness revision", |connection| {
+                load_verified_harness_revision_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    &result_revision.revision_id,
+                )?
+                .ok_or(HarnessRevisionError::InvalidStoredState)
+            })
+            .map_err(map_managed_harness_revision_error)?;
+        if verified != *result_revision {
+            return Err(HarnessRevisionError::InvalidStoredState);
+        }
+        Ok(result)
     }
 
     pub(crate) fn load_harness_revision(&self, revision_id: &str) -> HarnessRevisionReadOutcome {
-        let connection = match self.connection.lock() {
-            Ok(connection) => connection,
-            Err(_) => return HarnessRevisionReadOutcome::Unavailable,
-        };
-        match load_verified_harness_revision_from_connection(
-            &connection,
-            &self.harness_revisions,
-            revision_id,
-        ) {
+        let result = self.database.read("load Harness revision", |connection| {
+            load_verified_harness_revision_from_connection(
+                connection,
+                &self.harness_revisions,
+                revision_id,
+            )
+        });
+        match result {
+            Err(ManagedOperationError::Infrastructure(_)) => {
+                HarnessRevisionReadOutcome::Unavailable
+            }
+            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
+            | Err(ManagedOperationError::Domain(
+                HarnessRevisionError::InvalidLocalCommitEvidence,
+            )) => HarnessRevisionReadOutcome::InvalidLocalCommitEvidence,
+            Err(ManagedOperationError::Domain(_)) => HarnessRevisionReadOutcome::Unavailable,
             Ok(Some(revision)) => HarnessRevisionReadOutcome::AvailableAndVerified { revision },
             Ok(None) => HarnessRevisionReadOutcome::Missing,
-            Err(HarnessRevisionError::InvalidStoredState)
-            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
-                HarnessRevisionReadOutcome::InvalidLocalCommitEvidence
-            }
-            Err(_) => HarnessRevisionReadOutcome::Unavailable,
         }
     }
 
@@ -1841,22 +1856,26 @@ impl SqliteOrchestrationRepository {
         if validate_harness_key(harness_key).is_err() {
             return HarnessRevisionHistoryOutcome::Missing;
         }
-        let connection = match self.connection.lock() {
-            Ok(connection) => connection,
-            Err(_) => return HarnessRevisionHistoryOutcome::Unavailable,
-        };
-        match load_verified_harness_revision_history_from_connection(
-            &connection,
-            &self.harness_revisions,
-            harness_key,
-        ) {
+        let result = self
+            .database
+            .read("load Harness revision history", |connection| {
+                load_verified_harness_revision_history_from_connection(
+                    connection,
+                    &self.harness_revisions,
+                    harness_key,
+                )
+            });
+        match result {
+            Err(ManagedOperationError::Infrastructure(_)) => {
+                HarnessRevisionHistoryOutcome::Unavailable
+            }
+            Err(ManagedOperationError::Domain(HarnessRevisionError::InvalidStoredState))
+            | Err(ManagedOperationError::Domain(
+                HarnessRevisionError::InvalidLocalCommitEvidence,
+            )) => HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence,
+            Err(ManagedOperationError::Domain(_)) => HarnessRevisionHistoryOutcome::Unavailable,
             Ok(revisions) if revisions.is_empty() => HarnessRevisionHistoryOutcome::Missing,
             Ok(revisions) => HarnessRevisionHistoryOutcome::AvailableAndVerified { revisions },
-            Err(HarnessRevisionError::InvalidStoredState)
-            | Err(HarnessRevisionError::InvalidLocalCommitEvidence) => {
-                HarnessRevisionHistoryOutcome::InvalidLocalCommitEvidence
-            }
-            Err(_) => HarnessRevisionHistoryOutcome::Unavailable,
         }
     }
 
@@ -1868,13 +1887,7 @@ impl SqliteOrchestrationRepository {
     {
         validate_git_capture_authorization(&value)?;
         let fingerprint = git_capture_authorization_fingerprint(&value);
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
+        self.database.write("store file review Git capture authorization", |tx| {
         let owned: Option<i64> = tx.query_row("SELECT 1 FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id AND epic.provenance_id=?3 WHERE sprint.id=?1 AND sprint.epic_id=?2", params![value.sprint_id, value.epic_id, value.provenance_id], |r| r.get(0)).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
         if owned.is_none() {
             return Err(FileReviewGitCaptureAuthorizationError::Forbidden);
@@ -1888,9 +1901,11 @@ impl SqliteOrchestrationRepository {
             };
         }
         tx.execute("INSERT INTO file_review_git_capture_authorizations (capture_authorization_id,idempotency_key,payload_fingerprint,epic_id,sprint_id,provenance_id,repository_id,repository_root,worktree_id,worktree_root,baseline_object_id,current_object_id,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", params![value.capture_authorization_id, value.idempotency_key, fingerprint, value.epic_id, value.sprint_id, value.provenance_id, value.repository_id, value.repository_root, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, timestamp(self.clock.now())]).map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
-        tx.commit()
-            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
-        Ok(StoreFileReviewGitCaptureAuthorizationResult::Stored)
+            Ok(StoreFileReviewGitCaptureAuthorizationResult::Stored)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(_) => FileReviewGitCaptureAuthorizationError::Unavailable,
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     /// Producer-facing capability: the opaque authorization identity is its sole input.
@@ -1902,11 +1917,12 @@ impl SqliteOrchestrationRepository {
         if capture_authorization_id.trim().is_empty() {
             return Err(FileReviewGitCaptureAuthorizationError::Invalid);
         }
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)?;
-        connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+        self.database.read("load file review Git capture authorization", |connection| {
+            connection.query_row("SELECT authorization.capture_authorization_id, authorization.epic_id, authorization.sprint_id, authorization.provenance_id, authorization.repository_id, authorization.repository_root, authorization.worktree_id, authorization.worktree_root, authorization.baseline_object_id, authorization.current_object_id FROM file_review_git_capture_authorizations authorization JOIN initiated_sprints sprint ON sprint.id=authorization.sprint_id AND sprint.epic_id=authorization.epic_id JOIN epic_initiations epic ON epic.epic_id=authorization.epic_id AND epic.provenance_id=authorization.provenance_id WHERE authorization.capture_authorization_id=?1", params![capture_authorization_id], |r| Ok(FileReviewGitCaptureAuthorization { capture_authorization_id:r.get(0)?, epic_id:r.get(1)?, sprint_id:r.get(2)?, provenance_id:r.get(3)?, repository_id:r.get(4)?, repository_root:r.get(5)?, worktree_id:r.get(6)?, worktree_root:r.get(7)?, baseline_object_id:r.get(8)?, current_object_id:r.get(9)? })).optional().map_err(|_| FileReviewGitCaptureAuthorizationError::Unavailable)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(_) => FileReviewGitCaptureAuthorizationError::Unavailable,
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     /// Producer-only durable linkage; an authorization can produce exactly one immutable review.
@@ -1916,13 +1932,7 @@ impl SqliteOrchestrationRepository {
         document_ref_id: &str,
         artifact_id: &str,
     ) -> Result<(), FileReviewFactsError> {
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| FileReviewFactsError::Unavailable("database lock is poisoned".into()))?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        self.database.write("store file review Git capture document link", |tx| {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
@@ -1936,16 +1946,16 @@ impl SqliteOrchestrationRepository {
         let existing:Option<String>=tx.query_row("SELECT linkage_fingerprint FROM file_review_git_capture_documents WHERE capture_authorization_id=?1 OR document_ref_id=?2 OR artifact_id=?3",params![capture_authorization_id,document_ref_id,artifact_id],|r|r.get(0)).optional().map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;
         if let Some(existing) = existing {
             if existing == fingerprint {
-                tx.commit()
-                    .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
                 return Ok(());
             }
             return Err(FileReviewFactsError::Conflict);
         }
         tx.execute("INSERT INTO file_review_git_capture_documents(capture_authorization_id,document_ref_id,artifact_id,linkage_fingerprint,recorded_at) VALUES(?1,?2,?3,?4,?5)",params![capture_authorization_id,document_ref_id,artifact_id,fingerprint,timestamp(self.clock.now())]).map_err(|e|FileReviewFactsError::Unavailable(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
-        Ok(())
+            Ok(())
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(error) => FileReviewFactsError::Unavailable(error.to_string()),
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     /// Application-only transition store. Runtime and Git facts are supplied by an internal port.
@@ -1955,13 +1965,7 @@ impl SqliteOrchestrationRepository {
     ) -> Result<StoreInitiatedSprintGitAuthorityResult, InitiatedSprintGitAuthorityError> {
         validate_initiated_sprint_git_authority(&value)?;
         let authority_id = initiated_sprint_git_authority_id(&value);
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        self.database.write("store initiated Sprint Git authority", |tx| {
         let ownership: Option<(String, String)> = tx
             .query_row(
                 "SELECT sprint.epic_id, epic.provenance_id FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id=sprint.epic_id JOIN epic_initiation_provenance provenance ON provenance.id=epic.provenance_id WHERE sprint.id=?1",
@@ -2001,9 +2005,11 @@ impl SqliteOrchestrationRepository {
             params![authority_id, value.idempotency_key, fingerprint, epic_id, value.sprint_id, provenance_id, value.repository_id, value.repository_root, value.repository_common_dir, value.worktree_id, value.worktree_root, value.baseline_object_id, value.current_object_id, value.runtime_instance_ref, value.runtime_source_ref, value.source_fingerprint, timestamp(self.clock.now())],
         )
         .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        tx.commit()
-            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        Ok(StoreInitiatedSprintGitAuthorityResult::Stored { authority_id })
+            Ok(StoreInitiatedSprintGitAuthorityResult::Stored { authority_id })
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(_) => InitiatedSprintGitAuthorityError::Unavailable,
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     /// Private downstream load. The live initiated Sprint/Epic/provenance chain is reauthorized.
@@ -2014,11 +2020,12 @@ impl SqliteOrchestrationRepository {
         if !bounded_application_id(authority_id) {
             return Err(InitiatedSprintGitAuthorityError::Invalid);
         }
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-        let loaded = connection.query_row("SELECT authority.authority_id,authority.epic_id,authority.sprint_id,authority.provenance_id,authority.repository_id,authority.repository_root,authority.repository_common_dir,authority.worktree_id,authority.worktree_root,authority.baseline_object_id,authority.current_object_id,authority.runtime_instance_ref,authority.runtime_source_ref,authority.source_fingerprint,authority.idempotency_key,authority.payload_fingerprint FROM initiated_sprint_git_authorities authority JOIN initiated_sprints sprint ON sprint.id=authority.sprint_id AND sprint.epic_id=authority.epic_id JOIN epic_initiations epic ON epic.epic_id=authority.epic_id AND epic.provenance_id=authority.provenance_id JOIN epic_initiation_provenance provenance ON provenance.id=authority.provenance_id WHERE authority.authority_id=?1", [authority_id], |row| Ok((InitiatedSprintGitAuthority { authority_id:row.get(0)?, epic_id:row.get(1)?, sprint_id:row.get(2)?, provenance_id:row.get(3)?, repository_id:row.get(4)?, repository_root:row.get(5)?, repository_common_dir:row.get(6)?, worktree_id:row.get(7)?, worktree_root:row.get(8)?, baseline_object_id:row.get(9)?, current_object_id:row.get(10)?, runtime_instance_ref:row.get(11)?, runtime_source_ref:row.get(12)?, source_fingerprint:row.get(13)? }, row.get::<_, String>(14)?, row.get::<_, String>(15)?))).optional().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let loaded = self.database.read("load initiated Sprint Git authority", |connection| {
+            connection.query_row("SELECT authority.authority_id,authority.epic_id,authority.sprint_id,authority.provenance_id,authority.repository_id,authority.repository_root,authority.repository_common_dir,authority.worktree_id,authority.worktree_root,authority.baseline_object_id,authority.current_object_id,authority.runtime_instance_ref,authority.runtime_source_ref,authority.source_fingerprint,authority.idempotency_key,authority.payload_fingerprint FROM initiated_sprint_git_authorities authority JOIN initiated_sprints sprint ON sprint.id=authority.sprint_id AND sprint.epic_id=authority.epic_id JOIN epic_initiations epic ON epic.epic_id=authority.epic_id AND epic.provenance_id=authority.provenance_id JOIN epic_initiation_provenance provenance ON provenance.id=authority.provenance_id WHERE authority.authority_id=?1", [authority_id], |row| Ok((InitiatedSprintGitAuthority { authority_id:row.get(0)?, epic_id:row.get(1)?, sprint_id:row.get(2)?, provenance_id:row.get(3)?, repository_id:row.get(4)?, repository_root:row.get(5)?, repository_common_dir:row.get(6)?, worktree_id:row.get(7)?, worktree_root:row.get(8)?, baseline_object_id:row.get(9)?, current_object_id:row.get(10)?, runtime_instance_ref:row.get(11)?, runtime_source_ref:row.get(12)?, source_fingerprint:row.get(13)? }, row.get::<_, String>(14)?, row.get::<_, String>(15)?))).optional().map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(_) => InitiatedSprintGitAuthorityError::Unavailable,
+            ManagedOperationError::Domain(error) => error,
+        })?;
         let Some((authority, idempotency_key, fingerprint)) = loaded else {
             return Ok(None);
         };
@@ -2059,11 +2066,7 @@ impl SqliteOrchestrationRepository {
         if !bounded_application_id(sprint_id) {
             return Err(InitiatedSprintGitAuthorityError::Invalid);
         }
-        let authority_ids = {
-            let connection = self
-                .connection
-                .lock()
-                .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
+        let authority_ids = self.database.read("load initiated Sprint Git authority for Sprint", |connection| {
             let mut statement = connection
                 .prepare(
                     "SELECT authority_id FROM initiated_sprint_git_authorities WHERE sprint_id=?1 ORDER BY recorded_at, authority_id LIMIT 2",
@@ -2074,8 +2077,11 @@ impl SqliteOrchestrationRepository {
                 .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| InitiatedSprintGitAuthorityError::Unavailable)?;
-            authority_ids
-        };
+            Ok::<_, InitiatedSprintGitAuthorityError>(authority_ids)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(_) => InitiatedSprintGitAuthorityError::Unavailable,
+            ManagedOperationError::Domain(error) => error,
+        })?;
         match authority_ids.as_slice() {
             [] => Ok(None),
             [authority_id] => self.load_initiated_sprint_git_authority(authority_id),
@@ -2090,13 +2096,7 @@ impl SqliteOrchestrationRepository {
     ) -> Result<StoreFileReviewFactsResult, FileReviewFactsError> {
         validate_file_review_facts(&facts)?;
         let payload_fingerprint = file_review_fingerprint(&facts)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| FileReviewFactsError::Unavailable("database lock is poisoned".into()))?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
+        self.database.write("store file review facts", |transaction| {
         let ownership: Option<i64> = transaction.query_row("SELECT 1 FROM initiated_sprints sprint JOIN epic_initiations epic ON epic.epic_id = sprint.epic_id AND epic.provenance_id = ?3 WHERE sprint.id = ?1 AND sprint.epic_id = ?2", params![facts.sprint_id, facts.epic_id, facts.provenance_id], |row| row.get(0)).optional().map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
         if ownership.is_none() {
             return Err(FileReviewFactsError::Forbidden);
@@ -2126,10 +2126,11 @@ impl SqliteOrchestrationRepository {
             transaction.execute("INSERT INTO file_review_changed_files (document_ref_id,changed_file_reference_id,display_name,change_kind,previous_display_name,ordinal) VALUES (?1,?2,?3,?4,?5,?6)", params![facts.document_ref_id, file.changed_file_reference_id, file.display_name, file.change_kind, file.previous_display_name, ordinal as i64]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
         }
         transaction.execute("INSERT INTO stored_file_review_artifacts (artifact_id,document_ref_id,contract_version,payload,payload_bytes,provenance_id) VALUES (?1,?2,?3,?4,?5,?6)", params![facts.artifact_id, facts.document_ref_id, STORED_FILE_REVIEW_ARTIFACT_V1, facts.payload, facts.payload.len() as i64, facts.provenance_id]).map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
-        transaction
-            .commit()
-            .map_err(|e| FileReviewFactsError::Unavailable(e.to_string()))?;
-        Ok(StoreFileReviewFactsResult::Stored)
+            Ok(StoreFileReviewFactsResult::Stored)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(error) => FileReviewFactsError::Unavailable(error.to_string()),
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     /// Opaque references select a pre-authorized Document; every lookup rechecks durable scope.
@@ -2140,7 +2141,7 @@ impl SqliteOrchestrationRepository {
         if opaque_reference.trim().is_empty() {
             return Ok(ScopedFileReviewLoad::Invalid);
         }
-        let connection = self.lock().map_err(|e| e.to_string())?;
+        self.database.read("load scoped file review", |connection| {
         let exists = connection
             .query_row(
                 "SELECT 1 FROM file_review_documents WHERE opaque_reference = ?1",
@@ -2168,7 +2169,7 @@ impl SqliteOrchestrationRepository {
         if changed_files.is_empty() {
             return Ok(ScopedFileReviewLoad::Invalid);
         }
-        Ok(ScopedFileReviewLoad::Available {
+            Ok(ScopedFileReviewLoad::Available {
             document: ScopedFileReviewDocument {
                 document_ref_id,
                 title,
@@ -2177,7 +2178,8 @@ impl SqliteOrchestrationRepository {
                 payload,
                 changed_files,
             },
-        })
+            })
+        }).map_err(ManagedOperationError::into_string)
     }
 
     /// Captures the authorized optimistic precondition for one managed Agent Invocation. The
@@ -2190,13 +2192,14 @@ impl SqliteOrchestrationRepository {
         agent_session_id: &str,
         actor_id: &str,
     ) -> Result<Option<String>, SaveProposalError> {
-        let connection = self.lock()?;
         let now = timestamp(self.clock.now());
-        let authorized = connection.query_row("SELECT 1 FROM epic_planning_drafts draft JOIN planning_draft_profile_assignments assignment ON assignment.draft_id = draft.id JOIN planning_draft_agent_session_associations association ON association.id = assignment.agent_session_association_id JOIN capability_profiles profile ON profile.id = assignment.capability_profile_id WHERE draft.id = ?1 AND draft.status = 'active' AND assignment.capability_profile_id = ?2 AND assignment.agent_session_association_id = ?3 AND association.agent_session_id = ?4 AND association.actor_id = ?5 AND assignment.expires_at >= ?6 AND profile.status = 'active'", params![draft_id.as_str(), profile_id.as_str(), association_id.as_str(), agent_session_id, actor_id, now], |_| Ok(())).optional().map_err(sql_error("authorize managed proposal precondition"))?.is_some();
-        if !authorized {
-            return Err(SaveProposalError::Forbidden);
-        }
-        connection.query_row("SELECT revision_token FROM proposal_revisions WHERE draft_id = ?1 ORDER BY recorded_at DESC, id DESC LIMIT 1", params![draft_id.as_str()], |row| row.get(0)).optional().map_err(sql_error("capture managed proposal precondition"))
+        self.read("capture managed proposal precondition", |connection| {
+            let authorized = connection.query_row("SELECT 1 FROM epic_planning_drafts draft JOIN planning_draft_profile_assignments assignment ON assignment.draft_id = draft.id JOIN planning_draft_agent_session_associations association ON association.id = assignment.agent_session_association_id JOIN capability_profiles profile ON profile.id = assignment.capability_profile_id WHERE draft.id = ?1 AND draft.status = 'active' AND assignment.capability_profile_id = ?2 AND assignment.agent_session_association_id = ?3 AND association.agent_session_id = ?4 AND association.actor_id = ?5 AND assignment.expires_at >= ?6 AND profile.status = 'active'", params![draft_id.as_str(), profile_id.as_str(), association_id.as_str(), agent_session_id, actor_id, now], |_| Ok(())).optional().map_err(sql_error("authorize managed proposal precondition"))?.is_some();
+            if !authorized {
+                return Err(SaveProposalError::Forbidden);
+            }
+            connection.query_row("SELECT revision_token FROM proposal_revisions WHERE draft_id = ?1 ORDER BY recorded_at DESC, id DESC LIMIT 1", params![draft_id.as_str()], |row| row.get(0)).optional().map_err(sql_error("capture managed proposal precondition"))
+        })
     }
 
     /// Derives the current initiation precondition from the registered managed Agent Session.
@@ -2210,11 +2213,9 @@ impl SqliteOrchestrationRepository {
         actor_id: &str,
     ) -> Result<String, super::domain::InitiateEpicError> {
         use super::domain::InitiateEpicError;
-        let connection = self.connection.lock().map_err(|_| {
-            InitiateEpicError::Unavailable("orchestration database lock is poisoned".into())
-        })?;
         let now = timestamp(self.clock.now());
-        let status: Option<String> = connection
+        self.database.read("capture agent initiation precondition", |connection| {
+            let status: Option<String> = connection
             .query_row(
                 "SELECT status FROM epic_planning_drafts WHERE id = ?1",
                 params![draft_id.as_str()],
@@ -2240,7 +2241,7 @@ impl SqliteOrchestrationRepository {
         if !authorized {
             return Err(InitiateEpicError::Forbidden);
         }
-        connection
+            connection
             .query_row(
                 "SELECT revision_token FROM proposal_revisions WHERE draft_id = ?1 ORDER BY recorded_at DESC, id DESC LIMIT 1",
                 params![draft_id.as_str()],
@@ -2249,6 +2250,10 @@ impl SqliteOrchestrationRepository {
             .optional()
             .map_err(|error| InitiateEpicError::Unavailable(error.to_string()))?
             .ok_or(InitiateEpicError::ProposalMissing)
+        }).map_err(|error| match error {
+            ManagedOperationError::Infrastructure(error) => InitiateEpicError::Unavailable(error.to_string()),
+            ManagedOperationError::Domain(error) => error,
+        })
     }
 
     pub(crate) fn initiation_is_projected(
@@ -2271,9 +2276,9 @@ impl SqliteOrchestrationRepository {
         association_id: &PlanningDraftAgentSessionAssociationId,
         actor_id: &str,
     ) -> Result<serde_json::Value, SaveProposalError> {
-        let connection = self.lock()?;
         let now = timestamp(self.clock.now());
-        let exists = connection
+        self.read("load Plan Builder context", |connection| {
+            let exists = connection
             .query_row(
                 "SELECT 1 FROM epic_planning_drafts WHERE id = ?1",
                 params![draft_id.as_str()],
@@ -2297,15 +2302,58 @@ impl SqliteOrchestrationRepository {
             .map_err(|error| {
                 SaveProposalError::Unavailable(format!("read proposal context: {error}"))
             })?;
-        Ok(
+            Ok(
             serde_json::json!({ "epicPlanningDraftId": draft_id.as_str(), "currentProposal": latest.map(|(id, token, _)| serde_json::json!({"proposalRevisionId": id, "revisionToken": token, "proposal": proposal})) }),
-        )
+            )
+        })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, SaveProposalError> {
-        self.connection.lock().map_err(|_| {
-            SaveProposalError::Unavailable("orchestration database lock is poisoned".into())
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, SaveProposalError>,
+    ) -> Result<T, SaveProposalError> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SaveProposalError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&Transaction<'_>) -> Result<T, SaveProposalError>,
+    ) -> Result<T, SaveProposalError> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| match error {
+                ManagedOperationError::Infrastructure(error) => {
+                    SaveProposalError::Unavailable(error.to_string())
+                }
+                ManagedOperationError::Domain(error) => error,
+            })
+    }
+
+    #[cfg(test)]
+    fn test_read<T, E>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, E>,
+    ) -> Result<T, ManagedOperationError<E>> {
+        self.database.read(operation, read)
+    }
+
+    #[cfg(test)]
+    fn test_write<T, E>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
+    ) -> Result<T, ManagedOperationError<E>> {
+        self.database.write(operation, write)
     }
 }
 
@@ -2689,6 +2737,64 @@ fn load_harness_working_copy_from_connection(
     };
     validate_working_copy(&working_copy)?;
     Ok(Some(working_copy))
+}
+
+fn load_harness_revision_command_record(
+    connection: &Connection,
+    command: &CreateHarnessRevisionCommand,
+    fingerprint: &str,
+) -> Result<Option<HarnessRevision>, HarnessRevisionError> {
+    let replay: Option<(String, String, i64, Option<String>, String, String, String, String)> =
+        connection.query_row(
+            "SELECT payload_fingerprint,harness_key,expected_source_draft_revision,expected_predecessor_revision_id,result_revision_id,result_json,result_digest,recorded_at FROM harness_revision_commands WHERE idempotency_key=?1",
+            [&command.idempotency_key],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
+        ).optional().map_err(|_| HarnessRevisionError::Unavailable)?;
+    let Some((
+        existing_fingerprint,
+        harness_key,
+        source_draft_revision,
+        expected_predecessor,
+        result_revision_id,
+        result_json,
+        result_digest,
+        recorded_at,
+    )) = replay
+    else {
+        return Ok(None);
+    };
+    if existing_fingerprint != fingerprint {
+        return Err(HarnessRevisionError::Conflict);
+    }
+    if harness_key != command.harness_key
+        || source_draft_revision != command.expected_source_draft_revision as i64
+        || expected_predecessor != command.expected_predecessor_revision_id
+        || result_digest != format!("{:x}", Sha256::digest(result_json.as_bytes()))
+    {
+        return Err(HarnessRevisionError::InvalidStoredState);
+    }
+    let recorded: HarnessRevision =
+        serde_json::from_str(&result_json).map_err(|_| HarnessRevisionError::InvalidStoredState)?;
+    validate_revision(&recorded)?;
+    if recorded.revision_id != result_revision_id
+        || recorded.harness_key != command.harness_key
+        || recorded.source_draft_revision != command.expected_source_draft_revision
+        || recorded.predecessor_revision_id != command.expected_predecessor_revision_id
+        || recorded.creation_provenance != command.creation_provenance
+        || timestamp(recorded.created_at) != recorded_at
+    {
+        return Err(HarnessRevisionError::InvalidStoredState);
+    }
+    Ok(Some(recorded))
+}
+
+fn map_managed_harness_revision_error(
+    error: ManagedOperationError<HarnessRevisionError>,
+) -> HarnessRevisionError {
+    match error {
+        ManagedOperationError::Infrastructure(_) => HarnessRevisionError::Unavailable,
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 fn harness_working_copy_digest(

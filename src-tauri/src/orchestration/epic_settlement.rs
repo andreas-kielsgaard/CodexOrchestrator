@@ -1,5 +1,6 @@
 //! Durable Epic settlement. Terminal readiness is an input, not a settlement fact.
 
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -85,6 +86,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), String> {
 /// Re-evaluates authoritative Epic state in one application-owned transaction.  It records an
 /// unresolved fact when the exact settlement authority is not current instead of inferring a
 /// settlement from readiness or partial descendant state.
+#[cfg(test)]
 pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
     let epics = connection
         .prepare("SELECT DISTINCT epic_id FROM initiated_sprints ORDER BY epic_id")
@@ -95,6 +97,29 @@ pub(crate) fn reconcile(connection: &mut Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     for epic in epics {
         reconcile_one(connection, &epic)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn reconcile_managed(database: &ActiveDatabase) -> Result<(), String> {
+    let epics = database
+        .read("load Epic settlement candidates", |connection| {
+            connection
+                .prepare("SELECT DISTINCT epic_id FROM initiated_sprints ORDER BY epic_id")
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([], |row| row.get::<_, String>(0))?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map_err(|error| error.to_string())
+        })
+        .map_err(managed_error)?;
+    for epic in epics {
+        database
+            .write("reconcile Epic settlement", |transaction| {
+                reconcile_one_transaction(transaction, &epic)
+            })
+            .map_err(managed_error)?;
     }
     Ok(())
 }
@@ -356,10 +381,18 @@ fn reconcile_one(connection: &mut Connection, epic: &str) -> Result<(), String> 
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
+    reconcile_one_transaction(&tx, epic)?;
+    tx.commit().map_err(|error| error.to_string())
+}
+
+fn reconcile_one_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    epic: &str,
+) -> Result<(), String> {
     let snapshot = Snapshot::load(&tx, epic)?;
     if let Err((reason, resume, fingerprint)) = snapshot.eligible() {
         persist_unresolved(&tx, epic, &reason, &resume, &fingerprint)?;
-        return tx.commit().map_err(|error| error.to_string());
+        return Ok(());
     }
     let eligibility = snapshot.eligibility_fingerprint();
     let request_id = digest(&format!("epic-settlement-request:{epic}:{eligibility}"));
@@ -377,7 +410,7 @@ fn reconcile_one(connection: &mut Connection, epic: &str) -> Result<(), String> 
             || stored_eligibility != eligibility
         {
             persist_unresolved(&tx, epic, "settlement_authority_superseded", "restore the exact previously requested approved-plan and terminal-readiness authority, then reassess", &eligibility)?;
-            return tx.commit().map_err(|error| error.to_string());
+            return Ok(());
         }
     } else {
         tx.execute("INSERT INTO epic_settlement_requests (epic_id,request_id,approved_plan_fingerprint,terminal_readiness_id,eligibility_fingerprint,requested_at) VALUES (?1,?2,?3,?4,?5,?6)", params![epic,request_id,snapshot.plan_fingerprint,snapshot.readiness_id,eligibility,now()]).map_err(|error| error.to_string())?;
@@ -402,7 +435,14 @@ fn reconcile_one(connection: &mut Connection, epic: &str) -> Result<(), String> 
         [epic],
     )
     .map_err(|error| error.to_string())?;
-    tx.commit().map_err(|error| error.to_string())
+    Ok(())
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 fn persist_unresolved(

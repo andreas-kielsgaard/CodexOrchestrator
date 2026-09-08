@@ -1,0 +1,160 @@
+.workflow-instance-creation-dialog__backdrop {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(23 33 27 / 34%);
+}
+
+.workflow-instance-creation-dialog {
+  display: grid;
+  gap: 15px;
+  width: min(520px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid #aeb9b1;
+  border-radius: 12px;
+  background: #fffdf8;
+  color: #17211b;
+  box-shadow: 0 20px 52px rgb(23 33 27 / 28%);
+}
+
+.workflow-instance-creation-dialog > header,
+.workflow-instance-creation-dialog > footer {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-instance-creation-dialog h2,
+.workflow-instance-creation-dialog p {
+  margin: 0;
+}
+
+.workflow-instance-creation-dialog__eyebrow {
+  margin-bottom: 5px !important;
+  color: #66736c;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workflow-instance-creation-dialog__description {
+  color: #59655e;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.workflow-instance-creation-dialog__close {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: #eef1eb;
+  color: #45534b;
+  cursor: pointer;
+}
+
+.workflow-instance-creation-dialog__field {
+  display: grid;
+  gap: 6px;
+  color: #45534b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.workflow-instance-creation-dialog__field input,
+.workflow-instance-creation-dialog__field select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #aeb9b1;
+  border-radius: 8px;
+  background: #fff;
+  color: #17211b;
+  font: inherit;
+  font-weight: 500;
+}
+
+.workflow-instance-creation-dialog__note {
+  padding: 10px;
+  border: 1px solid #e1c9a9;
+  border-radius: 8px;
+  background: #fff3df;
+  color: #6b4d21;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.workflow-instance-creation-dialog__error {
+  padding: 10px;
+  border: 1px solid #d8a79d;
+  border-radius: 8px;
+  background: #fff8f5;
+  color: #7a2e20;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workflow-instance-creation-dialog > footer {
+  justify-content: end;
+}
+
+.workflow-instance-creation-dialog > footer button {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid #aeb9b1;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.workflow-instance-creation-dialog > footer .workflow-instance-creation-dialog__submit {
+  border-color: #17211b;
+  background: #f2ca52;
+}
+
+.workflow-instance-creation-dialog button:disabled,
+.workflow-instance-creation-dialog input:disabled,
+.workflow-instance-creation-dialog select:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.workflow-instance-creation-dialog :focus-visible {
+  outline: 3px solid rgb(154 121 32 / 35%);
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .workflow-instance-creation-dialog__backdrop {
+    padding: 12px;
+  }
+
+  .workflow-instance-creation-dialog {
+    max-height: calc(100vh - 24px);
+    padding: 16px;
+  }
+
+  .workflow-instance-creation-dialog > footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .workflow-instance-creation-dialog > footer button {
+    width: 100%;
+  }
+}

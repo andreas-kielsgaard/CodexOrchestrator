@@ -139,6 +139,32 @@ pub(crate) struct HarnessToolsConfiguration {
     pub(crate) available_discovery_policy: HarnessDiscoveryPolicy,
     pub(crate) items: Vec<HarnessToolConfiguration>,
     pub(crate) schema_boundary: String,
+    /// Upstream MCP server exposure is part of the detached Harness definition. The ordinary
+    /// tool catalog above remains the Agent-visible semantic surface.
+    #[serde(default)]
+    pub(crate) mcp_servers: Vec<HarnessMcpServerExposure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HarnessMcpServerExposure {
+    pub(crate) server_name: String,
+    pub(crate) access: HarnessMcpServerAccess,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum HarnessMcpServerAccess {
+    EntireServer,
+    SelectedTools {
+        #[serde(default)]
+        tool_names: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -628,6 +654,7 @@ mod tests {
                     policy: HarnessToolPolicy::Available,
                 }],
                 schema_boundary: "Application-owned proposal schema.".into(),
+                mcp_servers: vec![],
             },
             runtime: HarnessRuntimeConfiguration {
                 model_policy_mode: HarnessModelPolicyMode::RevisionOwned,

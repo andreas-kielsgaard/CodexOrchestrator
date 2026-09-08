@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Slice Plan"
+  short_description: "Plan one bounded slice in detail"
+  default_prompt: "Use $maintain-slice-plan to build, revise, or present the detailed plan for this bounded slice of work."

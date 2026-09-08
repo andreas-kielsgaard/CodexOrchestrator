@@ -1,10 +1,13 @@
-use std::path::PathBuf;
 use std::{
     fs,
     sync::{Arc, Mutex, Weak},
 };
 
 use tauri::Manager;
+
+fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
+    app_data_dir.join("worktree-review")
+}
 
 struct ManagedPlanBuilderNotifier {
     inner: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier>,
@@ -23,6 +26,7 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
+    workflow: Arc<Mutex<Option<Weak<crate::workflows::application::WorkflowApplication>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -35,6 +39,12 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         } = &notification
         {
             self.registry.on_terminal(invocation);
+        }
+        let workflow = self.workflow.lock().ok().and_then(|slot| slot.clone());
+        if let Some(workflow) = workflow.and_then(|application| application.upgrade()) {
+            // Workflow execution is a best-effort callback after the sender's terminal fact is
+            // durable. Its failure must not change or obscure that Agent Session completion.
+            let _ = workflow.on_agent_notification(&notification);
         }
         // Runtime launch provenance is persisted synchronously before the process start returns.
         // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
@@ -79,10 +89,6 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
     }
 }
 
-fn worktree_review_root(app_data_dir: &std::path::Path) -> PathBuf {
-    app_data_dir.join("worktree-review")
-}
-
 pub(crate) fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
@@ -94,29 +100,36 @@ pub(crate) fn run() {
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
-            let connection = crate::storage::open_active_database(&database_path)?;
-            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::open(
-                database_path.clone(),
+            let database = crate::product_database::open(&database_path)?;
+            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::new(
+                database.clone(),
                 app_data_dir.clone(),
-            )?);
+            ));
             let repository = Arc::new(
-                crate::agent_sessions::repository::SqliteAgentSessionRepository::new(connection)
-                    .map_err(|error| error.to_string())?,
+                crate::agent_sessions::repository::SqliteAgentSessionRepository::from_database(
+                    database.clone(),
+                ),
             );
             let orchestration_repository = Arc::new(
-                crate::orchestration::repository::SqliteOrchestrationRepository::open_with_harness_revision_repository(
-                    &database_path,
+                crate::orchestration::repository::SqliteOrchestrationRepository::from_database_with_harness_revision_repository(
+                    database.clone(),
                     crate::storage::harness_revision_repository_path(&app_data_dir),
                 )
                 .map_err(|error| error.to_string())?,
             );
             let product_decisions = Arc::new(
-                crate::product_decisions::ProductDecisionRepository::open(&database_path)
-                    .map_err(|_| "Unable to open Product Decision storage.".to_string())?,
+                crate::product_decisions::ProductDecisionRepository::new(database.clone()),
             );
+            let managed_mcp_upstreams = Arc::new(
+                crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
+            );
+            let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
+                database.clone(),
+                managed_mcp_upstreams.clone(),
+            )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
-                &database_path,
+                database.clone(),
                 app_data_dir.join("execution-workspaces"),
                 orchestration_repository.clone(),
             )
@@ -131,6 +144,7 @@ pub(crate) fn run() {
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
+            let workflow_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -141,6 +155,7 @@ pub(crate) fn run() {
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
+                    workflow: workflow_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
@@ -153,7 +168,8 @@ pub(crate) fn run() {
                     providers,
                     None,
                 )
-                .with_native_profile_launch_authority(native_profiles.clone()),
+                .with_native_profile_launch_authority(native_profiles.clone())
+                .with_session_harness_launch_authority(harness_engine.clone()),
             );
             application
                 .reconcile_startup()
@@ -161,6 +177,38 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
+            app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
+                app_data_dir.join("codex-orchestrator.sqlite"),
+            ));
+            let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
+                Arc::new(
+                    crate::workflows::repository::SqliteWorkflowRepository::from_database(
+                        database.clone(),
+                    ),
+                ),
+                application.clone(),
+                harness_engine.clone(),
+            ));
+            let (workflow_mcp, workflow_mcp_owner) =
+                crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;
+            let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
+            if let Err(workflow_mcp_owner) = managed_mcp_upstreams
+                .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
+            {
+                workflow_mcp_owner.stop();
+                managed_mcp_upstreams.unregister(&workflow_mcp_registration);
+                return Err("Unable to retain the Workflow MCP server.".into());
+            }
+            *workflow_notification
+                .lock()
+                .map_err(|_| "Workflow notification registry is unavailable".to_string())? =
+                Some(Arc::downgrade(&workflows));
+            app.manage(crate::workflows::transport::WorkflowTauriState::new(
+                workflows,
+            ));
+            app.manage(crate::harness_engine::HarnessEngineTauriState::new(
+                harness_engine,
+            ));
             app.manage(crate::native_profiles::NativeProfileTauriState::new(
                 native_profiles,
             ));
@@ -198,10 +246,9 @@ pub(crate) fn run() {
                     ),
                 );
             let transition_repository = Arc::new(
-                crate::orchestration::bootstrap_transition::SqliteBootstrapTransitionRepository::open(
-                    &database_path,
-                )
-                .map_err(|error| error.to_string())?,
+                crate::orchestration::bootstrap_transition::SqliteBootstrapTransitionRepository::from_database(
+                    database.clone(),
+                ),
             );
             let transition =
                 crate::orchestration::bootstrap_transition::PostConfirmationTransitionService::new(
@@ -209,12 +256,11 @@ pub(crate) fn run() {
                     application.clone(),
                     app_data_dir.join("orchestration-materials"),
                 );
-            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open_with_application_git_authority(
-                &database_path,
+            let sprint_runners = crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::from_database_with_application_git_authority(
+                database.clone(),
                 application.clone(),
             )
             .map_err(|error| error.to_string())?;
-            let git_comparison = sprint_runners.git_comparison_port();
             sprint_runners
                 .attach_work_unit_handler_activation(work_unit_handler)
                 .map_err(|error| error.to_string())?;
@@ -253,31 +299,25 @@ pub(crate) fn run() {
             );
             app.manage(
                 crate::orchestration::transport::ManagedPlanBuilderTauriState::new(
-                    crate::orchestration::application::ManagedPlanBuilderService::new(
+                    crate::orchestration::application::ManagedPlanBuilderService::new_with_managed_mcp_upstreams(
                         orchestration.clone(),
                         application,
                         registry,
                         initiation_confirmations,
+                        Some(managed_mcp_upstreams),
                     ),
                 ),
             );
-            let review_root = worktree_review_root(&app_data_dir);
             let review = Arc::new(crate::worktree_review::WorktreeReviewApplication::open(
-                review_root.clone(),
+                worktree_review_root(&app_data_dir),
+            ));
+            app.manage(crate::worktree_review::transport::WorktreeReviewTauriState::new(
+                review,
             ));
             app.manage(
-                crate::orchestration::transport::ContextualFileReviewTauriState::available(
+                crate::orchestration::transport::ContextualFileReviewTauriState::unavailable(
                     orchestration.clone(),
-                    Arc::new(
-                        crate::orchestration::file_review_originating_entry::FileReviewOriginatingEntryService::new(
-                            orchestration_repository.clone(),
-                            git_comparison,
-                        ),
-                    ),
                 ),
-            );
-            app.manage(
-                crate::worktree_review::transport::WorktreeReviewTauriState::new(review),
             );
             Ok(())
         })
@@ -292,14 +332,34 @@ pub(crate) fn run() {
             crate::archive_open_task,
             crate::load_task_run_detail,
             crate::start_codex_task_run,
-            crate::epic_origin::choose_epic_origin_project,
-            crate::epic_origin::inspect_epic_origin_project,
             crate::agent_sessions::transport::create_agent_session,
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
+            crate::workflows::transport::list_workflow_types,
+            crate::workflows::transport::list_workflow_roles,
+            crate::workflows::transport::list_workflow_mcp_components,
+            crate::workflows::transport::create_workflow_role,
+            crate::workflows::transport::update_workflow_role,
+            crate::workflows::transport::create_workflow_type,
+            crate::workflows::transport::load_workflow_type,
+            crate::workflows::transport::update_workflow_type,
+            crate::workflows::transport::save_workflow_node_draft,
+            crate::workflows::transport::delete_workflow_node_draft,
+            crate::workflows::transport::detach_workflow_node_role,
+            crate::workflows::transport::save_workflow_node_as_role,
+            crate::workflows::transport::save_workflow_connection_draft,
+            crate::workflows::transport::delete_workflow_connection_draft,
+            crate::workflows::transport::activate_workflow_changes,
+            crate::workflows::transport::load_workflow_native_query,
+            crate::workflows::transport::create_workflow_instance,
+            crate::workflows::transport::send_workflow_node_message,
+            crate::workflows::transport::list_workflow_instances,
+            crate::workflows::transport::load_workflow_instance,
+            crate::worktree_targets_temp::list_discovered_worktree_targets,
             crate::native_profiles::load_native_profile_query,
+            crate::native_profiles::discover_native_codex_homes,
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,
             crate::native_profiles::select_native_profile,
@@ -336,7 +396,6 @@ pub(crate) fn run() {
             crate::orchestration::transport::request_contextual_file_review,
             crate::orchestration::transport::load_epic_bootstrap_transition_query,
             crate::orchestration::transport::load_sprint_runner_transition_query,
-            crate::worktree_application::transport::create_physical_worktree,
             crate::worktree_review::transport::worktree_review_overview,
             crate::worktree_review::transport::select_worktree_review_repository,
             crate::worktree_review::transport::worktree_review_repository_registration_overview,
@@ -357,16 +416,6 @@ pub(crate) fn run() {
             if let Some(state) =
                 app_handle.try_state::<crate::agent_sessions::transport::AgentSessionTauriState>()
             {
-                if let Some(managed) = app_handle
-                    .try_state::<crate::orchestration::transport::ManagedPlanBuilderTauriState>(
-                ) {
-                    managed.service().shutdown();
-                }
-                if let Some(transition) = app_handle
-                    .try_state::<crate::orchestration::transport::BootstrapTransitionTauriState>()
-                {
-                    transition.service().shutdown();
-                }
                 if let Err(error) = state.application().shutdown_runtime() {
                     // Runtime shutdown retains ownership through direct-child reap. If that
                     // authoritative path reports an error, keep the application alive so a later
@@ -375,22 +424,32 @@ pub(crate) fn run() {
                         "Agent runtime shutdown failed; application exit was prevented: {error}"
                     );
                     api.prevent_exit();
+                    return;
+                }
+                // Release invocation ownership without stopping any upstream retained by the
+                // application-lifetime Harness registry.
+                if let Some(managed) = app_handle
+                    .try_state::<crate::orchestration::transport::ManagedPlanBuilderTauriState>(
+                ) {
+                    managed.service().shutdown();
+                }
+                // Agent runtimes stop first, followed by the Harness proxy, then its retained
+                // managed upstreams.
+                if let Some(harness) =
+                    app_handle.try_state::<crate::harness_engine::HarnessEngineTauriState>()
+                {
+                    if let Err(error) = harness.service().shutdown() {
+                        eprintln!("Harness sidecar shutdown failed: {error}");
+                        api.prevent_exit();
+                        return;
+                    }
+                }
+                if let Some(transition) = app_handle
+                    .try_state::<crate::orchestration::transport::BootstrapTransitionTauriState>()
+                {
+                    transition.service().shutdown();
                 }
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::worktree_review_root;
-
-    #[test]
-    fn review_storage_is_app_owned_and_override_must_be_absolute() {
-        let app_data = std::env::temp_dir().join("codex-orchestrator-app-data");
-        assert_eq!(
-            worktree_review_root(&app_data),
-            app_data.join("worktree-review")
-        );
-    }
 }

@@ -51,6 +51,8 @@ export interface HarnessEffectiveConfiguration {
       readonly policy: HarnessToolPolicy;
     }[];
     readonly schemaBoundary: string;
+    /** Application-owned upstream exposure; absent on older recorded Harness revisions. */
+    readonly mcpServers?: readonly HarnessMcpServerExposure[];
   };
   readonly runtime: {
     readonly modelPolicyMode: 'revision_owned' | 'delegated_shared';
@@ -82,6 +84,13 @@ export interface HarnessEffectiveConfiguration {
       };
 }
 
+export interface HarnessMcpServerExposure {
+  readonly serverName: string;
+  readonly access:
+    | { readonly kind: 'entire_server' }
+    | { readonly kind: 'selected_tools'; readonly toolNames: readonly string[] };
+}
+
 export interface HarnessConfigurationCatalogs {
   readonly agentNames: {
     readonly source: 'product_default_pool' | 'not_connected';
@@ -107,7 +116,8 @@ export interface HarnessConfigurationCatalogs {
     readonly reason: string;
   };
   readonly tools: {
-    readonly source: 'recorded_harness_tool_catalog' | 'not_connected';
+    readonly source:
+      'recorded_harness_tool_catalog' | 'workflow_mcp_component_catalog' | 'not_connected';
     readonly items: readonly {
       readonly name: string;
       readonly description: string;
@@ -115,7 +125,7 @@ export interface HarnessConfigurationCatalogs {
     readonly reason: string;
   };
   readonly models: {
-    readonly source: 'recorded_catalog' | 'not_connected';
+    readonly source: 'recorded_catalog' | 'workflow_runtime_catalog' | 'not_connected';
     readonly items: readonly {
       readonly id: string;
       readonly label: string;

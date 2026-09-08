@@ -5,7 +5,7 @@ use super::{
     },
     initiated_sprint_git_authority::{
         BindInitiatedSprintGitAuthorityError, InitiatedSprintGitAuthorityService,
-        SprintGitComparisonPort,
+        WorktreeRuntimeGitComparison,
     },
     repository::{
         FileReviewGitCaptureAuthorizationError, FileReviewGitCaptureAuthorizationWrite,
@@ -49,7 +49,7 @@ pub(crate) struct FileReviewOriginatingEntryService {
 impl FileReviewOriginatingEntryService {
     pub(crate) fn new(
         repository: Arc<SqliteOrchestrationRepository>,
-        runtime: Arc<dyn SprintGitComparisonPort>,
+        runtime: Arc<dyn WorktreeRuntimeGitComparison>,
     ) -> Self {
         Self {
             authority: InitiatedSprintGitAuthorityService::new(repository.clone(), runtime),
@@ -249,7 +249,7 @@ mod tests {
         expected: Mutex<Result<VerifiedRuntimeGitComparison, BindInitiatedSprintGitAuthorityError>>,
     }
 
-    impl SprintGitComparisonPort for RealComparisonPort {
+    impl WorktreeRuntimeGitComparison for RealComparisonPort {
         fn resolve_verified_comparison(
             &self,
             runtime_instance_ref: &str,

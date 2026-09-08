@@ -131,6 +131,13 @@ export interface NativeProfileQuery {
   readonly profiles: readonly NativeProfile[];
 }
 
+export interface DiscoveredNativeCodexHome {
+  readonly homePath: string;
+  readonly source: 'environment' | 'default' | 'sibling' | 'registered';
+  readonly registeredProfileId: string | null;
+  readonly selected: boolean;
+}
+
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 const noActionArgs = undefined;
 
@@ -323,6 +330,20 @@ export function decodeNativeProfileQuery(value: unknown): NativeProfileQuery {
   return { contract: query.contract, profiles };
 }
 
+export function decodeDiscoveredNativeCodexHomes(value: unknown): DiscoveredNativeCodexHome[] {
+  if (!Array.isArray(value)) throw new Error('Discovered Codex homes must be an array');
+  return value.map((candidate, index) => {
+    const home = object(candidate, `discovered Codex home ${index}`);
+    keys(home, ['homePath', 'source', 'registeredProfileId', 'selected'], `discovered Codex home ${index}`);
+    return {
+      homePath: absolutePath(home.homePath, `discovered Codex home ${index} path`),
+      source: enumValue(home.source, ['environment', 'default', 'sibling', 'registered'], `discovered Codex home ${index} source`),
+      registeredProfileId: nullableString(home.registeredProfileId, `discovered Codex home ${index} registered profile`),
+      selected: booleanValue(home.selected, `discovered Codex home ${index} selection`),
+    };
+  });
+}
+
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
   keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'fullAccessCanaryAttempt', 'readiness'], `native profile ${index}`);
@@ -447,6 +468,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
 
 export interface NativeProfileClient {
   load(): Promise<NativeProfileQuery>;
+  discoverHomes(): Promise<readonly DiscoveredNativeCodexHome[]>;
   registerExisting(homePath: string): Promise<NativeProfileQuery>;
   createDedicated(): Promise<NativeProfileQuery>;
   select(profileId: string): Promise<NativeProfileQuery>;
@@ -483,8 +505,25 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     return run;
   };
   const id = (profileId: string) => ({ input: { profileId } });
+  const probeMcp = (profileId: string) => {
+    const args = id(profileId);
+    const run = queue.then(async () => {
+      decodeNativeProfile(
+        await invokeCommand<unknown>('probe_native_profile_mcp_reporting', args),
+        0,
+      );
+      decodeNativeProfile(
+        await invokeCommand<unknown>('reconcile_native_profile_mcp_reporting', args),
+        0,
+      );
+      return read();
+    });
+    queue = run.then(() => undefined, () => undefined);
+    return run;
+  };
   return {
     load,
+    discoverHomes: () => invokeCommand<unknown>('discover_native_codex_homes').then(decodeDiscoveredNativeCodexHomes),
     registerExisting: (homePath) => action('register_native_profile', { input: { homePath } }),
     createDedicated: () => action('create_dedicated_native_profile', noActionArgs),
     select: (profileId) => action('select_native_profile', id(profileId)),
@@ -499,7 +538,7 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
-    probeMcp: (profileId) => action('reconcile_native_profile_mcp_reporting', id(profileId)),
+    probeMcp,
   };
 }
 

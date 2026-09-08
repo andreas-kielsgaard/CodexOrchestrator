@@ -13,20 +13,23 @@ use uuid::Uuid;
 
 mod active_app;
 mod agent_sessions;
-mod epic_origin;
 mod git_process;
+mod harness_engine;
 mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;
+mod persistence;
+mod product_database;
 mod product_decisions;
 mod repository_context;
 mod repository_discovery;
 mod runtime;
 mod storage;
-#[allow(dead_code)]
+mod workflows;
 pub(crate) mod worktree_application;
 mod worktree_review;
+mod worktree_targets_temp;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 
@@ -809,6 +812,16 @@ fn start_codex_task_run(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     active_app::run();
+}
+
+/// Runs the private Harness Engine child mode before Tauri initializes.
+pub fn run_harness_engine_sidecar_if_requested() -> bool {
+    harness_engine::sidecar::run_if_requested()
+}
+
+/// Runs the headless Workflow authoring and demonstration surface before Tauri initializes.
+pub fn run_workflow_cli_if_requested() -> Option<Result<(), String>> {
+    workflows::cli::run_if_requested()
 }
 
 fn ensure_legacy_tasks_available() -> Result<(), String> {

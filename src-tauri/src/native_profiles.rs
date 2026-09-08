@@ -1,6 +1,9 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
+mod discovery;
+
+use crate::persistence::ActiveDatabase;
 use axum::http::{header, StatusCode};
 use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
@@ -12,9 +15,11 @@ use rmcp::{
     model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router, ServerHandler,
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::sync::OnceLock;
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
@@ -22,7 +27,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    sync::{mpsc, Arc, Mutex},
     thread,
 };
 use tauri::State;
@@ -611,6 +616,7 @@ const WORKSPACE_WRITE_CANARY_COMMAND_FILE: &str = "native-codex-profile-canary.c
 const FULL_ACCESS_CANARY_TIMEOUT_SECONDS: i64 = 120;
 const DANGER_AUTHORITY_SCOPE: &str = "full_machine_filesystem_and_unrestricted_network";
 const DANGER_AUTHORITY_VERSION: &str = "danger-full-access/unrestricted-network/v1";
+#[cfg(test)]
 static NATIVE_PROFILE_OPEN_GATE: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1567,7 +1573,9 @@ struct ReadDedicatedMarker {
 }
 
 pub(crate) struct NativeProfileService {
-    database_path: PathBuf,
+    database: Arc<ActiveDatabase>,
+    #[cfg(test)]
+    database_path: Option<PathBuf>,
     dedicated_root: PathBuf,
     cli: Arc<dyn NativeCliPort>,
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
@@ -1578,17 +1586,11 @@ pub(crate) struct NativeProfileService {
 }
 
 impl NativeProfileService {
-    pub(crate) fn open(database_path: PathBuf, app_data_dir: PathBuf) -> Result<Self, String> {
-        let _gate = NATIVE_PROFILE_OPEN_GATE
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .map_err(|_| "Native profile initialization supervision is unavailable")?;
-        let connection = crate::storage::open_active_database(&database_path)?;
-        connection
-            .execute_batch(NATIVE_PROFILE_SCHEMA)
-            .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
-        Ok(Self {
-            database_path,
+    pub(crate) fn new(database: Arc<ActiveDatabase>, app_data_dir: PathBuf) -> Self {
+        Self {
+            database,
+            #[cfg(test)]
+            database_path: None,
             dedicated_root: app_data_dir.join("native-codex-homes"),
             cli: Arc::new(SystemNativeCliPort {
                 program: crate::runtime::codex::resolve_program("codex".into()),
@@ -1598,16 +1600,65 @@ impl NativeProfileService {
             full_access_canary_children: Mutex::new(HashMap::new()),
             mcp_dispatch_claims: Mutex::new(HashMap::new()),
             operation_gate: Mutex::new(()),
-        })
+        }
     }
 
+    #[cfg(test)]
+    pub(crate) fn open(database_path: PathBuf, app_data_dir: PathBuf) -> Result<Self, String> {
+        let _gate = NATIVE_PROFILE_OPEN_GATE
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| "Native profile initialization supervision is unavailable")?;
+        let database = ActiveDatabase::open(&database_path, |connection| {
+            connection
+                .execute_batch(NATIVE_PROFILE_SCHEMA)
+                .map_err(|error| format!("Unable to initialize native profile schema: {error}"))
+        })
+        .map_err(|error| error.to_string())?;
+        let mut service = Self::new(Arc::new(database), app_data_dir);
+        service.database_path = Some(database_path);
+        Ok(service)
+    }
+
+    #[cfg(test)]
+
     fn connection(&self) -> Result<Connection, String> {
-        crate::storage::open_active_database(&self.database_path)
+        let connection = Connection::open(
+            self.database_path
+                .as_ref()
+                .ok_or("Native profile test database path is unavailable")?,
+        )
+        .map_err(|error| error.to_string())?;
+        crate::persistence::configure_writer_connection(&connection)
+            .map_err(|error| error.to_string())?;
+        Ok(connection)
+    }
+
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .read(operation, read)
+            .map_err(|error| error.into_string())
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database
+            .write(operation, write)
+            .map_err(|error| error.into_string())
     }
 
     pub(crate) fn query(&self) -> Result<NativeProfileQueryDto, String> {
-        let mut connection = self.connection()?;
-        for profile in load_profiles(&mut connection)? {
+        let profiles = self.read("load native profiles for reconciliation", |connection| {
+            load_profiles(connection)
+        })?;
+        for profile in profiles {
             self.revalidate(&profile)?;
             self.reconcile_sandbox_adoption(&profile.id)?;
             self.reconcile_login_attempt(&profile.id)?;
@@ -1615,7 +1666,9 @@ impl NativeProfileService {
             self.reconcile_full_access_canary(&profile.id)?;
             self.expire_mcp_probe(&profile.id)?;
         }
-        let profiles = load_profiles(&mut connection)?;
+        let profiles = self.read("load native profiles", |connection| {
+            load_profiles(connection)
+        })?;
         Ok(NativeProfileQueryDto {
             contract: PROFILE_QUERY_CONTRACT,
             profiles: profiles.into_iter().map(Into::into).collect(),
@@ -1680,10 +1733,7 @@ impl NativeProfileService {
     ) -> Result<NativeProfileDto, String> {
         let identity = filesystem_identity(&home)?;
         let now = Utc::now().to_rfc3339();
-        let connection = self.connection()?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(|error| format!("Unable to begin profile registration: {error}"))?;
+        let inserted = self.write("register native profile", |transaction| {
         let inserted = transaction
             .execute(
                 "INSERT OR IGNORE INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES (?1,?2,?3,?4,'active',?5,?5)",
@@ -1691,27 +1741,25 @@ impl NativeProfileService {
             )
             .map_err(|error| format!("Unable to register Codex home: {error}"))?;
         if inserted == 0 {
-            transaction.commit().map_err(|error| error.to_string())?;
-            return self
-                .profile_by_home(&home)?
-                .map(Into::into)
-                .ok_or_else(|| "Concurrent profile registration did not produce a profile".into());
+            return Ok(false);
         }
-        transaction
-            .execute(
+            transaction.execute(
                 "INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,mcp_reporting,observed_at) VALUES (?1,'unknown','unknown','not_run','not_assessed',?2)",
-                params![id, now],
-            )
-            .map_err(|error| format!("Unable to initialize profile readiness: {error}"))?;
+                params![id, now],).map_err(|error| format!("Unable to initialize profile readiness: {error}"))?;
         transaction
             .execute(
                 "INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at) VALUES (?1,'workspace_write',?2)",
                 params![id, now],
             )
-            .map_err(|error| format!("Unable to initialize profile execution mode: {error}"))?;
-        transaction
-            .commit()
-            .map_err(|error| format!("Unable to commit profile registration: {error}"))?;
+            .map_err(| error| format!("Unable to initialize profile execution mode: {error}"))?;
+        Ok(true)
+        })?;
+        if !inserted {
+            return self
+                .profile_by_home(&home)?
+                .map(Into::into)
+                .ok_or_else(|| "Concurrent profile registration did not produce a profile".into());
+        }
         self.profile(&id).map(Into::into)
     }
 
@@ -1730,21 +1778,21 @@ impl NativeProfileService {
             return Err("Only a currently validated native profile can be selected".into());
         }
         let now = Utc::now().to_rfc3339();
-        let mut connection = self.connection()?;
-        let profiles = load_profiles(&mut connection)?;
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(|error| error.to_string())?;
-        transaction
-            .execute("UPDATE native_codex_profiles SET selected_at=NULL", [])
-            .map_err(|error| error.to_string())?;
-        transaction
-            .execute(
-                "UPDATE native_codex_profiles SET selected_at=?2,updated_at=?2 WHERE id=?1",
-                params![id, now],
-            )
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
+        let profiles = self.read("load native profiles before selection", |connection| {
+            load_profiles(connection)
+        })?;
+        self.write("select native profile", |transaction| {
+            transaction
+                .execute("UPDATE native_codex_profiles SET selected_at=NULL", [])
+                .map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "UPDATE native_codex_profiles SET selected_at=?2,updated_at=?2 WHERE id=?1",
+                    params![id, now],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })?;
         for unselected in profiles.into_iter().filter(|candidate| candidate.id != id) {
             if unselected.selected {
                 self.invalidate_sandbox_adoption(&unselected.id)?;
@@ -1760,12 +1808,14 @@ impl NativeProfileService {
         mode: ExecutionMode,
     ) -> Result<NativeProfileDto, String> {
         self.require_active(id)?;
-        self.connection()?
-            .execute(
+        self.write("select native execution mode", |transaction| {
+            transaction.execute(
                 "UPDATE native_codex_profile_execution_modes SET selected_mode=?2,updated_at=?3 WHERE profile_id=?1",
                 params![id, mode.database(), Utc::now().to_rfc3339()],
             )
             .map_err(|error| format!("Unable to select native execution mode: {error}"))?;
+            Ok(())
+        })?;
         self.profile(id).map(Into::into)
     }
 
@@ -1799,30 +1849,39 @@ impl NativeProfileService {
                     .into(),
             );
         }
-        self.connection()?
-            .execute(
+        self.write("authorize native danger full access", |transaction| {
+            transaction.execute(
                 "INSERT INTO native_codex_profile_mode_authorizations (profile_id,mode,filesystem_identity,authority_scope,authority_version,authorization_correlation_id,authorized_at,revoked_at) VALUES (?1,'danger_full_access',?2,?3,?4,?5,?6,NULL) ON CONFLICT(profile_id,mode) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,authority_scope=excluded.authority_scope,authority_version=excluded.authority_version,authorization_correlation_id=excluded.authorization_correlation_id,authorized_at=excluded.authorized_at,revoked_at=NULL",
                 params![id, profile.identity, DANGER_AUTHORITY_SCOPE, DANGER_AUTHORITY_VERSION, format!("native-danger-authorization-{}", Uuid::new_v4()), Utc::now().to_rfc3339()],
             )
             .map_err(|error| format!("Unable to record danger full access authorization: {error}"))?;
+            Ok(())
+        })?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn revoke_danger_full_access(&self, id: &str) -> Result<NativeProfileDto, String> {
         self.require_selected_active(id)?;
-        self.connection()?
-            .execute(
+        self.write("revoke native danger full access", |transaction| {
+            transaction.execute(
                 "UPDATE native_codex_profile_mode_authorizations SET revoked_at=?2 WHERE profile_id=?1 AND mode='danger_full_access' AND revoked_at IS NULL",
                 params![id, Utc::now().to_rfc3339()],
             )
             .map_err(|error| format!("Unable to revoke danger full access authorization: {error}"))?;
+            Ok(())
+        })?;
         self.profile(id).map(Into::into)
     }
 
     pub(crate) fn request_login(&self, id: &str) -> Result<NativeProfileDto, String> {
         let profile = self.require_selected_active(id)?;
         self.reconcile_login_attempt(id)?;
-        if load_pending_login_attempt(&self.connection()?, id)?.is_some() {
+        if self
+            .read("load pending native login attempt", |connection| {
+                load_pending_login_attempt(connection, id)
+            })?
+            .is_some()
+        {
             return self.profile(id).map(Into::into);
         }
         let root = self.ensure_probe_root(id)?;
@@ -1837,10 +1896,10 @@ impl NativeProfileService {
             profile_id: profile.id.clone(),
             filesystem_identity: profile.identity.clone(),
         };
-        let inserted = self.connection()?.execute(
+        let inserted = self.write("create native login attempt", |transaction| transaction.execute(
             "INSERT OR IGNORE INTO native_codex_profile_login_attempts (attempt_id,profile_id,filesystem_identity,executable,version,correlation_id,state,browser_handoff,requested_at) VALUES (?1,?2,?3,?4,?5,?6,'pending','unobserved',?7)",
             params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, surface.provenance.executable, surface.provenance.version, format!("native-login-{}", Uuid::new_v4()), now.to_rfc3339()],
-        ).map_err(|error| format!("Unable to persist native browser login attempt: {error}"))?;
+        ).map_err(|error| format!("Unable to persist native browser login attempt: {error}")))?;
         if inserted == 0 {
             return self.profile(id).map(Into::into);
         }
@@ -1875,10 +1934,13 @@ impl NativeProfileService {
                 return Err("Native profile login supervision is unavailable".into());
             }
         }
-        self.connection()?.execute(
+        self.write("accept native login launch", |transaction| {
+            transaction.execute(
             "UPDATE native_codex_profile_login_attempts SET launch_accepted_at=?2 WHERE attempt_id=?1 AND state='pending'",
             params![attempt.attempt_id, Utc::now().to_rfc3339()],
         ).map_err(|error| error.to_string())?;
+            Ok(())
+        })?;
         self.set_attention(
             id,
             "authentication",
@@ -1944,15 +2006,14 @@ impl NativeProfileService {
         self.require_selected_active(id)?;
         self.reconcile_setup_attempts(id)?;
         self.require_selected_active(id)?;
-        let connection = self.connection()?;
-        let latest_state = connection
+        let latest_state = self.read("load latest native sandbox setup", |connection| connection
             .query_row(
                 "SELECT state FROM native_codex_profile_setup_attempts WHERE profile_id=?1 AND phase='sandbox_initialization' ORDER BY requested_at DESC,attempt_id DESC LIMIT 1",
                 params![id],
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string()))?;
         if latest_state.as_deref() != Some("terminal_succeeded") {
             return Err("A completed application-owned sandbox setup request is required before confirmation".into());
         }
@@ -1984,14 +2045,17 @@ impl NativeProfileService {
         let verified = surface.provenance.workspace_sandbox_supported
             && surface.windows_sandbox_setup_supported
             && elevated_mode_observed;
-        self.connection()?.execute(
+        self.write("record native sandbox verification", |transaction| {
+        transaction.execute(
             "INSERT INTO native_codex_profile_sandbox_adoptions (profile_id,filesystem_identity,executable,version,workspace_sandbox_supported,windows_sandbox_setup_supported,correlation_id,observed_at,state,elevated_mode_observed) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(profile_id) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,executable=excluded.executable,version=excluded.version,workspace_sandbox_supported=excluded.workspace_sandbox_supported,windows_sandbox_setup_supported=excluded.windows_sandbox_setup_supported,correlation_id=excluded.correlation_id,observed_at=excluded.observed_at,state=excluded.state,elevated_mode_observed=excluded.elevated_mode_observed",
             params![id, profile.identity, surface.provenance.executable, surface.provenance.version, surface.provenance.workspace_sandbox_supported as i64, surface.windows_sandbox_setup_supported as i64, format!("native-sandbox-adoption-{}", Uuid::new_v4()), Utc::now().to_rfc3339(), if verified { "verified" } else { "not_verified" }, elevated_mode_observed as i64],
         ).map_err(|error| format!("Unable to persist external sandbox verification: {error}"))?;
-        self.connection()?.execute(
+        transaction.execute(
             "UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'",
             params![id, Utc::now().to_rfc3339()],
         ).map_err(|error| format!("Unable to invalidate superseded external sandbox adoption confirmation: {error}"))?;
+        Ok(())
+        })?;
         self.update_readiness(
             id,
             None,
@@ -2017,7 +2081,9 @@ impl NativeProfileService {
         id: &str,
     ) -> Result<NativeProfileDto, String> {
         let profile = self.require_selected_active(id)?;
-        let adoption = load_sandbox_adoption(&self.connection()?, id, &profile.identity)?;
+        let adoption = self.read("load native sandbox adoption", |connection| {
+            load_sandbox_adoption(connection, id, &profile.identity)
+        })?;
         let surface = self.cli.surface().map_err(|_| {
             "The resolved Codex CLI surface is unsupported for external sandbox adoption"
                 .to_string()
@@ -2039,10 +2105,10 @@ impl NativeProfileService {
             .correlation_id
             .ok_or("The external sandbox observation has no durable correlation")?;
         let now = Utc::now().to_rfc3339();
-        self.connection()?.execute(
+        self.write("confirm native sandbox adoption", |transaction| transaction.execute(
             "INSERT INTO native_codex_profile_sandbox_adoption_confirmations (profile_id,filesystem_identity,adoption_correlation_id,confirmation_correlation_id,confirmed_at,state,invalidated_at) VALUES (?1,?2,?3,?4,?5,'confirmed',NULL) ON CONFLICT(profile_id) DO UPDATE SET filesystem_identity=excluded.filesystem_identity,adoption_correlation_id=excluded.adoption_correlation_id,confirmation_correlation_id=excluded.confirmation_correlation_id,confirmed_at=excluded.confirmed_at,state='confirmed',invalidated_at=NULL",
             params![id, profile.identity, adoption_correlation, format!("native-sandbox-adoption-confirmation-{}", Uuid::new_v4()), now],
-        ).map_err(|error| format!("Unable to persist external sandbox adoption confirmation: {error}"))?;
+        ).map_err(|error| format!("Unable to persist external sandbox adoption confirmation: {error}")))?;
         self.update_readiness(
             id,
             None,
@@ -2199,21 +2265,16 @@ impl NativeProfileService {
             .map_err(|_| "Native profile operation supervision is unavailable")?;
         self.require_selected_active_while_gated(id)?;
         let root = self.probe_root(id);
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to begin native MCP reporting probe: {error}"))?;
+        let authority = self.write("begin native MCP reporting probe", |transaction| {
         let now = Utc::now();
         transaction.execute(
             "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
             params![id, now.to_rfc3339()],
         ).map_err(|error| error.to_string())?;
         if let Some(authority) = load_pending_mcp_probe(&transaction, id)? {
-            transaction.commit().map_err(|error| error.to_string())?;
             return Ok(authority);
         }
-        if self.has_current_mcp_reporting_probe(&transaction, id)? {
-            transaction.commit().map_err(|error| error.to_string())?;
+        if self.has_current_mcp_reporting_probe(transaction, id)? {
             return Err(
                 "The application-owned MCP reporting probe is already pending or claimed".into(),
             );
@@ -2234,13 +2295,13 @@ impl NativeProfileService {
             "UPDATE native_codex_profile_readiness SET mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1",
             params![id, now.to_rfc3339()],
         ).map_err(|error| error.to_string())?;
-        self.write_attention(
-            &transaction,
+        self.write_attention(transaction,
             id,
             "mcp_reporting",
             Some("mcp_reporting_probe_pending_application_receipt"),
         )?;
-        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(authority)
+        })?;
         drop(gate);
         Ok(authority)
     }
@@ -2258,10 +2319,7 @@ impl NativeProfileService {
             .get(id)
             .cloned()
             .ok_or("The application-owned MCP reporting receipt has no current dispatch claim")?;
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to begin native MCP receipt settlement: {error}"))?;
+        self.write("settle native MCP reporting receipt", |transaction| {
         let now = Utc::now();
         let expired = transaction.execute(
             "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
@@ -2272,13 +2330,10 @@ impl NativeProfileService {
                 "UPDATE native_codex_profile_readiness SET mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1",
                 params![id, now.to_rfc3339()],
             ).map_err(|error| error.to_string())?;
-            self.write_attention(
-                &transaction,
+            self.write_attention(transaction,
                 id,
                 "mcp_reporting",
-                Some("mcp_reporting_probe_expired"),
-            )?;
-            transaction.commit().map_err(|error| error.to_string())?;
+                Some("mcp_reporting_probe_expired"),)?;
             return Err("The application-owned MCP reporting probe has expired".into());
         }
         let transitioned = transaction.execute(
@@ -2287,15 +2342,17 @@ impl NativeProfileService {
         ).map_err(|error| error.to_string())?;
         if transitioned != 1 {
             return Err(
-                "MCP reporting receipt does not match one current application-owned probe".into(),
+                "MCP reporting receipt does not match one current application-owned probe"
+                    .into(),
             );
         }
         transaction.execute(
             "UPDATE native_codex_profile_readiness SET mcp_reporting='ready',observed_at=?2 WHERE profile_id=?1",
             params![id, now.to_rfc3339()],
         ).map_err(|error| error.to_string())?;
-        self.write_attention(&transaction, id, "mcp_reporting", None)?;
-        transaction.commit().map_err(|error| error.to_string())?;
+        self.write_attention(transaction, id, "mcp_reporting", None)?;
+        Ok(())
+        })?;
         self.profile(id).map(Into::into)
     }
 
@@ -2303,12 +2360,8 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<Option<ClaimedNativeMcpReportingProbe>, String> {
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to claim native MCP reporting probe: {error}"))?;
+        self.write("claim native MCP reporting probe", |transaction| {
         let Some(authority) = load_pending_mcp_probe(&transaction, id)? else {
-            transaction.commit().map_err(|error| error.to_string())?;
             return Ok(None);
         };
         let claim_id = format!("native-mcp-dispatch-{}", Uuid::new_v4());
@@ -2322,17 +2375,16 @@ impl NativeProfileService {
         if claimed != 1 {
             return Err("The application-owned MCP reporting probe could not be claimed".into());
         }
-        self.write_attention(
-            &transaction,
+        self.write_attention(transaction,
             id,
             "mcp_reporting",
             Some("mcp_reporting_dispatch_claimed_receipt_pending"),
         )?;
-        transaction.commit().map_err(|error| error.to_string())?;
         Ok(Some(ClaimedNativeMcpReportingProbe {
             authority,
             claim_id,
         }))
+        })
     }
 
     fn has_current_mcp_reporting_probe(
@@ -2365,12 +2417,7 @@ impl NativeProfileService {
         claim_id: &str,
         attention: &'static str,
     ) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                format!("Unable to terminalize native MCP reporting probe: {error}")
-            })?;
+        self.write("cancel native MCP reporting probe", |transaction| {
         let now = Utc::now().to_rfc3339();
         let transitioned = transaction
             .execute(
@@ -2379,9 +2426,7 @@ impl NativeProfileService {
             )
             .map_err(|error| error.to_string())?;
         if transitioned != 1 {
-            return Err(
-                "The application-owned MCP reporting probe could not be terminalized".into(),
-            );
+            return Err("The application-owned MCP reporting probe could not be terminalized".into(),);
         }
         transaction
             .execute(
@@ -2389,16 +2434,18 @@ impl NativeProfileService {
                 params![id, now],
             )
             .map_err(|error| error.to_string())?;
-        self.write_attention(&transaction, id, "mcp_reporting", Some(attention))?;
-        transaction.commit().map_err(|error| error.to_string())
+        self.write_attention(transaction, id, "mcp_reporting", Some(attention))?;
+        Ok(())
+        })
     }
 
     pub(crate) fn resolve_selected_home(&self) -> Result<ResolvedNativeCodexHome, String> {
-        let mut connection = self.connection()?;
-        let profile = load_profiles(&mut connection)?
-            .into_iter()
-            .find(|profile| profile.selected)
-            .ok_or("No native Codex home is selected")?;
+        let profile = self.read("resolve selected native profile", |connection| {
+            Ok(load_profiles(connection)?
+                .into_iter()
+                .find(|profile| profile.selected)
+                .ok_or("No native Codex home is selected")?)
+        })?;
         self.reconcile_sandbox_adoption(&profile.id)?;
         let profile = self.require_selected_active(&profile.id)?;
         if profile.lifecycle != Lifecycle::Active {
@@ -2448,12 +2495,7 @@ impl NativeProfileService {
             );
         }
         let resolved = self.resolve_selected_home()?;
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                format!("Unable to bind managed Agent Session native profile: {error}")
-            })?;
+        self.write("bind managed Agent Session native profile", |transaction| {
         let binding = transaction
             .query_row(
                 "SELECT profile_id,filesystem_identity FROM agent_session_native_profile_bindings WHERE session_id=?1",
@@ -2470,10 +2512,7 @@ impl NativeProfileService {
             }
             None => {
                 if resuming {
-                    return Err(
-                        "Managed Agent Session resume requires a durable native profile binding"
-                            .into(),
-                    );
+                    return Err("Managed Agent Session resume requires a durable native profile binding".into(),);
                 }
                 transaction.execute(
                     "INSERT INTO agent_session_native_profile_bindings (session_id,profile_id,filesystem_identity,bound_at) VALUES (?1,?2,?3,?4)",
@@ -2492,12 +2531,7 @@ impl NativeProfileService {
             .map_err(|error| format!("Unable to load managed Agent Session native launch provenance: {error}"))?;
         match provenance {
             Some((bound_session, profile_id, identity, key, bound_mode)) => {
-                if bound_session != session_id
-                    || profile_id != resolved.profile_id
-                    || identity != resolved.filesystem_identity
-                    || key != "CODEX_HOME"
-                    || bound_mode != mode
-                {
+                if bound_session != session_id || profile_id != resolved.profile_id || identity != resolved.filesystem_identity || key != "CODEX_HOME" || bound_mode != mode {
                     return Err("Managed Agent Session native launch provenance conflicts with its durable profile binding".into());
                 }
             }
@@ -2508,8 +2542,7 @@ impl NativeProfileService {
                 ).map_err(|error| format!("Unable to persist managed Agent Session native launch provenance: {error}"))?;
             }
         }
-        transaction.commit().map_err(|error| {
-            format!("Unable to commit managed Agent Session native profile binding: {error}")
+        Ok(())
         })?;
         extension.environment.push((
             "CODEX_HOME".into(),
@@ -2689,7 +2722,12 @@ impl NativeProfileService {
         id: &str,
     ) -> Result<NativeProfileDto, String> {
         self.reconcile_full_access_canary(id)?;
-        if load_pending_full_access_canary(&self.connection()?, id)?.is_some() {
+        if self
+            .read("load pending native full access canary", |connection| {
+                load_pending_full_access_canary(connection, id)
+            })?
+            .is_some()
+        {
             return self.profile(id).map(Into::into);
         }
         let profile = self.require_selected_active(id)?;
@@ -2729,10 +2767,10 @@ impl NativeProfileService {
             correlation_id: format!("native-full-access-canary-correlation-{}", Uuid::new_v4()),
             deadline_at: now + Duration::seconds(FULL_ACCESS_CANARY_TIMEOUT_SECONDS),
         };
-        self.connection()?.execute(
+        self.write("create native full access canary", |transaction| transaction.execute(
             "INSERT INTO native_codex_profile_full_access_canaries (attempt_id,profile_id,filesystem_identity,mode,executable,version,sentinel_path,authorization_correlation_id,authorization_version,correlation_id,state,requested_at,deadline_at,process_activity,provider_activity,terminal_classification,receipt_observed,cleanup_disposition) VALUES (?1,?2,?3,'danger_full_access',?4,?5,?6,?7,?8,?9,'pending',?10,?11,'unobserved','unobserved','not_observed',0,'pending')",
             params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.executable, attempt.version, attempt.sentinel_path.to_string_lossy(), attempt.authorization_correlation_id, attempt.authorization_version, attempt.correlation_id, now.to_rfc3339(), attempt.deadline_at.to_rfc3339()],
-        ).map_err(|error| format!("Unable to persist full-access canary request: {error}"))?;
+        ).map_err(|error| format!("Unable to persist full-access canary request: {error}")))?;
         let mut args = projection.launch.arguments;
         args.push(prompt);
         let invocation = NativeCliInvocation {
@@ -2747,10 +2785,13 @@ impl NativeProfileService {
             Ok(mut child) => match self.full_access_canary_children.lock() {
                 Ok(mut children) => {
                     children.insert(attempt.attempt_id.clone(), child);
-                    self.connection()?.execute(
+                    self.write("accept native full access canary launch", |transaction| {
+                        transaction.execute(
                         "UPDATE native_codex_profile_full_access_canaries SET launch_accepted_at=?2,process_activity='launch_accepted' WHERE attempt_id=?1 AND state='pending'",
                         params![attempt.attempt_id, Utc::now().to_rfc3339()],
                     ).map_err(|error| error.to_string())?;
+                        Ok(())
+                    })?;
                     self.profile(id).map(Into::into)
                 }
                 Err(_) => {
@@ -2779,7 +2820,10 @@ impl NativeProfileService {
     }
 
     fn reconcile_full_access_canary(&self, id: &str) -> Result<(), String> {
-        let Some(attempt) = load_pending_full_access_canary(&self.connection()?, id)? else {
+        let Some(attempt) = self.read("load pending native full access canary", |connection| {
+            load_pending_full_access_canary(connection, id)
+        })?
+        else {
             return Ok(());
         };
         let current = self.require_selected_active(id);
@@ -2919,14 +2963,17 @@ impl NativeProfileService {
             classification
         };
         let terminal_observed = matches!(state, "passed" | "terminal_failed" | "cleanup_failed");
-        self.connection()?.execute(
+        self.write("settle native full access canary", |transaction| {
+        transaction.execute(
             "UPDATE native_codex_profile_full_access_canaries SET state=?2,settled_at=?3,process_activity=CASE WHEN ?8 THEN 'terminal_observed' ELSE process_activity END,terminal_classification=?4,terminal_exit_code=?5,receipt_observed=?6,cleanup_disposition=?7 WHERE attempt_id=?1 AND state='pending'",
             params![attempt.attempt_id, state, Utc::now().to_rfc3339(), classification, exit_code, receipt_observed as i64, cleanup_disposition, terminal_observed],
         ).map_err(|error| error.to_string())?;
-        self.connection()?.execute(
+        transaction.execute(
             "UPDATE native_codex_profile_readiness SET danger_full_access_canary=?2,observed_at=?3 WHERE profile_id=?1",
             params![attempt.profile_id, if state == "passed" { "passed" } else { "blocked" }, Utc::now().to_rfc3339()],
         ).map_err(|error| error.to_string())?;
+        Ok(())
+        })?;
         Ok(())
     }
 
@@ -3278,7 +3325,10 @@ impl NativeProfileService {
     }
 
     fn reconcile_setup_attempts(&self, id: &str) -> Result<(), String> {
-        for attempt in load_pending_setup_attempts(&self.connection()?, id)? {
+        let attempts = self.read("load pending native setup attempts", |connection| {
+            load_pending_setup_attempts(connection, id)
+        })?;
+        for attempt in attempts {
             let profile = self.profile(id)?;
             let authority_valid = profile.lifecycle == Lifecycle::Active
                 && validate_profile(&profile) == Lifecycle::Active
@@ -3430,10 +3480,10 @@ impl NativeProfileService {
     }
 
     fn mark_setup_attempt_launch_accepted(&self, attempt_id: &str) -> Result<(), String> {
-        self.connection()?.execute(
+        self.write("accept native setup attempt launch", |transaction| transaction.execute(
             "UPDATE native_codex_profile_setup_attempts SET launch_accepted_at=?2 WHERE attempt_id=?1 AND state='pending'",
             params![attempt_id, Utc::now().to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
+        ).map_err(|error| error.to_string()))?;
         Ok(())
     }
 
@@ -3444,10 +3494,10 @@ impl NativeProfileService {
         state: &str,
         terminal_classification: &str,
     ) -> Result<usize, String> {
-        self.connection()?.execute(
+        self.write("persist native setup attempt", |transaction| transaction.execute(
             "INSERT OR IGNORE INTO native_codex_profile_setup_attempts (attempt_id,profile_id,filesystem_identity,phase,state,executable,version,workspace_sandbox_supported,correlation_id,requested_at,deadline_at,settled_at,terminal_classification) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,CASE WHEN ?5='pending' THEN NULL ELSE ?10 END,?12)",
             params![attempt.attempt_id, attempt.profile_id, attempt.filesystem_identity, attempt.phase.database(), state, provenance.executable, provenance.version, provenance.workspace_sandbox_supported, format!("native-setup-{}", Uuid::new_v4()), Utc::now().to_rfc3339(), attempt.deadline_at.to_rfc3339(), terminal_classification],
-        ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}"))
+        ).map_err(|error| format!("Unable to persist native sandbox attempt: {error}")))
     }
 
     fn set_setup_attempt_state(
@@ -3457,21 +3507,20 @@ impl NativeProfileService {
         terminal_classification: &str,
         terminal_exit_code: Option<i32>,
     ) -> Result<(), String> {
-        self.connection()?.execute(
+        self.write("settle native setup attempt", |transaction| transaction.execute(
             "UPDATE native_codex_profile_setup_attempts SET state=?2,settled_at=?3,terminal_classification=?4,terminal_exit_code=?5 WHERE attempt_id=?1 AND state='pending'",
             params![attempt_id, state, Utc::now().to_rfc3339(), terminal_classification, terminal_exit_code],
-        ).map_err(|error| error.to_string())?;
+        ).map_err(|error| error.to_string()))?;
         Ok(())
     }
 
     fn expire_mcp_probe(&self, id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        let expired = connection
+        let expired = self.write("expire native MCP reporting probe", |transaction| transaction
             .execute(
                 "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
                 params![id, Utc::now().to_rfc3339()],
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string()))?;
         if expired != 0 {
             self.update_readiness(
                 id,
@@ -3486,7 +3535,10 @@ impl NativeProfileService {
     }
 
     fn reconcile_login_attempt(&self, id: &str) -> Result<(), String> {
-        let Some(attempt) = load_pending_login_attempt(&self.connection()?, id)? else {
+        let Some(attempt) = self.read("load pending native login attempt", |connection| {
+            load_pending_login_attempt(connection, id)
+        })?
+        else {
             return Ok(());
         };
         let profile = self.profile(id)?;
@@ -3562,26 +3614,28 @@ impl NativeProfileService {
     }
 
     fn set_login_attempt_state(&self, attempt_id: &str, state: &str) -> Result<(), String> {
-        self.connection()?.execute(
+        self.write("settle native login attempt", |transaction| transaction.execute(
             "UPDATE native_codex_profile_login_attempts SET state=?2,settled_at=?3 WHERE attempt_id=?1 AND state='pending'",
             params![attempt_id, state, Utc::now().to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
+        ).map_err(|error| error.to_string()))?;
         Ok(())
     }
 
     fn profile(&self, id: &str) -> Result<StoredProfile, String> {
-        let mut connection = self.connection()?;
-        load_profiles(&mut connection)?
-            .into_iter()
-            .find(|profile| profile.id == id)
-            .ok_or_else(|| "Native Codex profile was not found".into())
+        self.read("load native profile", |connection| {
+            Ok(load_profiles(connection)?
+                .into_iter()
+                .find(|profile| profile.id == id)
+                .ok_or_else(|| "Native Codex profile was not found".to_string())?)
+        })
     }
 
     fn profile_by_home(&self, home: &Path) -> Result<Option<StoredProfile>, String> {
-        let mut connection = self.connection()?;
-        Ok(load_profiles(&mut connection)?
-            .into_iter()
-            .find(|profile| profile.home == home))
+        self.read("load native profile by home", |connection| {
+            Ok(load_profiles(connection)?
+                .into_iter()
+                .find(|profile| profile.home == home))
+        })
     }
 
     fn record_lifecycle(&self, id: &str, lifecycle: Lifecycle) -> Result<(), String> {
@@ -3603,7 +3657,9 @@ impl NativeProfileService {
         {
             let _ = child.terminate();
         }
-        let attempts = load_pending_setup_attempts(&self.connection()?, id)?;
+        let attempts = self.read("load pending native setup attempts", |connection| {
+            load_pending_setup_attempts(connection, id)
+        })?;
         let mut children = self
             .setup_children
             .lock()
@@ -3620,7 +3676,11 @@ impl NativeProfileService {
             }
         }
         drop(children);
-        if let Some(attempt) = load_pending_full_access_canary(&self.connection()?, id)? {
+        if let Some(attempt) = self
+            .read("load pending native full access canary", |connection| {
+                load_pending_full_access_canary(connection, id)
+            })?
+        {
             if let Ok(mut children) = self.full_access_canary_children.lock() {
                 if let Some(mut child) = children.remove(&attempt.attempt_id) {
                     let _ = child.terminate();
@@ -3631,34 +3691,38 @@ impl NativeProfileService {
             // an I/O failure.
             self.settle_full_access_canary(&attempt, "cancelled", "cancelled", None, false)?;
         }
-        let connection = self.connection()?;
-        connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state IN ('pending','dispatching')", params![id]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        self.write("record native profile lifecycle", |transaction| {
+        transaction.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state IN ('pending','dispatching')", params![id]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
+        transaction.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         self.write_attention(
-            &connection,
+            transaction,
             id,
             "continuity",
-            Some("profile_continuity_lost"),
+            Some("profile_continuity_lost"),)?;
+        Ok(())
+        }
         )?;
         Ok(())
     }
 
     fn invalidate_sandbox_adoption(&self, id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection.execute(
+        self.write("invalidate native sandbox adoption", |transaction| {
+        transaction.execute(
             "UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1",
             params![id],
         ).map_err(|error| error.to_string())?;
-        connection.execute(
+        transaction.execute(
             "UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'",
             params![id, Utc::now().to_rfc3339()],
         ).map_err(|error| error.to_string())?;
+        Ok(())
+        })?;
         self.update_readiness(
             id,
             None,
@@ -3734,15 +3798,16 @@ impl NativeProfileService {
         mcp: Option<&str>,
         attention: Option<(&str, Option<&str>)>,
     ) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection.execute(
+        self.write("update native profile readiness", |transaction| {
+        transaction.execute(
             "UPDATE native_codex_profile_readiness SET authentication=COALESCE(?2,authentication),sandbox_initialization=COALESCE(?3,sandbox_initialization),workspace_write_canary=COALESCE(?4,workspace_write_canary),mcp_reporting=COALESCE(?5,mcp_reporting),observed_at=?6 WHERE profile_id=?1",
             params![id, authentication, sandbox, canary, mcp, Utc::now().to_rfc3339()],
         ).map_err(|error| format!("Unable to record native profile readiness: {error}"))?;
         if let Some((concern, detail)) = attention {
-            self.write_attention(&connection, id, concern, detail)?;
+            self.write_attention(transaction, id, concern, detail)?;
         }
         Ok(())
+        })
     }
 
     fn set_attention(
@@ -3752,19 +3817,20 @@ impl NativeProfileService {
         attention: Option<&str>,
         reset_readiness: bool,
     ) -> Result<(), String> {
-        let connection = self.connection()?;
+        self.write("set native profile attention", |transaction| {
         if reset_readiness {
-            connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+            transaction.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         } else {
-            connection
+            transaction
                 .execute(
                     "UPDATE native_codex_profile_readiness SET observed_at=?2 WHERE profile_id=?1",
                     params![id, Utc::now().to_rfc3339()],
                 )
                 .map_err(|error| error.to_string())?;
         }
-        self.write_attention(&connection, id, concern, attention)?;
+        self.write_attention(transaction, id, concern, attention)?;
         Ok(())
+        })
     }
 
     fn write_attention(
@@ -4550,7 +4616,7 @@ fn load_pending_mcp_probe(
         .map_err(|error| error.to_string())
 }
 
-fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
+fn load_profiles(connection: &Connection) -> Result<Vec<StoredProfile>, String> {
     let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT phase FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT state FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT executable FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT version FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT workspace_sandbox_supported FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT correlation_id FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT deadline_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_classification FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_exit_code FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
@@ -4787,6 +4853,24 @@ pub(crate) fn load_native_profile_query(
     state: State<'_, NativeProfileTauriState>,
 ) -> Result<NativeProfileQueryDto, String> {
     state.service.query()
+}
+
+#[tauri::command]
+pub(crate) fn discover_native_codex_homes(
+    state: State<'_, NativeProfileTauriState>,
+) -> Result<Vec<discovery::DiscoveredNativeCodexHome>, String> {
+    let query = state.service.query()?;
+    discovery::discover_native_codex_homes(
+        &query
+            .profiles
+            .into_iter()
+            .map(|profile| discovery::RegisteredNativeCodexHome {
+                profile_id: profile.id,
+                home_path: PathBuf::from(profile.home_path),
+                selected: profile.selected,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 #[tauri::command]
 pub(crate) fn register_native_profile(

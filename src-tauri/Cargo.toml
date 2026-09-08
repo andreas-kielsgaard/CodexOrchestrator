@@ -32,9 +32,13 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 pathdiff = "0.2"
+globset = "0.4"
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -49,7 +53,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
 tempfile = "3"
 
 [profile.test-fast]

@@ -8,6 +8,7 @@ import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
 import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
+import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
 
 interface AgentSessionTranscriptProps {
   transcript: ProjectedTranscript | null;
@@ -102,9 +103,12 @@ export function AgentSessionTranscript({
               </article>
             )}
             {invocation.showOutcome && !invocation.finalResponse && invocation.outcome.message && (
-              <p className={`invocation-outcome ${invocation.status}`} role="status">
-                <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
-              </p>
+              <>
+                <p className={`invocation-outcome ${invocation.status}`} role="status">
+                  <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
+                </p>
+                <AgentSessionRuntimeGuidance failure={invocation.runtimeFailure} />
+              </>
             )}
             {invocation.showOutcome &&
               !invocation.finalResponse &&

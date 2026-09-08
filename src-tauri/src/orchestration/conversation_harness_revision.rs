@@ -576,6 +576,7 @@ mod tests {
                     policy: HarnessToolPolicy::Available,
                 }],
                 schema_boundary: "Application-owned proposal schema.".into(),
+                mcp_servers: vec![],
             },
             runtime: HarnessRuntimeConfiguration {
                 model_policy_mode: HarnessModelPolicyMode::RevisionOwned,

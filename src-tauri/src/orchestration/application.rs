@@ -34,6 +34,7 @@ pub(crate) struct ManagedPlanBuilderService {
     registry: Arc<ManagedPlanBuilderRegistry>,
     confirmations: Arc<InitiationConfirmationCoordinator>,
     factory: Arc<dyn ManagedPlanBuilderInvocationFactory>,
+    managed_mcp_upstreams: Option<Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>>,
     send_lock: Mutex<()>,
 }
 
@@ -47,6 +48,11 @@ impl super::confirmation::ButtonInitiationContextScheduler for OrchestrationAppl
 
 pub(crate) trait ManagedPlanBuilderInvocationHandle: Send {
     fn injection(&self) -> &CodexMcpInjection;
+    fn upstream_descriptor(
+        &self,
+    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+        None
+    }
     fn bind_agent_invocation(&self, invocation_id: AgentInvocationId);
     fn stop(self: Box<Self>);
 }
@@ -66,11 +72,54 @@ impl ManagedPlanBuilderInvocationHandle for ProductionManagedInvocation {
     fn injection(&self) -> &CodexMcpInjection {
         &self.0.injection
     }
+    fn upstream_descriptor(
+        &self,
+    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+        Some(self.0.upstream_descriptor())
+    }
     fn bind_agent_invocation(&self, invocation_id: AgentInvocationId) {
         self.0.bind_agent_invocation(invocation_id);
     }
     fn stop(self: Box<Self>) {
         self.0.stop();
+    }
+}
+
+struct RegisteredManagedInvocation {
+    inner: Box<dyn ManagedPlanBuilderInvocationHandle>,
+    upstreams: Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>,
+    registration_id: String,
+}
+
+struct PlanBuilderManagedUpstreamOwner(Box<dyn ManagedPlanBuilderInvocationHandle>);
+
+impl crate::harness_engine::ManagedMcpUpstreamOwner for PlanBuilderManagedUpstreamOwner {
+    fn stop(self: Box<Self>) {
+        self.0.stop();
+    }
+}
+
+impl ManagedPlanBuilderInvocationHandle for RegisteredManagedInvocation {
+    fn injection(&self) -> &CodexMcpInjection {
+        self.inner.injection()
+    }
+
+    fn upstream_descriptor(
+        &self,
+    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+        self.inner.upstream_descriptor()
+    }
+
+    fn bind_agent_invocation(&self, invocation_id: AgentInvocationId) {
+        self.inner.bind_agent_invocation(invocation_id);
+    }
+
+    fn stop(self: Box<Self>) {
+        let owner: Box<dyn crate::harness_engine::ManagedMcpUpstreamOwner> =
+            Box::new(PlanBuilderManagedUpstreamOwner(self.inner));
+        if let Err(owner) = self.upstreams.retain_owner(&self.registration_id, owner) {
+            owner.stop();
+        }
     }
 }
 impl ManagedPlanBuilderInvocationFactory for ProductionManagedInvocationFactory {
@@ -144,12 +193,31 @@ impl ManagedPlanBuilderService {
         registry: Arc<ManagedPlanBuilderRegistry>,
         confirmations: Arc<InitiationConfirmationCoordinator>,
     ) -> Arc<Self> {
+        Self::new_with_managed_mcp_upstreams(
+            orchestration,
+            sessions,
+            registry,
+            confirmations,
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_managed_mcp_upstreams(
+        orchestration: Arc<OrchestrationApplication>,
+        sessions: Arc<AgentSessionApplication>,
+        registry: Arc<ManagedPlanBuilderRegistry>,
+        confirmations: Arc<InitiationConfirmationCoordinator>,
+        managed_mcp_upstreams: Option<
+            Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>,
+        >,
+    ) -> Arc<Self> {
         Arc::new(Self {
             orchestration,
             sessions,
             registry,
             confirmations,
             factory: Arc::new(ProductionManagedInvocationFactory),
+            managed_mcp_upstreams,
             send_lock: Mutex::new(()),
         })
     }
@@ -168,6 +236,7 @@ impl ManagedPlanBuilderService {
             registry,
             confirmations,
             factory,
+            managed_mcp_upstreams: None,
             send_lock: Mutex::new(()),
         })
     }
@@ -420,6 +489,21 @@ impl ManagedPlanBuilderService {
             &harness.mcp.enabled_tools,
             harness.mcp.required,
         )?;
+        let managed: Box<dyn ManagedPlanBuilderInvocationHandle> =
+            match (&self.managed_mcp_upstreams, managed.upstream_descriptor()) {
+                (Some(upstreams), Some(descriptor)) => match upstreams.register(descriptor) {
+                    Ok(registration_id) => Box::new(RegisteredManagedInvocation {
+                        inner: managed,
+                        upstreams: upstreams.clone(),
+                        registration_id,
+                    }),
+                    Err(error) => {
+                        managed.stop();
+                        return Err(error);
+                    }
+                },
+                _ => managed,
+            };
         let mut additional_args = harness.runtime_configuration_args();
         additional_args.extend(managed.injection().configuration_args.clone());
         let extension = RuntimeLaunchExtension {
@@ -850,6 +934,41 @@ mod tests {
             }))
         }
     }
+
+    #[test]
+    fn registered_plan_builder_upstream_outlives_origin_until_application_shutdown() {
+        let upstreams = Arc::new(crate::harness_engine::ManagedMcpUpstreamRegistry::default());
+        let registration_id = upstreams
+            .register(crate::harness_engine::ManagedMcpUpstreamDescriptor {
+                name: "plan_builder".into(),
+                url: "http://127.0.0.1:41001/mcp".into(),
+                bearer_token: "secret".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
+            })
+            .unwrap();
+        let stops = Arc::new(Mutex::new(0));
+        let managed: Box<dyn ManagedPlanBuilderInvocationHandle> =
+            Box::new(RegisteredManagedInvocation {
+                inner: Box::new(Handle {
+                    injection: CodexMcpInjection::new(
+                        "http://127.0.0.1:41001/mcp",
+                        "secret".into(),
+                        &[],
+                        true,
+                    ),
+                    stops: stops.clone(),
+                }),
+                upstreams: upstreams.clone(),
+                registration_id,
+            });
+
+        managed.stop();
+        assert_eq!(*stops.lock().unwrap(), 0);
+        upstreams.shutdown();
+        assert_eq!(*stops.lock().unwrap(), 1);
+    }
+
     #[derive(Clone, Copy, Default)]
     enum RuntimeMode {
         #[default]

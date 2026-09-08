@@ -1,0 +1,259 @@
+{
+  "contractVersion": "workflow-cli-catalog/v1",
+  "workflows": [
+    {
+      "name": "Example · File Review Matrix",
+      "nodes": [
+        {
+          "id": "example-matrix-author",
+          "name": "Artifact author",
+          "harnessName": "Demonstration artifact author",
+          "roleName": null,
+          "positionX": 120,
+          "positionY": 220,
+          "isStartingPoint": true,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Demonstration artifact author",
+              "roleIdentity": "Create the requested demonstration artifact in the target worktree.",
+              "instructions": "Follow the user's request. Create or overwrite handoffs/demo-plan.md using workspace tools. Keep the artifact concise. Do not finish until that exact file exists.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "example-matrix-fresh-reviewer",
+          "name": "Fresh reviewer",
+          "harnessName": "Fresh demonstration reviewer",
+          "roleName": null,
+          "positionX": 540,
+          "positionY": 100,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Fresh demonstration reviewer",
+              "roleIdentity": "Review one handed-off artifact in an isolated Session.",
+              "instructions": "Open the relative file path at the start of the prompt. Report two strengths and one concrete improvement. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "example-matrix-continuing-reviewer",
+          "name": "Continuing reviewer",
+          "harnessName": "Continuing demonstration reviewer",
+          "roleName": null,
+          "positionX": 540,
+          "positionY": 340,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Continuing demonstration reviewer",
+              "roleIdentity": "Review successive revisions in one continuing Session.",
+              "instructions": "Open the relative file path at the start of the prompt. Compare it with any earlier revision in this Session, then give a concise verdict. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "example-matrix-to-fresh",
+          "name": "Fresh review for every revision",
+          "senderNodeId": "example-matrix-author",
+          "receiverNodeId": "example-matrix-fresh-reviewer",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_filename_pattern",
+              "folder": "handoffs",
+              "filenamePattern": "demo-plan.md"
+            },
+            "descriptionText": "The author produced this demonstration plan.",
+            "promptText": "Review the current revision now.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        },
+        {
+          "id": "example-matrix-to-continuing",
+          "name": "Continue review across revisions",
+          "senderNodeId": "example-matrix-author",
+          "receiverNodeId": "example-matrix-continuing-reviewer",
+          "receiverSessionPolicy": "continue_latest",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_filename_pattern",
+              "folder": "handoffs",
+              "filenamePattern": "demo-plan.md"
+            },
+            "descriptionText": "The author produced another revision of this demonstration plan.",
+            "promptText": "Review it in the context of the revisions you have already seen.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Example · Agent-selected Artifact",
+      "nodes": [
+        {
+          "id": "example-regex-writer",
+          "name": "Artifact selector",
+          "harnessName": "Agent-selected artifact writer",
+          "roleName": null,
+          "positionX": 140,
+          "positionY": 220,
+          "isStartingPoint": true,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Agent-selected artifact writer",
+              "roleIdentity": "Choose and create a fitting Markdown handoff artifact.",
+              "instructions": "Create one Markdown file inside handoffs. Use a short descriptive filename. End your final response with exactly HANDOFF: followed by that filename only, without the folder prefix.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "example-regex-reader",
+          "name": "Selected artifact reader",
+          "harnessName": "Selected artifact reader",
+          "roleName": null,
+          "positionX": 560,
+          "positionY": 220,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Selected artifact reader",
+              "roleIdentity": "Read the artifact selected by the previous agent.",
+              "instructions": "Open the relative file path at the start of the prompt and summarize its purpose in three bullets. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "example-regex-handoff",
+          "name": "Use the filename selected in agent output",
+          "senderNodeId": "example-regex-writer",
+          "receiverNodeId": "example-regex-reader",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "turn_finished_expected_file",
+            "fileSelector": {
+              "kind": "folder_output_regex",
+              "folder": "handoffs",
+              "outputRegex": "HANDOFF:\\s+([A-Za-z0-9._-]+\\.md)"
+            },
+            "descriptionText": "The previous agent selected this artifact in its final output.",
+            "promptText": "Read and summarize the selected artifact.",
+            "matchSelection": "newest",
+            "initialCheck": "once_immediately"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Example · Native MCP Handoff",
+      "nodes": [
+        {
+          "id": "example-mcp-sender",
+          "name": "Directed handoff sender",
+          "harnessName": "Native Workflow handoff sender",
+          "roleName": null,
+          "positionX": 140,
+          "positionY": 220,
+          "isStartingPoint": true,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Native Workflow handoff sender",
+              "roleIdentity": "Create a small artifact and hand it to the configured receiver through the Workflow MCP tool.",
+              "instructions": "Create handoffs/mcp-note.md for the user's request. Then call the available handoff_to_agent tool exactly once with filePaths containing handoffs/mcp-note.md and a concise promptText asking the receiver to inspect it. Do not merely describe the tool call.",
+              "mcpServers": [
+                {
+                  "serverName": "workflow_handoff",
+                  "access": {
+                    "kind": "selected_tools",
+                    "toolNames": ["handoff_to_agent"]
+                  }
+                }
+              ],
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        },
+        {
+          "id": "example-mcp-receiver",
+          "name": "Directed handoff receiver",
+          "harnessName": "Native Workflow handoff receiver",
+          "roleName": null,
+          "positionX": 560,
+          "positionY": 220,
+          "isStartingPoint": false,
+          "harness": {
+            "kind": "standalone",
+            "config": {
+              "harnessName": "Native Workflow handoff receiver",
+              "roleIdentity": "Inspect the files and instructions delivered explicitly through Workflow MCP.",
+              "instructions": "Open every relative file path in the prompt and return a concise receipt describing what was handed off. Do not edit files.",
+              "runtime": {
+                "provider": "codex",
+                "model": "gpt-5.6-terra",
+                "reasoningEffort": "low"
+              }
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "example-mcp-directed-handoff",
+          "name": "Agent-directed native handoff",
+          "senderNodeId": "example-mcp-sender",
+          "receiverNodeId": "example-mcp-receiver",
+          "receiverSessionPolicy": "fresh",
+          "mechanism": {
+            "kind": "mcp_native_prompt_agent",
+            "serverName": "workflow_handoff",
+            "toolName": "handoff_to_agent",
+            "warningText": "This demonstration lets the sender choose when and what to hand off."
+          }
+        }
+      ]
+    }
+  ]
+}

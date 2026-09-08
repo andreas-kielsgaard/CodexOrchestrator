@@ -20,19 +20,22 @@ import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrati
 import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
-import { tauriEpicOriginProjectClient } from '../infrastructure/epicOriginProject/tauriEpicOriginProject';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
+import { tauriWorkflowClient } from '../infrastructure/workflows/tauriWorkflowClient';
+import { DiscoveredWorktreeTargetSelector } from '../features/worktreeTargetsTemp/DiscoveredWorktreeTargetSelector';
 import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
-    epicOriginProjectClient: tauriEpicOriginProjectClient,
+    workflowClient: tauriWorkflowClient,
+    workflowTargetSelector: DiscoveredWorktreeTargetSelector,
+    worktreeReviewClient: tauriWorktreeReview,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
@@ -44,7 +47,6 @@ export function createProductApplicationComposition(): AppProps {
       createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,
     productDecisionCorrectionClient: tauriProductDecisionCorrectionClient,
-    worktreeReviewClient: tauriWorktreeReview,
     orchestrationClient: createNativeQueryOrchestrationClient(
       tauriOrchestrationNativeQueryClient,
       tauriEpicBootstrapTransitionClient,

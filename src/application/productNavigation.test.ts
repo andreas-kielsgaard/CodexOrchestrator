@@ -67,6 +67,35 @@ describe('Product navigation history', () => {
     expect(canNavigateBack(state)).toBe(false);
   });
 
+  it('keeps a Workflow type as a typed destination and returns to its landing page', () => {
+    const landing = {
+      kind: 'workflow',
+      workflowTypeId: null,
+      workflowInstanceId: null,
+    } as const;
+    const editor = {
+      kind: 'workflow',
+      workflowTypeId: 'workflow-1',
+      workflowInstanceId: null,
+    } as const;
+    let state = createProductNavigation(landing);
+
+    state = productNavigationReducer(state, {
+      type: 'navigate',
+      intent: 'push',
+      destination: editor,
+    });
+    expect(state.current.destination).toEqual(editor);
+    expect(canNavigateBack(state)).toBe(true);
+
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current.destination).toEqual(landing);
+    expect(canNavigateBack(state)).toBe(false);
+    expect(restoreProductNavigation(editor, overview, () => true).current.destination).toEqual(
+      editor,
+    );
+  });
+
   it('does not manufacture a self-history entry for a same-destination push', () => {
     const state = productNavigationReducer(createProductNavigation(overview), {
       type: 'navigate',

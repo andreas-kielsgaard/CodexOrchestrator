@@ -33,7 +33,6 @@ import {
   recordedWorkUnitReviewFileSource,
 } from './recordedWorkUnitReviewFixture';
 import { recordedEpicProductDecisionSource } from '../productDecisions/recordedEpicProductDecisionSource';
-import { recordedEpicOriginProjectClient } from './recordedEpicOriginProjectClient';
 
 /** Recorded development data enters through canonical composition; it is not a product connector. */
 export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClient(
@@ -91,7 +90,6 @@ export function createRecordedDevelopmentApplicationComposition(options?: {
   });
   return {
     agentSessionClient: recordedDevelopmentAgentSessionClient,
-    epicOriginProjectClient: recordedEpicOriginProjectClient,
     managedPlanBuilderAgentIdentity: recordedPlanBuilderAgentIdentity,
     orchestrationClient: recordedDevelopmentOrchestrationClient,
     orchestrationPresentation: createRecordedDevelopmentOrchestrationPresentation({

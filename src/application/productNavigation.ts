@@ -12,6 +12,11 @@ export type ProductNavigationDestination =
     }
   | { readonly kind: 'plan_builder'; readonly epicPlanningDraftId: string | null }
   | {
+      readonly kind: 'workflow';
+      readonly workflowTypeId: string | null;
+      readonly workflowInstanceId: string | null;
+    }
+  | {
       readonly kind: 'agent_sessions';
       readonly selectedSessionId: string | null;
       readonly focusedInvocationId: string | null;
@@ -281,6 +286,13 @@ export function isProductNavigationDestination(
         hasOnlyKeys(value, ['kind', 'epicPlanningDraftId']) &&
         (value.epicPlanningDraftId === null || isIdentifier(value.epicPlanningDraftId))
       );
+    case 'workflow':
+      return (
+        hasOnlyKeys(value, ['kind', 'workflowTypeId', 'workflowInstanceId']) &&
+        (value.workflowTypeId === null || isIdentifier(value.workflowTypeId)) &&
+        (value.workflowInstanceId === null || isIdentifier(value.workflowInstanceId)) &&
+        !(value.workflowTypeId !== null && value.workflowInstanceId !== null)
+      );
     case 'agent_sessions':
       return (
         hasOnlyKeys(value, [
@@ -371,6 +383,12 @@ export function sameProductNavigationDestination(
     case 'plan_builder':
       return (
         right.kind === 'plan_builder' && left.epicPlanningDraftId === right.epicPlanningDraftId
+      );
+    case 'workflow':
+      return (
+        right.kind === 'workflow' &&
+        left.workflowTypeId === right.workflowTypeId &&
+        left.workflowInstanceId === right.workflowInstanceId
       );
     case 'agent_sessions':
       return (
