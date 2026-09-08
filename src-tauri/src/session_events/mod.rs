@@ -29,7 +29,7 @@ pub(crate) use ports::{
 pub(crate) use queries::SessionEventQueryApplication;
 #[cfg(test)]
 pub(crate) use repository::InMemorySessionEventStore;
-pub(crate) use repository::SqliteSessionEventStore;
+pub(crate) use repository::{initialize_session_event_storage, SqliteSessionEventStore};
 
 pub(crate) struct SessionEventApplication {
     directory: Arc<dyn SessionDirectory>,

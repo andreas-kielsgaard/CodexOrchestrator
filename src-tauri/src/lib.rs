@@ -22,6 +22,8 @@ mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;
+mod persistence;
+mod product_database;
 mod product_decisions;
 mod runtime;
 mod session_events;
@@ -820,6 +822,8 @@ pub fn run() {
 pub fn run_harness_engine_sidecar_if_requested() -> bool {
     harness_engine::sidecar::run_if_requested()
 }
+
+/// Runs the headless Workflow authoring and demonstration surface before Tauri initializes.
 
 fn ensure_legacy_tasks_available() -> Result<(), String> {
     Err("Legacy Tasks are quarantined in the Agent Session reset baseline".to_string())

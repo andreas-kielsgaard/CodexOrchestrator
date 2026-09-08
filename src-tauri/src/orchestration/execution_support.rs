@@ -11,7 +11,8 @@ use super::{
         SqliteOrchestrationRepository,
     },
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{
     error::Error,
@@ -287,14 +288,12 @@ impl ProductExecutionWorkspaceResolver {
                 .rsplit_once('-')
                 .map(|(_, digest)| digest)
                 .ok_or(ExecutionSupportError::Unavailable)?;
-            let parent = container
-                .join(".co-exec")
-                .join(scope);
+            let parent = container.join(".co-exec").join(scope);
             if create_parent {
                 fs::create_dir_all(&parent).map_err(|_| ExecutionSupportError::Unavailable)?;
             }
-            let metadata = fs::symlink_metadata(&parent)
-                .map_err(|_| ExecutionSupportError::Unavailable)?;
+            let metadata =
+                fs::symlink_metadata(&parent).map_err(|_| ExecutionSupportError::Unavailable)?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
@@ -393,13 +392,18 @@ impl ProductExecutionWorkspaceResolver {
         let authority = &attempt.authority;
         let repository_root = canonical_authorized_root(&authority.repository_root)?;
         let authority_root = canonical_authorized_root(&authority.worktree_root)?;
-        let authority_head = git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+        let authority_head =
+            git_text(&authority_root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
         if !git_text(&authority_root, &["status", "--porcelain"])?.is_empty()
             || (attempt.baseline_object_id == authority.current_object_id
                 && authority_head != authority.current_object_id)
             || git_text(
                 &repository_root,
-                &["rev-parse", "--verify", &format!("{}^{{commit}}", authority.current_object_id)],
+                &[
+                    "rev-parse",
+                    "--verify",
+                    &format!("{}^{{commit}}", authority.current_object_id),
+                ],
             )? != authority.current_object_id
         {
             return Err(ExecutionSupportError::Unavailable);
@@ -572,31 +576,42 @@ impl ExecutionWorkspaceResolver for ProductExecutionWorkspaceResolver {
 }
 
 pub(crate) struct SqliteExecutionSupportRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
     orchestration: Arc<SqliteOrchestrationRepository>,
 }
 
 impl SqliteExecutionSupportRepository {
-    fn open(
-        path: &Path,
+    fn new(
+        database: Arc<ActiveDatabase>,
         orchestration: Arc<SqliteOrchestrationRepository>,
     ) -> Result<Self, ExecutionSupportError> {
-        let connection = Connection::open(path).map_err(|_| ExecutionSupportError::Unavailable)?;
-        crate::storage::configure_sqlite_connection(&connection)
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        connection
-            .execute_batch(EXECUTION_SUPPORT_SCHEMA)
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let role_keyed = connection
-            .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_, String>(0))
-            .map(|sql| sql.contains("PRIMARY KEY(attempt_id,role_kind)"))
-            .unwrap_or(false);
-        if !role_keyed && connection.execute_batch(EXECUTION_SUPPORT_ROLE_KEY_MIGRATION).is_err() {
-            let _ = connection.execute_batch("ROLLBACK;");
-            return Err(ExecutionSupportError::Unavailable);
+        let role_keyed = map_managed(database.read("inspect execution support role schema", |connection| {
+            Ok::<_, ExecutionSupportError>(connection
+                .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_, String>(0))
+                .map(|sql| sql.contains("PRIMARY KEY(attempt_id,role_kind)"))
+                .unwrap_or(false))
+        }))?;
+        if !role_keyed {
+            let migration = EXECUTION_SUPPORT_ROLE_KEY_MIGRATION
+                .strip_prefix("\nBEGIN IMMEDIATE;\n")
+                .and_then(|migration| migration.strip_suffix("COMMIT;\n"))
+                .ok_or(ExecutionSupportError::Unavailable)?;
+            map_managed(database.write("migrate execution support role schema", |transaction| {
+                let role_keyed = transaction
+                    .query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_, String>(0))
+                    .map(|sql| sql.contains("PRIMARY KEY(attempt_id,role_kind)"))
+                    .unwrap_or(false);
+                if role_keyed {
+                    return Ok(());
+                }
+                transaction
+                    .execute_batch(migration)
+                    .map_err(|_| ExecutionSupportError::Unavailable)?;
+                Ok(())
+            }))?;
         }
         Ok(Self {
-            connection: Mutex::new(connection),
+            database,
             orchestration,
         })
     }
@@ -619,7 +634,10 @@ impl SqliteExecutionSupportRepository {
         if !git_object_id(&authority.current_object_id) {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
-        let baseline = request.execution_seed_object_id.clone().unwrap_or(authority.current_object_id);
+        let baseline = request
+            .execution_seed_object_id
+            .clone()
+            .unwrap_or(authority.current_object_id);
         if !git_object_id(&baseline) {
             return Err(ExecutionSupportError::CorrelationMismatch);
         }
@@ -631,13 +649,7 @@ impl SqliteExecutionSupportRepository {
             &request.sprint_git_authority_id,
             &baseline,
         );
-        let mut connection = self
-            .connection
-            .lock()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        map_managed(self.database.write("authorize existing execution attempt", |transaction| {
         let existing: Option<(String, String)> = transaction
             .query_row(
                 "SELECT baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1 AND role_kind=?2",
@@ -650,9 +662,6 @@ impl SqliteExecutionSupportRepository {
             if stored_baseline != baseline || stored_fingerprint != fingerprint {
                 return Err(ExecutionSupportError::Conflict);
             }
-            transaction
-                .commit()
-                .map_err(|_| ExecutionSupportError::Unavailable)?;
             return Ok(
                 AuthorizeExistingWorkUnitExecutionAttemptResult::IdempotentReplay {
                     baseline_object_id: baseline,
@@ -665,24 +674,19 @@ impl SqliteExecutionSupportRepository {
                 params![request.attempt_id, request.work_unit_id, role_kind, request.sprint_git_authority_id, baseline, fingerprint],
             )
             .map_err(|_| ExecutionSupportError::Conflict)?;
-        transaction
-            .commit()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
         Ok(
             AuthorizeExistingWorkUnitExecutionAttemptResult::Authorized {
                 baseline_object_id: baseline,
             },
         )
+        }))
     }
 
     fn current_target_object_id(
         &self,
         authority: &InitiatedSprintGitAuthority,
     ) -> Result<String, ExecutionSupportError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        map_managed(self.database.read("load execution target object", |connection| {
         let target_table_exists: bool = connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sprint_target_currents')",
@@ -702,15 +706,16 @@ impl SqliteExecutionSupportRepository {
             .optional()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
         Ok(target.unwrap_or_else(|| authority.current_object_id.clone()))
+        }))
     }
 
-    fn load_authorized_attempt_for_role(&self, attempt_id: &str, role: WorkUnitExecutionRole,
+    fn load_authorized_attempt_for_role(
+        &self,
+        attempt_id: &str,
+        role: WorkUnitExecutionRole,
     ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
         let (work_unit_id, role_kind, authority_id, baseline_object_id, stored_fingerprint):
-            (String, String, String, String, String) = self
-            .connection
-            .lock()
-            .map_err(|_| ExecutionSupportError::Unavailable)?
+            (String, String, String, String, String) = map_managed(self.database.read("load authorized execution attempt", |connection| connection
             .query_row(
                 "SELECT work_unit_id,role_kind,sprint_git_authority_id,baseline_object_id,authorization_fingerprint FROM execution_support_attempt_authorizations WHERE attempt_id=?1 AND role_kind=?2",
                 params![attempt_id,role.as_str()],
@@ -718,7 +723,7 @@ impl SqliteExecutionSupportRepository {
             )
             .optional()
             .map_err(|_| ExecutionSupportError::Unavailable)?
-            .ok_or(ExecutionSupportError::Denied)?;
+            .ok_or(ExecutionSupportError::Denied)))?;
         if !bounded_id(&work_unit_id)
             || !matches!(
                 role_kind.as_str(),
@@ -742,12 +747,11 @@ impl SqliteExecutionSupportRepository {
             .map_err(|_| ExecutionSupportError::Unavailable)?
             .ok_or(ExecutionSupportError::Denied)?;
         if self.current_target_object_id(&authority)? != baseline_object_id {
-            let connection = self.connection.lock().map_err(|_| ExecutionSupportError::Unavailable)?;
-            let retry_seed: bool = connection.query_row(
+            let retry_seed: bool = map_managed(self.database.read("load execution retry seed", |connection| connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts WHERE retry_attempt_id=?1 AND candidate_commit_id=?2 AND candidate_pinned_at IS NOT NULL)",
                 params![attempt_id, baseline_object_id],
                 |row| row.get(0),
-            ).map_err(|_| ExecutionSupportError::Unavailable)?;
+            ).map_err(|_| ExecutionSupportError::Unavailable)))?;
             if !retry_seed {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
@@ -761,12 +765,18 @@ impl SqliteExecutionSupportRepository {
         })
     }
     #[cfg(test)]
-    fn load_authorized_attempt(&self, attempt_id: &str) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> { self.load_authorized_attempt_for_role(attempt_id, WorkUnitExecutionRole::Implementer) }
+    fn load_authorized_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<AuthorizedExecutionAttempt, ExecutionSupportError> {
+        self.load_authorized_attempt_for_role(attempt_id, WorkUnitExecutionRole::Implementer)
+    }
 }
 
 pub(crate) struct ExecutionSupportService {
     repository: Arc<SqliteExecutionSupportRepository>,
     resolver: Arc<dyn ExecutionWorkspaceResolver>,
+    grant_gate: Mutex<()>,
 }
 
 impl ExecutionSupportService {
@@ -777,6 +787,7 @@ impl ExecutionSupportService {
         Self {
             repository,
             resolver,
+            grant_gate: Mutex::new(()),
         }
     }
 
@@ -791,24 +802,28 @@ impl ExecutionSupportService {
 
     /// This application-only operation accepts an opaque existing attempt reference. Its context
     /// is re-derived from durable authority; it does not create a Work Unit or execution attempt.
-    pub(crate) fn grant_role(&self, attempt_id: &str, role: WorkUnitExecutionRole,
+    pub(crate) fn grant_role(
+        &self,
+        attempt_id: &str,
+        role: WorkUnitExecutionRole,
     ) -> Result<ExecutionSupportReference, ExecutionSupportError> {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let attempt = self.repository.load_authorized_attempt_for_role(attempt_id, role)?;
-        let mut connection = self
-            .repository
-            .connection
+        let _grant_gate = self
+            .grant_gate
             .lock()
             .map_err(|_| ExecutionSupportError::Unavailable)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
-        // One ProductExecutionSupportState owns this mutex; the immediate writer transaction
-        // serializes its native first-grant side effect. SQLite extends that serialization to a
-        // second product process before either can create a duplicate deterministic worktree.
-        let existing = load_grant(&transaction, attempt_id, role.as_str())?;
+        let attempt = self
+            .repository
+            .load_authorized_attempt_for_role(attempt_id, role)?;
+        let existing = map_managed(
+            self.repository
+                .database
+                .read("load execution support grant", |connection| {
+                    load_grant(connection, attempt_id, role.as_str())
+                }),
+        )?;
         let binding = self
             .resolver
             .resolve(&attempt, existing.as_ref().map(|grant| &grant.binding))?;
@@ -816,26 +831,33 @@ impl ExecutionSupportService {
             if existing.correlation != correlation_fingerprint(&attempt, &binding) {
                 return Err(ExecutionSupportError::CorrelationMismatch);
             }
-            transaction
-                .commit()
-                .map_err(|_| ExecutionSupportError::Unavailable)?;
             return Ok(ExecutionSupportReference {
                 capability_ref: existing.capability_ref,
                 working_directory: self.resolver.working_directory(&attempt, &binding)?,
             });
         }
-        let capability_ref = stable_id("execution-support", &format!("{attempt_id}:{}", role.as_str()));
+        let capability_ref = stable_id(
+            "execution-support",
+            &format!("{attempt_id}:{}", role.as_str()),
+        );
         let correlation = correlation_fingerprint(&attempt, &binding);
-        transaction.execute(
-            "INSERT INTO execution_support_grants (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,datetime('now'))",
-            params![attempt.attempt_id, capability_ref, attempt.authority.epic_id, attempt.authority.sprint_id, attempt.work_unit_id, attempt.authority.repository_id, attempt.role_kind, binding.workspace_id, binding.workspace_fingerprint, correlation],
-        ).map_err(|_| ExecutionSupportError::Conflict)?;
-        transaction
-            .commit()
-            .map_err(|_| ExecutionSupportError::Unavailable)?;
+        let stored = map_managed(self.repository.database.write("create execution support grant", |transaction| {
+            if let Some(existing) = load_grant(transaction, attempt_id, role.as_str())? {
+                if existing.correlation != correlation {
+                    return Err(ExecutionSupportError::CorrelationMismatch);
+                }
+                return Ok(existing);
+            }
+            transaction.execute(
+                "INSERT INTO execution_support_grants (attempt_id,capability_ref,epic_id,sprint_id,work_unit_id,repository_id,role_id,workspace_id,workspace_fingerprint,correlation_fingerprint,recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,datetime('now'))",
+                params![attempt.attempt_id, capability_ref, attempt.authority.epic_id, attempt.authority.sprint_id, attempt.work_unit_id, attempt.authority.repository_id, attempt.role_kind, binding.workspace_id, binding.workspace_fingerprint, correlation],
+            ).map_err(|_| ExecutionSupportError::Conflict)?;
+            load_grant(transaction, attempt_id, role.as_str())?
+                .ok_or(ExecutionSupportError::Unavailable)
+        }))?;
         Ok(ExecutionSupportReference {
-            capability_ref,
-            working_directory: self.resolver.working_directory(&attempt, &binding)?,
+            capability_ref: stored.capability_ref,
+            working_directory: self.resolver.working_directory(&attempt, &stored.binding)?,
         })
     }
 
@@ -866,14 +888,16 @@ impl ExecutionSupportService {
         if !bounded_id(attempt_id) {
             return Err(ExecutionSupportError::Denied);
         }
-        let grant = {
-            let connection = self
-                .repository
-                .connection
-                .lock()
-                .map_err(|_| ExecutionSupportError::Unavailable)?;
-            load_grant(&connection, attempt_id, WorkUnitExecutionRole::Implementer.as_str())?
-        }
+        let grant = map_managed(self.repository.database.read(
+            "load implementer execution support grant",
+            |connection| {
+                load_grant(
+                    connection,
+                    attempt_id,
+                    WorkUnitExecutionRole::Implementer.as_str(),
+                )
+            },
+        ))?
         .ok_or(ExecutionSupportError::Denied)?;
         let attempt = self
             .repository
@@ -893,17 +917,22 @@ impl ExecutionSupportService {
         if !bounded_id(capability_ref) {
             return Err(ExecutionSupportError::Denied);
         }
-        let grant = {
-            let connection = self
-                .repository
-                .connection
-                .lock()
-                .map_err(|_| ExecutionSupportError::Unavailable)?;
-            load_grant_for_capability(&connection, capability_ref)?
-        }
+        let grant = map_managed(
+            self.repository
+                .database
+                .read("load execution support capability", |connection| {
+                    load_grant_for_capability(connection, capability_ref)
+                }),
+        )?
         .ok_or(ExecutionSupportError::Denied)?;
-        let role = match grant.role_id.as_str() { "work_unit_handler" => WorkUnitExecutionRole::Handler, "work_unit_implementer" => WorkUnitExecutionRole::Implementer, _ => return Err(ExecutionSupportError::Denied) };
-        let attempt = self.repository.load_authorized_attempt_for_role(&grant.attempt_id, role)?;
+        let role = match grant.role_id.as_str() {
+            "work_unit_handler" => WorkUnitExecutionRole::Handler,
+            "work_unit_implementer" => WorkUnitExecutionRole::Implementer,
+            _ => return Err(ExecutionSupportError::Denied),
+        };
+        let attempt = self
+            .repository
+            .load_authorized_attempt_for_role(&grant.attempt_id, role)?;
         let binding = self.resolver.resolve(&attempt, Some(&grant.binding))?;
         if grant.correlation != correlation_fingerprint(&attempt, &binding) {
             return Err(ExecutionSupportError::CorrelationMismatch);
@@ -925,7 +954,10 @@ impl ExecutionSupportService {
                 )
                 .map(ExecutionSupportResponse::EvidenceContent)
             }
-            ExecutionSupportIntent::CaptureAuthorization => inspection.capture_authorization_id.map(ExecutionSupportResponse::CaptureAuthorization).ok_or(ExecutionSupportError::Denied),
+            ExecutionSupportIntent::CaptureAuthorization => inspection
+                .capture_authorization_id
+                .map(ExecutionSupportResponse::CaptureAuthorization)
+                .ok_or(ExecutionSupportError::Denied),
         }
     }
 }
@@ -937,12 +969,12 @@ pub(crate) struct ProductExecutionSupportState {
 }
 impl ProductExecutionSupportState {
     pub(crate) fn new(
-        database_path: &Path,
+        database: Arc<ActiveDatabase>,
         workspace_parent: PathBuf,
         orchestration: Arc<SqliteOrchestrationRepository>,
     ) -> Result<Self, ExecutionSupportError> {
-        let repository = Arc::new(SqliteExecutionSupportRepository::open(
-            database_path,
+        let repository = Arc::new(SqliteExecutionSupportRepository::new(
+            database,
             orchestration.clone(),
         )?);
         Ok(Self {
@@ -955,8 +987,34 @@ impl ProductExecutionSupportState {
             )),
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn open(
+        database_path: &Path,
+        workspace_parent: PathBuf,
+        orchestration: Arc<SqliteOrchestrationRepository>,
+    ) -> Result<Self, ExecutionSupportError> {
+        let database = ActiveDatabase::open(database_path, |connection| {
+            connection
+                .execute_batch(EXECUTION_SUPPORT_SCHEMA)
+                .map_err(|error| error.to_string())
+        })
+        .map(Arc::new)
+        .map_err(|_| ExecutionSupportError::Unavailable)?;
+        Self::new(database, workspace_parent, orchestration)
+    }
     pub(crate) fn service(&self) -> Arc<ExecutionSupportService> {
         self.service.clone()
+    }
+}
+
+fn map_managed<T>(
+    result: Result<T, ManagedOperationError<ExecutionSupportError>>,
+) -> Result<T, ExecutionSupportError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(ManagedOperationError::Domain(error)) => Err(error),
+        Err(ManagedOperationError::Infrastructure(_)) => Err(ExecutionSupportError::Unavailable),
     }
 }
 
@@ -969,10 +1027,27 @@ struct StoredGrant {
     correlation: String,
 }
 
-fn load_grant(connection: &Connection, attempt_id: &str, role_id: &str,
+fn load_grant(
+    connection: &Connection,
+    attempt_id: &str,
+    role_id: &str,
 ) -> Result<Option<StoredGrant>, ExecutionSupportError> {
     let query = "SELECT attempt_id,role_id,capability_ref,workspace_id,workspace_fingerprint,correlation_fingerprint FROM execution_support_grants WHERE attempt_id=?1 AND role_id=?2";
-    connection.query_row(query, params![attempt_id,role_id], |row| Ok(StoredGrant { attempt_id:row.get(0)?, role_id:row.get(1)?, capability_ref:row.get(2)?, binding:ExecutionWorkspaceBinding{workspace_id:row.get(3)?,workspace_fingerprint:row.get(4)?}, correlation:row.get(5)? })).optional().map_err(|_|ExecutionSupportError::Unavailable)
+    connection
+        .query_row(query, params![attempt_id, role_id], |row| {
+            Ok(StoredGrant {
+                attempt_id: row.get(0)?,
+                role_id: row.get(1)?,
+                capability_ref: row.get(2)?,
+                binding: ExecutionWorkspaceBinding {
+                    workspace_id: row.get(3)?,
+                    workspace_fingerprint: row.get(4)?,
+                },
+                correlation: row.get(5)?,
+            })
+        })
+        .optional()
+        .map_err(|_| ExecutionSupportError::Unavailable)
 }
 fn load_grant_for_capability(
     connection: &Connection,
@@ -1214,16 +1289,17 @@ mod tests {
         InitiatedSprintGitAuthorityWrite, StoreInitiatedSprintGitAuthorityResult,
     };
     use super::*;
-    use crate::{
-        agent_sessions::{
-            domain::AgentInvocationId,
-            ports::{AgentRuntimeUpdateSink, RuntimeUpdate, RuntimeUpdateDeliveryFailure},
-        },
+    use crate::agent_sessions::{
+        domain::AgentInvocationId,
+        ports::{AgentRuntimeUpdateSink, RuntimeUpdate, RuntimeUpdateDeliveryFailure},
     };
     #[cfg(feature = "live-tests")]
     use crate::{
         agent_sessions::{
-            domain::{AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId, RuntimeSandboxMode},
+            domain::{
+                AgentInvocationTerminalStatus, AgentRuntimeOptions, AgentSessionId,
+                RuntimeSandboxMode,
+            },
             ports::{AgentRuntime, RuntimeInvocationRequest},
         },
         runtime::codex::CodexCliRuntime,
@@ -1255,10 +1331,17 @@ mod tests {
         fn service(&self) -> ExecutionSupportService {
             let orchestration =
                 Arc::new(SqliteOrchestrationRepository::open(&self.database).unwrap());
+            let database = Arc::new(
+                ActiveDatabase::open(&self.database, |connection| {
+                    connection
+                        .execute_batch(EXECUTION_SUPPORT_SCHEMA)
+                        .map_err(|error| error.to_string())
+                })
+                .unwrap(),
+            );
             ExecutionSupportService::new(
                 Arc::new(
-                    SqliteExecutionSupportRepository::open(&self.database, orchestration.clone())
-                        .unwrap(),
+                    SqliteExecutionSupportRepository::new(database, orchestration.clone()).unwrap(),
                 ),
                 Arc::new(ProductExecutionWorkspaceResolver::new(
                     orchestration,
@@ -1534,7 +1617,9 @@ mod tests {
         assert!(!root.starts_with(&fixture.sprint_root));
         assert!(!root.starts_with(&application_root));
         assert_eq!(fixture.git(&root, &["rev-parse", "HEAD"]), fixture.baseline);
-        assert!(registered_worktree(&fixture.repository_root, &root.canonicalize().unwrap()).unwrap());
+        assert!(
+            registered_worktree(&fixture.repository_root, &root.canonicalize().unwrap()).unwrap()
+        );
         assert_eq!(
             service
                 .grant_for_role(
@@ -1612,7 +1697,10 @@ mod tests {
             sandbox: Some(RuntimeSandboxMode::WorkspaceWrite),
         };
         let effective = runtime
-            .preflight_invocation(crate::agent_sessions::ports::RuntimeInvocationMode::Start, &options)
+            .preflight_invocation(
+                crate::agent_sessions::ports::RuntimeInvocationMode::Start,
+                &options,
+            )
             .unwrap()
             .effective_options;
         runtime
@@ -1632,14 +1720,26 @@ mod tests {
         while runtime.active_direct_child_count().unwrap() != 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(runtime.active_direct_child_count().unwrap(), 0, "live provider did not finish");
+        assert_eq!(
+            runtime.active_direct_child_count().unwrap(),
+            0,
+            "live provider did not finish"
+        );
         let updates = sink.updates.lock().unwrap();
         assert!(updates.iter().any(|update| matches!(update, RuntimeUpdate::Event(event) if event.raw_payload["kind"] == "codex_launch_provenance" && event.raw_payload["sandbox"] == "workspace-write" && event.raw_payload["workingDirectory"]["extendedLengthPrefix"] == false && event.raw_payload["inheritsParentEnvironment"] == true)));
         assert!(updates.iter().any(|update| matches!(update, RuntimeUpdate::Finished(outcome) if outcome.status == AgentInvocationTerminalStatus::Completed)));
         drop(updates);
-        assert!(std::fs::read_to_string(fixture.attempt_root("live-attempt-1").join("file.txt")).unwrap().contains("PIP01W_PRODUCT_LIVE"));
-        assert!(service.commit_implementer_candidate("live-attempt-1").unwrap());
-        assert!(matches!(service.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if !files.is_empty()));
+        assert!(
+            std::fs::read_to_string(fixture.attempt_root("live-attempt-1").join("file.txt"))
+                .unwrap()
+                .contains("PIP01W_PRODUCT_LIVE")
+        );
+        assert!(service
+            .commit_implementer_candidate("live-attempt-1")
+            .unwrap());
+        assert!(
+            matches!(service.consume(&reference.capability_ref, ExecutionSupportIntent::ChangedFileManifest), Ok(ExecutionSupportResponse::ChangedFileManifest(files)) if !files.is_empty())
+        );
     }
 
     #[test]
@@ -1695,12 +1795,14 @@ mod tests {
 
         let reopened = fixture.service();
         let reference = reopened.grant("attempt-1").unwrap();
-        let stored = load_grant_for_capability(
-            &reopened.repository.connection.lock().unwrap(),
-            &reference.capability_ref,
-        )
-        .unwrap()
-        .unwrap();
+        let stored = reopened
+            .repository
+            .database
+            .read("inspect execution support grant", |connection| {
+                load_grant_for_capability(connection, &reference.capability_ref)
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.binding, binding);
         assert!(matches!(
             reopened.consume(
@@ -1814,7 +1916,10 @@ mod tests {
                 if files.len() == 1 && files[0].display_name == "candidate.txt"
         ));
         assert_eq!(service.commit_implementer_candidate("attempt-1"), Ok(false));
-        assert_eq!(fixture.service().commit_implementer_candidate("attempt-1"), Ok(false));
+        assert_eq!(
+            fixture.service().commit_implementer_candidate("attempt-1"),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -1864,7 +1969,13 @@ mod tests {
         let fixture = fixture();
         let connection = Connection::open(&fixture.database).unwrap();
         connection.execute_batch("DROP TABLE execution_support_attempt_authorizations; DROP TABLE execution_support_grants; CREATE TABLE execution_support_attempt_authorizations (attempt_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),sprint_git_authority_id TEXT NOT NULL,baseline_object_id TEXT NOT NULL,authorization_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL); CREATE TABLE execution_support_grants (attempt_id TEXT PRIMARY KEY,capability_ref TEXT NOT NULL UNIQUE,epic_id TEXT NOT NULL,sprint_id TEXT NOT NULL,work_unit_id TEXT NOT NULL,repository_id TEXT NOT NULL,role_id TEXT NOT NULL,workspace_id TEXT NOT NULL,workspace_fingerprint TEXT NOT NULL,correlation_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL);").unwrap();
-        let fingerprint = authorization_fingerprint("legacy-attempt", "legacy-unit", "work_unit_handler", &fixture.authority_id, &fixture.baseline);
+        let fingerprint = authorization_fingerprint(
+            "legacy-attempt",
+            "legacy-unit",
+            "work_unit_handler",
+            &fixture.authority_id,
+            &fixture.baseline,
+        );
         connection.execute("INSERT INTO execution_support_attempt_authorizations VALUES (?1,?2,?3,?4,?5,?6,datetime('now'))", params!["legacy-attempt","legacy-unit","work_unit_handler",fixture.authority_id,fixture.baseline,fingerprint]).unwrap();
         drop(connection);
         let service = fixture.service();
@@ -1872,9 +1983,15 @@ mod tests {
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_list('execution_support_attempt_authorizations') WHERE \"table\"='initiated_sprint_git_authorities'", [], |row| row.get::<_,i64>(0)).unwrap(), 1);
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM execution_support_attempt_authorizations WHERE attempt_id='legacy-attempt' AND role_kind='work_unit_handler'", [], |row| row.get::<_,i64>(0)).unwrap(), 1);
         drop(connection);
-        assert!(matches!(service.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
+        assert!(matches!(
+            service.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler),
+            Ok(_)
+        ));
         let reopened = fixture.service();
-        assert!(matches!(reopened.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler), Ok(_)));
+        assert!(matches!(
+            reopened.grant_for_role("legacy-attempt", WorkUnitExecutionRole::Handler),
+            Ok(_)
+        ));
     }
 
     #[test]
@@ -1884,11 +2001,18 @@ mod tests {
         connection.execute_batch("DROP TABLE execution_support_attempt_authorizations; DROP TABLE execution_support_grants; CREATE TABLE execution_support_attempt_authorizations (attempt_id TEXT PRIMARY KEY,work_unit_id TEXT NOT NULL,role_kind TEXT NOT NULL CHECK(role_kind IN ('work_unit_handler','work_unit_implementer')),sprint_git_authority_id TEXT NOT NULL,baseline_object_id TEXT NOT NULL,authorization_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL); CREATE TABLE execution_support_grants (attempt_id TEXT PRIMARY KEY,capability_ref TEXT NOT NULL UNIQUE,epic_id TEXT NOT NULL,sprint_id TEXT NOT NULL,work_unit_id TEXT NOT NULL,repository_id TEXT NOT NULL,role_id TEXT NOT NULL,workspace_id TEXT NOT NULL,workspace_fingerprint TEXT NOT NULL,correlation_fingerprint TEXT NOT NULL,recorded_at TEXT NOT NULL);").unwrap();
         connection.execute("INSERT INTO execution_support_attempt_authorizations VALUES ('bad','unit','work_unit_handler','missing-authority',?1,'fingerprint',datetime('now'))", [&fixture.baseline]).unwrap();
         drop(connection);
-        let orchestration = Arc::new(SqliteOrchestrationRepository::open(&fixture.database).unwrap());
-        assert!(SqliteExecutionSupportRepository::open(&fixture.database, orchestration).is_err());
+        let orchestration =
+            Arc::new(SqliteOrchestrationRepository::open(&fixture.database).unwrap());
+        let database = Arc::new(ActiveDatabase::open(&fixture.database, |_| Ok(())).unwrap());
+        assert!(SqliteExecutionSupportRepository::new(database, orchestration).is_err());
         let connection = Connection::open(&fixture.database).unwrap();
         assert!(connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_support_attempt_authorizations'", [], |row| row.get::<_,String>(0)).unwrap().contains("attempt_id TEXT PRIMARY KEY"));
-        connection.execute("DELETE FROM execution_support_attempt_authorizations WHERE attempt_id='bad'", []).unwrap();
+        connection
+            .execute(
+                "DELETE FROM execution_support_attempt_authorizations WHERE attempt_id='bad'",
+                [],
+            )
+            .unwrap();
         drop(connection);
         let _ = fixture.service();
         let connection = Connection::open(&fixture.database).unwrap();

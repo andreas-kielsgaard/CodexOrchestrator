@@ -505,6 +505,22 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     return run;
   };
   const id = (profileId: string) => ({ input: { profileId } });
+  const probeMcp = (profileId: string) => {
+    const args = id(profileId);
+    const run = queue.then(async () => {
+      decodeNativeProfile(
+        await invokeCommand<unknown>('probe_native_profile_mcp_reporting', args),
+        0,
+      );
+      decodeNativeProfile(
+        await invokeCommand<unknown>('reconcile_native_profile_mcp_reporting', args),
+        0,
+      );
+      return read();
+    });
+    queue = run.then(() => undefined, () => undefined);
+    return run;
+  };
   return {
     load,
     discoverHomes: () => invokeCommand<unknown>('discover_native_codex_homes').then(decodeDiscoveredNativeCodexHomes),
@@ -522,7 +538,7 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
-    probeMcp: (profileId) => action('reconcile_native_profile_mcp_reporting', id(profileId)),
+    probeMcp,
   };
 }
 

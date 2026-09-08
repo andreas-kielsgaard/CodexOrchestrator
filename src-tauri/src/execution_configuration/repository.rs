@@ -6,8 +6,10 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use std::{
     collections::BTreeMap,
     path::Path,
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
+
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const CAPABILITY_PROFILE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS execution_capability_profiles (
@@ -105,78 +107,83 @@ impl InMemoryCapabilityProfileRepository {
 }
 
 pub(crate) struct SqliteCapabilityProfileRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteCapabilityProfileRepository {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
     pub(crate) fn open(database_path: &Path) -> Result<Self, CapabilityProfileRepositoryError> {
-        let connection = crate::storage::open_active_database(database_path)
-            .map_err(CapabilityProfileRepositoryError::Storage)?;
-        Self::new(connection)
+        ActiveDatabase::open(database_path, initialize_capability_profile_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))
     }
 
     pub(crate) fn new(connection: Connection) -> Result<Self, CapabilityProfileRepositoryError> {
-        crate::storage::configure_sqlite_connection(&connection).map_err(|error| {
-            CapabilityProfileRepositoryError::Storage(format!(
-                "Unable to configure Capability Profile storage: {error}"
-            ))
-        })?;
-        connection
-            .execute_batch(CAPABILITY_PROFILE_SCHEMA)
-            .map_err(|error| {
-                CapabilityProfileRepositoryError::Storage(format!(
-                    "Unable to initialize Capability Profile storage: {error}"
-                ))
-            })?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        ActiveDatabase::from_connection(connection, initialize_capability_profile_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))
     }
 
-    fn lock(&self) -> Result<MutexGuard<'_, Connection>, CapabilityProfileRepositoryError> {
-        self.connection.lock().map_err(|_| {
-            CapabilityProfileRepositoryError::Storage(
-                "Capability Profile storage lock was poisoned".into(),
-            )
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, CapabilityProfileRepositoryError>,
+    ) -> Result<T, CapabilityProfileRepositoryError> {
+        self.database.read(operation, read).map_err(managed_error)
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, CapabilityProfileRepositoryError>,
+    ) -> Result<T, CapabilityProfileRepositoryError> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 }
 
 impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
     fn list(&self) -> Result<Vec<CapabilityProfile>, CapabilityProfileRepositoryError> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT capability_profile_id,revision,profile_json \
+        self.read("list Capability Profiles", |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT capability_profile_id,revision,profile_json \
                  FROM execution_capability_profiles ORDER BY capability_profile_id COLLATE NOCASE",
-            )
-            .map_err(storage_error("prepare Capability Profile list"))?;
-        let profiles = statement
-            .query_map([], profile_row)
-            .map_err(storage_error("query Capability Profile list"))?
-            .map(|row| {
-                row.map_err(storage_error("read Capability Profile row"))
-                    .and_then(decode_profile_row)
-            })
-            .collect();
-        profiles
+                )
+                .map_err(storage_error("prepare Capability Profile list"))?;
+            let profiles = statement
+                .query_map([], profile_row)
+                .map_err(storage_error("query Capability Profile list"))?
+                .map(|row| {
+                    row.map_err(storage_error("read Capability Profile row"))
+                        .and_then(decode_profile_row)
+                })
+                .collect();
+            profiles
+        })
     }
 
     fn find(
         &self,
         capability_profile_id: &str,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
-        self.lock()?
-            .query_row(
-                "SELECT capability_profile_id,revision,profile_json \
+        self.read("find Capability Profile", |connection| {
+            connection
+                .query_row(
+                    "SELECT capability_profile_id,revision,profile_json \
                  FROM execution_capability_profiles WHERE capability_profile_id=?1",
-                [capability_profile_id],
-                profile_row,
-            )
-            .optional()
-            .map_err(storage_error("read Capability Profile"))?
-            .map(decode_profile_row)
-            .transpose()
+                    [capability_profile_id],
+                    profile_row,
+                )
+                .optional()
+                .map_err(storage_error("read Capability Profile"))?
+                .map(decode_profile_row)
+                .transpose()
+        })
     }
 
     fn insert(
@@ -185,26 +192,28 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
     ) -> Result<(), CapabilityProfileRepositoryError> {
         validate_profile(capability_profile)?;
         let json = encode_profile(capability_profile)?;
-        match self.lock()?.execute(
-            "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) \
-             VALUES(?1,?2,?3)",
-            params![
-                capability_profile.capability_profile_id,
-                persisted_revision(capability_profile.revision)?,
-                json,
-            ],
-        ) {
-            Ok(1) => Ok(()),
-            Ok(changed) => Err(CapabilityProfileRepositoryError::Storage(format!(
-                "Capability Profile insert affected {changed} rows"
-            ))),
-            Err(error) if error.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) => {
-                Err(CapabilityProfileRepositoryError::AlreadyExists(
-                    capability_profile.capability_profile_id.clone(),
-                ))
+        self.write("insert Capability Profile", |transaction| {
+            match transaction.execute(
+                "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) \
+                 VALUES(?1,?2,?3)",
+                params![
+                    capability_profile.capability_profile_id,
+                    persisted_revision(capability_profile.revision)?,
+                    json,
+                ],
+            ) {
+                Ok(1) => Ok(()),
+                Ok(changed) => Err(CapabilityProfileRepositoryError::Storage(format!(
+                    "Capability Profile insert affected {changed} rows"
+                ))),
+                Err(error) if error.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) => {
+                    Err(CapabilityProfileRepositoryError::AlreadyExists(
+                        capability_profile.capability_profile_id.clone(),
+                    ))
+                }
+                Err(error) => Err(storage_error("insert Capability Profile")(error)),
             }
-            Err(error) => Err(storage_error("insert Capability Profile")(error)),
-        }
+        })
     }
 
     fn replace(
@@ -214,8 +223,8 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
     ) -> Result<(), CapabilityProfileRepositoryError> {
         validate_profile(capability_profile)?;
         let json = encode_profile(capability_profile)?;
-        let connection = self.lock()?;
-        let changed = connection
+        self.write("replace Capability Profile", |transaction| {
+        let changed = transaction
             .execute(
                 "UPDATE execution_capability_profiles SET revision=?2,profile_json=?3 \
                  WHERE capability_profile_id=?1 AND revision=?4",
@@ -230,7 +239,7 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
         if changed == 1 {
             return Ok(());
         }
-        let exists = connection
+        let exists = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM execution_capability_profiles WHERE capability_profile_id=?1)",
                 [&capability_profile.capability_profile_id],
@@ -249,11 +258,11 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
                 capability_profile.capability_profile_id.clone(),
             ))
         }
+        })
     }
 
     fn remove(&self, capability_profile_id: &str) -> Result<(), CapabilityProfileRepositoryError> {
-        match self
-            .lock()?
+        self.write("delete Capability Profile", |transaction| match transaction
             .execute(
                 "DELETE FROM execution_capability_profiles WHERE capability_profile_id=?1",
                 [capability_profile_id],
@@ -267,7 +276,24 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
             changed => Err(CapabilityProfileRepositoryError::Storage(format!(
                 "Capability Profile delete affected {changed} rows"
             ))),
+        })
+    }
+}
+
+pub(crate) fn initialize_capability_profile_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(CAPABILITY_PROFILE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Capability Profile storage: {error}"))
+}
+
+fn managed_error(
+    error: ManagedOperationError<CapabilityProfileRepositoryError>,
+) -> CapabilityProfileRepositoryError {
+    match error {
+        ManagedOperationError::Infrastructure(error) => {
+            CapabilityProfileRepositoryError::Storage(error.to_string())
         }
+        ManagedOperationError::Domain(error) => error,
     }
 }
 

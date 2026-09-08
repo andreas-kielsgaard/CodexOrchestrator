@@ -1,7 +1,3 @@
-use super::{
-    application::WorkflowApplication,
-    domain::{WorkflowInvocation, WorkflowMcpComponent, WorkflowMcpOutput},
-};
 use crate::harness_engine::{ManagedMcpUpstreamDescriptor, ManagedMcpUpstreamOwner};
 use axum::body::Body;
 use http_body_util::BodyExt;
@@ -17,16 +13,6 @@ pub(crate) const TOOL_NAME: &str = "handoff_to_agent";
 pub(crate) const INTERFACE_ID: &str = "prompt_agent_files_and_text/v1";
 pub(crate) const RESERVED_ARGUMENT: &str = "_workflowInvocation";
 
-pub(crate) fn component() -> WorkflowMcpComponent {
-    WorkflowMcpComponent {
-        server_name: SERVER_NAME.to_string(),
-        tool_name: TOOL_NAME.to_string(),
-        title: "Handoff to agent".to_string(),
-        participation_mode: "native".to_string(),
-        interface_id: INTERFACE_ID.to_string(),
-    }
-}
-
 pub(crate) struct WorkflowMcpServerOwner {
     cancellation: CancellationToken,
     thread: Option<thread::JoinHandle<()>>,
@@ -41,18 +27,6 @@ impl ManagedMcpUpstreamOwner for WorkflowMcpServerOwner {
     }
 }
 
-pub(crate) fn start_sample_server(
-    application: Weak<WorkflowApplication>,
-) -> Result<
-    (
-        ManagedMcpUpstreamDescriptor,
-        Box<dyn ManagedMcpUpstreamOwner>,
-    ),
-    String,
-> {
-    start_server(WorkflowMcpApplication::Legacy(application))
-}
-
 pub(crate) fn start_session_event_server(
     application: Weak<super::execution::WorkflowExecutionService>,
 ) -> Result<
@@ -62,17 +36,11 @@ pub(crate) fn start_session_event_server(
     ),
     String,
 > {
-    start_server(WorkflowMcpApplication::SessionEvents(application))
-}
-
-#[derive(Clone)]
-enum WorkflowMcpApplication {
-    Legacy(Weak<WorkflowApplication>),
-    SessionEvents(Weak<super::execution::WorkflowExecutionService>),
+    start_server(application)
 }
 
 fn start_server(
-    application: WorkflowMcpApplication,
+    application: Weak<super::execution::WorkflowExecutionService>,
 ) -> Result<
     (
         ManagedMcpUpstreamDescriptor,
@@ -124,7 +92,7 @@ fn start_server(
 
 async fn run(
     listener: tokio::net::TcpListener,
-    application: WorkflowMcpApplication,
+    application: Weak<super::execution::WorkflowExecutionService>,
     bearer: String,
     cancellation: CancellationToken,
 ) {
@@ -151,7 +119,7 @@ async fn run(
 
 async fn handle(
     request: Request<hyper::body::Incoming>,
-    application: WorkflowMcpApplication,
+    application: Weak<super::execution::WorkflowExecutionService>,
     bearer: &str,
 ) -> Response<Body> {
     let authorized = request
@@ -176,147 +144,10 @@ async fn handle(
             )
         }
     };
-    let application = match application {
-        WorkflowMcpApplication::SessionEvents(application) => {
-            return match application.upgrade() {
-                Some(application) => {
-                    handle_session_event_request(&path, &body, &headers, &application)
-                }
-                None => text(StatusCode::SERVICE_UNAVAILABLE, "Workflow is unavailable"),
-            }
-        }
-        WorkflowMcpApplication::Legacy(application) => application,
-    };
     let Some(application) = application.upgrade() else {
-        return text(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Workflow Engine is unavailable.",
-        );
+        return text(StatusCode::SERVICE_UNAVAILABLE, "Workflow is unavailable");
     };
-    if path == "/prepare" {
-        let request = match serde_json::from_slice::<PrepareRequest>(&body) {
-            Ok(request) => request,
-            Err(error) => {
-                return text(
-                    StatusCode::BAD_REQUEST,
-                    &format!("Invalid Workflow preparation: {error}"),
-                )
-            }
-        };
-        return match application.prepare_mcp_native_handoff(
-            &request.workflow_instance_id,
-            &request.sender_node_id,
-            &request.source_session_id,
-            &request.source_invocation_id,
-            &request.server_name,
-            &request.tool_name,
-        ) {
-            Ok(handoff) => json_response(json!({ "handoff": handoff })),
-            Err(error) => text(StatusCode::CONFLICT, &error),
-        };
-    }
-    if path != "/mcp" {
-        return text(
-            StatusCode::NOT_FOUND,
-            "Workflow MCP endpoint was not found.",
-        );
-    }
-    let request = match serde_json::from_slice::<Value>(&body) {
-        Ok(request) => request,
-        Err(error) => return rpc_error(Value::Null, format!("Invalid MCP request: {error}")),
-    };
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    match request.get("method").and_then(Value::as_str) {
-        Some("initialize") => json_response(json!({
-            "jsonrpc":"2.0","id":id,"result":{
-                "protocolVersion":"2025-06-18",
-                "capabilities":{"tools":{}},
-                "serverInfo":{"name":"workflow-handoff","version":"1"}
-            }
-        })),
-        Some("notifications/initialized") => Response::builder()
-            .status(StatusCode::ACCEPTED)
-            .body(Body::empty())
-            .expect("empty response"),
-        Some("tools/list") => json_response(json!({
-            "jsonrpc":"2.0","id":id,"result":{"tools":[tool_metadata()]}
-        })),
-        Some("tools/call") => handle_tool_call(id, &request, &headers, &application),
-        _ => rpc_error(id, "Unsupported Workflow MCP method.".to_string()),
-    }
-}
-
-fn handle_tool_call(
-    id: Value,
-    request: &Value,
-    headers: &hyper::HeaderMap,
-    application: &WorkflowApplication,
-) -> Response<Body> {
-    if request.pointer("/params/name").and_then(Value::as_str) != Some(TOOL_NAME) {
-        return rpc_error(id, "Unknown Workflow MCP tool.".to_string());
-    }
-    let arguments = request
-        .pointer("/params/arguments")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let workflow_context = arguments
-        .get(RESERVED_ARGUMENT)
-        .map(|value| serde_json::from_value::<WorkflowInvocation>(value.clone()));
-    let workflow_instance_id = header_value(headers, "x-workflow-instance-id");
-    let source_session_id = header_value(headers, "x-workflow-session-id");
-    let file_paths = arguments
-        .get("filePaths")
-        .and_then(Value::as_array)
-        .map(|paths| {
-            paths
-                .iter()
-                .map(|path| path.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        })
-        .flatten();
-    let output = match (
-        file_paths,
-        arguments.get("promptText").and_then(Value::as_str),
-    ) {
-        (Some(file_paths), Some(prompt_text)) => Ok(WorkflowMcpOutput {
-            file_paths,
-            prompt_text: prompt_text.to_string(),
-        }),
-        _ => Err("filePaths and promptText are required.".to_string()),
-    };
-    if let Some(workflow_context) = workflow_context {
-        let invocation = match workflow_context {
-            Ok(invocation) => invocation,
-            Err(error) => {
-                return tool_error(id, &format!("Workflow invocation is invalid: {error}"))
-            }
-        };
-        let (Some(workflow_instance_id), Some(source_session_id)) =
-            (workflow_instance_id, source_session_id)
-        else {
-            return tool_error(id, "Trusted Workflow routing context is absent.");
-        };
-        if let Err(error) = application.settle_mcp_native_handoff(
-            workflow_instance_id,
-            source_session_id,
-            &invocation,
-            output.clone(),
-        ) {
-            return tool_error(id, &error);
-        }
-    }
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => return tool_error(id, &error),
-    };
-    json_response(json!({
-        "jsonrpc":"2.0","id":id,"result":{
-            "content":[{"type":"text","text":"Workflow handoff output accepted."}],
-            "structuredContent":output,
-            "isError":false
-        }
-    }))
+    handle_session_event_request(&path, &body, &headers, &application)
 }
 
 fn handle_session_event_request(

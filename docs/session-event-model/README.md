@@ -1,6 +1,6 @@
 # Execution Configuration and Session Event target
 
-Status: working target direction for `codex/session-event-model-overhaul`.
+Status: working implementation on `codex/harness-ux-workflow-convergence`.
 
 This directory describes the replacement for the mixed Harness and generic Workflow Role models.
 It is an implementation guide, not a claim that every described integration or UI already exists.
@@ -58,23 +58,25 @@ implementation supported by current use over abstractions justified only by poss
 - `src-tauri/src/agent_sessions/session_event_adapter.rs`: Agent Session implementation of Session
   Event ports.
 - `src/components/CollapsibleSection.tsx`: reusable disclosure UI.
-- `src/features/workflows/editor/`: reusable Workflow editor behavior.
+- `src/features/workflowGraph/`: shared graph rendering and node-drag behavior.
+- `src/features/workflowAuthoring/`: recipe editing and instance creation.
+- `src/features/workflowInstances/`: stored run selection and node-based run view.
 - `src/features/agentSessions/`: reusable Session workspace and transcript behavior.
 
-The current frontend still contains legacy `conversationHarnesses` and Workflow Role/Harness
-contracts. Their useful controls are extraction sources, not target domain compositions.
+Some curated orchestration features still use older Harness wording. They are adjacent feature
+contracts, not part of the generic Workflow model described here.
 
 ## Current checkpoint
 
-The replacement services and controls were mounted by `aaca806`. Review checkpoint `e77a725`
-records missing instance/canvas flows and creation, event-wiring, draft-state and layout failures.
-The earlier unmounted foundation proof did not establish these mounted flows. See the
-[regression review](../regression-review/README.md) for observed evidence and the
-[repair plan](repair-plan/README.md) for the agreed scope. Repairs were implemented in
-`codex/session-event-regression-review` for consolidation into `codex/harness-ux-workflow-convergence`. The [repair record](../regression-review/repairs/README.md)
-maps the changed boundaries and tested flows, including real file-source and local managed-MCP
-integration. A fresh native-window walkthrough and user acceptance remain unverified; broad legacy
-retirement remains later.
+The replacement services and controls are mounted. Workflow authoring compiles to Session Events;
+stored recipe instances pin their recipe and worktree; Session creation pins its resolved profile;
+and the production composition shares one managed `ActiveDatabase` across these repositories.
+
+The Workflow V1 executor, commands, CLI, frontend fallback and Role-era storage code have been
+removed. Old Workflow data is not migrated. See the [regression review](../regression-review/README.md)
+for the earlier baseline and the [repair record](../regression-review/repairs/README.md) for the
+functional proof that led to this checkpoint. A fresh native-window walkthrough and user acceptance
+remain separate from source-level integration.
 
 ## Documentation authority
 

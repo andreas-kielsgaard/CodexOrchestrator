@@ -3,7 +3,12 @@ use super::{
     SessionEventStoreError,
 };
 use rusqlite::{params, Connection};
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const SESSION_EVENT_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS session_event_groups (
@@ -26,29 +31,35 @@ ON session_event_deliveries(event_group_id, ordinal);
 "#;
 
 pub(crate) struct SqliteSessionEventStore {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteSessionEventStore {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
     pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, SessionEventStoreError> {
-        let connection = Connection::open(path).map_err(|error| {
-            SessionEventStoreError::new(format!("Unable to open Session-event storage: {error}"))
-        })?;
-        crate::storage::configure_sqlite_connection(&connection).map_err(|error| {
-            SessionEventStoreError::new(format!(
-                "Unable to configure Session-event storage: {error}"
-            ))
-        })?;
-        connection
-            .execute_batch(SESSION_EVENT_SCHEMA)
-            .map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to initialize Session-event storage: {error}"
-                ))
-            })?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        ActiveDatabase::open(path, initialize_session_event_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| SessionEventStoreError::new(error.to_string()))
+    }
+
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, SessionEventStoreError>,
+    ) -> Result<T, SessionEventStoreError> {
+        self.database.read(operation, read).map_err(managed_error)
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SessionEventStoreError>,
+    ) -> Result<T, SessionEventStoreError> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 }
 
@@ -69,15 +80,7 @@ impl SessionEventStore for SqliteSessionEventStore {
                     .map_err(|error| SessionEventStoreError::new(error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
-        let transaction = connection.unchecked_transaction().map_err(|error| {
-            SessionEventStoreError::new(format!(
-                "Unable to begin Session-event persistence: {error}"
-            ))
-        })?;
+        self.write("record Session Event", |transaction| {
         transaction
             .execute(
                 "INSERT INTO session_event_groups(id,record_json,recorded_at) VALUES(?1,?2,?3)",
@@ -111,10 +114,7 @@ impl SessionEventStore for SqliteSessionEventStore {
                     ))
                 })?;
         }
-        transaction.commit().map_err(|error| {
-            SessionEventStoreError::new(format!(
-                "Unable to commit Session-event persistence: {error}"
-            ))
+        Ok(())
         })
     }
 
@@ -122,110 +122,67 @@ impl SessionEventStore for SqliteSessionEventStore {
         &self,
         event_group_id: &ReferenceIdentity,
     ) -> Result<Option<EventGroupRecord>, SessionEventStoreError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
-        let mut statement = connection
-            .prepare("SELECT record_json FROM session_event_groups WHERE id = ?1")
-            .map_err(|error| {
+        self.read("load Session Event group", |connection| {
+            let mut statement = connection
+                .prepare("SELECT record_json FROM session_event_groups WHERE id = ?1")
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to prepare Session-event group query: {error}"
+                    ))
+                })?;
+            let mut rows = statement
+                .query(params![persistence_key(event_group_id)?])
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to query Session-event group {}: {error}",
+                        reference_label(event_group_id)
+                    ))
+                })?;
+            let Some(row) = rows.next().map_err(|error| {
                 SessionEventStoreError::new(format!(
-                    "Unable to prepare Session-event group query: {error}"
+                    "Unable to read Session-event group {}: {error}",
+                    reference_label(event_group_id)
                 ))
-            })?;
-        let mut rows = statement
-            .query(params![persistence_key(event_group_id)?])
-            .map_err(|error| {
+            })?
+            else {
+                return Ok(None);
+            };
+            let json = row.get::<_, String>(0).map_err(|error| {
                 SessionEventStoreError::new(format!(
-                    "Unable to query Session-event group {}: {error}",
+                    "Unable to decode stored Session-event group {}: {error}",
                     reference_label(event_group_id)
                 ))
             })?;
-        let Some(row) = rows.next().map_err(|error| {
-            SessionEventStoreError::new(format!(
-                "Unable to read Session-event group {}: {error}",
-                reference_label(event_group_id)
-            ))
-        })?
-        else {
-            return Ok(None);
-        };
-        let json = row.get::<_, String>(0).map_err(|error| {
-            SessionEventStoreError::new(format!(
-                "Unable to decode stored Session-event group {}: {error}",
-                reference_label(event_group_id)
-            ))
-        })?;
-        deserialize_group(&json).map(Some)
+            deserialize_group(&json).map(Some)
+        })
     }
 
     fn deliveries_for_group(
         &self,
         event_group_id: &ReferenceIdentity,
     ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
-        let mut statement = connection
-            .prepare(
-                "SELECT record_json FROM session_event_deliveries \
+        self.read("list Session Event deliveries for group", |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT record_json FROM session_event_deliveries \
                  WHERE event_group_id = ?1 ORDER BY ordinal",
-            )
-            .map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to prepare Session-event delivery query: {error}"
-                ))
-            })?;
-        let rows = statement
-            .query_map(params![persistence_key(event_group_id)?], |row| {
-                row.get::<_, String>(0)
-            })
-            .map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to query deliveries for Session-event group {}: {error}",
-                    reference_label(event_group_id)
-                ))
-            })?;
-        rows.map(|row| {
-            let json = row.map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to read stored Session-event delivery: {error}"
-                ))
-            })?;
-            deserialize_delivery(&json)
-        })
-        .collect()
-    }
-
-    fn deliveries_for_session(
-        &self,
-        session: &ReferenceIdentity,
-    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| SessionEventStoreError::new("Session-event storage lock was poisoned"))?;
-        let mut statement = connection
-            .prepare(
-                "SELECT record_json FROM session_event_deliveries \
-                 ORDER BY rowid",
-            )
-            .map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to prepare Session-linked delivery query: {error}"
-                ))
-            })?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| {
-                SessionEventStoreError::new(format!(
-                    "Unable to query deliveries for Session {}: {error}",
-                    reference_label(session)
-                ))
-            })?;
-        let deliveries = rows
-            .map(|row| {
+                )
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to prepare Session-event delivery query: {error}"
+                    ))
+                })?;
+            let rows = statement
+                .query_map(params![persistence_key(event_group_id)?], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to query deliveries for Session-event group {}: {error}",
+                        reference_label(event_group_id)
+                    ))
+                })?;
+            rows.map(|row| {
                 let json = row.map_err(|error| {
                     SessionEventStoreError::new(format!(
                         "Unable to read stored Session-event delivery: {error}"
@@ -233,11 +190,63 @@ impl SessionEventStore for SqliteSessionEventStore {
                 })?;
                 deserialize_delivery(&json)
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(deliveries
-            .into_iter()
-            .filter(|delivery| &delivery.target_session == session)
-            .collect())
+            .collect()
+        })
+    }
+
+    fn deliveries_for_session(
+        &self,
+        session: &ReferenceIdentity,
+    ) -> Result<Vec<EventDeliveryRecord>, SessionEventStoreError> {
+        self.read("list Session Event deliveries for Session", |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT record_json FROM session_event_deliveries \
+                 ORDER BY rowid",
+                )
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to prepare Session-linked delivery query: {error}"
+                    ))
+                })?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| {
+                    SessionEventStoreError::new(format!(
+                        "Unable to query deliveries for Session {}: {error}",
+                        reference_label(session)
+                    ))
+                })?;
+            let deliveries = rows
+                .map(|row| {
+                    let json = row.map_err(|error| {
+                        SessionEventStoreError::new(format!(
+                            "Unable to read stored Session-event delivery: {error}"
+                        ))
+                    })?;
+                    deserialize_delivery(&json)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(deliveries
+                .into_iter()
+                .filter(|delivery| &delivery.target_session == session)
+                .collect())
+        })
+    }
+}
+
+pub(crate) fn initialize_session_event_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(SESSION_EVENT_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Session-event storage: {error}"))
+}
+
+fn managed_error(error: ManagedOperationError<SessionEventStoreError>) -> SessionEventStoreError {
+    match error {
+        ManagedOperationError::Infrastructure(error) => {
+            SessionEventStoreError::new(error.to_string())
+        }
+        ManagedOperationError::Domain(error) => error,
     }
 }
 

@@ -4,16 +4,14 @@ import {
   WorkflowGraphEmpty,
   WorkflowGraphNodeCard,
   WorkflowGraphSurface,
+  beginWorkflowNodeDrag,
+  projectWorkflowNodeDrag,
   workflowGraphBounds,
   type WorkflowGraphConnection,
   type WorkflowGraphNode,
-} from '../workflowGraph';
-import {
-  beginWorkflowNodeDrag,
-  projectWorkflowNodeDrag,
-  type WorkflowNodeDragState,
   type WorkflowNodeDragPreview,
-} from '../workflows/editor/workflowNodeDrag';
+  type WorkflowNodeDragState,
+} from '../workflowGraph';
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
 import './workflowCanvas.css';
 

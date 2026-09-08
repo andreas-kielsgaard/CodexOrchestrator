@@ -3,10 +3,12 @@ use crate::session_events::{ReferenceIdentity, SessionEventResult};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Mutex};
+use std::{path::Path, sync::Arc};
 use uuid::Uuid;
 
-const SCHEMA: &str = r#"
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
+
+pub(crate) const WORKFLOW_INSTANCE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS workflow_recipe_instances (
     id TEXT PRIMARY KEY, record_json TEXT NOT NULL CHECK(json_valid(record_json))
 );
@@ -43,34 +45,46 @@ pub(crate) struct WorkflowEventAttempt {
 }
 
 pub(crate) struct WorkflowInstanceStore {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl WorkflowInstanceStore {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
-        Self::from_connection(Connection::open(path).map_err(|error| error.to_string())?)
+        ActiveDatabase::open(path, initialize_workflow_instance_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
     pub(crate) fn in_memory() -> Self {
-        Self::from_connection(Connection::open_in_memory().unwrap()).unwrap()
+        ActiveDatabase::from_connection(
+            Connection::open_in_memory().unwrap(),
+            initialize_workflow_instance_storage,
+        )
+        .map(Arc::new)
+        .map(Self::from_database)
+        .unwrap()
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, String> {
-        crate::storage::configure_sqlite_connection(&connection)
-            .map_err(|error| error.to_string())?;
-        connection
-            .execute_batch(SCHEMA)
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.read(operation, read).map_err(managed_error)
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
-        self.connection
-            .lock()
-            .map_err(|_| "Workflow instance storage is unavailable".into())
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 
     pub(crate) fn create(
@@ -96,20 +110,22 @@ impl WorkflowInstanceStore {
             target,
             created_at: Utc::now().to_rfc3339(),
         };
-        self.lock()?
-            .execute(
-                "INSERT INTO workflow_recipe_instances(id,record_json) VALUES(?1,?2)",
-                params![
-                    record.id,
-                    serde_json::to_string(&record).map_err(|error| error.to_string())?
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(record)
+        self.write("create Workflow instance", |transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO workflow_recipe_instances(id,record_json) VALUES(?1,?2)",
+                    params![
+                        record.id,
+                        serde_json::to_string(&record).map_err(|error| error.to_string())?
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(record)
+        })
     }
 
     pub(crate) fn list(&self) -> Result<Vec<RecipeInstance>, String> {
-        let connection = self.lock()?;
+        self.read("list Workflow instances", |connection| {
         let mut query = connection.prepare("SELECT record_json FROM workflow_recipe_instances ORDER BY json_extract(record_json,'$.createdAt') DESC,id")
             .map_err(|error| error.to_string())?;
         let result = query
@@ -121,26 +137,28 @@ impl WorkflowInstanceStore {
             })
             .collect();
         result
+        })
     }
 
     pub(crate) fn load(&self, id: &str) -> Result<RecipeInstance, String> {
-        let value: String = self
-            .lock()?
-            .query_row(
-                "SELECT record_json FROM workflow_recipe_instances WHERE id=?1",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("Workflow instance `{id}` does not exist"))?;
-        serde_json::from_str(&value).map_err(|error| error.to_string())
+        self.read("load Workflow instance", |connection| {
+            let value: String = connection
+                .query_row(
+                    "SELECT record_json FROM workflow_recipe_instances WHERE id=?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("Workflow instance `{id}` does not exist"))?;
+            serde_json::from_str(&value).map_err(|error| error.to_string())
+        })
     }
 
     pub(crate) fn begin_attempt(&self, attempt: &WorkflowEventAttempt) -> Result<bool, String> {
-        Ok(self.lock()?.execute("INSERT OR IGNORE INTO workflow_recipe_attempts(id,instance_id,record_json) VALUES(?1,?2,?3)",
+        self.write("begin Workflow event attempt", |transaction| Ok(transaction.execute("INSERT OR IGNORE INTO workflow_recipe_attempts(id,instance_id,record_json) VALUES(?1,?2,?3)",
             params![attempt.id, attempt.instance_id, serde_json::to_string(attempt).map_err(|error| error.to_string())?])
-            .map_err(|error| error.to_string())? == 1)
+            .map_err(|error| error.to_string())? == 1))
     }
 
     pub(crate) fn finish_attempt(
@@ -152,20 +170,22 @@ impl WorkflowInstanceStore {
             Ok(result) => attempt.event_group = Some(result.group.event_group_id.clone()),
             Err(error) => attempt.error = Some(error.clone()),
         }
-        self.lock()?
-            .execute(
-                "UPDATE workflow_recipe_attempts SET record_json=?2 WHERE id=?1",
-                params![
-                    attempt.id,
-                    serde_json::to_string(&attempt).map_err(|error| error.to_string())?
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
+        self.write("finish Workflow event attempt", |transaction| {
+            transaction
+                .execute(
+                    "UPDATE workflow_recipe_attempts SET record_json=?2 WHERE id=?1",
+                    params![
+                        attempt.id,
+                        serde_json::to_string(&attempt).map_err(|error| error.to_string())?
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
     }
 
     pub(crate) fn attempts(&self, instance_id: &str) -> Result<Vec<WorkflowEventAttempt>, String> {
-        let connection = self.lock()?;
+        self.read("list Workflow event attempts", |connection| {
         let mut query = connection.prepare("SELECT record_json FROM workflow_recipe_attempts WHERE instance_id=?1 ORDER BY rowid DESC")
             .map_err(|error| error.to_string())?;
         let result = query
@@ -177,6 +197,20 @@ impl WorkflowInstanceStore {
             })
             .collect();
         result
+        })
+    }
+}
+
+pub(crate) fn initialize_workflow_instance_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(WORKFLOW_INSTANCE_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Workflow instance storage: {error}"))
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
     }
 }
 

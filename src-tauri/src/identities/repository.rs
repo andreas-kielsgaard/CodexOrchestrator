@@ -2,7 +2,9 @@ use super::domain::{IdentityDefinition, IdentityId, IdentityShape};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::{path::Path, sync::Mutex};
+use std::{path::Path, sync::Arc};
+
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const IDENTITY_CATALOG_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS identity_definitions (
@@ -39,68 +41,83 @@ pub(crate) trait IdentityRepository: Send + Sync {
 }
 
 pub(crate) struct SqliteIdentityRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteIdentityRepository {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
     pub(crate) fn open(database_path: &Path) -> Result<Self, String> {
-        let connection = crate::storage::open_active_database(database_path)?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        ActiveDatabase::open(database_path, initialize_identity_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
     pub(super) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().expect("in-memory Identity storage");
-        connection
-            .execute_batch(IDENTITY_CATALOG_SCHEMA)
-            .expect("Identity schema");
-        Self {
-            connection: Mutex::new(connection),
-        }
+        ActiveDatabase::from_connection(connection, initialize_identity_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .expect("Identity schema")
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
-        self.connection
-            .lock()
-            .map_err(|_| "Identity catalog storage is unavailable.".to_string())
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.read(operation, read).map_err(managed_error)
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 }
 
 impl IdentityRepository for SqliteIdentityRepository {
     fn list(&self) -> Result<Vec<IdentityCatalogEntry>, String> {
-        let connection = self.lock()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT identity_id,display_name,color,shape,created_at,updated_at \
+        self.read("list Identity definitions", |connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT identity_id,display_name,color,shape,created_at,updated_at \
                  FROM identity_definitions \
                  ORDER BY display_name COLLATE NOCASE,identity_id",
-            )
-            .map_err(|error| format!("Unable to prepare Identity catalog list: {error}"))?;
-        let entries = statement
-            .query_map([], identity_row)
-            .map_err(|error| format!("Unable to query Identity catalog: {error}"))?
-            .map(|row| {
-                row.map_err(|error| format!("Unable to read Identity catalog entry: {error}"))
-                    .and_then(decode_identity_row)
-            })
-            .collect();
-        entries
+                )
+                .map_err(|error| format!("Unable to prepare Identity catalog list: {error}"))?;
+            let entries = statement
+                .query_map([], identity_row)
+                .map_err(|error| format!("Unable to query Identity catalog: {error}"))?
+                .map(|row| {
+                    row.map_err(|error| format!("Unable to read Identity catalog entry: {error}"))
+                        .and_then(decode_identity_row)
+                })
+                .collect();
+            entries
+        })
     }
 
     fn find(&self, identity_id: &IdentityId) -> Result<Option<IdentityCatalogEntry>, String> {
-        self.lock()?
-            .query_row(
-                "SELECT identity_id,display_name,color,shape,created_at,updated_at \
+        self.read("find Identity definition", |connection| {
+            connection
+                .query_row(
+                    "SELECT identity_id,display_name,color,shape,created_at,updated_at \
                  FROM identity_definitions WHERE identity_id=?1",
-                [identity_id.as_str()],
-                identity_row,
-            )
-            .optional()
-            .map_err(|error| format!("Unable to load Identity definition: {error}"))?
-            .map(decode_identity_row)
-            .transpose()
+                    [identity_id.as_str()],
+                    identity_row,
+                )
+                .optional()
+                .map_err(|error| format!("Unable to load Identity definition: {error}"))?
+                .map(decode_identity_row)
+                .transpose()
+        })
     }
 
     fn create(&self, entry: &IdentityCatalogEntry) -> Result<(), String> {
@@ -108,22 +125,24 @@ impl IdentityRepository for SqliteIdentityRepository {
             .definition
             .validate()
             .map_err(|error| error.to_string())?;
-        self.lock()?
-            .execute(
-                "INSERT INTO identity_definitions(\
+        self.write("create Identity definition", |transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO identity_definitions(\
                     identity_id,display_name,color,shape,created_at,updated_at\
                  ) VALUES(?1,?2,?3,?4,?5,?6)",
-                params![
-                    entry.definition.id.as_str(),
-                    entry.definition.display_name,
-                    entry.definition.color,
-                    shape_value(entry.definition.shape),
-                    entry.created_at.to_rfc3339(),
-                    entry.updated_at.to_rfc3339(),
-                ],
-            )
-            .map_err(|error| format!("Unable to create Identity definition: {error}"))?;
-        Ok(())
+                    params![
+                        entry.definition.id.as_str(),
+                        entry.definition.display_name,
+                        entry.definition.color,
+                        shape_value(entry.definition.shape),
+                        entry.created_at.to_rfc3339(),
+                        entry.updated_at.to_rfc3339(),
+                    ],
+                )
+                .map_err(|error| format!("Unable to create Identity definition: {error}"))?;
+            Ok(())
+        })
     }
 
     fn update(&self, entry: &IdentityCatalogEntry) -> Result<(), String> {
@@ -131,33 +150,48 @@ impl IdentityRepository for SqliteIdentityRepository {
             .definition
             .validate()
             .map_err(|error| error.to_string())?;
-        let changed = self
-            .lock()?
-            .execute(
-                "UPDATE identity_definitions \
+        self.write("update Identity definition", |transaction| {
+            let changed = transaction
+                .execute(
+                    "UPDATE identity_definitions \
                  SET display_name=?2,color=?3,shape=?4,updated_at=?5 \
                  WHERE identity_id=?1",
-                params![
-                    entry.definition.id.as_str(),
-                    entry.definition.display_name,
-                    entry.definition.color,
-                    shape_value(entry.definition.shape),
-                    entry.updated_at.to_rfc3339(),
-                ],
-            )
-            .map_err(|error| format!("Unable to update Identity definition: {error}"))?;
-        expect_one(changed, "Identity definition does not exist")
+                    params![
+                        entry.definition.id.as_str(),
+                        entry.definition.display_name,
+                        entry.definition.color,
+                        shape_value(entry.definition.shape),
+                        entry.updated_at.to_rfc3339(),
+                    ],
+                )
+                .map_err(|error| format!("Unable to update Identity definition: {error}"))?;
+            expect_one(changed, "Identity definition does not exist")
+        })
     }
 
     fn delete(&self, identity_id: &IdentityId) -> Result<(), String> {
-        let changed = self
-            .lock()?
-            .execute(
-                "DELETE FROM identity_definitions WHERE identity_id=?1",
-                [identity_id.as_str()],
-            )
-            .map_err(|error| format!("Unable to delete Identity definition: {error}"))?;
-        expect_one(changed, "Identity definition does not exist")
+        self.write("delete Identity definition", |transaction| {
+            let changed = transaction
+                .execute(
+                    "DELETE FROM identity_definitions WHERE identity_id=?1",
+                    [identity_id.as_str()],
+                )
+                .map_err(|error| format!("Unable to delete Identity definition: {error}"))?;
+            expect_one(changed, "Identity definition does not exist")
+        })
+    }
+}
+
+pub(crate) fn initialize_identity_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(IDENTITY_CATALOG_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Identity storage: {error}"))
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
     }
 }
 

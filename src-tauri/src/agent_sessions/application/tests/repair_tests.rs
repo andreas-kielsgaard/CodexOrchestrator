@@ -1,6 +1,5 @@
 use super::*;
 use crate::harness_engine::{
-    catalog_service::HarnessCatalogService,
     domain::SidecarBindingRegistration,
     proxy::{run_proxy_listener, ProxyBindings},
     repository::SqliteHarnessBindingRepository,
@@ -69,9 +68,10 @@ impl Fixture {
 
     fn with_runtime(behavior: RuntimeBehavior, mediated: bool) -> Self {
         let folder = tempfile::tempdir().unwrap();
-        let database = folder.path().join("repair.sqlite");
-        let identities = IdentityService::open(&database).unwrap();
-        let repository = Arc::new(SqliteAgentSessionRepository::open(&database).unwrap());
+        let database_path = folder.path().join("repair.sqlite");
+        let database = crate::product_database::open(&database_path).unwrap();
+        let identities = IdentityService::from_database(database.clone());
+        let repository = Arc::new(SqliteAgentSessionRepository::from_database(database.clone()));
         let runtime = Arc::new(FakeRuntime::new(behavior));
         let notifier = Arc::new(WorkflowNotifier {
             recording: RecordingNotifier::new(repository.clone()),
@@ -82,10 +82,9 @@ impl Fixture {
         let registry = Arc::new(ManagedMcpUpstreamRegistry::default());
         let engine = mediated.then(|| {
             HarnessEngineService::new(
-                Arc::new(SqliteHarnessBindingRepository::open(&database).unwrap()),
+                Arc::new(SqliteHarnessBindingRepository::from_database(database.clone())),
                 Arc::new(LocalProxy::new()),
                 registry.clone(),
-                HarnessCatalogService::in_memory(),
             )
             .unwrap()
         });
@@ -115,7 +114,9 @@ impl Fixture {
         }
         let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
         let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap()),
+            Arc::new(SqliteCapabilityProfileRepository::from_database(
+                database.clone(),
+            )),
             source.clone(),
         ));
         let definition = test_session_creation_request().capability_profile;
@@ -127,29 +128,30 @@ impl Fixture {
             )
             .unwrap();
         let adapter = Arc::new(
-            AgentSessionEventAdapter::open(
-                &database,
+            AgentSessionEventAdapter::from_database(
+                database.clone(),
                 sessions.clone(),
                 repository.clone(),
                 source.clone(),
                 identities,
             )
-            .unwrap()
             .with_capability_profiles(profiles.clone()),
         );
         let events = Arc::new(SessionEventApplication::new(
             adapter.clone(),
             adapter.clone(),
-            Arc::new(SqliteSessionEventStore::open(&database).unwrap()),
+            Arc::new(SqliteSessionEventStore::from_database(database.clone())),
         ));
         let authoring = Arc::new(WorkflowAuthoringService::new(
-            Arc::new(SqliteWorkflowAuthoringRepository::open(&database).unwrap()),
+            Arc::new(SqliteWorkflowAuthoringRepository::from_database(
+                database.clone(),
+            )),
             profiles.clone(),
         ));
         let execution = Arc::new(WorkflowExecutionService::new(
             authoring.clone(),
             events,
-            Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
+            Arc::new(WorkflowInstanceStore::from_database(database)),
             adapter,
             repository.clone(),
         ));

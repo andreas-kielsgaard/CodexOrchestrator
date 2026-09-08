@@ -8,7 +8,9 @@ use super::{
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::{path::Path, sync::Mutex};
+use std::{path::Path, sync::Arc};
+
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const HARNESS_CATALOG_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS harnesses (
@@ -87,31 +89,44 @@ pub(crate) trait HarnessCatalogRepository: Send + Sync {
 }
 
 pub(crate) struct SqliteHarnessCatalogRepository {
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl SqliteHarnessCatalogRepository {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self { database }
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
-        let connection = crate::storage::open_active_database(path)?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        ActiveDatabase::open(path, initialize_harness_catalog_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .map_err(|error| error.to_string())
     }
 
     #[cfg(test)]
     pub(super) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        connection.execute_batch(HARNESS_CATALOG_SCHEMA).unwrap();
-        Self {
-            connection: Mutex::new(connection),
-        }
+        ActiveDatabase::from_connection(connection, initialize_harness_catalog_storage)
+            .map(Arc::new)
+            .map(Self::from_database)
+            .unwrap()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
-        self.connection
-            .lock()
-            .map_err(|_| "Harness catalog storage is unavailable.".to_string())
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.read(operation, read).map_err(managed_error)
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 }
 
@@ -120,8 +135,8 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
         if harness.metadata.name.trim().is_empty() {
             return Err("Harness name must not be empty.".into());
         }
-        self.lock()?
-            .execute(
+        self.write("create Harness", |transaction| {
+            transaction.execute(
                 "INSERT INTO harnesses(harness_id,metadata_json,created_at,updated_at) VALUES(?1,?2,?3,?4)",
                 params![
                     harness.id.as_str(),
@@ -131,7 +146,8 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                 ],
             )
             .map_err(|error| format!("Unable to create Harness: {error}"))?;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn update_metadata(
@@ -143,19 +159,24 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
         if metadata.name.trim().is_empty() {
             return Err("Harness name must not be empty.".into());
         }
-        let changed = self
-            .lock()?
-            .execute(
-                "UPDATE harnesses SET metadata_json=?2,updated_at=?3 WHERE harness_id=?1",
-                params![harness_id.as_str(), encode(metadata)?, updated_at.to_rfc3339()],
-            )
-            .map_err(|error| format!("Unable to update Harness metadata: {error}"))?;
-        expect_one(changed, "Harness does not exist")
+        self.write("update Harness metadata", |transaction| {
+            let changed = transaction
+                .execute(
+                    "UPDATE harnesses SET metadata_json=?2,updated_at=?3 WHERE harness_id=?1",
+                    params![
+                        harness_id.as_str(),
+                        encode(metadata)?,
+                        updated_at.to_rfc3339()
+                    ],
+                )
+                .map_err(|error| format!("Unable to update Harness metadata: {error}"))?;
+            expect_one(changed, "Harness does not exist")
+        })
     }
 
     fn harness(&self, harness_id: &HarnessId) -> Result<Option<HarnessRecord>, String> {
-        self.lock()?
-            .query_row(
+        self.read("load Harness", |connection| {
+            connection.query_row(
                 "SELECT harness_id,metadata_json,created_at,updated_at FROM harnesses WHERE harness_id=?1",
                 [harness_id.as_str()],
                 harness_row,
@@ -164,11 +185,12 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
             .map_err(|error| format!("Unable to load Harness: {error}"))?
             .map(decode_harness_row)
             .transpose()
+        })
     }
 
     fn harnesses(&self) -> Result<Vec<HarnessRecord>, String> {
-        let connection = self.lock()?;
-        let mut statement = connection
+        self.read("list Harnesses", |connection| {
+            let mut statement = connection
             .prepare("SELECT harness_id,metadata_json,created_at,updated_at FROM harnesses ORDER BY json_extract(metadata_json,'$.name'),harness_id")
             .map_err(|error| format!("Unable to prepare Harness list: {error}"))?;
         let harnesses = statement
@@ -179,12 +201,13 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                     .and_then(decode_harness_row)
             })
             .collect();
-        harnesses
+            harnesses
+        })
     }
 
     fn draft(&self, harness_id: &HarnessId) -> Result<Option<HarnessDraft>, String> {
-        self.lock()?
-            .query_row(
+        self.read("load Harness draft", |connection| {
+            connection.query_row(
                 "SELECT harness_id,based_on_version,configuration_json,draft_revision,saved_at FROM harness_drafts WHERE harness_id=?1",
                 [harness_id.as_str()],
                 draft_row,
@@ -193,6 +216,7 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
             .map_err(|error| format!("Unable to load Harness draft: {error}"))?
             .map(decode_draft_row)
             .transpose()
+        })
     }
 
     fn save_draft(
@@ -204,9 +228,9 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
         if draft.draft_revision != expected_current_revision + 1 {
             return Err("Harness draft revision must advance exactly once.".into());
         }
-        let connection = self.lock()?;
+        self.write("save Harness draft", |transaction| {
         let changed = if expected_current_revision == 0 {
-            connection.execute(
+            transaction.execute(
                 "INSERT INTO harness_drafts(harness_id,based_on_version,configuration_contract_version,configuration_json,draft_revision,saved_at) VALUES(?1,?2,?3,?4,?5,?6)",
                 params![
                     draft.harness_id.as_str(),
@@ -218,7 +242,7 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                 ],
             )
         } else {
-            connection.execute(
+            transaction.execute(
                 "UPDATE harness_drafts SET based_on_version=?2,configuration_json=?3,draft_revision=?4,saved_at=?5 WHERE harness_id=?1 AND draft_revision=?6",
                 params![
                     draft.harness_id.as_str(),
@@ -232,11 +256,12 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
         }
         .map_err(|error| format!("Unable to save Harness draft: {error}"))?;
         expect_one(changed, "Harness draft changed before it could be saved")
+        })
     }
 
     fn version(&self, reference: &HarnessVersionRef) -> Result<Option<HarnessVersion>, String> {
-        self.lock()?
-            .query_row(
+        self.read("load Harness version", |connection| {
+            connection.query_row(
                 "SELECT harness_id,version_number,scope_json,configuration_json,configuration_digest,created_at FROM harness_versions WHERE harness_id=?1 AND version_number=?2",
                 params![reference.harness_id().as_str(), reference.version().get()],
                 version_row,
@@ -245,11 +270,12 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
             .map_err(|error| format!("Unable to load Harness version: {error}"))?
             .map(decode_version_row)
             .transpose()
+        })
     }
 
     fn versions(&self, harness_id: &HarnessId) -> Result<Vec<HarnessVersion>, String> {
-        let connection = self.lock()?;
-        let mut statement = connection
+        self.read("list Harness versions", |connection| {
+            let mut statement = connection
             .prepare("SELECT harness_id,version_number,scope_json,configuration_json,configuration_digest,created_at FROM harness_versions WHERE harness_id=?1 ORDER BY version_number")
             .map_err(|error| format!("Unable to prepare Harness versions: {error}"))?;
         let versions = statement
@@ -260,36 +286,33 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                     .and_then(decode_version_row)
             })
             .collect();
-        versions
+            versions
+        })
     }
 
     fn publish(&self, version: &HarnessVersion, draft_revision: Option<u64>) -> Result<(), String> {
         version.verify()?;
-        let mut connection = self.lock()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("Unable to begin Harness publication: {error}"))?;
-        insert_version(&transaction, version)?;
-        if let Some(draft_revision) = draft_revision {
-            let changed = transaction
-                .execute(
-                    "DELETE FROM harness_drafts WHERE harness_id=?1 AND draft_revision=?2",
-                    params![version.reference.harness_id().as_str(), draft_revision],
-                )
-                .map_err(|error| format!("Unable to consume Harness draft: {error}"))?;
-            expect_one(changed, "Harness draft changed before publication")?;
-        }
-        transaction
-            .commit()
-            .map_err(|error| format!("Unable to commit Harness publication: {error}"))
+        self.write("publish Harness version", |transaction| {
+            insert_version(transaction, version)?;
+            if let Some(draft_revision) = draft_revision {
+                let changed = transaction
+                    .execute(
+                        "DELETE FROM harness_drafts WHERE harness_id=?1 AND draft_revision=?2",
+                        params![version.reference.harness_id().as_str(), draft_revision],
+                    )
+                    .map_err(|error| format!("Unable to consume Harness draft: {error}"))?;
+                expect_one(changed, "Harness draft changed before publication")?;
+            }
+            Ok(())
+        })
     }
 
     fn replacement(
         &self,
         source: &HarnessVersionRef,
     ) -> Result<Option<HarnessVersionReplacement>, String> {
-        self.lock()?
-            .query_row(
+        self.read("load Harness replacement", |connection| {
+            connection.query_row(
                 "SELECT harness_id,source_version,target_version FROM harness_version_replacements WHERE harness_id=?1 AND source_version=?2",
                 params![source.harness_id().as_str(), source.version().get()],
                 replacement_row,
@@ -298,14 +321,15 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
             .map_err(|error| format!("Unable to load Harness replacement: {error}"))?
             .map(decode_replacement_row)
             .transpose()
+        })
     }
 
     fn replacements(
         &self,
         harness_id: &HarnessId,
     ) -> Result<Vec<HarnessVersionReplacement>, String> {
-        let connection = self.lock()?;
-        let mut statement = connection
+        self.read("list Harness replacements", |connection| {
+            let mut statement = connection
             .prepare("SELECT harness_id,source_version,target_version FROM harness_version_replacements WHERE harness_id=?1 ORDER BY source_version")
             .map_err(|error| format!("Unable to prepare Harness replacements: {error}"))?;
         let replacements = statement
@@ -316,7 +340,8 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                     .and_then(decode_replacement_row)
             })
             .collect();
-        replacements
+            replacements
+        })
     }
 
     fn order_replacement(
@@ -325,8 +350,8 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
         ordered_at: DateTime<Utc>,
     ) -> Result<(), String> {
         replacement.validate().map_err(|error| error.to_string())?;
-        self.lock()?
-            .execute(
+        self.write("order Harness replacement", |transaction| {
+            transaction.execute(
                 "INSERT INTO harness_version_replacements(harness_id,source_version,target_version,ordered_at) VALUES(?1,?2,?3,?4) ON CONFLICT(harness_id,source_version) DO UPDATE SET target_version=excluded.target_version,ordered_at=excluded.ordered_at",
                 params![
                     replacement.source().harness_id().as_str(),
@@ -336,7 +361,21 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
                 ],
             )
             .map_err(|error| format!("Unable to order Harness replacement: {error}"))?;
-        Ok(())
+            Ok(())
+        })
+    }
+}
+
+pub(crate) fn initialize_harness_catalog_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(HARNESS_CATALOG_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Harness catalog storage: {error}"))
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
     }
 }
 
@@ -350,7 +389,13 @@ fn harness_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HarnessRow> {
 }
 
 fn draft_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DraftRow> {
-    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    ))
 }
 
 fn version_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VersionRow> {
@@ -534,7 +579,10 @@ mod tests {
         .unwrap();
         repository.publish(&version, Some(1)).unwrap();
 
-        assert_eq!(repository.version(&version.reference).unwrap(), Some(version));
+        assert_eq!(
+            repository.version(&version.reference).unwrap(),
+            Some(version)
+        );
         assert_eq!(repository.draft(&id).unwrap(), None);
     }
 
@@ -559,16 +607,17 @@ mod tests {
         .unwrap();
         repository.publish(&first, None).unwrap();
         repository.publish(&second, None).unwrap();
-        let replacement = HarnessVersionReplacement::new(
-            first.reference.clone(),
-            second.reference.clone(),
-        )
-        .unwrap();
+        let replacement =
+            HarnessVersionReplacement::new(first.reference.clone(), second.reference.clone())
+                .unwrap();
 
         repository
             .order_replacement(&replacement, Utc::now())
             .unwrap();
 
-        assert_eq!(repository.replacement(&first.reference).unwrap(), Some(replacement));
+        assert_eq!(
+            repository.replacement(&first.reference).unwrap(),
+            Some(replacement)
+        );
     }
 }

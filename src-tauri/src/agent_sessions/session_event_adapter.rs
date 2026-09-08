@@ -23,7 +23,9 @@ use crate::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const SESSION_ADDRESS_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS agent_session_address_clock (
@@ -69,10 +71,27 @@ pub(crate) struct AgentSessionEventAdapter {
     profile_source: Arc<dyn SelectedRuntimeProfileSource>,
     capability_profiles: Option<Arc<CapabilityProfileService>>,
     identities: IdentityService,
-    connection: Mutex<Connection>,
+    database: Arc<ActiveDatabase>,
 }
 
 impl AgentSessionEventAdapter {
+    pub(crate) fn from_database(
+        database: Arc<ActiveDatabase>,
+        application: Arc<AgentSessionApplication>,
+        repository: Arc<SqliteAgentSessionRepository>,
+        profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        identities: IdentityService,
+    ) -> Self {
+        Self {
+            application,
+            repository,
+            profile_source,
+            capability_profiles: None,
+            identities,
+            database,
+        }
+    }
+
     pub(crate) fn open(
         path: impl AsRef<std::path::Path>,
         application: Arc<AgentSessionApplication>,
@@ -80,24 +99,16 @@ impl AgentSessionEventAdapter {
         profile_source: Arc<dyn SelectedRuntimeProfileSource>,
         identities: IdentityService,
     ) -> Result<Self, String> {
-        let connection = Connection::open(path)
-            .map_err(|error| format!("Unable to open Agent Session address storage: {error}"))?;
-        crate::storage::configure_sqlite_connection(&connection).map_err(|error| {
-            format!("Unable to configure Agent Session address storage: {error}")
-        })?;
-        connection
-            .execute_batch(SESSION_ADDRESS_SCHEMA)
-            .map_err(|error| {
-                format!("Unable to initialize Agent Session address storage: {error}")
-            })?;
-        Ok(Self {
+        let database = ActiveDatabase::open(path, initialize_session_address_storage)
+            .map(Arc::new)
+            .map_err(|error| error.to_string())?;
+        Ok(Self::from_database(
+            database,
             application,
             repository,
             profile_source,
-            capability_profiles: None,
             identities,
-            connection: Mutex::new(connection),
-        })
+        ))
     }
 
     pub(crate) fn with_capability_profiles(
@@ -108,19 +119,28 @@ impl AgentSessionEventAdapter {
         self
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, SessionDirectoryError> {
-        self.connection.lock().map_err(|_| {
-            SessionDirectoryError::new("Agent Session address storage lock is poisoned")
-        })
+    fn read<T>(
+        &self,
+        operation: &'static str,
+        read: impl FnOnce(&Connection) -> Result<T, SessionDirectoryError>,
+    ) -> Result<T, SessionDirectoryError> {
+        self.database.read(operation, read).map_err(managed_error)
+    }
+
+    fn write<T>(
+        &self,
+        operation: &'static str,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SessionDirectoryError>,
+    ) -> Result<T, SessionDirectoryError> {
+        self.database.write(operation, write).map_err(managed_error)
     }
 
     fn load_address(
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<StoredAddressDomain>, SessionDirectoryError> {
-        let connection = self.lock()?;
-        connection
-            .query_row(
+        self.read("load Agent Session address", |connection| {
+            connection.query_row(
                 "SELECT scope_namespace,scope_kind,scope_id,subject_namespace,subject_kind,subject_id,created_by_event_json,created_by_session_json,created_sequence,last_addressed_sequence FROM agent_session_addresses WHERE session_id=?1",
                 [session_id.as_str()],
                 stored_address_row,
@@ -129,6 +149,7 @@ impl AgentSessionEventAdapter {
             .map_err(|error| SessionDirectoryError::new(format!("Unable to load Agent Session address: {error}")))?
             .map(StoredAddress::into_domain)
             .transpose()
+        })
     }
 }
 
@@ -166,7 +187,7 @@ impl SessionDirectory for AgentSessionEventAdapter {
         &self,
         address: &SessionLogicalAddress,
     ) -> Result<Vec<SessionDirectoryEntry>, SessionDirectoryError> {
-        let connection = self.lock()?;
+        self.read("list logically addressed Agent Sessions", |connection| {
         let mut statement = connection
             .prepare(
                 "SELECT address.session_id,address.scope_namespace,address.scope_kind,address.scope_id,address.subject_namespace,address.subject_kind,address.subject_id,address.created_by_event_json,address.created_by_session_json,address.created_sequence,address.last_addressed_sequence,EXISTS(SELECT 1 FROM agent_session_invocations invocation WHERE invocation.session_id=address.session_id AND invocation.status IN ('pending','running')) FROM agent_session_addresses address JOIN agent_sessions session ON session.id=address.session_id WHERE session.availability='available' AND address.scope_namespace=?1 AND address.scope_kind=?2 AND address.scope_id=?3 AND address.subject_namespace=?4 AND address.subject_kind=?5 AND address.subject_id=?6",
@@ -212,6 +233,7 @@ impl SessionDirectory for AgentSessionEventAdapter {
             Ok(stored.into_domain()?.entry(session, running))
         })
         .collect()
+        })
     }
 
     fn create_session(
@@ -350,20 +372,17 @@ impl SessionDirectory for AgentSessionEventAdapter {
         _event_group_id: &ReferenceIdentity,
     ) -> Result<u64, SessionDirectoryError> {
         let session_id = parse_session_reference(session)?;
-        let connection = self.lock()?;
-        let transaction = connection.unchecked_transaction().map_err(|error| {
-            SessionDirectoryError::new(format!("Unable to begin Session address update: {error}"))
-        })?;
-        transaction
-            .execute("INSERT INTO agent_session_address_clock DEFAULT VALUES", [])
-            .map_err(|error| {
-                SessionDirectoryError::new(format!(
-                    "Unable to allocate Session address sequence: {error}"
-                ))
-            })?;
-        let sequence = u64::try_from(transaction.last_insert_rowid())
-            .map_err(|_| SessionDirectoryError::new("Invalid Session address sequence"))?;
-        let changed = transaction
+        self.write("mark Agent Session addressed", |transaction| {
+            transaction
+                .execute("INSERT INTO agent_session_address_clock DEFAULT VALUES", [])
+                .map_err(|error| {
+                    SessionDirectoryError::new(format!(
+                        "Unable to allocate Session address sequence: {error}"
+                    ))
+                })?;
+            let sequence = u64::try_from(transaction.last_insert_rowid())
+                .map_err(|_| SessionDirectoryError::new("Invalid Session address sequence"))?;
+            let changed = transaction
             .execute(
                 "UPDATE agent_session_addresses SET last_addressed_sequence=?1 WHERE session_id=?2",
                 params![sequence, session_id.as_str()],
@@ -371,15 +390,28 @@ impl SessionDirectory for AgentSessionEventAdapter {
             .map_err(|error| {
                 SessionDirectoryError::new(format!("Unable to mark Session addressed: {error}"))
             })?;
-        if changed != 1 {
-            return Err(SessionDirectoryError::new(
-                "Addressed Session has no logical address record",
-            ));
+            if changed != 1 {
+                return Err(SessionDirectoryError::new(
+                    "Addressed Session has no logical address record",
+                ));
+            }
+            Ok(sequence)
+        })
+    }
+}
+
+pub(crate) fn initialize_session_address_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(SESSION_ADDRESS_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Agent Session address storage: {error}"))
+}
+
+fn managed_error(error: ManagedOperationError<SessionDirectoryError>) -> SessionDirectoryError {
+    match error {
+        ManagedOperationError::Infrastructure(error) => {
+            SessionDirectoryError::new(error.to_string())
         }
-        transaction.commit().map_err(|error| {
-            SessionDirectoryError::new(format!("Unable to commit Session address update: {error}"))
-        })?;
-        Ok(sequence)
+        ManagedOperationError::Domain(error) => error,
     }
 }
 

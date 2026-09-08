@@ -1,7 +1,10 @@
 //! Durable prerequisite-wave eligibility.  This module consumes settled product facts only; it
 //! neither invokes accepted integration nor creates any Handler runtime effect.
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
+use rusqlite::{params, OptionalExtension};
+#[cfg(test)]
+use rusqlite::{Connection, TransactionBehavior};
 
 pub(crate) const WORK_UNIT_DEPENDENCY_WAVE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS work_unit_dependency_activation_intents (
@@ -67,6 +70,7 @@ enum Eligibility {
 /// Recomputes the one bounded dependency wave from exact canonical graph edges and settled
 /// prerequisite contributions.  The resulting eligibility and activation intent are one durable
 /// transaction and deliberately precede the Handler's effectful reconciliation.
+#[cfg(test)]
 pub(crate) fn reconcile_work_unit_dependency_wave(
     connection: &mut Connection,
 ) -> Result<(), String> {
@@ -76,6 +80,26 @@ pub(crate) fn reconcile_work_unit_dependency_wave(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| error.to_string())?;
+    reconcile_work_unit_dependency_wave_transaction(&transaction)?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+pub(crate) fn reconcile_work_unit_dependency_wave_managed(
+    database: &ActiveDatabase,
+) -> Result<(), String> {
+    database
+        .write("reconcile Work Unit dependency wave", |transaction| {
+            transaction
+                .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+                .map_err(|error| error.to_string())?;
+            reconcile_work_unit_dependency_wave_transaction(transaction)
+        })
+        .map_err(managed_error)
+}
+
+fn reconcile_work_unit_dependency_wave_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), String> {
     let units = transaction
         .prepare(
             "SELECT u.work_unit_id,u.materialization_id,u.accepted_revision_id,m.sprint_id
@@ -130,17 +154,38 @@ pub(crate) fn reconcile_work_unit_dependency_wave(
             eligibility,
         )?;
     }
-    transaction.commit().map_err(|error| error.to_string())
+    Ok(())
 }
 
 /// Projects factual execution state and records the three exact terminal facts only after every
 /// canonical unit has one coherent accepted-integration settlement and every dependency has its
 /// exact outgoing contribution.  This function is idempotent and makes no runtime call.
+#[cfg(test)]
 pub(crate) fn reconcile_work_slice_execution_settlement(
     connection: &mut Connection,
 ) -> Result<(), String> {
     connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).map_err(|e| e.to_string())?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    reconcile_work_slice_execution_settlement_transaction(&tx)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+pub(crate) fn reconcile_work_slice_execution_settlement_managed(
+    database: &ActiveDatabase,
+) -> Result<(), String> {
+    database
+        .write("reconcile Work Slice execution settlement", |transaction| {
+            transaction
+                .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+                .map_err(|error| error.to_string())?;
+            reconcile_work_slice_execution_settlement_transaction(transaction)
+        })
+        .map_err(managed_error)
+}
+
+fn reconcile_work_slice_execution_settlement_transaction(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), String> {
     let materializations = tx.prepare(
         "SELECT materialization_id,planning_point_id,accepted_revision_id
            FROM work_unit_materializations WHERE settled_at IS NOT NULL
@@ -201,7 +246,14 @@ pub(crate) fn reconcile_work_slice_execution_settlement(
             params![planning_point, materialization],
         )?;
     }
-    tx.commit().map_err(|e| e.to_string())
+    Ok(())
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 fn existing_attention(

@@ -1,6 +1,7 @@
 //! Private, retained authority for a completed Handler acceptance.  It deliberately does not
 //! integrate the candidate or advance the Sprint target.
 
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::{
@@ -123,6 +124,95 @@ pub(crate) fn reconcile_accepted_candidate_authorities(
         reconcile_candidate(connection, row)?;
     }
     Ok(())
+}
+
+pub(crate) fn reconcile_accepted_candidate_authorities_managed(
+    database: &ActiveDatabase,
+) -> Result<(), String> {
+    database.write("initialize accepted candidate authority", |transaction| {
+        initialize_accepted_candidate_authority_schema(transaction)
+    }).map_err(managed_error)?;
+    let rows = database.read("load accepted Handler candidates", |connection| connection.prepare(
+        "SELECT d.work_unit_id,a.sprint_id,a.authority_id,o.attempt_id,o.reporting_invocation_id,
+                d.review_invocation_id,d.decision_fingerprint,r.delivered_payload_fingerprint,o.evidence_manifest_json,
+                o.comparison_fingerprint,o.evidence_content_fingerprints_json,
+                a.repository_root,a.repository_common_dir,a.worktree_root,x.baseline_object_id,a.current_object_id,
+                c.capture_authorization_id,c.idempotency_key,c.payload_fingerprint,c.epic_id,
+                c.provenance_id,c.repository_id,c.repository_root,c.worktree_id,
+                l.document_ref_id,l.artifact_id,c.worktree_root,c.current_object_id
+         FROM work_unit_handler_decisions d
+         JOIN work_unit_handler_reviews r ON r.review_invocation_id=d.review_invocation_id
+         JOIN work_unit_implementer_outcomes o ON o.work_unit_id=d.work_unit_id
+           AND o.reporting_invocation_id=r.reporting_invocation_id
+         JOIN work_unit_handler_activations h ON h.work_unit_id=d.work_unit_id AND h.attempt_id=o.attempt_id
+         JOIN work_unit_materializations m ON m.materialization_id=h.materialization_id
+         JOIN initiated_sprint_git_authorities a ON a.sprint_id=m.sprint_id
+         JOIN execution_support_attempt_authorizations x ON x.attempt_id=o.attempt_id AND x.work_unit_id=d.work_unit_id AND x.role_kind='work_unit_implementer' AND x.sprint_git_authority_id=a.authority_id
+         JOIN execution_support_grants g ON g.attempt_id=o.attempt_id AND g.role_id='work_unit_implementer'
+         JOIN file_review_git_capture_authorizations c ON c.capture_authorization_id=o.file_review_capture_authorization_id AND c.worktree_id=g.workspace_id AND c.repository_id=a.repository_id AND c.baseline_object_id=x.baseline_object_id
+         JOIN file_review_git_capture_documents l ON l.capture_authorization_id=c.capture_authorization_id
+         WHERE d.decision_variant='accepted' AND d.implementation_accepted_at IS NOT NULL
+           AND r.lifecycle_status='completed' AND r.semantic_judgment_variant='accept'
+           AND o.evidence_ready_at IS NOT NULL AND o.application_accepted_at IS NOT NULL
+         ORDER BY d.work_unit_id"
+    ).and_then(|mut statement| statement.query_map([], |r| Ok(CandidateRow { work_unit_id:r.get(0)?, sprint_id:r.get(1)?, authority_id:r.get(2)?, attempt_id:r.get(3)?, reporting:r.get(4)?, review:r.get(5)?, decision:r.get(6)?,delivered_evidence:r.get(7)?, manifest:r.get(8)?, comparison:r.get(9)?, contents:r.get(10)?, repo:r.get(11)?, common:r.get(12)?, authority_root:r.get(13)?, baseline:r.get(14)?, authority_current:r.get(15)?, capture_id:r.get(16)?, capture_key:r.get(17)?, capture_fingerprint:r.get(18)?, capture_epic:r.get(19)?, capture_provenance:r.get(20)?, capture_repository:r.get(21)?, capture_repository_root:r.get(22)?, capture_worktree:r.get(23)?, document_id:r.get(24)?,artifact_id:r.get(25)?,capture_root:r.get(26)?, capture_commit:r.get(27)? }))?.collect::<Result<Vec<_>, _>>()).map_err(|error| error.to_string())).map_err(managed_error)?;
+    for row in rows {
+        reconcile_candidate_managed(database, row)?;
+    }
+    Ok(())
+}
+
+fn reconcile_candidate_managed(database: &ActiveDatabase, row: CandidateRow) -> Result<(), String> {
+    let candidate_id = stable_id("accepted-handler-candidate", &row.decision);
+    database.write("record accepted candidate baseline", |transaction| transaction.execute("UPDATE accepted_handler_candidates SET attempt_baseline_object_id=COALESCE(attempt_baseline_object_id,?2) WHERE candidate_id=?1",params![candidate_id,row.baseline]).map(|_| ()).map_err(|error| error.to_string())).map_err(managed_error)?;
+    let private_ref = format!("refs/codex/orchestrator/accepted/{candidate_id}");
+    let evidence = fingerprint(&[&row.work_unit_id,&row.attempt_id,&row.authority_id,&row.baseline,&row.capture_commit,&row.reporting,&row.review,&row.decision,&row.delivered_evidence,&row.document_id,&row.artifact_id,&row.manifest,&row.comparison,&row.contents,&row.capture_id]);
+    let retained:Option<(String,String,String,Option<String>,Option<String>)>=database.read("load retained accepted candidate", |connection| connection.query_row("SELECT candidate_commit_id,candidate_tree_id,evidence_fingerprint,pinned_at,attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id=?1",[&candidate_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(|e|e.to_string())).map_err(managed_error)?;
+    if let Some((commit, tree, stored, Some(_), retained_baseline)) = retained {
+        let lineage = database.read("validate retained candidate lineage", |connection| validate_durable_lineage(connection, &row)).map_err(managed_error);
+        let reason = if commit != row.capture_commit || stored != evidence || retained_baseline.as_deref() != Some(row.baseline.as_str()) {
+            Some("retained_durable_lineage_mismatch".to_string())
+        } else if let Err(reason) = lineage {
+            Some(reason)
+        } else {
+            let repository = PathBuf::from(&row.repo);
+            if git(&repository, &["show-ref", "--verify", "--hash", &private_ref]).as_deref() != Ok(commit.as_str()) {
+                Some("private_ref_divergent".to_string())
+            } else if git(&repository, &["rev-parse", "--verify", &format!("{commit}^{{tree}}")]).as_deref() != Ok(tree.as_str()) {
+                Some("retained_candidate_tree_mismatch".to_string())
+            } else { None }
+        };
+        if let Some(reason) = reason {
+            return record_attention_managed(database, &candidate_id, &reason);
+        }
+        return initialize_target_managed(database, &row);
+    }
+    let valid = validate_candidate_git(&row).and_then(|tree| {
+        database.read("validate accepted candidate lineage", |connection| validate_durable_lineage(connection, &row)).map_err(managed_error)?;
+        match git(&PathBuf::from(&row.capture_root), &["show-ref", "--verify", "--hash", &private_ref]) {
+            Ok(value) if value == row.capture_commit => Ok(tree),
+            Ok(_) => Err("private_ref_divergent".into()),
+            Err(_) => Ok(tree),
+        }
+    });
+    let tree = match valid { Ok(tree) => tree, Err(reason) => return record_attention_managed(database, &candidate_id, &reason) };
+    let existing: Option<(String,String,String,String,String,String,String)> = database.read("load accepted candidate intent", |connection| connection.query_row("SELECT work_unit_id,authority_id,reporting_invocation_id,review_invocation_id,decision_fingerprint,candidate_commit_id,evidence_fingerprint FROM accepted_handler_candidates WHERE candidate_id=?1 OR work_unit_id=?2", params![candidate_id,row.work_unit_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(|e|e.to_string())).map_err(managed_error)?;
+    if let Some(existing) = existing {
+        if existing != (row.work_unit_id.clone(),row.authority_id.clone(),row.reporting.clone(),row.review.clone(),row.decision.clone(),row.capture_commit.clone(),evidence.clone()) {
+            return record_attention_managed(database, &candidate_id, "durable_candidate_conflict");
+        }
+    } else {
+        database.write("reserve accepted candidate intent", |transaction| transaction.execute("INSERT INTO accepted_handler_candidates (candidate_id,work_unit_id,sprint_id,authority_id,attempt_id,reporting_invocation_id,review_invocation_id,decision_fingerprint,capture_authorization_id,attempt_baseline_object_id,candidate_commit_id,candidate_tree_id,private_ref_name,evidence_fingerprint,intent_recorded_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",params![candidate_id,row.work_unit_id,row.sprint_id,row.authority_id,row.attempt_id,row.reporting,row.review,row.decision,row.capture_id,row.baseline,row.capture_commit,tree,private_ref,evidence,chrono::Utc::now().to_rfc3339()]).map(|_| ()).map_err(|e|e.to_string())).map_err(managed_error)?;
+    }
+    let root = PathBuf::from(&row.capture_root);
+    let pinned = git(&root, &["update-ref", &private_ref, &row.capture_commit, ""]).or_else(|_| git(&root, &["show-ref", "--verify", "--hash", &private_ref]).and_then(|actual| if actual == row.capture_commit { Ok(actual) } else { Err("private_ref_divergent".into()) }));
+    match pinned {
+        Ok(_) => {
+            database.write("record accepted candidate pin", |transaction| transaction.execute("UPDATE accepted_handler_candidates SET pinned_at=COALESCE(pinned_at,?2) WHERE candidate_id=?1",params![candidate_id,chrono::Utc::now().to_rfc3339()]).map(|_| ()).map_err(|e|e.to_string())).map_err(managed_error)?;
+            initialize_target_managed(database, &row)
+        }
+        Err(reason) => record_attention_managed(database, &candidate_id, &reason),
+    }
 }
 
 pub(crate) fn initialize_accepted_candidate_authority_schema(
@@ -292,6 +382,12 @@ fn reconcile_candidate(connection: &mut Connection, row: CandidateRow) -> Result
 }
 
 fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<String, String> {
+    let tree = validate_candidate_git(row)?;
+    validate_durable_lineage(connection, row)?;
+    Ok(tree)
+}
+
+fn validate_candidate_git(row: &CandidateRow) -> Result<String, String> {
     let root = PathBuf::from(&row.capture_root);
     let repo = PathBuf::from(&row.repo);
     if !root.is_dir() || git(&root, &["status", "--porcelain"])? != "" {
@@ -332,7 +428,6 @@ fn validate_candidate(connection: &Connection, row: &CandidateRow) -> Result<Str
             &format!("{}^{{tree}}", row.capture_commit),
         ],
     )?;
-    validate_durable_lineage(connection, row)?;
     Ok(tree)
 }
 
@@ -459,8 +554,47 @@ fn initialize_target(connection: &mut Connection, row: &CandidateRow) -> Result<
     Ok(())
 }
 
+fn initialize_target_managed(database: &ActiveDatabase, row: &CandidateRow) -> Result<(), String> {
+    let existing:Option<(String,String,String,String,i64,String,String)>=database.read("load Sprint target current", |connection| connection.query_row("SELECT sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at FROM sprint_target_currents WHERE authority_id=?1",[&row.authority_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(|e|e.to_string())).map_err(managed_error)?;
+    if let Some((sprint, reference, current, binding, version, initialized, updated)) = existing {
+        let exact = sprint == row.sprint_id && safe_ref(&reference) && git_object(&current) && version >= 1 && initialized <= updated && binding == sprint_target_binding_fingerprint(&row.authority_id, &reference, &current);
+        return if exact { Ok(()) } else { record_target_attention_managed(database, &row.authority_id, "target_current_durable_mismatch") };
+    }
+    let worktree = PathBuf::from(&row.authority_root);
+    let ref_name = match git(&worktree, &["symbolic-ref", "--quiet", "HEAD"]) {
+        Ok(value) if safe_ref(&value) => value,
+        _ => return record_target_attention_managed(database, &row.authority_id, "target_ref_detached_or_unsafe"),
+    };
+    if git(&worktree, &["status", "--porcelain"])? != "" {
+        return record_target_attention_managed(database, &row.authority_id, "target_worktree_dirty");
+    }
+    let current = git(&worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    if git_path(&worktree, "--show-toplevel")? != canonical(&worktree)?
+        || git(&worktree, &["rev-parse", "--verify", &format!("{ref_name}^{{commit}}")])? != current
+        || current != row.authority_current
+        || git_path(&worktree, "--git-common-dir")? != canonical(&PathBuf::from(&row.common))?
+    {
+        return record_target_attention_managed(database, &row.authority_id, "target_worktree_drift");
+    }
+    let fingerprint = sprint_target_binding_fingerprint(&row.authority_id, &ref_name, &current);
+    database.write("initialize Sprint target current", |transaction| {
+        let now = chrono::Utc::now().to_rfc3339();
+        transaction.execute("INSERT INTO sprint_target_currents(authority_id,sprint_id,target_ref_name,current_object_id,binding_fingerprint,version,initialized_at,updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?6)",params![row.authority_id,row.sprint_id,ref_name,current,fingerprint,now]).map_err(|e|e.to_string())?;
+        transaction.execute("DELETE FROM sprint_target_current_attentions WHERE authority_id=?1", [&row.authority_id]).map_err(|e| e.to_string())?;
+        Ok(())
+    }).map_err(managed_error)
+}
+
+fn record_attention_managed(database: &ActiveDatabase, candidate_id: &str, reason: &str) -> Result<(), String> {
+    database.write("record accepted candidate attention", |transaction| record_attention(transaction, candidate_id, reason)).map_err(managed_error)
+}
+
+fn record_target_attention_managed(database: &ActiveDatabase, authority_id: &str, reason: &str) -> Result<(), String> {
+    database.write("record Sprint target attention", |transaction| record_target_attention(transaction, authority_id, reason)).map_err(managed_error)
+}
+
 fn record_attention(
-    connection: &mut Connection,
+    connection: &Connection,
     candidate_id: &str,
     reason: &str,
 ) -> Result<(), String> {
@@ -469,7 +603,7 @@ fn record_attention(
     Ok(())
 }
 fn record_target_attention(
-    connection: &mut Connection,
+    connection: &Connection,
     authority_id: &str,
     reason: &str,
 ) -> Result<(), String> {
@@ -541,6 +675,13 @@ fn fingerprint_bytes(prefix: &str, value: &[u8]) -> String {
     h.update([0]);
     h.update(value.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
     format!("{prefix}-{:x}", h.finalize())
+}
+
+fn managed_error(error: ManagedOperationError<String>) -> String {
+    match error {
+        ManagedOperationError::Infrastructure(error) => error.to_string(),
+        ManagedOperationError::Domain(error) => error,
+    }
 }
 
 #[cfg(test)]

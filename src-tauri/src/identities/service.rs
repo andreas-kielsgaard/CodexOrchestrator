@@ -6,12 +6,18 @@ use chrono::Utc;
 use std::{path::Path, sync::Arc};
 use uuid::Uuid;
 
+use crate::persistence::ActiveDatabase;
+
 #[derive(Clone)]
 pub(crate) struct IdentityService {
     repository: Arc<dyn IdentityRepository>,
 }
 
 impl IdentityService {
+    pub(crate) fn from_database(database: Arc<ActiveDatabase>) -> Self {
+        Self::new(Arc::new(SqliteIdentityRepository::from_database(database)))
+    }
+
     pub(crate) fn open(database_path: &Path) -> Result<Self, String> {
         Ok(Self::new(Arc::new(SqliteIdentityRepository::open(
             database_path,

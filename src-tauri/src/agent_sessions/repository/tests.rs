@@ -363,6 +363,44 @@ fn enforces_one_active_invocation_and_rolls_back_rejected_create() {
 }
 
 #[test]
+fn independent_repositories_create_pending_invocations_without_lock_upgrade_failure() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let path = directory.path().join("concurrent-invocations.sqlite");
+    let seed = SqliteAgentSessionRepository::open(&path).expect("open seed repository");
+    seed.create_session(test_session("session-a", at(0)))
+        .expect("create first Session");
+    seed.create_session(test_session("session-b", at(0)))
+        .expect("create second Session");
+    drop(seed);
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let workers = [("session-a", "invocation-a"), ("session-b", "invocation-b")]
+        .into_iter()
+        .map(|(session_id, invocation_id)| {
+            let repository =
+                SqliteAgentSessionRepository::open(&path).expect("open independent repository");
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                repository.create_pending_invocation(test_invocation(
+                    invocation_id,
+                    &AgentSessionId::new(session_id).expect("Session ID"),
+                    at(1),
+                ))
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+
+    for worker in workers {
+        worker
+            .join()
+            .expect("join invocation writer")
+            .expect("create pending invocation");
+    }
+}
+
+#[test]
 fn rejects_duplicate_or_reordered_event_sequences_without_partial_write() {
     let repository = memory_repository();
     let session = repository
@@ -461,9 +499,10 @@ fn construction_enables_and_verifies_foreign_keys_for_injected_connections() {
 
     assert_eq!(
         repository
-            .lock()
-            .expect("repository connection")
-            .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+            .database
+            .read("verify repository foreign keys", |connection| {
+                connection.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+            })
             .expect("repository foreign key state"),
         1
     );

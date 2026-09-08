@@ -23,8 +23,8 @@ pub(crate) use ports::{
     SelectedRuntimeProfileSourceError,
 };
 pub(crate) use repository::{
-    InMemoryCapabilityProfileRepository, SqliteCapabilityProfileRepository,
-    CAPABILITY_PROFILE_SCHEMA,
+    initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,
+    SqliteCapabilityProfileRepository, CAPABILITY_PROFILE_SCHEMA,
 };
 pub(crate) use resolution::{
     DirectUserInvocationRequest, DirectUserInvocationResolution, ResolutionError,

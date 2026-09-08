@@ -310,9 +310,9 @@ SQLite infrastructure includes:
 
 The pure SQLite adapters still do not open database files or import `node:sqlite`; Node
 runtime-facing opening is isolated in `localAppDatabase.ts`. Browser/React modules must not import
-this opener. The active Tauri composition retains one Agent Session connection. Every Rust SQLite
-connection goes through the same explicit policy: foreign keys enabled, a five-second busy timeout,
-WAL for file-backed databases, and `FULL` synchronous commits.
+this opener. The active Tauri composition shares one managed database capability across product
+domains. See [Managed Active Database](architecture/active-database.md) for its ownership,
+transaction, and external-effect boundaries.
 
 ### Tauri
 
