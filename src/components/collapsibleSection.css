@@ -1,0 +1,46 @@
+.collapsible-section__header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collapsible-section__heading-group {
+  min-width: 0;
+}
+
+.collapsible-section__heading-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.collapsible-section__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 -4px -5px;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsible-section__toggle:hover,
+.collapsible-section__toggle:focus-visible {
+  background: rgb(80 100 88 / 8%);
+}
+
+.collapsible-section__toggle svg {
+  flex: 0 0 auto;
+}
+
+.collapsible-section__content[hidden] {
+  /* Feature layouts may set display:grid. Hidden content must still leave the layout. */
+  display: none !important;
+}

@@ -69,8 +69,10 @@ invalidation, and truthful unknown/unavailable results. Sprint 3 does not implem
 or define capabilities for services other than Codex CLI. Carry this insight to the Epic Runner.
 
 Agent-to-product tools are a complementary boundary, not an extension of `AgentRuntime`. Later MCP
-work should own a semantic tool catalog, exposure policy, application authorization, and capability
-profiles covering role, tools, skills, authority, and context. Tool visibility limits agent context;
+work should own a semantic tool catalog, exposure policy and application authorization. The
+Execution Configuration target can represent allowed technical exposure through Capability
+Profiles and Workflow-local exposure through embedded Node Profiles; it does not require a generic
+Role concept. Tool visibility limits agent context;
 server-side authorization remains the actual control boundary. MCP handlers should invoke product
 application commands whose accepted effects become Orchestration Events rather than exposing event
 storage or provider-runtime internals directly.

@@ -15,14 +15,10 @@ use crate::{
         ports::RuntimeLaunchExtension,
     },
     persistence::ActiveDatabase,
-    workflows::{
-        application::{BindWorkflowSessionHarness, WorkflowSessionHarnessBinder},
-        domain::{WorkflowHarnessConfig, WorkflowMcpServerAccess},
-    },
 };
 use chrono::Utc;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     sync::{Arc, Mutex},
 };
 use uuid::Uuid;
@@ -142,6 +138,69 @@ pub(crate) struct HarnessEngineService {
 }
 
 impl HarnessEngineService {
+    pub(crate) fn bind_session_profile(
+        &self,
+        session_id: &AgentSessionId,
+        profile: &crate::execution_configuration::SessionCreationResolution,
+    ) -> Result<(), String> {
+        profile.verify_digest().map_err(|error| error.to_string())?;
+        let snapshot = serde_json::to_string(profile).map_err(|error| error.to_string())?;
+        if let Some(binding) = self.repository.current_for_session(session_id.as_str())? {
+            binding.verify_digest()?;
+            if binding.harness_snapshot != snapshot {
+                return Err("Session MCP binding does not match its pinned profile".into());
+            }
+            return Ok(());
+        }
+        let mut exposures = Vec::new();
+        for (index, (server, tools)) in profile
+            .session_profile()
+            .node_capabilities()
+            .mcp_tools
+            .iter()
+            .enumerate()
+        {
+            if tools.is_empty() {
+                continue;
+            }
+            exposures.push(HarnessMcpExposurePlan {
+                configured_server_name: server.clone(),
+                proxy_server_name: format!("session_capability_{}", index + 1),
+                upstream: self.upstreams.resolve(server)?,
+                access: HarnessToolAccess::SelectedTools {
+                    tool_names: tools.iter().cloned().collect(),
+                },
+            });
+        }
+        let mediation_plan = serde_json::to_string(&HarnessMediationPlan {
+            contract_version: MEDIATION_PLAN_VERSION.into(),
+            exposures,
+        })
+        .map_err(|error| error.to_string())?;
+        // Keep the existing technical storage/proxy format. Legacy provenance columns are
+        // unused here; source addressing is derived from the trusted Session at the receiver.
+        let binding = HarnessBindingRecord {
+            id: format!("session-capability-binding-{}", Uuid::new_v4()),
+            session_id: session_id.as_str().into(),
+            runtime_instance_id: profile.session_profile().runtime_profile_ref().into(),
+            session_instance_token: Uuid::new_v4().simple().to_string(),
+            stage: HarnessBindingStage::Prepared,
+            configuration_digest: binding_digest(&snapshot, &mediation_plan),
+            harness_snapshot: snapshot,
+            mediation_plan,
+            harness_token: None,
+            source_workflow_instance_id: String::new(),
+            source_recipe_id: String::new(),
+            source_node_id: String::new(),
+            prepared_at: Utc::now().to_rfc3339(),
+            bound_at: None,
+            retired_at: None,
+        };
+        self.repository.insert_prepared(&binding)?;
+        self.complete_prepared_binding(&binding)?;
+        Ok(())
+    }
+
     pub(crate) fn open_system(
         database: Arc<ActiveDatabase>,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
@@ -151,7 +210,7 @@ impl HarnessEngineService {
         Self::new(repository, sidecar, upstreams)
     }
 
-    fn new(
+    pub(crate) fn new(
         repository: Arc<dyn HarnessBindingRepository>,
         sidecar: Arc<dyn HarnessSidecarClient>,
         upstreams: Arc<ManagedMcpUpstreamRegistry>,
@@ -162,48 +221,6 @@ impl HarnessEngineService {
             upstreams,
         });
         Ok(service)
-    }
-
-    fn compile_plan(
-        &self,
-        harness: &WorkflowHarnessConfig,
-    ) -> Result<HarnessMediationPlan, String> {
-        let mut server_names = HashSet::new();
-        let mut exposures = Vec::with_capacity(harness.mcp_servers().len());
-        for (index, configured) in harness.mcp_servers().iter().enumerate() {
-            let server_name = configured.server_name.trim();
-            if !server_names.insert(server_name.to_string()) {
-                return Err(format!(
-                    "Harness MCP server {server_name} is exposed more than once."
-                ));
-            }
-            let upstream = self.upstreams.resolve(server_name)?;
-            let access = match &configured.access {
-                WorkflowMcpServerAccess::EntireServer => HarnessToolAccess::EntireServer,
-                WorkflowMcpServerAccess::SelectedTools { tool_names } => {
-                    let mut unique = HashSet::new();
-                    let mut selected = Vec::new();
-                    for tool_name in tool_names {
-                        if unique.insert(tool_name.clone()) {
-                            selected.push(tool_name.clone());
-                        }
-                    }
-                    HarnessToolAccess::SelectedTools {
-                        tool_names: selected,
-                    }
-                }
-            };
-            exposures.push(HarnessMcpExposurePlan {
-                configured_server_name: server_name.to_string(),
-                proxy_server_name: format!("workflow_harness_{}", index + 1),
-                upstream,
-                access,
-            });
-        }
-        Ok(HarnessMediationPlan {
-            contract_version: MEDIATION_PLAN_VERSION.to_string(),
-            exposures,
-        })
     }
 
     fn proxy_extension(
@@ -267,37 +284,6 @@ impl HarnessEngineService {
     }
 }
 
-impl WorkflowSessionHarnessBinder for HarnessEngineService {
-    fn bind_workflow_session(&self, request: BindWorkflowSessionHarness) -> Result<(), String> {
-        let harness_snapshot = serde_json::to_string(&request.harness)
-            .map_err(|error| format!("Unable to materialize Workflow Harness: {error}"))?;
-        let plan = self.compile_plan(&request.harness)?;
-        let mediation_plan = serde_json::to_string(&plan)
-            .map_err(|error| format!("Unable to compile Harness mediation plan: {error}"))?;
-        let prepared_at = Utc::now().to_rfc3339();
-        let binding = HarnessBindingRecord {
-            id: format!("harness-binding-{}", Uuid::new_v4()),
-            session_id: request.session_id.as_str().to_string(),
-            runtime_instance_id: request.runtime_instance_id,
-            session_instance_token: Uuid::new_v4().simple().to_string(),
-            stage: HarnessBindingStage::Prepared,
-            configuration_digest: binding_digest(&harness_snapshot, &mediation_plan),
-            harness_snapshot,
-            mediation_plan,
-            harness_token: None,
-            source_workflow_instance_id: request.workflow_instance_id,
-            source_recipe_id: request.recipe_id,
-            source_node_id: request.node_id,
-            prepared_at,
-            bound_at: None,
-            retired_at: None,
-        };
-        self.repository.insert_prepared(&binding)?;
-        self.complete_prepared_binding(&binding)?;
-        Ok(())
-    }
-}
-
 impl SessionHarnessLaunchAuthority for HarnessEngineService {
     fn prepare_launch(
         &self,
@@ -355,214 +341,6 @@ impl HarnessEngineTauriState {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    #[derive(Default)]
-    struct FakeSidecar {
-        registrations: Mutex<Vec<SidecarBindingRegistration>>,
-        failed_registrations: Mutex<usize>,
-        retired: Mutex<Vec<String>>,
-        prepared_invocations: Mutex<Vec<(String, String)>>,
-    }
-
-    impl HarnessSidecarClient for FakeSidecar {
-        fn register_binding(
-            &self,
-            mut registration: SidecarBindingRegistration,
-        ) -> Result<String, String> {
-            let mut failures = self.failed_registrations.lock().unwrap();
-            if *failures > 0 {
-                *failures -= 1;
-                return Err("sidecar registration failed".to_string());
-            }
-            drop(failures);
-            let token = registration
-                .harness_token
-                .clone()
-                .unwrap_or_else(|| "stable-harness-token".to_string());
-            registration.harness_token = Some(token.clone());
-            self.registrations.lock().unwrap().push(registration);
-            Ok(token)
-        }
-
-        fn ensure_binding(&self, registration: SidecarBindingRegistration) -> Result<(), String> {
-            self.registrations.lock().unwrap().push(registration);
-            Ok(())
-        }
-
-        fn retire_binding(&self, binding_id: &str) -> Result<(), String> {
-            self.retired.lock().unwrap().push(binding_id.to_string());
-            Ok(())
-        }
-
-        fn prepare_invocation(&self, binding_id: &str, invocation_id: &str) -> Result<(), String> {
-            self.prepared_invocations
-                .lock()
-                .unwrap()
-                .push((binding_id.to_string(), invocation_id.to_string()));
-            Ok(())
-        }
-
-        fn proxy_address(&self) -> Result<std::net::SocketAddr, String> {
-            Ok("127.0.0.1:43123".parse().unwrap())
-        }
-
-        fn shutdown(&self) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    struct FailingMarkBoundRepository {
-        inner: Arc<SqliteHarnessBindingRepository>,
-        fail_once: AtomicBool,
-    }
-
-    impl HarnessBindingRepository for FailingMarkBoundRepository {
-        fn insert_prepared(&self, binding: &HarnessBindingRecord) -> Result<(), String> {
-            self.inner.insert_prepared(binding)
-        }
-
-        fn mark_bound(
-            &self,
-            binding_id: &str,
-            harness_token: &str,
-            bound_at: &str,
-        ) -> Result<HarnessBindingRecord, String> {
-            if self.fail_once.swap(false, Ordering::SeqCst) {
-                return Err("simulated bound persistence failure".to_string());
-            }
-            self.inner.mark_bound(binding_id, harness_token, bound_at)
-        }
-
-        fn current_for_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Option<HarnessBindingRecord>, String> {
-            self.inner.current_for_session(session_id)
-        }
-
-        fn non_retired(&self) -> Result<Vec<HarnessBindingRecord>, String> {
-            self.inner.non_retired()
-        }
-
-        fn retire(&self, binding_id: &str, retired_at: &str) -> Result<(), String> {
-            self.inner.retire(binding_id, retired_at)
-        }
-    }
-
-    fn repository() -> (tempfile::TempDir, Arc<SqliteHarnessBindingRepository>) {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("bindings.sqlite");
-        let connection = crate::storage::open_active_database(&path).unwrap();
-        connection
-            .execute(
-                "INSERT INTO agent_sessions(id,title,availability,external_context_id,runtime_version,working_directory,requested_options_json,created_at,updated_at) VALUES('session-1','Session','available',NULL,NULL,NULL,'{}','t','t')",
-                [],
-            )
-            .unwrap();
-        drop(connection);
-        (
-            directory,
-            Arc::new(SqliteHarnessBindingRepository::open(&path).unwrap()),
-        )
-    }
-
-    #[test]
-    fn binding_is_persisted_then_bound_and_launch_receives_only_proxy_configuration() {
-        let (_directory, repository) = repository();
-        let sidecar = Arc::new(FakeSidecar::default());
-        let registry = Arc::new(ManagedMcpUpstreamRegistry::default());
-        registry
-            .register(ManagedMcpUpstreamDescriptor {
-                name: "plan_builder".into(),
-                url: "http://127.0.0.1:48000/mcp".into(),
-                bearer_token: "upstream-secret".into(),
-                workflow_tool_name: None,
-                workflow_prepare_url: None,
-            })
-            .unwrap();
-        let service =
-            HarnessEngineService::new(repository.clone(), sidecar.clone(), registry).unwrap();
-        service
-            .bind_workflow_session(BindWorkflowSessionHarness {
-                session_id: AgentSessionId::new("session-1").unwrap(),
-                runtime_instance_id: "invocation-1".into(),
-                workflow_instance_id: "workflow-instance-1".into(),
-                recipe_id: "recipe-1".into(),
-                node_id: "node-1".into(),
-                harness: {
-                    let mut harness =
-                        WorkflowHarnessConfig::test_definition("Review", "", "", "", "");
-                    harness.0.tools.mcp_servers =
-                        vec![crate::workflows::domain::WorkflowMcpServerExposure {
-                            server_name: "plan_builder".into(),
-                            access: WorkflowMcpServerAccess::SelectedTools {
-                                tool_names: vec!["submit_epic_plan_proposal".into()],
-                            },
-                        }];
-                    harness
-                },
-            })
-            .unwrap();
-        let binding = repository
-            .current_for_session("session-1")
-            .unwrap()
-            .unwrap();
-        assert_eq!(binding.stage, HarnessBindingStage::Bound);
-        assert_eq!(
-            binding.harness_token.as_deref(),
-            Some("stable-harness-token")
-        );
-        assert_eq!(binding.source_workflow_instance_id, "workflow-instance-1");
-        assert_eq!(binding.source_recipe_id, "recipe-1");
-        assert_eq!(binding.source_node_id, "node-1");
-        let bound_definition: WorkflowHarnessConfig =
-            serde_json::from_str(&binding.harness_snapshot).unwrap();
-        assert_eq!(bound_definition.name(), "Review");
-        assert!(!binding.harness_snapshot.contains("workflowInstanceId"));
-        assert!(!binding.harness_snapshot.contains("sessionId"));
-        let extension = service
-            .prepare_launch(
-                &AgentSessionId::new("session-1").unwrap(),
-                &AgentInvocationId::new("invocation-1").unwrap(),
-                None,
-            )
-            .unwrap()
-            .unwrap();
-        let joined = extension.additional_args.join(" ");
-        assert!(joined.contains("mcp_servers={}"));
-        assert!(joined.contains("stable-harness-token"));
-        assert!(!joined.contains("48000"));
-        assert!(!joined.contains("upstream-secret"));
-        assert!(extension.environment.is_empty());
-        assert_eq!(
-            sidecar.prepared_invocations.lock().unwrap()[0].1,
-            "invocation-1"
-        );
-    }
-
-    #[test]
-    fn unknown_upstream_fails_visibly_instead_of_using_ambient_codex_configuration() {
-        let (_directory, repository) = repository();
-        let service = HarnessEngineService::new(
-            repository,
-            Arc::new(FakeSidecar::default()),
-            Arc::new(ManagedMcpUpstreamRegistry::default()),
-        )
-        .unwrap();
-        let error = service
-            .compile_plan(&{
-                let mut harness = WorkflowHarnessConfig::test_definition("Review", "", "", "", "");
-                harness.0.tools.mcp_servers =
-                    vec![crate::workflows::domain::WorkflowMcpServerExposure {
-                        server_name: "arbitrary_server".into(),
-                        access: WorkflowMcpServerAccess::EntireServer,
-                    }];
-                harness
-            })
-            .unwrap_err();
-        assert!(error.contains("no application-owned managed upstream"));
-        assert!(error.contains("never inherited"));
-    }
 
     #[test]
     fn bound_session_rejects_direct_caller_mcp_configuration() {
@@ -642,105 +420,5 @@ mod tests {
         assert!(!stopped.load(Ordering::SeqCst));
         registry.shutdown();
         assert!(stopped.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn invocation_reconciles_a_prepared_binding_after_registration_failure() {
-        let (_directory, repository) = repository();
-        let sidecar = Arc::new(FakeSidecar::default());
-        *sidecar.failed_registrations.lock().unwrap() = 1;
-        let service = HarnessEngineService::new(
-            repository.clone(),
-            sidecar,
-            Arc::new(ManagedMcpUpstreamRegistry::default()),
-        )
-        .unwrap();
-        let request = BindWorkflowSessionHarness {
-            session_id: AgentSessionId::new("session-1").unwrap(),
-            runtime_instance_id: "invocation-1".into(),
-            workflow_instance_id: "workflow-instance-1".into(),
-            recipe_id: "recipe-1".into(),
-            node_id: "node-1".into(),
-            harness: WorkflowHarnessConfig::default(),
-        };
-
-        assert!(service.bind_workflow_session(request).is_err());
-        assert_eq!(
-            repository
-                .current_for_session("session-1")
-                .unwrap()
-                .unwrap()
-                .stage,
-            HarnessBindingStage::Prepared
-        );
-
-        service
-            .prepare_launch(
-                &AgentSessionId::new("session-1").unwrap(),
-                &AgentInvocationId::new("invocation-2").unwrap(),
-                None,
-            )
-            .unwrap();
-        assert_eq!(
-            repository
-                .current_for_session("session-1")
-                .unwrap()
-                .unwrap()
-                .stage,
-            HarnessBindingStage::Bound
-        );
-    }
-
-    #[test]
-    fn bound_persistence_failure_retires_sidecar_registration_and_retries_prepared_bytes() {
-        let (_directory, repository) = repository();
-        let sidecar = Arc::new(FakeSidecar::default());
-        let failing_repository = Arc::new(FailingMarkBoundRepository {
-            inner: repository.clone(),
-            fail_once: AtomicBool::new(true),
-        });
-        let service = HarnessEngineService::new(
-            failing_repository,
-            sidecar.clone(),
-            Arc::new(ManagedMcpUpstreamRegistry::default()),
-        )
-        .unwrap();
-
-        assert!(service
-            .bind_workflow_session(BindWorkflowSessionHarness {
-                session_id: AgentSessionId::new("session-1").unwrap(),
-                runtime_instance_id: "invocation-1".into(),
-                workflow_instance_id: "workflow-instance-1".into(),
-                recipe_id: "recipe-1".into(),
-                node_id: "node-1".into(),
-                harness: WorkflowHarnessConfig::default(),
-            })
-            .unwrap_err()
-            .contains("persistence failure"));
-        assert_eq!(sidecar.retired.lock().unwrap().len(), 1);
-        assert_eq!(
-            repository
-                .current_for_session("session-1")
-                .unwrap()
-                .unwrap()
-                .stage,
-            HarnessBindingStage::Prepared
-        );
-
-        service
-            .prepare_launch(
-                &AgentSessionId::new("session-1").unwrap(),
-                &AgentInvocationId::new("invocation-2").unwrap(),
-                None,
-            )
-            .unwrap();
-        assert_eq!(
-            repository
-                .current_for_session("session-1")
-                .unwrap()
-                .unwrap()
-                .stage,
-            HarnessBindingStage::Bound
-        );
     }
 }

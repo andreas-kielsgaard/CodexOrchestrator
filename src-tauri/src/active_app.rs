@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("worktree-review")
@@ -26,7 +26,8 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
-    workflow: Arc<Mutex<Option<Weak<crate::workflows::application::WorkflowApplication>>>>,
+    workflow_execution:
+        Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
     fn notify(
@@ -40,11 +41,15 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         {
             self.registry.on_terminal(invocation);
         }
-        let workflow = self.workflow.lock().ok().and_then(|slot| slot.clone());
-        if let Some(workflow) = workflow.and_then(|application| application.upgrade()) {
-            // Workflow execution is a best-effort callback after the sender's terminal fact is
-            // durable. Its failure must not change or obscure that Agent Session completion.
-            let _ = workflow.on_agent_notification(&notification);
+        let execution = self
+            .workflow_execution
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .and_then(|service| service.upgrade());
+        if let Some(execution) = execution {
+            // Handoff failures have their own stored attempt; never relabel the sender's result.
+            let _ = execution.on_agent_notification(&notification);
         }
         // Runtime launch provenance is persisted synchronously before the process start returns.
         // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
@@ -131,6 +136,12 @@ pub(crate) fn run() {
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
+            let harness_catalog =
+                crate::harness_engine::catalog_service::HarnessCatalogService::from_database(
+                    database.clone(),
+                );
+            let identities =
+                crate::identities::service::IdentityService::from_database(database.clone());
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
                 database.clone(),
                 managed_mcp_upstreams.clone(),
@@ -152,7 +163,7 @@ pub(crate) fn run() {
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
-            let workflow_notification = Arc::new(Mutex::new(None));
+            let workflow_execution_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
                     inner: Arc::new(
@@ -163,13 +174,13 @@ pub(crate) fn run() {
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
-                    workflow: workflow_notification.clone(),
+                    workflow_execution: workflow_execution_notification.clone(),
                 });
             let providers =
                 Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
             let application = Arc::new(
                 crate::agent_sessions::application::AgentSessionApplication::new(
-                    repository,
+                    repository.clone(),
                     runtime,
                     notifier,
                     providers.clone(),
@@ -177,25 +188,122 @@ pub(crate) fn run() {
                     None,
                 )
                 .with_native_profile_launch_authority(native_profiles.clone())
-                .with_session_harness_launch_authority(harness_engine.clone()),
+                .with_session_harness_version_resolver(Arc::new(harness_catalog.clone()))
+                .with_session_harness_launch_authority(Arc::new(crate::harness_engine::session_binding::SessionProfileHarnessAuthority {
+                    engine: harness_engine.clone(), sessions: repository.clone(),
+                })),
             );
             application
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
+            let selected_runtime_profile = Arc::new(
+                crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
+                    native_profiles.clone(),
+                    crate::execution_configuration::NativeCodexCapabilityExposure {
+                        capabilities: crate::execution_configuration::CapabilitySet {
+                            // This tool is supplied by the application, not discovered in Codex.
+                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string()].into_iter().collect())].into_iter().collect(),
+                            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
+                                .into_iter()
+                                .collect(),
+                            reasoning_modes: [
+                                "low".to_string(),
+                                "medium".to_string(),
+                                "high".to_string(),
+                                "xhigh".to_string(),
+                                "max".to_string(),
+                                "ultra".to_string(),
+                            ]
+                            .into_iter()
+                            .collect(),
+                            ..crate::execution_configuration::CapabilitySet::default()
+                        },
+                        locked: crate::execution_configuration::RuntimeSelections::default(),
+                    },
+                ),
+            );
+            let capability_profiles = Arc::new(
+                crate::execution_configuration::CapabilityProfileService::new(
+                    Arc::new(
+                        crate::execution_configuration::SqliteCapabilityProfileRepository::from_database(
+                            database.clone(),
+                        ),
+                    ),
+                    selected_runtime_profile.clone(),
+                ),
+            );
+            let session_event_adapter = Arc::new(
+                crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::from_database(
+                    database.clone(),
+                    application.clone(),
+                    repository.clone(),
+                    selected_runtime_profile.clone(),
+                    identities.clone(),
+                ).with_capability_profiles(capability_profiles.clone()),
+            );
+            let session_event_store = Arc::new(
+                crate::session_events::SqliteSessionEventStore::from_database(database.clone()),
+            );
+            let event_app_handle = app.handle().clone();
+            let session_events = Arc::new(crate::session_events::SessionEventApplication::new(
+                session_event_adapter.clone(),
+                session_event_adapter.clone(),
+                session_event_store.clone(),
+            ).with_record_observer(Arc::new(move |result| {
+                let _ = event_app_handle.emit("session-event-recorded", &result.group.event_group_id);
+            })));
+            let session_event_queries = Arc::new(
+                crate::session_events::SessionEventQueryApplication::new(session_event_store),
+            );
+            app.manage(session_events.clone());
+            app.manage(crate::session_events::transport::SessionEventQueryTauriState::new(
+                session_event_queries,
+            ));
+            app.manage(
+                crate::execution_configuration::transport::CapabilityProfileTauriState::new(
+                    capability_profiles.clone(),
+                ),
+            );
+            app.manage(
+                crate::agent_sessions::transport::AgentSessionProfileTauriState::new(Arc::new(
+                    crate::agent_sessions::application::AgentSessionProfileApplication::new(
+                        application.clone(),
+                        selected_runtime_profile,
+                    ),
+                )),
+            );
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
-            let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
-                Arc::new(
-                    crate::workflows::repository::SqliteWorkflowRepository::from_database(
-                        database.clone(),
+            let workflow_authoring = Arc::new(
+                crate::workflows::authoring_service::WorkflowAuthoringService::new(
+                    Arc::new(
+                        crate::workflows::authoring_repository::SqliteWorkflowAuthoringRepository::from_database(
+                            database.clone(),
+                        ),
                     ),
+                    capability_profiles,
                 ),
-                application.clone(),
-                harness_engine.clone(),
-            ));
+            );
+            app.manage(
+                crate::workflows::authoring_transport::WorkflowAuthoringTauriState::new(
+                    workflow_authoring.clone(),
+                ),
+            );
+            let instance_app_handle = app.handle().clone();
+            let workflow_execution = Arc::new(crate::workflows::execution::WorkflowExecutionService::new(
+                workflow_authoring, session_events,
+                Arc::new(crate::workflows::instances::WorkflowInstanceStore::from_database(
+                    database.clone(),
+                )),
+                session_event_adapter, repository.clone(),
+            ).with_record_observer(Arc::new(move |instance_id| {
+                let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
+            })));
+            *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
+            app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
             let (workflow_mcp, workflow_mcp_owner) =
-                crate::workflows::mcp::start_sample_server(Arc::downgrade(&workflows))?;
+                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&workflow_execution))?;
             let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
             if let Err(workflow_mcp_owner) = managed_mcp_upstreams
                 .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
@@ -204,15 +312,14 @@ pub(crate) fn run() {
                 managed_mcp_upstreams.unregister(&workflow_mcp_registration);
                 return Err("Unable to retain the Workflow MCP server.".into());
             }
-            *workflow_notification
-                .lock()
-                .map_err(|_| "Workflow notification registry is unavailable".to_string())? =
-                Some(Arc::downgrade(&workflows));
-            app.manage(crate::workflows::transport::WorkflowTauriState::new(
-                workflows,
-            ));
             app.manage(crate::harness_engine::HarnessEngineTauriState::new(
                 harness_engine,
+            ));
+            app.manage(
+                crate::harness_engine::transport::HarnessCatalogTauriState::new(harness_catalog),
+            );
+            app.manage(crate::identities::transport::IdentityTauriState::new(
+                identities,
             ));
             app.manage(crate::native_profiles::NativeProfileTauriState::new(
                 native_profiles,
@@ -342,27 +449,47 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
+            crate::agent_sessions::transport::profile::load_pinned_agent_session_profile,
+            crate::agent_sessions::transport::profile::send_direct_user_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
-            crate::workflows::transport::list_workflow_types,
-            crate::workflows::transport::list_workflow_roles,
-            crate::workflows::transport::list_workflow_mcp_components,
-            crate::workflows::transport::create_workflow_role,
-            crate::workflows::transport::update_workflow_role,
-            crate::workflows::transport::create_workflow_type,
-            crate::workflows::transport::load_workflow_type,
-            crate::workflows::transport::update_workflow_type,
-            crate::workflows::transport::save_workflow_node_draft,
-            crate::workflows::transport::delete_workflow_node_draft,
-            crate::workflows::transport::detach_workflow_node_role,
-            crate::workflows::transport::save_workflow_node_as_role,
-            crate::workflows::transport::save_workflow_connection_draft,
-            crate::workflows::transport::delete_workflow_connection_draft,
-            crate::workflows::transport::activate_workflow_changes,
-            crate::workflows::transport::load_workflow_native_query,
-            crate::workflows::transport::create_workflow_instance,
-            crate::workflows::transport::send_workflow_node_message,
-            crate::workflows::transport::list_workflow_instances,
-            crate::workflows::transport::load_workflow_instance,
+            crate::agent_sessions::transport::update_agent_session_harness,
+            crate::agent_sessions::transport::update_agent_session_identity,
+            crate::agent_sessions::transport::update_agent_session_model_override,
+            crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::list_capability_profiles,
+            crate::execution_configuration::transport::load_capability_profile,
+            crate::execution_configuration::transport::create_capability_profile,
+            crate::execution_configuration::transport::update_capability_profile,
+            crate::execution_configuration::transport::delete_capability_profile,
+            crate::session_events::transport::load_session_event_group,
+            crate::agent_sessions::transport::profile::start_direct_user_agent_session,
+            crate::workflows::execution_transport::create_workflow_recipe_instance,
+            crate::workflows::execution_transport::list_workflow_recipe_instances,
+            crate::workflows::execution_transport::load_workflow_recipe_instance,
+            crate::session_events::transport::load_recorded_session_event,
+            crate::session_events::transport::list_session_event_deliveries_for_group,
+            crate::session_events::transport::list_session_event_deliveries_for_session,
+            crate::identities::transport::list_identities,
+            crate::identities::transport::create_identity,
+            crate::identities::transport::update_identity,
+            crate::identities::transport::delete_identity,
+            crate::harness_engine::transport::list_harnesses,
+            crate::harness_engine::transport::load_harness,
+            crate::harness_engine::transport::create_harness,
+            crate::harness_engine::transport::rename_harness,
+            crate::harness_engine::transport::save_harness_draft,
+            crate::harness_engine::transport::publish_harness_draft,
+            crate::harness_engine::transport::publish_session_harness_override,
+            crate::harness_engine::transport::order_harness_version_replacement,
+            crate::harness_engine::transport::resolve_harness_version,
+            crate::workflows::authoring_transport::list_workflow_recipes,
+            crate::workflows::authoring_transport::load_workflow_recipe,
+            crate::workflows::authoring_transport::create_workflow_recipe,
+            crate::workflows::authoring_transport::save_workflow_recipe_draft,
+            crate::workflows::authoring_transport::copy_workflow_node_configuration,
+            crate::workflows::authoring_transport::activate_workflow_recipe,
+            crate::workflows::authoring_transport::compile_workflow_recipe_instance,
+            crate::workflows::execution_transport::dispatch_workflow_user_request,
             crate::repository_catalog::transport::repository_catalog_overview,
             crate::repository_catalog::transport::register_repository_directory,
             crate::repository_catalog::transport::register_codex_repository,

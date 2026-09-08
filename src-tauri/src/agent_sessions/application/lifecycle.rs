@@ -14,6 +14,8 @@ use crate::agent_sessions::{
         RuntimePortError, RuntimePortErrorKind, RuntimeUpdate,
     },
 };
+use crate::execution_configuration::SessionCreationResolution;
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::{error::Error, fmt, sync::Arc};
@@ -30,6 +32,31 @@ pub(crate) struct CreateAgentSessionCommand {
 pub(crate) struct CreateApplicationAgentSessionCommand {
     pub(crate) session_id: AgentSessionId,
     pub(crate) session: CreateAgentSessionCommand,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AgentSessionOwnership {
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+    pub(crate) session_profile: Option<SessionCreationResolution>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionHarnessCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionIdentityCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UpdateAgentSessionModelOverrideCommand {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) model: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -93,7 +120,7 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
 }
 
 /// Application-owned authority for deriving the one native home used by a managed provider
-/// launch. Callers can supply role-specific extensions, but never profile authority.
+/// launch. Callers can supply invocation-specific extensions, but never profile authority.
 pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     fn prepare_launch(
         &self,
@@ -104,9 +131,9 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     ) -> Result<RuntimeLaunchExtension, String>;
 }
 
-/// Session-owned runtime mediation consulted after all role and profile launch configuration has
-/// been resolved. A bound Session can replace only the MCP surface while preserving unrelated
-/// launch settings.
+/// Session-owned runtime mediation consulted after application invocation and profile launch
+/// configuration has been resolved. A bound Session can replace only the MCP surface while
+/// preserving unrelated launch settings.
 pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
     fn prepare_launch(
         &self,
@@ -114,6 +141,15 @@ pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
         invocation_id: &AgentInvocationId,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<Option<RuntimeLaunchExtension>, String>;
+}
+
+/// Resolves the Session's exact owned Harness reference before any launch configuration is built.
+pub(crate) trait SessionHarnessVersionResolver: Send + Sync {
+    fn resolve_session_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        requested: &HarnessVersionRef,
+    ) -> Result<HarnessVersionRef, String>;
 }
 
 pub(crate) trait AgentSessionClock: Send + Sync {
@@ -157,6 +193,7 @@ pub(crate) struct AgentSessionApplication {
     ids: Arc<dyn AgentSessionIdProvider>,
     runtime_version: Option<String>,
     native_profile_launch_authority: Option<Arc<dyn NativeProfileLaunchAuthority>>,
+    session_harness_version_resolver: Option<Arc<dyn SessionHarnessVersionResolver>>,
     session_harness_launch_authority: Option<Arc<dyn SessionHarnessLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
 }
@@ -178,6 +215,7 @@ impl AgentSessionApplication {
             ids,
             runtime_version,
             native_profile_launch_authority: None,
+            session_harness_version_resolver: None,
             session_harness_launch_authority: None,
             update_lanes: Arc::new(InvocationUpdateLanes::default()),
         }
@@ -199,16 +237,40 @@ impl AgentSessionApplication {
         self
     }
 
+    pub(crate) fn with_session_harness_version_resolver(
+        mut self,
+        resolver: Arc<dyn SessionHarnessVersionResolver>,
+    ) -> Self {
+        self.session_harness_version_resolver = Some(resolver);
+        self
+    }
+
     pub(crate) fn create_session(
         &self,
         command: CreateAgentSessionCommand,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
-        self.create_session_with_id(command, self.ids.session_id())
+        self.create_session_with_ownership(command, AgentSessionOwnership::default())
+    }
+
+    pub(crate) fn create_session_with_ownership(
+        &self,
+        command: CreateAgentSessionCommand,
+        ownership: AgentSessionOwnership,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.create_session_with_id(command, self.ids.session_id(), ownership)
     }
 
     pub(crate) fn create_application_session(
         &self,
         command: CreateApplicationAgentSessionCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.create_application_session_with_ownership(command, AgentSessionOwnership::default())
+    }
+
+    pub(crate) fn create_application_session_with_ownership(
+        &self,
+        command: CreateApplicationAgentSessionCommand,
+        ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
         if let Some(existing) = self
             .repository
@@ -220,6 +282,7 @@ impl AgentSessionApplication {
             if existing.title != expected_title
                 || existing.working_directory != expected_directory
                 || existing.requested_options != command.session.requested_options
+                || existing.session_profile != ownership.session_profile
             {
                 return Err(AgentSessionApplicationError::conflict(
                     "application Agent Session identity was already used for different semantics",
@@ -227,16 +290,29 @@ impl AgentSessionApplication {
             }
             return Ok(existing);
         }
-        self.create_session_with_id(command.session, command.session_id)
+        self.create_session_with_id(command.session, command.session_id, ownership)
     }
 
     fn create_session_with_id(
         &self,
         command: CreateAgentSessionCommand,
         session_id: AgentSessionId,
+        ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
+        let session = self.prepare_session_with_id(command, session_id, ownership);
+        self.repository
+            .create_session(session)
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn prepare_session_with_id(
+        &self,
+        command: CreateAgentSessionCommand,
+        session_id: AgentSessionId,
+        ownership: AgentSessionOwnership,
+    ) -> AgentSession {
         let now = self.clock.now();
-        let session = AgentSession {
+        AgentSession {
             id: session_id,
             title: normalize_title(command.title.as_deref(), "Agent Session"),
             availability: AgentSessionAvailability::Available,
@@ -246,11 +322,55 @@ impl AgentSessionApplication {
             },
             working_directory: normalize_optional(command.working_directory),
             requested_options: command.requested_options,
+            session_profile: ownership.session_profile,
+            harness_version: ownership.harness_version,
+            assigned_identity: ownership.assigned_identity,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    pub(crate) fn update_session_harness(
+        &self,
+        command: UpdateAgentSessionHarnessCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.repository
+            .update_harness_version(
+                &command.session_id,
+                command.harness_version,
+                self.clock.now(),
+            )
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn update_session_identity(
+        &self,
+        command: UpdateAgentSessionIdentityCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        self.repository
+            .update_assigned_identity(
+                &command.session_id,
+                command.assigned_identity,
+                self.clock.now(),
+            )
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn update_session_model_override(
+        &self,
+        command: UpdateAgentSessionModelOverrideCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        let model = match command.model {
+            Some(model) if model.trim().is_empty() => {
+                return Err(AgentSessionApplicationError::invalid(
+                    "Session model override cannot be blank",
+                ));
+            }
+            Some(model) => Some(model.trim().to_string()),
+            None => None,
         };
         self.repository
-            .create_session(session)
+            .update_session_model_override(&command.session_id, model, self.clock.now())
             .map_err(AgentSessionApplicationError::repository)
     }
 
@@ -280,8 +400,8 @@ impl AgentSessionApplication {
         self.send_message_with_launch_extension(command, None)
     }
 
-    /// Explicit opt-in for a role-specific application service. Generic callers cannot acquire
-    /// an extension accidentally because the normal send path always supplies `None`.
+    /// Explicit opt-in for an application-owned invocation service. Generic callers cannot
+    /// acquire an extension accidentally because the normal send path always supplies `None`.
     pub(crate) fn send_message_with_launch_extension(
         &self,
         command: SendAgentSessionMessageCommand,
@@ -650,6 +770,20 @@ impl AgentSessionApplication {
             invocation_id: invocation.id.clone(),
         };
 
+        let session = match self.resolve_owned_harness_version(session) {
+            Ok(session) => session,
+            Err(message) => {
+                self.finish_preflight_failure(
+                    &invocation,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        };
+
         let launch_extension = match self.native_profile_launch_authority.as_ref() {
             Some(authority) => match authority.prepare_launch(
                 &session.id,
@@ -672,23 +806,21 @@ impl AgentSessionApplication {
             None => launch_extension,
         };
         let launch_extension = match self.session_harness_launch_authority.as_ref() {
-            Some(authority) => match authority.prepare_launch(
-                &session.id,
-                &invocation.id,
-                launch_extension,
-            ) {
-                Ok(extension) => extension,
-                Err(message) => {
-                    self.finish_preflight_failure(
-                        &invocation,
-                        RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
-                    )?;
-                    return Ok(SendAgentSessionMessageLaunchResult {
-                        acknowledgement,
-                        launch_accepted: false,
-                    });
+            Some(authority) => {
+                match authority.prepare_launch(&session.id, &invocation.id, launch_extension) {
+                    Ok(extension) => extension,
+                    Err(message) => {
+                        self.finish_preflight_failure(
+                            &invocation,
+                            RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                        )?;
+                        return Ok(SendAgentSessionMessageLaunchResult {
+                            acknowledgement,
+                            launch_accepted: false,
+                        });
+                    }
                 }
-            },
+            }
             None => launch_extension,
         };
 
@@ -770,6 +902,26 @@ impl AgentSessionApplication {
             acknowledgement,
             launch_accepted,
         })
+    }
+
+    fn resolve_owned_harness_version(&self, session: AgentSession) -> Result<AgentSession, String> {
+        let Some(requested) = session.harness_version.as_ref() else {
+            return Ok(session);
+        };
+        let resolver = self
+            .session_harness_version_resolver
+            .as_ref()
+            .ok_or_else(|| {
+                "Session has a Harness reference, but Harness version resolution is unavailable."
+                    .to_string()
+            })?;
+        let resolved = resolver.resolve_session_harness_version(&session.id, requested)?;
+        if &resolved == requested {
+            return Ok(session);
+        }
+        self.repository
+            .update_harness_version(&session.id, Some(resolved), self.clock.now())
+            .map_err(|error| format!("Unable to persist resolved Session Harness: {error}"))
     }
 
     pub(crate) fn cancel_invocation(

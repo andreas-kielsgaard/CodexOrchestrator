@@ -22,6 +22,7 @@ export interface ConversationViewportComposerTarget {
   draft: string;
   workingDirectory: string;
   sending: boolean;
+  sendUnavailableReason?: string;
   active: boolean;
   canceling: boolean;
   setDraft(value: string): void;
@@ -130,6 +131,7 @@ export function ConversationViewport({
           workingDirectory={composerTarget.workingDirectory}
           isNewSession={!composerTarget.sessionId}
           sending={composerTarget.sending}
+          sendUnavailableReason={composerTarget.sendUnavailableReason}
           active={composerTarget.active}
           canceling={composerTarget.canceling}
           messageLabel={composerPresentation?.messageLabel}

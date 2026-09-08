@@ -42,3 +42,13 @@ export {
   AgentSessionTurnInspector,
   type AgentSessionTurnInspectorProps,
 } from './AgentSessionTurnInspector';
+export {
+  PerMessageRuntimeControls,
+  type PerMessageRuntimeControlsProps,
+  type PerMessageRuntimeOption,
+  type PerMessageRuntimeSelection,
+} from './PerMessageRuntimeControls';
+export {
+  AgentSessionExecutionSettings,
+  type AgentSessionExecutionSettingsProps,
+} from './AgentSessionExecutionSettings';

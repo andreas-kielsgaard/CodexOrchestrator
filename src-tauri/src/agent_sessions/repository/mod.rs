@@ -5,8 +5,8 @@ mod schema;
 mod tests;
 
 pub(crate) use schema::{
-    quarantine_archived_prototype_tables, AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA,
-    AGENT_SESSION_SCHEMA,
+    ensure_agent_session_ownership_schema, quarantine_archived_prototype_tables,
+    AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA, AGENT_SESSION_SCHEMA,
 };
 
 use self::mapping::*;
@@ -23,6 +23,8 @@ use super::{
         ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
     },
 };
+use crate::session_events::{ReferenceIdentity, SessionLogicalAddress};
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 #[cfg(any(test, feature = "live-tests"))]
@@ -55,6 +57,51 @@ impl SqliteAgentSessionRepository {
             .map(Arc::new)
             .map(Self::from_database)
             .map_err(persistence_unavailable)
+    }
+
+    /// Persists a newly prepared Agent Session and its generic logical address in one transaction.
+    /// This is the concrete atomic boundary used by the Session Event adapter.
+    pub(crate) fn create_addressed_session(
+        &self,
+        session: AgentSession,
+        logical_address: &SessionLogicalAddress,
+        created_by_event: &ReferenceIdentity,
+        created_by_session: Option<&ReferenceIdentity>,
+    ) -> Result<(AgentSession, u64), RepositoryError> {
+        validate_session(&session).map_err(contract_error)?;
+        let created_by_event_json = to_json(created_by_event)?;
+        let created_by_session_json = created_by_session.map(to_json).transpose()?;
+        self.write("create addressed Agent Session", |transaction| {
+            insert_session(transaction, &session)?;
+            transaction
+                .execute("INSERT INTO agent_session_address_clock DEFAULT VALUES", [])
+                .map_err(sql_unavailable("allocate Session address sequence"))?;
+            let created_sequence =
+                u64::try_from(transaction.last_insert_rowid()).map_err(|_| {
+                    RepositoryError::new(
+                        RepositoryErrorKind::InvalidState,
+                        "Invalid Session address sequence",
+                    )
+                })?;
+            transaction
+                .execute(
+                    "INSERT INTO agent_session_addresses(session_id,scope_namespace,scope_kind,scope_id,subject_namespace,subject_kind,subject_id,created_by_event_json,created_by_session_json,created_sequence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                    params![
+                        session.id.as_str(),
+                        logical_address.scope.namespace(),
+                        logical_address.scope.kind(),
+                        logical_address.scope.id(),
+                        logical_address.subject.namespace(),
+                        logical_address.subject.kind(),
+                        logical_address.subject.id(),
+                        created_by_event_json,
+                        created_by_session_json,
+                        created_sequence,
+                    ],
+                )
+                .map_err(sql_write("store Agent Session address"))?;
+            Ok((session, created_sequence))
+        })
     }
 
     fn load_session_history_snapshot(
@@ -248,6 +295,84 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
             )
             .map_err(sql_unavailable("update runtime binding"))?;
         Ok(candidate)
+        })
+    }
+
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.write("update Agent Session Harness", |transaction| {
+            let current = required_session(transaction, session_id)?;
+            let mut candidate = current.clone();
+            candidate.harness_version = harness_version;
+            candidate.updated_at = updated_at;
+            validate_session_update(&current, &candidate).map_err(contract_error)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET harness_version_ref_json = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        candidate.harness_version.as_ref().map(to_json).transpose()?,
+                        timestamp(updated_at),
+                        session_id.as_str()
+                    ],
+                )
+                .map_err(sql_unavailable("update session Harness"))?;
+            Ok(candidate)
+        })
+    }
+
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.write("update assigned Agent identity", |transaction| {
+            let current = required_session(transaction, session_id)?;
+            let mut candidate = current.clone();
+            candidate.assigned_identity = assigned_identity;
+            candidate.updated_at = updated_at;
+            validate_session_update(&current, &candidate).map_err(contract_error)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET assigned_identity_json = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        candidate.assigned_identity.as_ref().map(to_json).transpose()?,
+                        timestamp(updated_at),
+                        session_id.as_str()
+                    ],
+                )
+                .map_err(sql_unavailable("update assigned Agent identity"))?;
+            Ok(candidate)
+        })
+    }
+
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.write("update Agent Session model override", |transaction| {
+            let current = required_session(transaction, session_id)?;
+            let mut candidate = current.clone();
+            candidate.requested_options.model = model;
+            candidate.updated_at = updated_at;
+            validate_session_update(&current, &candidate).map_err(contract_error)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET requested_options_json = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        to_json(&candidate.requested_options)?,
+                        timestamp(updated_at),
+                        session_id.as_str()
+                    ],
+                )
+                .map_err(sql_unavailable("update Session model override"))?;
+            Ok(candidate)
         })
     }
 
@@ -459,6 +584,7 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .execute_batch(AGENT_SESSION_SCHEMA)
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
+    ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA)
         .map_err(|error| format!("Unable to initialize Agent Session launch storage: {error}"))

@@ -278,6 +278,8 @@ function makeSession(id: string, title: string, workingDirectory: string | null)
     runtimeBinding: { externalContextId: null, runtimeVersion: 'recorded' },
     workingDirectory,
     requestedOptions: { model: null, sandbox: null },
+    harnessVersion: null,
+    assignedIdentity: null,
     createdAt: defaultTime,
     updatedAt: defaultTime,
   };

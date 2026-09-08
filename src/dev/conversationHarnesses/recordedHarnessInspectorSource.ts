@@ -78,7 +78,9 @@ const recordedSessionAppliedRevision = Math.max(1, recordedProfile.version - 1);
 export const recordedHarnessInspectorAgentIdentity: AgentIdentity = {
   name: 'Avery',
   harnessRole: 'epic_plan_builder',
-  visualIdentityToken: 'sunflower',
+  visualIdentityToken: harnessVisualIdentities.epic_plan_builder.token,
+  visualIdentityAccent: harnessVisualIdentities.epic_plan_builder.accent,
+  visualIdentityShape: harnessVisualIdentities.epic_plan_builder.shape,
 };
 
 export const recordedHarnessInspectorSessionDetails: AgentSessionDetailsDto =
@@ -193,6 +195,7 @@ function buildSnapshot(sessionId: string): ConversationHarnessManagementSnapshot
     agentIdentity: recordedHarnessInspectorAgentIdentity,
     catalogs,
     workingCopy: null,
+    sessionWorkingCopy: null,
     versionControl: {
       support: 'recorded_preview',
       pushedRevision: profile.version,
@@ -400,6 +403,87 @@ function reduceRecordedCommand(
   snapshot: ConversationHarnessManagementSnapshot,
   command: ConversationHarnessManagementCommand,
 ): ConversationHarnessManagementSnapshot {
+  if (command.kind === 'start_session_edit') {
+    if (snapshot.sessionWorkingCopy) return snapshot;
+    const base = findVersion(snapshot, command.baseRevision);
+    return {
+      ...snapshot,
+      sessionWorkingCopy: {
+        baseRevision: base.revision,
+        dirty: true,
+        configuration: base.configuration,
+      },
+    };
+  }
+  if (command.kind === 'save_session_working_copy') {
+    const workingCopy = requireSessionWorkingCopy(snapshot);
+    validateConfiguration(command.configuration, snapshot.catalogs);
+    return {
+      ...snapshot,
+      sessionWorkingCopy: {
+        ...workingCopy,
+        dirty: true,
+        configuration: command.configuration,
+      },
+    };
+  }
+  if (command.kind === 'discard_session_working_copy') {
+    return { ...snapshot, sessionWorkingCopy: null };
+  }
+  if (command.kind === 'publish_session_override') {
+    const workingCopy = requireSessionWorkingCopy(snapshot);
+    if (workingCopy.baseRevision !== command.expectedBaseRevision)
+      throw new Error('The Session customization base changed. Reload before publishing.');
+    validateConfiguration(workingCopy.configuration, snapshot.catalogs);
+    const revision =
+      Math.max(...snapshot.versionControl.versions.map((version) => version.revision)) + 1;
+    const next = {
+      ...snapshot,
+      sessionWorkingCopy: null,
+      versionControl: {
+        ...snapshot.versionControl,
+        versions: [
+          ...snapshot.versionControl.versions.map((version) =>
+            version.revision === snapshot.sessionBinding.appliedRevision
+              ? { ...version, activeSessionCount: Math.max(0, version.activeSessionCount - 1) }
+              : version,
+          ),
+          {
+            revision,
+            label: `Session customization from v${workingCopy.baseRevision}`,
+            status: 'committed' as const,
+            configuration: workingCopy.configuration,
+            activeSessionCount: 1,
+            queuedSessionCount: 0,
+            committedAt: new Date().toISOString(),
+          },
+        ],
+      },
+      sessionBinding: {
+        ...snapshot.sessionBinding,
+        state: 'current' as const,
+        appliedRevision: revision,
+        desiredRevision: null,
+        reason: 'This Session now owns its published customization.',
+      },
+      modelChoices: {
+        ...snapshot.modelChoices,
+        delegatedPolicies:
+          workingCopy.configuration.runtime.modelPolicyMode === 'delegated_shared'
+            ? [
+                ...snapshot.modelChoices.delegatedPolicies,
+                {
+                  revision,
+                  policy: policyFromConfiguration(workingCopy.configuration),
+                  dirty: false,
+                  updatedAt: new Date().toISOString(),
+                },
+              ]
+            : snapshot.modelChoices.delegatedPolicies,
+      },
+    };
+    return withResolvedModelChoice(next);
+  }
   if (command.kind === 'start_edit') {
     if (snapshot.workingCopy) return snapshot;
     const base = findVersion(snapshot, command.baseRevision);
@@ -471,15 +555,10 @@ function reduceRecordedCommand(
   if (command.kind === 'update_session_identity') {
     const name = command.name.trim();
     if (!name) throw new Error('Agent name must not be blank.');
-    const visualCatalog = snapshot.catalogs.agentVisualIdentities.items;
-    if (
-      !visualCatalog.some(
-        (entry) =>
-          entry.identity.token === command.visualIdentity.token &&
-          entry.identity.accent === command.visualIdentity.accent,
-      )
-    )
-      throw new Error('Agent visual identity is outside the recorded product catalog.');
+    if (!/^#[0-9a-f]{6}$/i.test(command.visualIdentity.accent))
+      throw new Error('Agent visual identity color must be a six-digit hex color.');
+    if (!['circle', 'square', 'hexagon'].includes(command.visualIdentity.shape))
+      throw new Error('Agent visual identity shape is not supported.');
     if (!snapshot.agentIdentity) throw new Error('This Session has no Agent identity to update.');
     return {
       ...snapshot,
@@ -487,6 +566,8 @@ function reduceRecordedCommand(
         ...snapshot.agentIdentity,
         name,
         visualIdentityToken: command.visualIdentity.token,
+        visualIdentityAccent: command.visualIdentity.accent,
+        visualIdentityShape: command.visualIdentity.shape,
       },
     };
   }
@@ -550,6 +631,8 @@ function reduceRecordedCommand(
       'The pushed version is queued for every relevant Session at its next prompt.',
     );
   }
+  if (command.kind !== 'queue_version')
+    throw new Error('Session Harness customization is available from the application source.');
   return queueRecordedVersion(
     snapshot,
     command.revision,
@@ -799,6 +882,14 @@ function requireWorkingCopy(
 ): NonNullable<ConversationHarnessManagementSnapshot['workingCopy']> {
   if (!snapshot.workingCopy) throw new Error('Start editing before saving or committing.');
   return snapshot.workingCopy;
+}
+
+function requireSessionWorkingCopy(
+  snapshot: ConversationHarnessManagementSnapshot,
+): NonNullable<ConversationHarnessManagementSnapshot['sessionWorkingCopy']> {
+  if (!snapshot.sessionWorkingCopy)
+    throw new Error('Customize this Session before saving or publishing.');
+  return snapshot.sessionWorkingCopy;
 }
 
 function findVersion(snapshot: ConversationHarnessManagementSnapshot, revision: number) {

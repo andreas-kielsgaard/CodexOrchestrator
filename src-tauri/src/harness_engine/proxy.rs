@@ -349,6 +349,9 @@ async fn handle_proxy_request(
                 &binding.registration.source_workflow_instance_id,
             )
             .header("x-workflow-session-id", &binding.registration.session_id);
+        if let Some(invocation_id) = &binding.current_invocation_id {
+            upstream = upstream.header("x-workflow-invocation-id", invocation_id);
+        }
     }
     let upstream = match upstream.send().await {
         Ok(response) => response,

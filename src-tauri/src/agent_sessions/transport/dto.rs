@@ -2,7 +2,8 @@ use crate::agent_sessions::{
     application::{
         project_invocation_observation, AgentInvocationObservation, AgentSessionNotification,
         CancelAgentInvocationCommand, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
-        SendAgentSessionMessageResult,
+        SendAgentSessionMessageResult, UpdateAgentSessionHarnessCommand,
+        UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
     },
     domain::{
         AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeOptions, AgentSession,
@@ -10,6 +11,7 @@ use crate::agent_sessions::{
     },
     ports::{AgentSessionHistory, AgentSessionSummary, ListAgentSessionsQuery},
 };
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use serde::{Deserialize, Serialize};
 
 pub(crate) type AgentSessionDto = AgentSession;
@@ -23,6 +25,68 @@ pub(crate) struct CreateAgentSessionCommandDto {
     pub(crate) working_directory: Option<String>,
     #[serde(default)]
     pub(crate) requested_options: AgentRuntimeOptions,
+    #[serde(default)]
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+    #[serde(default)]
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+impl CreateAgentSessionCommandDto {
+    pub(crate) fn ownership(&self) -> crate::agent_sessions::application::AgentSessionOwnership {
+        crate::agent_sessions::application::AgentSessionOwnership {
+            harness_version: self.harness_version.clone(),
+            assigned_identity: self.assigned_identity.clone(),
+            session_profile: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateAgentSessionHarnessCommandDto {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) harness_version: Option<HarnessVersionRef>,
+}
+
+impl From<UpdateAgentSessionHarnessCommandDto> for UpdateAgentSessionHarnessCommand {
+    fn from(value: UpdateAgentSessionHarnessCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            harness_version: value.harness_version,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateAgentSessionIdentityCommandDto {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+impl From<UpdateAgentSessionIdentityCommandDto> for UpdateAgentSessionIdentityCommand {
+    fn from(value: UpdateAgentSessionIdentityCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            assigned_identity: value.assigned_identity,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UpdateAgentSessionModelOverrideCommandDto {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) model: Option<String>,
+}
+
+impl From<UpdateAgentSessionModelOverrideCommandDto> for UpdateAgentSessionModelOverrideCommand {
+    fn from(value: UpdateAgentSessionModelOverrideCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            model: value.model,
+        }
+    }
 }
 
 impl From<CreateAgentSessionCommandDto> for CreateAgentSessionCommand {
@@ -237,6 +301,30 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     #[test]
+    fn model_override_transport_accepts_an_opaque_model_or_explicit_clear() {
+        let selected: UpdateAgentSessionModelOverrideCommand = serde_json::from_value::<
+            UpdateAgentSessionModelOverrideCommandDto,
+        >(serde_json::json!({
+            "sessionId": "session",
+            "model": "user-selected-model"
+        }))
+        .unwrap()
+        .into();
+        assert_eq!(selected.session_id.as_str(), "session");
+        assert_eq!(selected.model.as_deref(), Some("user-selected-model"));
+
+        let cleared: UpdateAgentSessionModelOverrideCommand = serde_json::from_value::<
+            UpdateAgentSessionModelOverrideCommandDto,
+        >(serde_json::json!({
+            "sessionId": "session",
+            "model": null
+        }))
+        .unwrap()
+        .into();
+        assert!(cleared.model.is_none());
+    }
+
+    #[test]
     fn serializes_observation_from_durable_history_without_application_acceptance() {
         let at = Utc.with_ymd_and_hms(2026, 8, 2, 12, 0, 0).unwrap();
         let session_id = AgentSessionId::new("session").unwrap();
@@ -252,6 +340,9 @@ mod tests {
                 },
                 working_directory: None,
                 requested_options: AgentRuntimeOptions::default(),
+                session_profile: None,
+                harness_version: None,
+                assigned_identity: None,
                 created_at: at,
                 updated_at: at,
             },

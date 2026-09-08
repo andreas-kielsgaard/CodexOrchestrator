@@ -114,6 +114,8 @@ function session(externalContextId: string | null): AgentSessionDto {
     },
     workingDirectory: 'C:/work/session-local',
     requestedOptions: { model: null, sandbox: null },
+    harnessVersion: null,
+    assignedIdentity: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };

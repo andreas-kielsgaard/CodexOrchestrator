@@ -1,9 +1,11 @@
-import type { AgentIdentity } from '../agentSessions';
+import type { AgentIdentity, AgentIdentityShape } from '../agentSessions';
+import type { IdentityDefinition } from '../identities';
 
 /** Recorded/configuration visual choice; Session identity remains injected by its owner. */
 export interface HarnessVisualIdentity {
   readonly token: string;
   readonly accent: string;
+  readonly shape: AgentIdentityShape;
 }
 
 export type HarnessSkillPolicy = 'always_applicable' | 'initial_ingestion' | 'available';
@@ -92,6 +94,12 @@ export interface HarnessMcpServerExposure {
 }
 
 export interface HarnessConfigurationCatalogs {
+  /** Application-owned reusable identities. Harness assignment policies store only their IDs. */
+  readonly identities?: {
+    readonly source: 'application_identity_catalog' | 'not_connected';
+    readonly items: readonly IdentityDefinition[];
+    readonly reason: string;
+  };
   readonly agentNames: {
     readonly source: 'product_default_pool' | 'not_connected';
     readonly items: readonly string[];
@@ -154,6 +162,12 @@ export interface ConversationHarnessManagementSnapshot {
     readonly baseRevision: number;
     readonly draftRevision: number;
     readonly dirty: boolean;
+    readonly configuration: HarnessEffectiveConfiguration;
+  } | null;
+  /** Process-local customization owned by this Session; never a persistent Harness draft. */
+  readonly sessionWorkingCopy?: {
+    readonly baseRevision: number;
+    readonly dirty: true;
     readonly configuration: HarnessEffectiveConfiguration;
   } | null;
   readonly versionControl: {
@@ -227,6 +241,21 @@ export type ConversationHarnessManagementCommand =
   | {
       readonly kind: 'save_working_copy';
       readonly configuration: HarnessEffectiveConfiguration;
+    }
+  | {
+      readonly kind: 'start_session_edit';
+      readonly baseRevision: number;
+    }
+  | {
+      readonly kind: 'save_session_working_copy';
+      readonly configuration: HarnessEffectiveConfiguration;
+    }
+  | {
+      readonly kind: 'publish_session_override';
+      readonly expectedBaseRevision: number;
+    }
+  | {
+      readonly kind: 'discard_session_working_copy';
     }
   | {
       readonly kind: 'commit';

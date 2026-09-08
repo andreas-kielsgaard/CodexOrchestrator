@@ -20,7 +20,7 @@ describe('App Harness Management preview', () => {
     expect(await screen.findByRole('heading', { name: /: Epic Plan Builder$/ })).toBeVisible();
     expect(screen.queryByText('Agent Session Harness Inspector')).toBeNull();
     expect(screen.getByLabelText('Session model')).toBeVisible();
-    expect(screen.getByLabelText('Session effort')).toBeVisible();
+    expect(screen.queryByLabelText('Session effort')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Manage harness' }));
     await screen.findByRole('heading', { name: 'Harness details' });
@@ -55,7 +55,7 @@ describe('App Harness Management preview', () => {
     expect(await screen.findByRole('heading', { name: displayTitle ?? '' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Manage harness' })).toBeVisible();
     expect(screen.getByLabelText('Session model')).toBeVisible();
-    expect(screen.getByLabelText('Session effort')).toBeVisible();
+    expect(screen.queryByLabelText('Session effort')).toBeNull();
     const reopenedResponse = screen
       .getByText(/planning context is ready for review/i)
       .closest('article');

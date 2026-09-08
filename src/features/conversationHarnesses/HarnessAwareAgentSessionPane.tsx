@@ -78,8 +78,10 @@ export function HarnessAwareAgentSessionPane({
   };
 
   const runCommand = async (command: ConversationHarnessManagementCommand) => {
-    if (!source?.dispatch || (commandPending && command.kind !== 'save_working_copy')) return;
-    const tracksPending = command.kind !== 'save_working_copy';
+    const savesWorkingCopy =
+      command.kind === 'save_working_copy' || command.kind === 'save_session_working_copy';
+    if (!source?.dispatch || (commandPending && !savesWorkingCopy)) return;
+    const tracksPending = !savesWorkingCopy;
     if (tracksPending) setCommandPending(true);
     setCommandError(null);
     try {

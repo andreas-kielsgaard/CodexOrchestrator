@@ -13,8 +13,10 @@ use uuid::Uuid;
 
 mod active_app;
 mod agent_sessions;
+mod execution_configuration;
 mod git_process;
 mod harness_engine;
+mod identities;
 mod native_profiles;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
@@ -26,6 +28,7 @@ mod repository_catalog;
 mod repository_context;
 mod repository_discovery;
 mod runtime;
+mod session_events;
 mod storage;
 mod workflows;
 pub(crate) mod worktree_application;
@@ -820,9 +823,6 @@ pub fn run_harness_engine_sidecar_if_requested() -> bool {
 }
 
 /// Runs the headless Workflow authoring and demonstration surface before Tauri initializes.
-pub fn run_workflow_cli_if_requested() -> Option<Result<(), String>> {
-    workflows::cli::run_if_requested()
-}
 
 fn ensure_legacy_tasks_available() -> Result<(), String> {
     Err("Legacy Tasks are quarantined in the Agent Session reset baseline".to_string())

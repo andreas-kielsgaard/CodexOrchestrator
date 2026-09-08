@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 46;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 47;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -32,16 +32,20 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if active_schema_is_present(connection)? {
             return Ok(());
         }
-        let transaction = rusqlite::Transaction::new_unchecked(
-            connection,
-            TransactionBehavior::Immediate,
+        let transaction =
+            rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+                .map_err(|error| format!("Unable to begin active v47 schema evolution: {error}"))?;
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+            &transaction,
         )
-            .map_err(|error| format!("Unable to begin active schema evolution: {error}"))?;
-        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-            .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
-        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        .map_err(|error| format!("Unable to evolve accepted-integration schema: {error}"))?;
+        transaction
+            .execute_batch(
+                crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+            )
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
-        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        transaction
+            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
@@ -52,29 +56,18 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
             .map_err(|error| format!("Unable to evolve Product Decision schema: {error}"))?;
         transaction
-            .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
-            .map_err(|error| format!("Unable to evolve Workflow schema: {error}"))?;
-        crate::workflows::repository::initialize_workflow_role_schema(&transaction)
-            .map_err(|error| format!("Unable to evolve Workflow Role schema: {error}"))?;
-        transaction
-            .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
-            .map_err(|error| format!("Unable to evolve Workflow instance schema: {error}"))?;
-        crate::workflows::repository::initialize_workflow_mcp_output_schema(&transaction)
-            .map_err(|error| format!("Unable to evolve Workflow MCP output schema: {error}"))?;
-        transaction
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
+        initialize_replacement_workflow_schema(&transaction)?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v47 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=45).contains(&current_version) {
-        let transaction = rusqlite::Transaction::new_unchecked(
-            connection,
-            TransactionBehavior::Immediate,
-        )
-            .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
+    if (1..=46).contains(&current_version) {
+        let transaction =
+            rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+                .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
         if current_version == 1 {
             transaction
                 .execute_batch(crate::orchestration::repository::ORCHESTRATION_INITIATION_SCHEMA)
@@ -163,26 +156,41 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate execution-support schema: {error}"))?;
         crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
             .map_err(|error| format!("Unable to migrate accepted-candidate authority schema: {error}"))?;
-        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-            .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
-        transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+            &transaction,
+        )
+        .map_err(|error| format!("Unable to migrate accepted-integration schema: {error}"))?;
+        transaction
+            .execute_batch(
+                crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+            )
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
-        transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        transaction
+            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
         if current_version <= 21 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile readiness schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile readiness schema: {error}")
+                })?;
         }
         if current_version <= 22 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile attention schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile attention schema: {error}")
+                })?;
         }
         if current_version <= 23 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native profile producer-attempt schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native profile producer-attempt schema: {error}")
+                })?;
         }
         if current_version <= 24 {
             let has_full_access_canary = transaction
@@ -197,12 +205,18 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 transaction.execute_batch("ALTER TABLE native_codex_profile_readiness ADD COLUMN danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked'));")
                     .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
             }
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native execution-mode authority schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native execution-mode authority schema: {error}")
+                })?;
         }
         if current_version <= 25 {
-            transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
-                .map_err(|error| format!("Unable to migrate native full-access canary schema: {error}"))?;
+            transaction
+                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .map_err(|error| {
+                    format!("Unable to migrate native full-access canary schema: {error}")
+                })?;
         }
         if current_version <= 26 {
             transaction
@@ -289,13 +303,19 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if legacy_full_access_canary {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION)
-                    .map_err(|error| format!("Unable to migrate native full-access canary evidence: {error}"))?;
+                    .execute_batch(
+                        crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
+                    )
+                    .map_err(|error| {
+                        format!("Unable to migrate native full-access canary evidence: {error}")
+                    })?;
             }
         }
         if current_version <= 34 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION)
+                .execute_batch(
+                    crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native MCP reporting dispatch claims: {error}")
                 })?;
@@ -305,58 +325,18 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
             .map_err(|error| format!("Unable to migrate Product Decision schema: {error}"))?;
-        transaction
-            .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
-            .map_err(|error| format!("Unable to migrate Workflow schema: {error}"))?;
-        if current_version <= 38 {
-            crate::workflows::repository::initialize_workflow_role_schema(&transaction)
-                .map_err(|error| format!("Unable to migrate Workflow Role schema: {error}"))?;
-        }
-        if current_version <= 41 {
-            transaction
-                .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
-                .map_err(|error| format!("Unable to migrate Workflow instance schema: {error}"))?;
-        }
-        if current_version <= 42 {
-            crate::workflows::repository::initialize_workflow_mcp_output_schema(&transaction)
-                .map_err(|error| {
-                    format!("Unable to migrate Workflow MCP output storage: {error}")
-                })?;
-        }
         if current_version <= 40 {
             transaction
                 .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
                 .map_err(|error| format!("Unable to migrate Harness binding schema: {error}"))?;
         }
-        if current_version <= 44 {
-            let agent_sessions_present = transaction
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions')",
-                    [],
-                    |row| row.get::<_, bool>(0),
-                )
-                .map_err(|error| format!("Unable to inspect Agent Session storage before Workflow reset: {error}"))?;
-            if agent_sessions_present {
-                transaction
-                    .execute(
-                        "DELETE FROM session_harness_bindings
-                         WHERE source_workflow_instance_id IN (SELECT id FROM workflow_instances)",
-                        [],
-                    )
-                    .map_err(|error| format!("Unable to reset Workflow Harness bindings: {error}"))?;
-            }
-            transaction
-                .execute_batch(
-                    "DROP TABLE IF EXISTS workflow_connection_activations;
-                     DROP TABLE IF EXISTS workflow_activations;
-                     DROP TABLE IF EXISTS workflow_instance_sessions;
-                     DROP TABLE IF EXISTS workflow_instances;",
-                )
-                .map_err(|error| format!("Unable to reset alpha Workflow runtime storage: {error}"))?;
-            transaction
-                .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
-                .map_err(|error| format!("Unable to create v45 Workflow runtime storage: {error}"))?;
-        }
+        transaction
+            .execute_batch(crate::harness_engine::catalog_repository::HARNESS_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Harness catalog schema: {error}"))?;
+        transaction
+            .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
+        initialize_replacement_workflow_schema(&transaction)?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -390,11 +370,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             "Unsupported active database schema version {current_version}; expected {ACTIVE_SCHEMA_VERSION}"
         ));
     }
-    let transaction = rusqlite::Transaction::new_unchecked(
-        connection,
-        TransactionBehavior::Immediate,
-    )
-        .map_err(|error| format!("Unable to begin active schema initialization: {error}"))?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+            .map_err(|error| format!("Unable to begin active schema initialization: {error}"))?;
     transaction
         .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
         .map_err(|error| format!("Unable to initialize Agent Session schema: {error}"))?;
@@ -436,11 +414,17 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .map_err(|error| format!("Unable to initialize execution-support schema: {error}"))?;
     crate::orchestration::accepted_candidate_authority::initialize_accepted_candidate_authority_schema(&transaction)
         .map_err(|error| format!("Unable to initialize accepted-candidate authority schema: {error}"))?;
-    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(&transaction)
-        .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
-    transaction.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+    crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
+        &transaction,
+    )
+    .map_err(|error| format!("Unable to initialize accepted-integration schema: {error}"))?;
+    transaction
+        .execute_batch(
+            crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA,
+        )
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
-    transaction.execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+    transaction
+        .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     transaction
         .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
@@ -451,16 +435,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::product_decisions::PRODUCT_DECISION_SCHEMA)
         .map_err(|error| format!("Unable to initialize Product Decision schema: {error}"))?;
     transaction
-        .execute_batch(crate::workflows::repository::WORKFLOW_SCHEMA)
-        .map_err(|error| format!("Unable to initialize Workflow schema: {error}"))?;
-    crate::workflows::repository::initialize_workflow_role_schema(&transaction)
-        .map_err(|error| format!("Unable to initialize Workflow Role schema: {error}"))?;
-    transaction
-        .execute_batch(crate::workflows::repository::WORKFLOW_INSTANCE_SCHEMA)
-        .map_err(|error| format!("Unable to initialize Workflow instance schema: {error}"))?;
-    transaction
         .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
+    initialize_replacement_workflow_schema(&transaction)?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -468,6 +445,30 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .commit()
         .map_err(|error| format!("Unable to commit active schema initialization: {error}"))?;
     Ok(())
+}
+
+fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "DROP TABLE IF EXISTS workflow_connection_activations;
+             DROP TABLE IF EXISTS workflow_activations;
+             DROP TABLE IF EXISTS workflow_instance_sessions;
+             DROP TABLE IF EXISTS workflow_instances;
+             DROP TABLE IF EXISTS workflow_connections;
+             DROP TABLE IF EXISTS workflow_nodes;
+             DROP TABLE IF EXISTS workflow_effective_recipes;
+             DROP TABLE IF EXISTS workflow_roles;
+             DROP TABLE IF EXISTS workflow_types;",
+        )
+        .map_err(|error| format!("Unable to retire Workflow V1 storage: {error}"))?;
+    crate::agent_sessions::repository::ensure_agent_session_ownership_schema(connection)?;
+    crate::agent_sessions::session_event_adapter::initialize_session_address_storage(connection)?;
+    crate::execution_configuration::initialize_capability_profile_storage(connection)?;
+    crate::harness_engine::catalog_repository::initialize_harness_catalog_storage(connection)?;
+    crate::identities::repository::initialize_identity_storage(connection)?;
+    crate::session_events::initialize_session_event_storage(connection)?;
+    crate::workflows::authoring_repository::initialize_workflow_authoring_storage(connection)?;
+    crate::workflows::instances::initialize_workflow_instance_storage(connection)
 }
 
 fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
@@ -495,36 +496,30 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 8)
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
-    let workflow_schema_is_present = connection
+    let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_types','workflow_nodes','workflow_connections','workflow_effective_recipes','workflow_roles')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 5)
-        .map_err(|error| format!("Unable to inspect active Workflow schema: {error}"))?;
-    let workflow_role_schema_is_present = connection
+        .map(|table_count| table_count == 8)
+        .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
+    let workflow_v1_schema_is_absent = connection
         .query_row(
-            "SELECT
-                (SELECT COUNT(*) FROM pragma_table_info('workflow_roles') WHERE name IN ('id','name','harness_json','created_at','updated_at'))=5
-                AND EXISTS(SELECT 1 FROM pragma_index_list('workflow_roles') WHERE name='workflow_roles_by_name')
-                AND EXISTS(SELECT 1 FROM pragma_table_info('workflow_nodes') WHERE name='live_effective_json')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_types','workflow_roles','workflow_effective_recipes','workflow_nodes','workflow_connections','workflow_instances','workflow_instance_sessions','workflow_activations','workflow_connection_activations')",
             [],
-            |row| row.get::<_, bool>(0),
+            |row| row.get::<_, i64>(0),
         )
-        .map_err(|error| format!("Unable to inspect active Workflow Role schema: {error}"))?;
-    let workflow_instance_schema_is_present = connection
+        .map(|table_count| table_count == 0)
+        .map_err(|error| format!("Unable to inspect retired Workflow V1 schema: {error}"))?;
+    let session_profile_schema_is_present = connection
         .query_row(
-            "SELECT
-                (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_instances','workflow_instance_sessions','workflow_connection_activations'))=3
-                AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_activations')
-                AND (SELECT COUNT(*) FROM pragma_table_info('workflow_instances') WHERE name IN ('repository_id','repository_name','repository_git_common_directory','branch_id','branch_name','worktree_id','worktree_root'))=7
-                AND NOT EXISTS(SELECT 1 FROM pragma_table_info('workflow_instances') WHERE name IN ('starting_prompt','working_directory'))
-                AND EXISTS(SELECT 1 FROM pragma_table_info('workflow_connection_activations') WHERE name='resolved_output_json')",
+            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json')",
             [],
-            |row| row.get::<_, bool>(0),
+            |row| row.get::<_, i64>(0),
         )
-        .map_err(|error| format!("Unable to inspect active Workflow instance schema: {error}"))?;
+        .map(|column_count| column_count == 3)
+        .map_err(|error| format!("Unable to inspect Agent Session profile schema: {error}"))?;
     let harness_binding_schema_is_present = connection
         .query_row(
             "SELECT
@@ -534,6 +529,21 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             |row| row.get::<_, bool>(0),
         )
         .map_err(|error| format!("Unable to inspect active Harness binding schema: {error}"))?;
+    let harness_catalog_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('harnesses','harness_versions','harness_drafts','harness_version_replacements')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 4)
+        .map_err(|error| format!("Unable to inspect active Harness catalog schema: {error}"))?;
+    let identity_catalog_schema_is_present = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='identity_definitions')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Unable to inspect active Identity catalog schema: {error}"))?;
     let repository_catalog_schema_is_present = connection
         .query_row(
             "SELECT
@@ -551,10 +561,12 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
-        && workflow_schema_is_present
-        && workflow_role_schema_is_present
-        && workflow_instance_schema_is_present
+        && replacement_workflow_schema_is_present
+        && workflow_v1_schema_is_absent
+        && session_profile_schema_is_present
         && harness_binding_schema_is_present
+        && harness_catalog_schema_is_present
+        && identity_catalog_schema_is_present
         && repository_catalog_schema_is_present)
 }
 /// Applies the app-wide policy to every SQLite connection before it is used. WAL permits readers
@@ -636,6 +648,8 @@ mod tests {
                 "accepted_handler_candidates",
                 "accepted_work_unit_integration_evidence",
                 "accepted_work_unit_integrations",
+                "agent_session_address_clock",
+                "agent_session_addresses",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
@@ -666,17 +680,23 @@ mod tests {
                 "epic_settlement_requests",
                 "epic_settlement_unresolved",
                 "epic_settlements",
+                "execution_capability_profiles",
                 "execution_support_attempt_authorizations",
                 "execution_support_grants",
                 "file_review_changed_files",
                 "file_review_documents",
                 "file_review_git_capture_authorizations",
                 "file_review_git_capture_documents",
+                "harness_drafts",
                 "harness_revision_commands",
                 "harness_revision_publications",
                 "harness_revisions",
+                "harness_version_replacements",
+                "harness_versions",
                 "harness_working_copies",
                 "harness_working_copy_commands",
+                "harnesses",
+                "identity_definitions",
                 "initiated_planning_drafts",
                 "initiated_sprint_git_authorities",
                 "initiated_sprints",
@@ -709,6 +729,8 @@ mod tests {
                 "proposal_revisions",
                 "registered_repositories",
                 "registered_repository_disclosures",
+                "session_event_deliveries",
+                "session_event_groups",
                 "session_harness_bindings",
                 "sprint_target_current_attentions",
                 "sprint_target_currents",
@@ -722,14 +744,9 @@ mod tests {
                 "work_unit_execution_states",
                 "work_unit_prerequisite_contributions",
                 "work_unit_settlements",
-                "workflow_connection_activations",
-                "workflow_connections",
-                "workflow_effective_recipes",
-                "workflow_instance_sessions",
-                "workflow_instances",
-                "workflow_nodes",
-                "workflow_roles",
-                "workflow_types",
+                "workflow_recipe_attempts",
+                "workflow_recipe_authoring",
+                "workflow_recipe_instances",
             ]
         );
         assert_eq!(
@@ -863,185 +880,61 @@ mod tests {
                 .unwrap(),
             2
         );
-        let workflow_node_columns = connection
-            .prepare("PRAGMA table_info(workflow_nodes)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(workflow_node_columns.contains(&"live_effective_json".to_string()));
-        let workflow_role_columns = connection
-            .prepare("PRAGMA table_info(workflow_roles)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            workflow_role_columns,
-            vec!["id", "name", "harness_json", "created_at", "updated_at"]
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_index_list('workflow_roles') WHERE name='workflow_roles_by_name'",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            1
-        );
     }
 
     #[test]
-    fn v37_migration_adds_workflow_definition_storage() {
+    fn v45_migration_adds_replacement_workflow_storage() {
         let connection = Connection::open_in_memory().expect("memory database");
         configure_sqlite_connection(&connection).expect("configure connection");
         initialize_active_database(&connection).expect("initialize active database");
         connection
             .execute_batch(
-                "DROP TABLE workflow_connections;
-                 DROP TABLE workflow_nodes;
-                 DROP TABLE workflow_effective_recipes;
-                 DROP TABLE workflow_types;
-                 PRAGMA user_version=37;",
+                "DROP TABLE workflow_recipe_attempts;
+                 DROP TABLE workflow_recipe_instances;
+                 DROP TABLE workflow_recipe_authoring;
+                 DROP TABLE session_event_deliveries;
+                 DROP TABLE session_event_groups;
+                 CREATE TABLE workflow_types(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_roles(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_effective_recipes(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_nodes(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_connections(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_instances(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_instance_sessions(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_activations(id TEXT PRIMARY KEY);
+                 CREATE TABLE workflow_connection_activations(id TEXT PRIMARY KEY);
+                 PRAGMA user_version=45;",
             )
-            .expect("restore v37 predecessor");
+            .expect("restore v45 predecessor");
 
-        initialize_active_database(&connection).expect("migrate Workflow schema");
+        initialize_active_database(&connection).expect("migrate replacement Workflow schema");
 
         for table in [
-            "workflow_types",
-            "workflow_nodes",
-            "workflow_connections",
-            "workflow_effective_recipes",
-            "workflow_roles",
+            "session_event_groups",
+            "session_event_deliveries",
+            "workflow_recipe_authoring",
+            "workflow_recipe_instances",
+            "workflow_recipe_attempts",
         ] {
             assert!(table_exists(&connection, table), "missing {table}");
         }
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
-    }
-
-    #[test]
-    fn migrates_v38_workflow_json_to_role_schema_and_reopens_idempotently() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("active-v38.sqlite");
-        let draft_json = r#"{"id":"node-1","name":"Review","harnessName":"Reviewer","roleName":null,"positionX":10.0,"positionY":20.0,"isStartingPoint":true}"#;
-        {
-            let connection = open_active_database(&path).expect("current database");
-            connection
-                .execute(
-                    "INSERT INTO workflow_types(id,name,created_at,updated_at) VALUES('workflow-1','Review','created','updated')",
-                    [],
-                )
-                .expect("seed Workflow type");
-            connection
-                .execute(
-                    "INSERT INTO workflow_nodes(id,workflow_type_id,draft_json,live_json,live_effective_json,has_unpublished_changes) VALUES('node-1','workflow-1',?1,?1,NULL,1)",
-                    [draft_json],
-                )
-                .expect("seed Workflow node");
-            connection
-                .execute_batch(
-                    "DROP TABLE workflow_roles;
-                     ALTER TABLE workflow_nodes DROP COLUMN live_effective_json;
-                     PRAGMA user_version=38;",
-                )
-                .expect("restore v38 predecessor");
-        }
-
-        {
-            let migrated = open_active_database(&path).expect("migrate v38");
-            assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
-            assert!(table_exists(&migrated, "workflow_roles"));
-            assert_eq!(
-                migrated
-                    .query_row(
-                        "SELECT COUNT(*) FROM pragma_index_list('workflow_roles') WHERE name='workflow_roles_by_name'",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .unwrap(),
-                1
-            );
-            assert_eq!(
-                migrated
-                    .query_row(
-                        "SELECT COUNT(*) FROM pragma_table_info('workflow_nodes') WHERE name='live_effective_json'",
-                        [],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .unwrap(),
-                1
-            );
-            assert_eq!(
-                migrated
-                    .query_row(
-                        "SELECT draft_json,live_json FROM workflow_nodes WHERE id='node-1'",
-                        [],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                    )
-                    .unwrap(),
-                (draft_json.to_string(), draft_json.to_string())
-            );
-        }
-
-        let reopened = open_active_database(&path).expect("reopen migrated database");
-        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
-        assert_eq!(
-            reopened
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('workflow_nodes') WHERE name='live_effective_json'",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            reopened
-                .query_row(
-                    "SELECT draft_json,live_json FROM workflow_nodes WHERE id='node-1'",
-                    [],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .unwrap(),
-            (draft_json.to_string(), draft_json.to_string())
-        );
-    }
-
-    #[test]
-    fn migrates_v39_to_current_workflow_runtime_storage_and_reopens_idempotently() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("active-v39.sqlite");
-        {
-            let connection = open_active_database(&path).expect("current database");
-            connection
-                .execute_batch(
-                    "DROP TABLE workflow_connection_activations;
-                     DROP TABLE workflow_instance_sessions;
-                     DROP TABLE workflow_instances;
-                     PRAGMA user_version=39;",
-                )
-                .expect("restore v39 predecessor");
-        }
-
-        let migrated = open_active_database(&path).expect("migrate v39");
         for table in [
+            "workflow_types",
+            "workflow_roles",
+            "workflow_effective_recipes",
+            "workflow_nodes",
+            "workflow_connections",
             "workflow_instances",
             "workflow_instance_sessions",
+            "workflow_activations",
             "workflow_connection_activations",
         ] {
-            assert!(table_exists(&migrated, table), "missing {table}");
+            assert!(!table_exists(&connection, table), "retained {table}");
         }
-        assert!(!table_exists(&migrated, "workflow_activations"));
-        assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
-        drop(migrated);
-
-        let reopened = open_active_database(&path).expect("reopen migrated database");
-        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
-        assert!(!table_exists(&reopened, "workflow_activations"));
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -1076,96 +969,6 @@ mod tests {
         let reopened = open_active_database(&path).expect("reopen migrated database");
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
         assert!(table_exists(&reopened, "session_harness_bindings"));
-    }
-
-    #[test]
-    fn migrates_v41_to_connection_activation_storage_and_reopens_idempotently() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("active-v41.sqlite");
-        {
-            let connection = open_active_database(&path).expect("current database");
-            connection
-                .execute_batch(
-                    "DROP TABLE workflow_connection_activations;
-                     PRAGMA user_version=41;",
-                )
-                .expect("restore v41 predecessor");
-        }
-
-        let migrated = open_active_database(&path).expect("migrate v41");
-        assert!(table_exists(&migrated, "workflow_connection_activations"));
-        assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
-        drop(migrated);
-
-        let reopened = open_active_database(&path).expect("reopen migrated database");
-        assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
-        assert!(table_exists(
-            &reopened,
-            "workflow_connection_activations"
-        ));
-    }
-
-    #[test]
-    fn migrates_v44_by_resetting_only_alpha_workflow_runtime_storage() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("active-v44.sqlite");
-        {
-            let connection = open_active_database(&path).expect("current database");
-            connection
-                .execute_batch(
-                    "ALTER TABLE workflow_instances RENAME COLUMN repository_git_common_directory TO repository_root;
-                     INSERT INTO workflow_types(id,name,active_recipe_id,created_at,updated_at) VALUES('type','Type',NULL,'t','t');
-                     INSERT INTO workflow_effective_recipes(id,workflow_type_id,ordinal,nodes_json,connections_json,created_at) VALUES('recipe','type',1,'[]','[]','t');
-                     UPDATE workflow_types SET active_recipe_id='recipe' WHERE id='type';
-                     INSERT INTO workflow_instances(id,workflow_type_id,recipe_id,name,repository_id,repository_name,repository_root,branch_id,branch_name,worktree_id,worktree_root,created_at) VALUES('instance','type','recipe','Instance','repo','Repository','C:/repo','branch','feature','worktree','C:/repo','t');
-                     INSERT INTO agent_sessions(id,title,availability,requested_options_json,created_at,updated_at) VALUES('session','Session','available','{}','t','t');
-                     INSERT INTO workflow_instance_sessions(workflow_instance_id,node_id,session_id,associated_at) VALUES('instance','sender','session','t');
-                     INSERT INTO session_harness_bindings(id,contract_version,session_id,runtime_instance_id,session_instance_token,stage,harness_snapshot,mediation_plan,configuration_digest,source_workflow_instance_id,source_recipe_id,source_node_id,prepared_at) VALUES('binding','harness-binding/v1','session','runtime','token','prepared','{}','{}','digest','instance','recipe','sender','t');
-                     INSERT INTO workflow_connection_activations(id,workflow_instance_id,recipe_id,connection_id,sender_node_id,receiver_node_id,source_session_id,source_invocation_id,delivery_kind,context_inheritance,compression,requested_at) VALUES('activation','instance','recipe','edge','sender','receiver','session','invocation','direct_prompt_runtime_v1','none','none','t');
-                     PRAGMA user_version=44;",
-                )
-                .expect("seed v44 Workflow runtime facts");
-        }
-
-        let migrated = open_active_database(&path).expect("migrate v44");
-        assert_eq!(
-            migrated
-                .query_row(
-                    "SELECT COUNT(*) FROM workflow_instances",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            migrated
-                .query_row("SELECT COUNT(*) FROM session_harness_bindings", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            migrated
-                .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            migrated
-                .query_row("SELECT COUNT(*) FROM workflow_types", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert!(!table_exists(&migrated, "workflow_activations"));
-        assert_eq!(pragma_i64(&migrated, "user_version"), ACTIVE_SCHEMA_VERSION);
-        drop(migrated);
-        assert_eq!(
-            pragma_i64(
-                &open_active_database(&path).expect("reopen migrated database"),
-                "user_version"
-            ),
-            ACTIVE_SCHEMA_VERSION
-        );
     }
 
     #[test]
@@ -1214,18 +1017,67 @@ mod tests {
         assert_eq!(reopened.query_row("SELECT attempt_baseline_object_id FROM accepted_handler_candidates WHERE candidate_id='terminal-candidate'", [], |row| row.get::<_, Option<String>>(0)).expect("preserved terminal missing baseline"), None);
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get::<_, String>(0)).expect("open stage"), "intent_reserved");
         assert_eq!(reopened.query_row("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get::<_, String>(0)).expect("terminal stage"), "settled");
-        let evolved_columns = reopened.prepare("PRAGMA table_info(accepted_work_unit_integrations)").unwrap().query_map([], |row| row.get::<_, String>(1)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        for column in ["stage","authorization_recorded_at","commit_fingerprint","object_created_at","ref_advanced_at","runtime_advanced_at","db_advanced_at","notification_intent_recorded_at","notification_delivered_at"] { assert!(evolved_columns.contains(&column.to_string()), "missing {column}"); }
+        let evolved_columns = reopened
+            .prepare("PRAGMA table_info(accepted_work_unit_integrations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for column in [
+            "stage",
+            "authorization_recorded_at",
+            "commit_fingerprint",
+            "object_created_at",
+            "ref_advanced_at",
+            "runtime_advanced_at",
+            "db_advanced_at",
+            "notification_intent_recorded_at",
+            "notification_delivered_at",
+        ] {
+            assert!(
+                evolved_columns.contains(&column.to_string()),
+                "missing {column}"
+            );
+        }
         assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "t");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT authorization_recorded_at FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "terminal-intent-at");
         let terminal: (String, Option<String>, Option<String>) = reopened.query_row("SELECT notification_intent_recorded_at,notification_delivered_at,commit_fingerprint FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
         assert_eq!(terminal, ("terminal-settled-at".into(), None, None));
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT evidence_id FROM accepted_work_unit_integration_evidence", [], |row| row.get(0)).unwrap(), "terminal-evidence-id");
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT settlement_id FROM work_unit_settlements", [], |row| row.get(0)).unwrap(), "terminal-settlement-id");
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT contribution_id FROM work_unit_prerequisite_contributions", [], |row| row.get(0)).unwrap(), "terminal-contribution-id");
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT evidence_id FROM accepted_work_unit_integration_evidence",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-evidence-id"
+        );
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT settlement_id FROM work_unit_settlements",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-settlement-id"
+        );
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT contribution_id FROM work_unit_prerequisite_contributions",
+                    [],
+                    |row| row.get(0)
+                )
+                .unwrap(),
+            "terminal-contribution-id"
+        );
         assert!(reopened.execute("INSERT INTO accepted_work_unit_integrations (integration_id,work_unit_id,candidate_id,authority_id,target_ref_name,pre_object_id,pre_version,candidate_commit_id,candidate_tree_id,baseline_object_id,intent_fingerprint,intent_recorded_at,stage) VALUES ('bad','unit','candidate','authority','refs/heads/main','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','intent','t','unknown')", []).is_err());
         assert!(reopened.execute("UPDATE accepted_work_unit_integrations SET stage='unknown' WHERE integration_id='integration'", []).is_err());
-        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened).expect("NULL baseline remains non-integratable");
+        crate::orchestration::accepted_integration::reconcile_accepted_integrations(&mut reopened)
+            .expect("NULL baseline remains non-integratable");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='integration'", [], |row| row.get(0)).unwrap(), "intent_reserved");
         assert_eq!(reopened.query_row::<String, _, _>("SELECT stage FROM accepted_work_unit_integrations WHERE integration_id='terminal-integration'", [], |row| row.get(0)).unwrap(), "settled");
         assert_eq!(pragma_i64(&reopened, "user_version"), ACTIVE_SCHEMA_VERSION);
@@ -2029,7 +1881,10 @@ mod tests {
             .expect("seed real v33 native-profile predecessor");
 
         initialize_active_database(&connection).expect("migrate v33 through dispatch claim");
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
         assert_eq!(
             connection
                 .query_row(
@@ -2119,30 +1974,40 @@ mod tests {
     }
 
     #[test]
-    fn v45_migration_adds_repository_catalog_without_replacing_existing_facts() {
+    fn v46_migration_adds_repository_catalog_and_replacement_workflow_schema() {
         let connection = Connection::open_in_memory().unwrap();
         initialize_active_database(&connection).unwrap();
         connection
             .execute_batch(
                 "DROP TABLE registered_repository_disclosures;
                  DROP TABLE registered_repositories;
-                 CREATE TABLE preserved_v45_fact(value TEXT NOT NULL);
-                 INSERT INTO preserved_v45_fact VALUES('preserved');
-                 PRAGMA user_version=45;",
+                 DROP TABLE workflow_recipe_attempts;
+                 DROP TABLE workflow_recipe_instances;
+                 DROP TABLE workflow_recipe_authoring;
+                 CREATE TABLE preserved_v46_fact(value TEXT NOT NULL);
+                 INSERT INTO preserved_v46_fact VALUES('preserved');
+                 PRAGMA user_version=46;",
             )
             .unwrap();
 
         initialize_active_database(&connection).unwrap();
 
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
-        assert!(table_exists(&connection, "registered_repositories"));
-        assert!(table_exists(
-            &connection,
-            "registered_repository_disclosures"
-        ));
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
+        for table in [
+            "registered_repositories",
+            "registered_repository_disclosures",
+            "workflow_recipe_authoring",
+            "workflow_recipe_instances",
+            "workflow_recipe_attempts",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
         assert_eq!(
             connection
-                .query_row("SELECT value FROM preserved_v45_fact", [], |row| {
+                .query_row("SELECT value FROM preserved_v46_fact", [], |row| {
                     row.get::<_, String>(0)
                 })
                 .unwrap(),
@@ -2168,7 +2033,10 @@ mod tests {
             &connection,
             "registered_repository_disclosures"
         ));
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
     }
 
     fn pragma_i64(connection: &Connection, name: &str) -> i64 {

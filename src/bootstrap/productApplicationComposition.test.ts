@@ -27,7 +27,6 @@ describe('product application composition', () => {
     ).resolves.toMatchObject({ status: 'unsupported' });
     expect(composition.contextualFileReviewClient).toBeDefined();
     expect(composition.productDecisionClient).toBeDefined();
-    expect(composition.workflowClient).toBeDefined();
     expect(composition.workflowTargetSelector).toBeDefined();
     expect(composition.repositoryCatalogClient).toBeDefined();
     expect(composition.worktreeReviewClient).toBeDefined();
@@ -43,5 +42,18 @@ describe('product application composition', () => {
     expect(readFileSync(resolve('src/app/ApplicationRoot.tsx'), 'utf8')).not.toMatch(
       /VITE_HUMAN_REVIEW_INSTANCE|humanReviewInstance|WorktreeBuildShell/,
     );
+  });
+
+  it('mounts replacement execution, Workflow, identity, Session Profile, and event boundaries', () => {
+    const composition = createProductApplicationComposition();
+
+    expect(composition.executionConfigurationClient).toBeDefined();
+    expect(composition.workflowAuthoringClient).toBeDefined();
+    expect(composition.workflowInstanceClient).toBeDefined();
+    expect(composition.draftCloseGuard).toBeDefined();
+    expect(composition.identityManagementClient).toBeDefined();
+    expect(composition.agentSessionProfileClient).toBeDefined();
+    expect(composition.sessionEventQueryClient).toBeDefined();
+    expect(composition.agentSessionHarnessManagementSource).toBeUndefined();
   });
 });

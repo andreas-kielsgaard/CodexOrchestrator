@@ -3,11 +3,144 @@ use crate::agent_sessions::domain::{
     AgentDiagnosticSeverity, AgentDiagnosticSource, AgentInvocationInputProvenance,
     AgentInvocationTerminalStatus, AgentRuntimeEventId, AgentRuntimeEventSource,
     AgentRuntimeFailure, ExternalRuntimeContextId, NormalizedRuntimeEvent,
-    NormalizedRuntimeEventKind,
+    NormalizedRuntimeEventKind, RuntimeSandboxMode,
+};
+use crate::{
+    harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
+    identities::{AssignedAgentIdentity, IdentityId, IdentityShape},
 };
 use serde_json::json;
 use std::{fs, path::PathBuf};
 use uuid::Uuid;
+
+#[test]
+fn model_override_persists_without_replacing_the_session_sandbox() {
+    let path = temporary_database_path();
+    let connection = initialized_file_database(&path);
+    let repository = SqliteAgentSessionRepository::new(connection).expect("construct repository");
+    let mut session = test_session("model-session", at(0));
+    session.requested_options.model = Some("initial-model".into());
+    session.requested_options.sandbox = Some(RuntimeSandboxMode::ReadOnly);
+    let session = repository.create_session(session).expect("create session");
+
+    let updated = repository
+        .update_session_model_override(&session.id, Some("replacement-model".into()), at(1))
+        .expect("update model override");
+    assert_eq!(
+        updated.requested_options.model.as_deref(),
+        Some("replacement-model")
+    );
+    assert_eq!(
+        updated.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    let cleared = repository
+        .update_session_model_override(&session.id, None, at(2))
+        .expect("clear model override");
+    assert!(cleared.requested_options.model.is_none());
+    assert_eq!(
+        cleared.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    drop(repository);
+
+    let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
+    let persisted = reopened
+        .get_session(&session.id)
+        .unwrap()
+        .expect("persisted session");
+    assert!(persisted.requested_options.model.is_none());
+    assert_eq!(
+        persisted.requested_options.sandbox,
+        Some(RuntimeSandboxMode::ReadOnly)
+    );
+    drop(reopened);
+    fs::remove_file(path).expect("remove test database");
+}
+
+#[test]
+fn persists_and_updates_session_owned_harness_and_identity() {
+    let path = temporary_database_path();
+    let connection = initialized_file_database(&path);
+    let repository = SqliteAgentSessionRepository::new(connection).expect("construct repository");
+    let mut session = test_session("owned-session", at(0));
+    session.harness_version = Some(harness_ref("planning", 1));
+    session.assigned_identity = Some(assigned_identity("avery", "Avery", "#39745a"));
+    let session = repository.create_session(session).expect("create session");
+
+    let migrated = repository
+        .update_harness_version(&session.id, Some(harness_ref("planning", 2)), at(1))
+        .expect("migrate Harness reference");
+    assert_eq!(
+        migrated
+            .harness_version
+            .as_ref()
+            .map(|value| value.version().get()),
+        Some(2)
+    );
+    let reassigned = repository
+        .update_assigned_identity(
+            &session.id,
+            Some(assigned_identity("morgan", "Morgan", "#224466")),
+            at(2),
+        )
+        .expect("replace assigned identity");
+    assert_eq!(
+        reassigned
+            .assigned_identity
+            .as_ref()
+            .map(|identity| identity.display_name.as_str()),
+        Some("Morgan")
+    );
+    drop(repository);
+
+    let reopened = SqliteAgentSessionRepository::open(&path).expect("reopen repository");
+    let persisted = reopened
+        .get_session(&session.id)
+        .expect("load session")
+        .expect("persisted session");
+    assert_eq!(persisted.harness_version, Some(harness_ref("planning", 2)));
+    assert_eq!(
+        persisted.assigned_identity,
+        Some(assigned_identity("morgan", "Morgan", "#224466"))
+    );
+
+    drop(reopened);
+    fs::remove_file(path).expect("remove test database");
+}
+
+#[test]
+fn repository_open_adds_nullable_ownership_to_pre_ownership_session_schema() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE agent_sessions (
+               id TEXT PRIMARY KEY,
+               title TEXT NOT NULL,
+               availability TEXT NOT NULL,
+               external_context_id TEXT,
+               runtime_version TEXT,
+               working_directory TEXT,
+               requested_options_json TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+             );
+             INSERT INTO agent_sessions
+               (id,title,availability,requested_options_json,created_at,updated_at)
+             VALUES ('legacy','Legacy','available','{}','2026-07-10T12:00:00Z','2026-07-10T12:00:00Z');",
+        )
+        .expect("legacy schema");
+
+    let repository = SqliteAgentSessionRepository::new(connection).expect("upgrade repository");
+    let session = repository
+        .get_session(&AgentSessionId::new("legacy").unwrap())
+        .expect("read upgraded session")
+        .expect("legacy session");
+
+    assert!(session.harness_version.is_none());
+    assert!(session.assigned_identity.is_none());
+}
 
 #[test]
 fn survives_close_and_reopen_with_complete_multi_invocation_history() {
@@ -406,6 +539,9 @@ fn test_session(id: &str, created_at: DateTime<Utc>) -> AgentSession {
         },
         working_directory: Some("C:/work".into()),
         requested_options: options(),
+        session_profile: None,
+        harness_version: None,
+        assigned_identity: None,
         created_at,
         updated_at: created_at,
     }
@@ -482,6 +618,23 @@ fn options() -> AgentRuntimeOptions {
         model: Some("test-model".into()),
         sandbox: None,
     }
+}
+
+fn harness_ref(id: &str, version: u64) -> HarnessVersionRef {
+    HarnessVersionRef::new(
+        HarnessId::new(id).expect("Harness ID"),
+        HarnessVersionNumber::new(version).expect("Harness version"),
+    )
+}
+
+fn assigned_identity(id: &str, name: &str, color: &str) -> AssignedAgentIdentity {
+    AssignedAgentIdentity::new(
+        Some(IdentityId::new(id).expect("identity ID")),
+        name,
+        color,
+        IdentityShape::Circle,
+    )
+    .expect("assigned identity")
 }
 
 fn at(second: u32) -> DateTime<Utc> {

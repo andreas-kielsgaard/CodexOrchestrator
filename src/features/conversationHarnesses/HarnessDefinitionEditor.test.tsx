@@ -40,6 +40,8 @@ describe('HarnessDefinitionEditor', () => {
     expect(within(role).getByTestId('harness-definition-editor')).toBeVisible();
     expect(within(session).getByLabelText('Harness name')).toHaveValue('Session Harness');
     expect(within(role).getByLabelText('Harness name')).toHaveValue('Role Harness');
+    expect(within(session).queryByLabelText('Harness machine key')).toBeNull();
+    expect(within(role).queryByText('Machine key')).toBeNull();
 
     fireEvent.change(within(role).getByLabelText('Harness name'), {
       target: { value: 'Security Harness' },
@@ -197,8 +199,11 @@ const catalogs: HarnessConfigurationCatalogs = {
   agentVisualIdentities: {
     source: 'product_visual_catalog',
     items: [
-      { identity: { token: 'sunflower', accent: '#f7bd3f' }, label: 'Sunflower' },
-      { identity: { token: 'ocean', accent: '#287fbc' }, label: 'Ocean' },
+      {
+        identity: { token: 'sunflower', accent: '#f7bd3f', shape: 'circle' },
+        label: 'Sunflower',
+      },
+      { identity: { token: 'ocean', accent: '#287fbc', shape: 'square' }, label: 'Ocean' },
     ],
     reason: 'Recorded identities.',
   },

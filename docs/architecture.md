@@ -5,6 +5,28 @@ Updated: 2026-09-08
 This document describes the current code architecture. It should explain where new work belongs and
 which boundaries should stay intact.
 
+## Execution Configuration and Session Event target
+
+The active overhaul of mixed Harness and generic Workflow Role concepts is documented in
+[`docs/session-event-model/`](session-event-model/README.md). That guide describes the working target,
+recommended implementation shape, UI mapping and migration sequence. The rest of this document
+continues to describe the wider application architecture and contains earlier current-state and
+legacy context that has not all been rewritten around the new model.
+
+The concise target dependency direction is:
+
+```text
+Runtime integration -> Execution Configuration
+Workflow authoring -> Session Event definitions
+Session Event runtime -> Agent Session ports
+Agent Sessions -> runtime execution
+Identity -> independent presentation and assignment
+```
+
+Use the target guide for Capability Profile, Node Profile, Session Profile, Session Event and
+Workflow-node work. Treat older Harness/Role material as historical unless a currently active
+feature explicitly still depends on it.
+
 ## Runtime Shape
 
 - Desktop shell: Tauri v2.

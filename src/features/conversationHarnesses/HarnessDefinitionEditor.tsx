@@ -28,7 +28,6 @@ interface SelectOption<T extends string = string> {
 
 export type HarnessDefinitionProperty =
   | 'identityName'
-  | 'identityMachineKey'
   | 'permittedAgentNames'
   | 'visualIdentity'
   | 'promptPrefixContent'
@@ -76,7 +75,7 @@ export function HarnessDefinitionEditor({
   modelPolicy = configuration.runtime,
   modelPolicyEditable = editable,
   modelPolicyNote,
-  modelPolicyBoundaryKey = configuration.identity.machineKey,
+  modelPolicyBoundaryKey = configuration.identity.name,
   modelPolicyLabelPrefix = 'Harness',
   provenance,
   onResetProperty,
@@ -126,7 +125,7 @@ export function HarnessDefinitionEditor({
   return (
     <div className="harness-definition-editor" data-testid="harness-definition-editor">
       <DefinitionSection title="Harness details">
-        <div className="harness-management__field-row">
+        <div className="harness-management__field-row is-single">
           <DefinitionField
             label="Harness name"
             source={provenance?.identityName}
@@ -140,23 +139,6 @@ export function HarnessDefinitionEditor({
                 onChange({
                   ...configuration,
                   identity: { ...configuration.identity, name: event.currentTarget.value },
-                })
-              }
-            />
-          </DefinitionField>
-          <DefinitionField
-            label="Machine key"
-            source={provenance?.identityMachineKey}
-            onReset={onResetProperty ? () => onResetProperty('identityMachineKey') : undefined}
-          >
-            <input
-              aria-label="Harness machine key"
-              value={configuration.identity.machineKey}
-              disabled={!editable}
-              onChange={(event) =>
-                onChange({
-                  ...configuration,
-                  identity: { ...configuration.identity, machineKey: event.currentTarget.value },
                 })
               }
             />
@@ -182,24 +164,29 @@ export function HarnessDefinitionEditor({
           source={provenance?.visualIdentity}
           onReset={onResetProperty ? () => onResetProperty('visualIdentity') : undefined}
           options={catalogs.agentVisualIdentities.items.map((entry) => ({
-            value: `${entry.identity.token}\u0000${entry.identity.accent}`,
+            value: `${entry.identity.token}\u0000${entry.identity.accent}\u0000${entry.identity.shape}`,
             label: entry.label,
           }))}
           value={
             configuration.identity.visualIdentity
-              ? `${configuration.identity.visualIdentity.token}\u0000${configuration.identity.visualIdentity.accent}`
+              ? `${configuration.identity.visualIdentity.token}\u0000${configuration.identity.visualIdentity.accent}\u0000${configuration.identity.visualIdentity.shape}`
               : null
           }
           editable={editable}
           clearLabel="Not configured"
           unavailableReason={catalogs.agentVisualIdentities.reason}
           onChange={(value) => {
-            const [token, accent] = value?.split('\u0000') ?? [];
+            const [token, accent, shape] = value?.split('\u0000') ?? [];
             onChange({
               ...configuration,
               identity: {
                 ...configuration.identity,
-                visualIdentity: token && accent ? { token, accent } : null,
+                visualIdentity:
+                  token &&
+                  accent &&
+                  (shape === 'circle' || shape === 'square' || shape === 'hexagon')
+                    ? { token, accent, shape }
+                    : null,
               },
             });
           }}

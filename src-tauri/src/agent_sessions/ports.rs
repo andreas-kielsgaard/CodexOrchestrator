@@ -4,6 +4,7 @@ use super::domain::{
     AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
     ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
 };
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,6 +83,30 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         session_id: &AgentSessionId,
         binding: AgentRuntimeBinding,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    /// Replaces the exact Harness reference after explicit assignment or Harness-owned migration.
+    fn update_harness_version(
+        &self,
+        session_id: &AgentSessionId,
+        harness_version: Option<HarnessVersionRef>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    /// Assigns a Session-owned identity snapshot or clears the current assignment.
+    fn update_assigned_identity(
+        &self,
+        session_id: &AgentSessionId,
+        assigned_identity: Option<AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    /// Updates the Session-owned model preference without changing its sandbox selection.
+    fn update_session_model_override(
+        &self,
+        session_id: &AgentSessionId,
+        model: Option<String>,
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError>;
 
@@ -187,7 +212,7 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) submitted_text: String,
     pub(crate) working_directory: Option<String>,
     pub(crate) options: AgentRuntimeOptions,
-    /// Opt-in child-process configuration supplied by a role-specific application service.
+    /// Opt-in child-process configuration supplied by an application-owned invocation service.
     /// Ordinary Agent Session sends always leave this absent.
     pub(crate) launch_extension: Option<RuntimeLaunchExtension>,
 }

@@ -1,5 +1,15 @@
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
+import type { AgentSessionProfileClient } from '../application/agentSessionProfiles';
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
+import type { ExecutionConfigurationClient } from '../application/executionConfiguration';
+import type { IdentityManagementClient } from '../application/identities';
+import type { SessionEventQueryClient } from '../application/sessionEvents';
+import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
+import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
+import type { WorkflowInstanceClient } from '../application/workflowInstances';
+import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
+import { DraftWorkspace } from '../components/draftWorkspace';
+import { useDraftCloseWarning } from '../components/useDraftCloseWarning';
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
 import type {
   ArtifactAccessController,
@@ -84,16 +94,17 @@ import type {
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
 } from '../application/productDecisions';
-import type { WorkflowApplicationClient } from '../application/workflows';
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
+import { ExecutionConfigurationScreen } from '../features/executionConfiguration';
+import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
 import type { WorktreeReviewClient } from '../application/worktreeReview';
 import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
-import { WorkflowScreen } from '../features/workflows';
 import { WorktreeReviewScreen } from '../features/worktreeReview';
 
 export type ApplicationSurface =
   | 'epics'
   | 'workflows'
+  | 'capability-profiles'
   | 'agent-sessions'
   | 'harness-inspector'
   | 'file-review'
@@ -108,7 +119,13 @@ export interface AppProps {
   /** Session-owned identity read; assignment and durability remain outside this view. */
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
-  readonly workflowClient?: WorkflowApplicationClient;
+  readonly workflowAuthoringClient?: WorkflowAuthoringClient;
+  readonly workflowInstanceClient?: WorkflowInstanceClient;
+  readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
+  readonly executionConfigurationClient?: ExecutionConfigurationClient;
+  readonly identityManagementClient?: IdentityManagementClient;
+  readonly agentSessionProfileClient?: AgentSessionProfileClient;
+  readonly sessionEventQueryClient?: SessionEventQueryClient;
   readonly workflowTargetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
@@ -159,7 +176,13 @@ export function App({
   },
   managedPlanBuilderAgentIdentity,
   orchestrationClient,
-  workflowClient,
+  workflowAuthoringClient,
+  workflowInstanceClient,
+  draftCloseGuard,
+  executionConfigurationClient,
+  identityManagementClient,
+  agentSessionProfileClient,
+  sessionEventQueryClient,
   workflowTargetSelector,
   orchestrationPresentation = productOrchestrationPresentationAdapter,
   orchestrationAgentSessionComposition,
@@ -188,13 +211,17 @@ export function App({
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
-    (initialSurface === 'workflows' && !workflowClient) ||
+    (initialSurface === 'workflows' && !workflowAuthoringClient) ||
+    (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
     (initialSurface === 'worktree-review' && (!worktreeReviewClient || !repositoryCatalogClient))
       ? 'epics'
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
+  const [workflowDrafts] = useState(() => new DraftWorkspace<WorkflowRecipeDraftDto>());
+  const [capabilityDrafts] = useState(() => new DraftWorkspace<CapabilityProfileDraft>());
+  useDraftCloseWarning(() => workflowDrafts.dirty() || capabilityDrafts.dirty(), draftCloseGuard);
   const productNavigationEpoch = useRef(0);
   type ContextualFileReviewState = {
     readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
@@ -220,7 +247,7 @@ export function App({
         case 'agent_sessions':
           return true;
         case 'workflow':
-          return Boolean(workflowClient);
+          return Boolean(workflowAuthoringClient);
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
           return sameFileReviewNavigationTarget(
@@ -241,7 +268,7 @@ export function App({
       repositoryCatalogClient,
       worktreeReviewClient,
       productDecisionClient,
-      workflowClient,
+      workflowAuthoringClient,
     ],
   );
   const initialNavigationDestination: ProductNavigationDestination =
@@ -856,7 +883,7 @@ export function App({
           >
             Orchestration
           </button>
-          {workflowClient ? (
+          {workflowAuthoringClient ? (
             <button
               className={surface === 'workflows' ? 'active' : undefined}
               type="button"
@@ -876,6 +903,19 @@ export function App({
               }}
             >
               Workflow
+            </button>
+          ) : null}
+          {executionConfigurationClient ? (
+            <button
+              className={surface === 'capability-profiles' ? 'active' : undefined}
+              type="button"
+              aria-current={surface === 'capability-profiles' ? 'page' : undefined}
+              onClick={() => {
+                productNavigationEpoch.current += 1;
+                setSurface('capability-profiles');
+              }}
+            >
+              Capability Profiles
             </button>
           ) : null}
           <button
@@ -1040,29 +1080,45 @@ export function App({
           onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
           onPublishProductDecision={openProductDecisionPublish}
         />
+      ) : surface === 'capability-profiles' && executionConfigurationClient ? (
+        <ExecutionConfigurationScreen
+          client={executionConfigurationClient}
+          workspace={capabilityDrafts}
+        />
       ) : surface === 'workflows' &&
-        workflowClient &&
+        workflowAuthoringClient &&
+        executionConfigurationClient &&
         currentProductDestination.kind === 'workflow' ? (
-        <WorkflowScreen
-          client={workflowClient}
-          agentSessionClient={agentSessionClient}
+        <WorkflowAuthoringScreen
+          client={workflowAuthoringClient}
+          executionConfigurationClient={executionConfigurationClient}
+          identityClient={identityManagementClient}
+          workspace={workflowDrafts}
+          instanceClient={workflowInstanceClient}
           targetSelector={workflowTargetSelector}
-          workflowTypeId={currentProductDestination.workflowTypeId}
-          workflowInstanceId={currentProductDestination.workflowInstanceId}
-          onOpenWorkflowType={(workflowTypeId) => {
+          sessionClient={agentSessionClient}
+          profileClient={agentSessionProfileClient}
+          queryClient={sessionEventQueryClient}
+          recipeId={currentProductDestination.workflowTypeId}
+          instanceId={currentProductDestination.workflowInstanceId}
+          onOpenRecipe={(recipeId) => {
             productNavigationEpoch.current += 1;
             dispatchProductNavigation({
               type: 'navigate',
               intent: 'push',
-              destination: { kind: 'workflow', workflowTypeId, workflowInstanceId: null },
+              destination: { kind: 'workflow', workflowTypeId: recipeId, workflowInstanceId: null },
             });
           }}
-          onOpenWorkflowInstance={(workflowInstanceId) => {
+          onOpenInstance={(instanceId) => {
             productNavigationEpoch.current += 1;
             dispatchProductNavigation({
               type: 'navigate',
               intent: 'push',
-              destination: { kind: 'workflow', workflowTypeId: null, workflowInstanceId },
+              destination: {
+                kind: 'workflow',
+                workflowTypeId: null,
+                workflowInstanceId: instanceId,
+              },
             });
           }}
         />
@@ -1089,6 +1145,8 @@ export function App({
         <StandaloneAgentSessionScreen
           client={agentSessionClient}
           harnessManagementSource={agentSessionHarnessManagementSource}
+          profileClient={agentSessionProfileClient}
+          sessionEventQueryClient={sessionEventQueryClient}
           agentIdentityForSession={agentIdentityForSession}
           orchestrations={
             orchestrationLoad.kind === 'ready' ? orchestrationLoad.readModels : undefined

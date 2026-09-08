@@ -1,0 +1,242 @@
+.workflow-instance-view {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: #f7f8f5;
+}
+
+.workflow-instance-view.is-loading {
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+}
+
+.workflow-instance-view__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #cbd4cd;
+  background: #fffdf8;
+}
+
+.workflow-instance-view__header h1,
+.workflow-instance-view__header p,
+.workflow-instance-view__header span,
+.workflow-instance-view__node-inspector h2,
+.workflow-instance-view__node-inspector p,
+.workflow-instance-view__connection-inspector h2,
+.workflow-instance-view__connection-inspector h3,
+.workflow-instance-view__connection-inspector p {
+  margin: 0;
+}
+
+.workflow-instance-view__header p,
+.workflow-instance-view__node-inspector header p,
+.workflow-instance-view__connection-inspector > header p,
+.workflow-instance-view__session-inspector header p {
+  color: #647169;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workflow-instance-view__header > div:last-child {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workflow-instance-view__header small {
+  max-width: 440px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-instance-view button {
+  font: inherit;
+}
+
+.workflow-instance-view__header button,
+.workflow-instance-view__close,
+.workflow-instance-view__request button,
+.workflow-instance-view__session-inspector header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid #bcc8c0;
+  border-radius: 7px;
+  background: #fffdf8;
+  color: #30463a;
+}
+
+.workflow-instance-view__error {
+  margin: 0;
+  padding: 8px 18px;
+  background: #fff0ec;
+  color: #8a392b;
+}
+
+.workflow-instance-view__body {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workflow-instance-view__body > .workflow-graph-scroll {
+  grid-area: 1 / 1;
+}
+
+.workflow-instance-view .workflow-node {
+  cursor: pointer;
+}
+
+.workflow-node__badges small.is-running {
+  background: #dcefe4;
+  color: #245942;
+}
+
+.workflow-instance-view__inspector {
+  z-index: 5;
+  grid-area: 1 / 1;
+  justify-self: end;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(580px, 52vw);
+  min-width: 390px;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid #bcc8c0;
+  background: #fffdf8;
+  box-shadow: -10px 0 24px rgb(23 33 27 / 14%);
+}
+
+.workflow-instance-view__close {
+  justify-self: end;
+  margin: 10px 12px 0;
+}
+
+.workflow-instance-view__node-inspector,
+.workflow-instance-view__connection-inspector {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 14px 18px;
+}
+
+.workflow-instance-view__node-inspector > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.workflow-instance-view__request {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #cbd4cd;
+  border-radius: 9px;
+  background: #f7f8f5;
+}
+
+.workflow-instance-view__request label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.workflow-instance-view__request textarea {
+  min-width: 0;
+  padding: 8px;
+  resize: vertical;
+}
+
+.workflow-instance-view__request button {
+  justify-self: start;
+}
+
+.workflow-instance-view__section {
+  margin-bottom: 10px;
+}
+
+.workflow-instance-view__session-link,
+.workflow-instance-view__attempt {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  margin: 6px 0;
+  padding: 9px;
+  border: 1px solid #cbd4cd;
+  border-radius: 7px;
+  background: #fff;
+  text-align: left;
+}
+
+.workflow-instance-view__session-link span,
+.workflow-instance-view__attempts span,
+.workflow-instance-view__attempts small,
+.workflow-instance-view__attempt span,
+.workflow-instance-view__attempt small {
+  overflow-wrap: anywhere;
+  color: #647169;
+  font-size: 0.72rem;
+}
+
+.workflow-instance-view__prompt {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workflow-instance-view__session-inspector {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workflow-instance-view__session-inspector > header,
+.workflow-instance-view__connection-inspector > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px 12px;
+}
+
+.workflow-instance-view__session-inspector > .agent-session-workspace {
+  min-height: 0;
+}
+
+.workflow-instance-view__attempts {
+  margin: 10px 0 14px;
+}
+
+.workflow-instance-view__older-activity {
+  border-top: 1px solid #cbd4cd;
+  background: #fffdf8;
+}
+
+.workflow-instance-view__older-activity .collapsible-section__content {
+  display: grid;
+  gap: 5px;
+}
+
+@media (max-width: 900px) {
+  .workflow-instance-view__inspector {
+    width: calc(100% - 24px);
+    min-width: 0;
+  }
+}

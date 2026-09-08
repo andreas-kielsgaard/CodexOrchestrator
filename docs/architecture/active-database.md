@@ -8,8 +8,8 @@
 | -------------------------------- | ----------------------------------------------------------------- |
 | Application configuration        | `native_profiles` and `repository_catalog`                        |
 | Operational control              | `orchestration::execution_support`                                |
-| Authored definitions             | `workflows` definitions and Orchestration-owned Harness revisions |
-| Runtime transactions             | Workflow runtime, `agent_sessions`, and `harness_engine` bindings |
+| Authored definitions             | Workflow recipes, Capability Profiles and Orchestration-owned Harness revisions |
+| Runtime transactions             | Session Events, recipe instances, `agent_sessions`, and mediated MCP bindings |
 | Product-development meta-process | `product_decisions` and Epic, Sprint, and Work Unit orchestration |
 
 These families classify data; they do not share domain authority. Each capability owns its schema and repository contracts.

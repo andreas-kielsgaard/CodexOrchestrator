@@ -256,8 +256,9 @@
   min-height: 0;
 }
 
-.agent-session-workspace--header-hidden {
-  grid-template-rows: auto minmax(0, 1fr);
+.agent-session-workspace--with-settings,
+.agent-session-workspace--header-hidden.agent-session-workspace--with-settings {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .agent-session-conversation {
@@ -1002,6 +1003,52 @@
   transition:
     opacity 120ms ease,
     transform 120ms ease;
+}
+
+.agent-session-execution-settings {
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dde2dc;
+  background: #f5f7f3;
+}
+
+.agent-session-execution-settings__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.agent-session-execution-settings__identity > button {
+  padding: 5px 9px;
+  border: 1px solid #c4cec4;
+  border-radius: 7px;
+  background: #fffdf8;
+  color: #34483d;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.agent-session-execution-settings > .collapsible-section > .collapsible-section__content {
+  display: grid;
+  gap: 14px;
+  max-height: min(68vh, 680px);
+  padding: 12px 2px 4px;
+  overflow: auto;
+}
+
+.agent-session-execution-settings__unavailable {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid #dde2dc;
+  background: #f5f7f3;
+  color: #5f6d65;
+  font-size: 0.72rem;
+}
+
+.agent-session-execution-settings__unavailable small {
+  color: #7a6e67;
 }
 
 .composer-send-action:hover .composer-keyboard-tooltip,

@@ -17,7 +17,7 @@ function ControlledEditor({
 }
 
 describe('MarkdownEditor', () => {
-  it('reuses the File Review AgentMarkdown renderer for GFM and safe HTML boundaries', () => {
+  it('reuses the generic Markdown renderer for GFM and safe HTML boundaries', () => {
     const { container } = render(
       <ControlledEditor
         initial={`# Prompt prefix
@@ -41,7 +41,7 @@ describe('MarkdownEditor', () => {
     const rendered = screen.getByRole('region', {
       name: 'Harness prompt rendered Markdown',
     });
-    expect(rendered.querySelector('.agent-markdown.markdown-editor__preview')).not.toBeNull();
+    expect(rendered.querySelector('.markdown-content.markdown-editor__preview')).not.toBeNull();
     expect(within(rendered).getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
     expect(within(rendered).getByRole('checkbox')).toBeChecked();
     expect(within(rendered).getByRole('table')).toBeVisible();
@@ -127,7 +127,7 @@ describe('MarkdownEditor', () => {
   it('renders the canonical formatted view when editing is unavailable', () => {
     const { container } = render(<ControlledEditor editable={false} />);
     expect(screen.getByRole('heading', { name: 'Prompt prefix' })).toBeVisible();
-    expect(container.querySelector('.agent-markdown.markdown-editor__preview')).not.toBeNull();
+    expect(container.querySelector('.markdown-content.markdown-editor__preview')).not.toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
   });

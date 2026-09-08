@@ -116,8 +116,18 @@ export function useAgentSessionCollection(
 }
 
 export interface UseAgentSessionOptions {
+  startSession?(input: {
+    readonly submittedText: string;
+    readonly workingDirectory: string | null;
+    readonly title: string | null;
+  }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   selectedSessionId: string | null;
   onSessionCreated?(sessionId: string): void;
+  /** Optional replacement boundary for messages sent to an already-created Session. */
+  sendExistingMessage?(input: {
+    readonly sessionId: string;
+    readonly submittedText: string;
+  }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   /** Optional managed-composition metadata for first-session creation. */
   sessionTitle?: string;
 }
@@ -130,14 +140,21 @@ export function useAgentSession(
     controlledSessionId: options.selectedSessionId,
     skipCollection: true,
     onSessionCreated: options.onSessionCreated,
+    sendExistingMessage: options.sendExistingMessage,
+    startSession: options.startSession,
     sessionTitle: options.sessionTitle,
   });
 }
 
 interface ControllerOptions {
+  startSession?: UseAgentSessionOptions['startSession'];
   controlledSessionId?: string | null;
   skipCollection?: boolean;
   onSessionCreated?(id: string): void;
+  sendExistingMessage?(input: {
+    readonly sessionId: string;
+    readonly submittedText: string;
+  }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   sessionTitle?: string;
 }
 export function useAgentSessionController(
@@ -314,14 +331,28 @@ export function useAgentSessionController(
       try {
         await subscriptionReadyRef.current;
         const existingSessionId = selectedIdRef.current;
-        const acknowledgement = await client.sendMessage({
-          ...(existingSessionId ? { sessionId: existingSessionId } : {}),
-          submittedText,
-          ...(!existingSessionId && options.sessionTitle ? { title: options.sessionTitle } : {}),
-          ...(!existingSessionId && workingDirectory.trim()
-            ? { workingDirectory: workingDirectory.trim() }
-            : {}),
-        });
+        const acknowledgement =
+          existingSessionId && options.sendExistingMessage
+            ? await options.sendExistingMessage({
+                sessionId: existingSessionId,
+                submittedText,
+              })
+            : !existingSessionId && options.startSession
+              ? await options.startSession({
+                  submittedText,
+                  workingDirectory: workingDirectory.trim() || null,
+                  title: options.sessionTitle ?? null,
+                })
+              : await client.sendMessage({
+                  ...(existingSessionId ? { sessionId: existingSessionId } : {}),
+                  submittedText,
+                  ...(!existingSessionId && options.sessionTitle
+                    ? { title: options.sessionTitle }
+                    : {}),
+                  ...(!existingSessionId && workingDirectory.trim()
+                    ? { workingDirectory: workingDirectory.trim() }
+                    : {}),
+                });
         selectedIdRef.current = acknowledgement.sessionId;
         invocationIdsRef.current.add(acknowledgement.invocationId);
         setSelectedSessionId(acknowledgement.sessionId);

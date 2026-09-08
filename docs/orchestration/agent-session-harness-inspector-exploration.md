@@ -1,7 +1,12 @@
 # Session-owned Harness Management architecture
 
-Status: recorded product prototype plus a read-only production inspection boundary. Harness
-persistence and runtime enforcement remain deferred.
+Status: historical prototype record, superseded as target architecture by
+[`docs/session-event-model/`](../session-event-model/README.md). This file remains useful for visual
+review history and extraction candidates; its session-owned editable Harness, revision and update
+model should not guide new domain work.
+
+Previously recorded status: recorded product prototype plus a read-only production inspection
+boundary. Harness persistence and runtime enforcement remain deferred.
 
 ## Decision
 
@@ -26,6 +31,12 @@ The recorded development composition exposes **Harness Management** over an Agen
 one application-source instance for Epic planning, standalone Agent Sessions, and the management
 preview. Its in-memory repository is outside React component state, so a working edit and its dirty
 state survive view navigation and component remount. They do not survive an application restart.
+
+`HarnessEditor` is the reusable presentation boundary. Reuse must preserve this reviewed
+composition: control-first version toolbar, distinct cards, focused catalog/detail dialogs,
+categorized policy groups, compact model ranges, and the Version history table. A consumer may
+adapt another application-owned Harness read/command source, but it must not flatten the editor
+into a generic property form or replace those interactions with per-field selectors.
 
 The prototype records these product concepts without claiming production effects:
 

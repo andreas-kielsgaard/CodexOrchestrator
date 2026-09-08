@@ -17,15 +17,20 @@ import { createTauriEpicPlanningDraftLifecycleClient } from '../infrastructure/o
 import { createTauriEpicInitiationConfirmationClient } from '../infrastructure/orchestrations/tauriEpicInitiationConfirmation';
 import { tauriEpicBootstrapTransitionClient } from '../infrastructure/orchestrations/tauriEpicBootstrapTransition';
 import { tauriSprintRunnerTransitionClient } from '../infrastructure/orchestrations/tauriSprintRunnerTransition';
-import { createTauriConversationHarnessInspectorSource } from '../infrastructure/conversationHarnesses/tauriConversationHarnessInspectorSource';
 import { createTauriContextualFileReviewClient } from '../infrastructure/fileReview/tauriContextualFileReview';
+import { tauriIdentityManagementClient } from '../infrastructure/identities';
+import { tauriExecutionConfigurationClient } from '../infrastructure/executionConfiguration/tauriExecutionConfigurationClient';
+import { tauriWorkflowAuthoringClient } from '../infrastructure/workflowAuthoring/tauriWorkflowAuthoringClient';
+import { tauriWorkflowInstanceClient } from '../infrastructure/workflowInstances/tauriWorkflowInstanceClient';
+import { tauriDraftCloseGuard } from '../infrastructure/tauriDraftCloseGuard';
+import { tauriAgentSessionProfileClient } from '../infrastructure/agentSessionProfiles/tauriAgentSessionProfileClient';
+import { tauriSessionEventQueryClient } from '../infrastructure/sessionEvents/tauriSessionEventQueryClient';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
 import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
-import { tauriWorkflowClient } from '../infrastructure/workflows/tauriWorkflowClient';
 import { createRepositoryWorktreeTargetSelector } from '../features/repositoryCatalog';
 import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
 import { tauriRepositoryCatalog } from '../infrastructure/repositoryCatalog/tauriRepositoryCatalog';
@@ -37,7 +42,13 @@ const RepositoryWorktreeTargetSelector =
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
-    workflowClient: tauriWorkflowClient,
+    workflowAuthoringClient: tauriWorkflowAuthoringClient,
+    workflowInstanceClient: tauriWorkflowInstanceClient,
+    draftCloseGuard: tauriDraftCloseGuard,
+    executionConfigurationClient: tauriExecutionConfigurationClient,
+    identityManagementClient: tauriIdentityManagementClient,
+    agentSessionProfileClient: tauriAgentSessionProfileClient,
+    sessionEventQueryClient: tauriSessionEventQueryClient,
     workflowTargetSelector: RepositoryWorktreeTargetSelector,
     repositoryCatalogClient: tauriRepositoryCatalog,
     worktreeReviewClient: tauriWorktreeReview,
@@ -45,7 +56,6 @@ export function createProductApplicationComposition(): AppProps {
       tauriAgentSessionClient,
       invoke,
     ),
-    agentSessionHarnessManagementSource: createTauriConversationHarnessInspectorSource(invoke),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
     nativeProfileApplicationConsumer:

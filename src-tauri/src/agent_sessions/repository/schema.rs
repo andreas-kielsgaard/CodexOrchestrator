@@ -9,6 +9,9 @@ CREATE TABLE agent_sessions (
   runtime_version TEXT,
   working_directory TEXT,
   requested_options_json TEXT NOT NULL CHECK (json_valid(requested_options_json)),
+  session_profile_json TEXT CHECK (session_profile_json IS NULL OR json_valid(session_profile_json)),
+  harness_version_ref_json TEXT CHECK (harness_version_ref_json IS NULL OR json_valid(harness_version_ref_json)),
+  assigned_identity_json TEXT CHECK (assigned_identity_json IS NULL OR json_valid(assigned_identity_json)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -76,6 +79,46 @@ CREATE TABLE IF NOT EXISTS agent_session_invocation_launch_acceptances (
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 "#;
+
+/// Adds nullable ownership columns to databases created before Agent Sessions owned these values.
+/// The active schema already contains them; the guards keep repository open backward-compatible.
+pub(crate) fn ensure_agent_session_ownership_schema(conn: &Connection) -> Result<(), String> {
+    let columns = table_columns(conn, "agent_sessions")?;
+    if columns.is_empty() {
+        return Ok(());
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "session_profile_json")
+    {
+        conn.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN session_profile_json TEXT CHECK (session_profile_json IS NULL OR json_valid(session_profile_json))",
+            [],
+        )
+        .map_err(|error| format!("Unable to add pinned Agent Session Profile: {error}"))?;
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "harness_version_ref_json")
+    {
+        conn.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN harness_version_ref_json TEXT CHECK (harness_version_ref_json IS NULL OR json_valid(harness_version_ref_json))",
+            [],
+        )
+        .map_err(|error| format!("Unable to add Agent Session Harness ownership: {error}"))?;
+    }
+    if !columns
+        .iter()
+        .any(|column| column == "assigned_identity_json")
+    {
+        conn.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN assigned_identity_json TEXT CHECK (assigned_identity_json IS NULL OR json_valid(assigned_identity_json))",
+            [],
+        )
+        .map_err(|error| format!("Unable to add Agent Session identity ownership: {error}"))?;
+    }
+    Ok(())
+}
 
 const PROTOTYPE_SESSION_TABLE: &str = "agent_sessions";
 const PROTOTYPE_LOG_TABLE: &str = "agent_session_cli_logs";

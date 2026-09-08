@@ -1,7 +1,13 @@
 import { AlertCircle, ArrowUpRight, ChevronDown, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
+import type {
+  AgentSessionProfileClient,
+  PinnedAgentSessionProfileDto,
+} from '../../application/agentSessionProfiles';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
+import type { SessionEventQueryClient } from '../../application/sessionEvents';
+import { useSessionDeliveries } from '../sessionEvents/useSessionDeliveries';
 import {
   buildAgentSessionNavigation,
   type AgentSessionNavigationIdentity,
@@ -14,7 +20,9 @@ import type {
 } from '../../application/orchestrations';
 import type { ProductDecisionEvidenceDestination } from '../../application/productDecisions';
 import type { TranscriptAnchorRange } from './transcriptProjector';
-import { AgentSessionWorkspace } from './AgentSessionWorkspace';
+import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
+import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
+import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
@@ -32,6 +40,8 @@ export interface AgentSessionScreenProps {
   readonly onExpandedNodeIdsChange?: (ids: ReadonlySet<string>) => void;
   readonly onNavigateToProduct?: (location: AgentSessionProductLocation) => void;
   readonly harnessManagementSource?: ConversationHarnessManagementSource;
+  readonly profileClient?: AgentSessionProfileClient;
+  readonly sessionEventQueryClient?: SessionEventQueryClient;
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   readonly focusInvocationId?: string;
   readonly focusEvidence?: ProductDecisionEvidenceDestination;
@@ -49,6 +59,8 @@ export function StandaloneAgentSessionScreen({
   onExpandedNodeIdsChange,
   onNavigateToProduct,
   harnessManagementSource,
+  profileClient,
+  sessionEventQueryClient,
   agentIdentityForSession,
   focusInvocationId,
   focusEvidence,
@@ -64,6 +76,35 @@ export function StandaloneAgentSessionScreen({
     [onSelectedSessionChange, selectedSessionId],
   );
   const collection = useAgentSessionCollection(client, collectionOptions);
+  const [pinnedProfile, setPinnedProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const deliveryQuery = useSessionDeliveries(sessionEventQueryClient, collection.selectedSessionId);
+  const [runtimeSelection, setRuntimeSelection] = useState<PerMessageRuntimeSelection>({
+    model: null,
+    reasoningMode: null,
+  });
+  useEffect(() => {
+    const sessionId = collection.selectedSessionId;
+    let active = true;
+    setPinnedProfile(null);
+    setProfileError(null);
+    setRuntimeSelection({ model: null, reasoningMode: null });
+    if (!sessionId || !profileClient)
+      return () => {
+        active = false;
+      };
+    void profileClient.loadPinnedProfile(sessionId).then(
+      (profile) => {
+        if (active) setPinnedProfile(profile);
+      },
+      (caught) => {
+        if (active) setProfileError(errorMessage(caught));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [collection.selectedSessionId, profileClient, sessionEventQueryClient]);
   const onCreated = useCallback(
     (id: string) => {
       onSelectedSessionChange?.(id);
@@ -71,9 +112,40 @@ export function StandaloneAgentSessionScreen({
     },
     [collection, onSelectedSessionChange],
   );
+  const sendExistingMessage = useCallback(
+    async ({ sessionId, submittedText }: { sessionId: string; submittedText: string }) => {
+      if (!profileClient || pinnedProfile?.sessionId !== sessionId) {
+        throw new Error('Pinned Session Profile is not available for this Session.');
+      }
+      const acknowledgement = await profileClient.sendDirectUserMessage({
+        sessionId,
+        submittedText,
+        model: runtimeSelection.model,
+        reasoningMode: runtimeSelection.reasoningMode,
+      });
+      setRuntimeSelection({ model: null, reasoningMode: null });
+      return acknowledgement;
+    },
+    [pinnedProfile?.sessionId, profileClient, runtimeSelection],
+  );
   const session = useAgentSession(client, {
     selectedSessionId: collection.selectedSessionId,
     onSessionCreated: onCreated,
+    ...(profileClient
+      ? {
+          startSession: (input: {
+            submittedText: string;
+            workingDirectory: string | null;
+            title: string | null;
+          }) =>
+            profileClient.startDirectUserSession({
+              ...input,
+              model: runtimeSelection.model,
+              reasoningMode: runtimeSelection.reasoningMode,
+            }),
+        }
+      : {}),
+    ...(profileClient && collection.selectedSessionId ? { sendExistingMessage } : {}),
   });
   const sessionIdentities = useMemo(
     () =>
@@ -130,6 +202,39 @@ export function StandaloneAgentSessionScreen({
     session.transcript,
     returnOrigin?.sessionId,
   ]);
+  const sendUnavailableReason =
+    profileClient &&
+    collection.selectedSessionId &&
+    pinnedProfile?.sessionId !== collection.selectedSessionId
+      ? profileError
+        ? 'This Session has no available pinned configuration. Its history is still readable.'
+        : 'Loading Session configuration…'
+      : undefined;
+  const executionSettings =
+    profileClient && collection.selectedSessionId ? (
+      <AgentSessionExecutionSettings
+        profile={pinnedProfile}
+        profileError={profileError}
+        deliveries={deliveryQuery.deliveries}
+        deliveryError={deliveryQuery.error}
+        onReloadDeliveries={deliveryQuery.reload}
+        identity={session.details?.session.assignedIdentity ?? null}
+        onIdentityChange={
+          client.updateIdentity && session.details
+            ? async (assignedIdentity) => {
+                await client.updateIdentity!({
+                  sessionId: session.details!.session.id,
+                  assignedIdentity,
+                });
+                await session.reload();
+              }
+            : undefined
+        }
+        selection={runtimeSelection}
+        disabled={session.sending}
+        onSelectionChange={setRuntimeSelection}
+      />
+    ) : undefined;
 
   return (
     <main className="agent-session-screen">
@@ -150,7 +255,11 @@ export function StandaloneAgentSessionScreen({
             onExpandedNodeIdsChange={updateExpansion}
             onSelect={(id) => void collection.selectSession(id)}
             onNew={collection.startNewSession}
-            onReload={() => void collection.reload()}
+            onReload={() => {
+              void collection.reload();
+              void session.reload();
+              deliveryQuery.reload();
+            }}
           />
         }
         secondary={
@@ -178,8 +287,43 @@ export function StandaloneAgentSessionScreen({
                 sessionId={collection.selectedSessionId}
                 source={harnessManagementSource}
               >
+                <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
+                  <AgentSessionWorkspace
+                    controller={session}
+                    sendUnavailableReason={sendUnavailableReason}
+                    transcriptRange={evidenceRange}
+                    inspection={
+                      focusEvidence
+                        ? {
+                            sessionId: focusEvidence.sessionId,
+                            invocationId: focusEvidence.invocationId,
+                          }
+                        : undefined
+                    }
+                    presentation={
+                      selectedIdentity
+                        ? {
+                            identityHeader: {
+                              agentIdentity: selectedIdentity,
+                              title: selectedIdentity.harnessRole
+                                .split('_')
+                                .filter(Boolean)
+                                .map(
+                                  (part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`,
+                                )
+                                .join(' '),
+                            },
+                          }
+                        : undefined
+                    }
+                  />
+                </AgentSessionHeaderActionsProvider>
+              </HarnessAwareAgentSessionPane>
+            ) : (
+              <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
                 <AgentSessionWorkspace
                   controller={session}
+                  sendUnavailableReason={sendUnavailableReason}
                   transcriptRange={evidenceRange}
                   inspection={
                     focusEvidence
@@ -189,37 +333,8 @@ export function StandaloneAgentSessionScreen({
                         }
                       : undefined
                   }
-                  presentation={
-                    selectedIdentity
-                      ? {
-                          identityHeader: {
-                            agentIdentity: selectedIdentity,
-                            title: selectedIdentity.harnessRole
-                              .split('_')
-                              .filter(Boolean)
-                              .map(
-                                (part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`,
-                              )
-                              .join(' '),
-                          },
-                        }
-                      : undefined
-                  }
                 />
-              </HarnessAwareAgentSessionPane>
-            ) : (
-              <AgentSessionWorkspace
-                controller={session}
-                transcriptRange={evidenceRange}
-                inspection={
-                  focusEvidence
-                    ? {
-                        sessionId: focusEvidence.sessionId,
-                        invocationId: focusEvidence.invocationId,
-                      }
-                    : undefined
-                }
-              />
+              </AgentSessionHeaderActionsProvider>
             )}
             {selectedNavigation && onNavigateToProduct ? (
               <SessionProductNavigation
@@ -313,6 +428,10 @@ function evidenceTranscriptRange(
 
 function locationKey(location: AgentSessionProductLocation) {
   return JSON.stringify(location);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export const AgentSessionScreen = StandaloneAgentSessionScreen;
