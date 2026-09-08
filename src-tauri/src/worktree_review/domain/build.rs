@@ -327,9 +327,11 @@ pub(crate) struct RetainedBuildOutput {
 impl RetainedBuildOutput {
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
         let storage_components = normal_relative_components(self.storage_key.as_str());
-        if storage_components.as_deref().is_none_or(|components| {
-            !components.ends_with(&[self.build_id.as_str(), self.attempt_id.as_str(), "output"])
-        }) {
+        let identifies_attempt = storage_components.as_deref().is_some_and(|components| {
+            components.ends_with(&[self.build_id.as_str(), self.attempt_id.as_str(), "output"])
+                || matches!(components, ["attempts", token, "output"] if valid_attempt_token(token))
+        });
+        if !identifies_attempt {
             return Err(DomainError::new(
                 "build output storage key must identify its build attempt output",
             ));
@@ -341,6 +343,13 @@ impl RetainedBuildOutput {
         }
         Ok(())
     }
+}
+
+fn valid_attempt_token(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn is_normal_relative_path(value: &str) -> bool {
@@ -493,5 +502,14 @@ mod tests {
         );
         assert!(output("../foreign", "app.exe").validate().is_err());
         assert!(output("outputs/build", "../app.exe").validate().is_err());
+        assert!(output(
+            "attempts/0123456789abcdef0123456789abcdef/output",
+            "t/debug/app.exe"
+        )
+        .validate()
+        .is_ok());
+        assert!(output("attempts/not-an-attempt/output", "t/debug/app.exe")
+            .validate()
+            .is_err());
     }
 }

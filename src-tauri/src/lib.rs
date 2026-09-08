@@ -21,6 +21,7 @@ mod native_profiles;
 mod orchestration;
 mod product_decisions;
 mod repository_context;
+mod repository_discovery;
 mod runtime;
 mod storage;
 #[allow(dead_code)]

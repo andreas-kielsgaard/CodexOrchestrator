@@ -1,6 +1,7 @@
 mod command;
 mod identity;
 mod refs;
+mod remotes;
 mod status;
 mod worktrees;
 
@@ -14,6 +15,7 @@ pub(crate) use identity::{
 pub(crate) use refs::{
     BranchRef, BranchSummary, CommitFacts, CommitReader, FullRefName, ObjectId, ReferenceReader,
 };
+pub(crate) use remotes::{RemoteObservation, RepositoryRemoteReader};
 pub(crate) use status::RepositoryStatusReader;
 pub(crate) use worktrees::{
     WorktreeInventoryReader, WorktreeLocation, WorktreeObservation, WorktreeObservationId,
@@ -88,6 +90,10 @@ impl RepositoryContext {
 
     pub(crate) fn commits(&self) -> CommitReader {
         CommitReader::new(self.runner.clone())
+    }
+
+    pub(crate) fn remotes(&self) -> RepositoryRemoteReader {
+        RepositoryRemoteReader::new(self.runner.clone())
     }
 
     pub(crate) fn status(&self) -> RepositoryStatusReader {

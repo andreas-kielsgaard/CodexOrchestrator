@@ -2,10 +2,13 @@
 
 use super::{
     build_service::ReviewBuildView,
-    domain::{AssociationBaselineKind, WorktreeAssociation, WorktreeAssociationProvenance},
+    domain::{
+        AssociationBaselineKind, ReviewRepository, WorktreeAssociation,
+        WorktreeAssociationProvenance,
+    },
     state::{
         ActiveBuildContextView, CapabilityReadinessStatus, CapabilityReadinessView,
-        SelectedRepositoryView, WorktreeReviewCapabilitiesView,
+        WorktreeReviewCapabilitiesView,
     },
 };
 use crate::repository_context::{
@@ -169,19 +172,6 @@ pub(crate) enum AssociateBaselineInput {
     SelectedCommit { object_id: String },
 }
 
-pub(super) fn repository_view(repository: &RepositoryIdentity) -> RepositoryView {
-    repository_view_with_readiness(
-        repository,
-        RepositoryReadinessView {
-            state: "ready".into(),
-            browse: CapabilityAvailabilityView::Available,
-            create_worktree: CapabilityAvailabilityView::Available,
-            build: CapabilityAvailabilityView::Available,
-            build_output_storage: CapabilityAvailabilityView::Available,
-        },
-    )
-}
-
 pub(super) fn repository_view_with_readiness(
     repository: &RepositoryIdentity,
     readiness: RepositoryReadinessView,
@@ -194,16 +184,25 @@ pub(super) fn repository_view_with_readiness(
     }
 }
 
-pub(super) fn persisted_repository_view(
-    repository: &SelectedRepositoryView,
-    capabilities: &WorktreeReviewCapabilitiesView,
+pub(super) fn registered_repository_view(
+    repository: &ReviewRepository,
+    readiness: RepositoryReadinessView,
 ) -> RepositoryView {
-    let path = Path::new(&repository.root);
     RepositoryView {
-        repository_id: repository.repository_id.clone(),
-        name: repository_name(path),
-        location_label: repository.root.clone(),
-        readiness: repository_readiness(capabilities),
+        repository_id: repository.id.as_str().to_owned(),
+        name: repository.label.clone(),
+        location_label: repository.anchor_root.to_string_lossy().into_owned(),
+        readiness,
+    }
+}
+
+pub(super) fn available_repository_readiness() -> RepositoryReadinessView {
+    RepositoryReadinessView {
+        state: "ready".into(),
+        browse: CapabilityAvailabilityView::Available,
+        create_worktree: CapabilityAvailabilityView::Available,
+        build: CapabilityAvailabilityView::Available,
+        build_output_storage: CapabilityAvailabilityView::Available,
     }
 }
 

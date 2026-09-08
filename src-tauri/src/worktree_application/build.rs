@@ -103,7 +103,9 @@ fn build_with(
     require_source_file(&worktree.join("package.json"), "package manifest")?;
     require_source_file(&worktree.join("package-lock.json"), "npm lockfile")?;
     require_source_file(&worktree.join("src-tauri/Cargo.toml"), "Cargo manifest")?;
-    let scratch_root = attempt_root.join(format!(".build-{}", uuid::Uuid::new_v4()));
+    // Keep toolchain paths shallow. MSVC still has components that fail near MAX_PATH even when
+    // the application itself uses extended-length paths.
+    let scratch_root = attempt_root.join("b");
     fs::create_dir(&scratch_root).map_err(|_| output_unavailable())?;
     let scratch_root = scratch_root
         .canonicalize()
@@ -208,7 +210,7 @@ fn dependency_command(
             external_path(&cache).into_os_string(),
         ],
         working_directory: external_path(worktree),
-        cargo_target: external_path(&scratch_root.join("cargo-target")),
+        cargo_target: external_path(&scratch_root.join("t")),
         log_path: log_path.to_path_buf(),
     }
 }
@@ -233,8 +235,8 @@ fn build_commands(
     )?;
     let working_directory = external_path(worktree);
     let tauri_directory = external_path(&worktree.join("src-tauri"));
-    let cargo_target = external_path(&output_root.join("cargo-target"));
-    let frontend_dist = external_path(&output_root.join("frontend-dist"));
+    let cargo_target = external_path(&output_root.join("t"));
+    let frontend_dist = external_path(&output_root.join("f"));
     let frontend_dist_config = pathdiff::diff_paths(&frontend_dist, &tauri_directory)
         .filter(|path| path.is_relative() && !path.as_os_str().is_empty())
         .map(|path| external_path(&path).to_string_lossy().into_owned())
@@ -313,7 +315,7 @@ fn external_path(path: &Path) -> PathBuf {
 fn expected_executable(output_root: &Path, binary_name: &str) -> PathBuf {
     #[cfg(windows)]
     let binary_name = format!("{binary_name}.exe");
-    output_root.join("cargo-target/debug").join(binary_name)
+    output_root.join("t/debug").join(binary_name)
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, WorktreeApplicationError> {
@@ -494,11 +496,11 @@ mod tests {
             ]
         );
         assert!(commands.iter().all(|command| {
-            command.cargo_target.ends_with(Path::new("cargo-target"))
+            command.cargo_target.ends_with(Path::new("t"))
                 && command.working_directory == external_path(&worktree.canonicalize().unwrap())
                 && command.log_path == attempt_root.canonicalize().unwrap().join("build.log")
         }));
-        assert!(!result.attempt_root.join(".build").exists());
+        assert!(!result.attempt_root.join("b").exists());
         assert!(!worktree.join("src-tauri/target").exists());
     }
 

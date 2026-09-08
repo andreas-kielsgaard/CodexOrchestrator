@@ -749,6 +749,8 @@ mod tests {
         let repository = ReviewRepository {
             id: RepositoryId::new("repository").unwrap(),
             label: "Repository".into(),
+            anchor_root: directory.path().join("repository"),
+            common_directory: directory.path().join("repository/.git"),
             first_seen_at: now,
             last_seen_at: now,
         };

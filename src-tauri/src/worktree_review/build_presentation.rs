@@ -148,7 +148,11 @@ pub(crate) struct BuildAttemptFailureView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum BuildOutputStateView {
     NotProduced,
     Unavailable {
@@ -167,7 +171,11 @@ pub(crate) enum BuildOutputStateView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum CleanupStateView {
     Retained {
         policy: String,
@@ -556,6 +564,37 @@ mod source_contract_tests {
                 "headObjectId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "capturedObjectId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "virtualCommitId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            })
+        );
+    }
+
+    #[test]
+    fn output_and_cleanup_receipts_use_the_product_camel_case_contract() {
+        let output = BuildOutputStateView::Available {
+            build_output_id: "output-one".into(),
+            storage_label: "Worktree Review AppData/output".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(output).expect("output state should serialize"),
+            json!({
+                "state": "available",
+                "buildOutputId": "output-one",
+                "storageLabel": "Worktree Review AppData/output"
+            })
+        );
+
+        let cleanup = CleanupStateView::Running {
+            cleanup_job_id: "cleanup-one".into(),
+            completed_effects: 1,
+            total_effects: 2,
+        };
+        assert_eq!(
+            serde_json::to_value(cleanup).expect("cleanup state should serialize"),
+            json!({
+                "state": "running",
+                "cleanupJobId": "cleanup-one",
+                "completedEffects": 1,
+                "totalEffects": 2
             })
         );
     }

@@ -4,23 +4,24 @@ use super::{
         BranchHistoryPageView, ProductOverviewView,
     },
     build_service::{CreateBuildInput, ReviewBuildView},
-    state::{CapabilityReadinessStatus, WorktreeReviewApplication},
+    repository_registration::{RepositoryRegistrationOverviewView, RepositoryRegistrationService},
+    state::WorktreeReviewApplication,
 };
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use tauri::State;
 
 pub(crate) struct WorktreeReviewTauriState {
-    application: Arc<WorktreeReviewApplication>,
     product: Result<Arc<BranchFirstReviewService>, String>,
+    registration: Arc<RepositoryRegistrationService>,
 }
 
 impl WorktreeReviewTauriState {
     pub(crate) fn new(application: Arc<WorktreeReviewApplication>) -> Self {
         let product = BranchFirstReviewService::open(application.clone()).map(Arc::new);
         Self {
-            application,
             product,
+            registration: Arc::new(RepositoryRegistrationService::new(application)),
         }
     }
 
@@ -37,8 +38,14 @@ pub(crate) struct RepositorySelectionInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RepositoryConnectionInput {
+pub(crate) struct RepositoryDirectoryRegistrationInput {
     repository_root: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexRepositoryRegistrationInput {
+    repository_id: String,
 }
 
 #[derive(Deserialize)]
@@ -91,22 +98,44 @@ pub(crate) async fn select_worktree_review_repository(
 }
 
 #[tauri::command]
-pub(crate) async fn connect_worktree_review_repository(
+pub(crate) async fn worktree_review_repository_registration_overview(
     state: State<'_, WorktreeReviewTauriState>,
-    input: RepositoryConnectionInput,
+) -> Result<RepositoryRegistrationOverviewView, String> {
+    let registration = state.registration.clone();
+    blocking("repository registration overview", move || {
+        registration.overview()
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn register_worktree_review_repository_directory(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: RepositoryDirectoryRegistrationInput,
 ) -> Result<ProductOverviewView, String> {
     let root = input.repository_root.trim();
     if root.is_empty() {
         return Err("Enter the root of a Git repository.".into());
     }
-    let application = state.application.clone();
+    let registration = state.registration.clone();
     let product = state.product_arc()?;
     let root = PathBuf::from(root);
-    blocking("repository connection", move || {
-        let result = application.select_repository(root);
-        if result.selection.status != CapabilityReadinessStatus::Ready {
-            return Err(result.selection.message);
-        }
+    blocking("repository registration", move || {
+        registration.register_directory(root)?;
+        product.overview()
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn register_codex_worktree_review_repository(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: CodexRepositoryRegistrationInput,
+) -> Result<ProductOverviewView, String> {
+    let registration = state.registration.clone();
+    let product = state.product_arc()?;
+    blocking("Codex repository registration", move || {
+        registration.register_codex_repository(&input.repository_id)?;
         product.overview()
     })
     .await

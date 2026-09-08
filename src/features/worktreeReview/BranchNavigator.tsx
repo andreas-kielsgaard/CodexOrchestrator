@@ -12,6 +12,7 @@ export function BranchNavigator({
   selectedBranchRef,
   disabled,
   onRepositoryChange,
+  onRegisterRepository,
   onBranchChange,
 }: {
   readonly repositories: readonly ReviewRepository[];
@@ -20,6 +21,7 @@ export function BranchNavigator({
   readonly selectedBranchRef: BranchRef | '';
   readonly disabled: boolean;
   readonly onRepositoryChange: (repositoryId: RepositoryId) => void;
+  readonly onRegisterRepository: () => void;
   readonly onBranchChange: (branchRef: BranchRef) => void;
 }) {
   return (
@@ -35,11 +37,19 @@ export function BranchNavigator({
           {repositories.length === 0 && <option value="">No repositories configured</option>}
           {repositories.map((repository) => (
             <option key={repository.repositoryId} value={repository.repositoryId}>
-              {repository.name}
+              {repository.name} — {repository.locationLabel}
             </option>
           ))}
         </select>
       </label>
+      <button
+        type="button"
+        className="worktree-review__register-button"
+        disabled={disabled}
+        onClick={onRegisterRepository}
+      >
+        Add repository…
+      </button>
 
       <div className="worktree-review__branch-heading">
         <h2>Branches</h2>

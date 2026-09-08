@@ -1,6 +1,7 @@
 use super::domain::{
     CleanupStorageKey, DomainError, OperationAttemptId, RepositoryId, ReviewBuildId,
 };
+use sha2::{Digest, Sha256};
 use std::path::{Component, Path};
 
 /// The one durable projection from Review identity to an AppData build-attempt directory.
@@ -21,12 +22,20 @@ pub(crate) fn attempt_storage_key(
             ));
         }
     }
-    CleanupStorageKey::new(format!(
-        "repositories/{}/build-output/{}/{}",
+    let mut digest = Sha256::new();
+    for value in [
         repository_id.as_str(),
         build_id.as_str(),
-        attempt_id.as_str()
-    ))
+        attempt_id.as_str(),
+    ] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    let token = digest.finalize()[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    CleanupStorageKey::new(format!("attempts/{token}"))
 }
 
 #[cfg(test)]
@@ -39,11 +48,20 @@ mod tests {
         let build = ReviewBuildId::new("build").unwrap();
         let attempt = OperationAttemptId::new("attempt").unwrap();
 
-        assert_eq!(
-            attempt_storage_key(&repository, &build, &attempt)
-                .unwrap()
-                .as_str(),
-            "repositories/repository/build-output/build/attempt"
+        let first = attempt_storage_key(&repository, &build, &attempt).unwrap();
+        let second = attempt_storage_key(&repository, &build, &attempt).unwrap();
+        assert_eq!(first, second);
+        assert!(first.as_str().starts_with("attempts/"));
+        assert_eq!(first.as_str().len(), "attempts/".len() + 32);
+        assert!(!first.as_str().contains(repository.as_str()));
+        assert_ne!(
+            first,
+            attempt_storage_key(
+                &repository,
+                &build,
+                &OperationAttemptId::new("another-attempt").unwrap()
+            )
+            .unwrap()
         );
         assert!(attempt_storage_key(
             &RepositoryId::new("../repository").unwrap(),

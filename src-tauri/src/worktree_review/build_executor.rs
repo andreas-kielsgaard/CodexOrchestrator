@@ -277,9 +277,9 @@ mod tests {
     fn retained_output_requires_a_current_contained_executable() {
         let directory = tempfile::tempdir().unwrap();
         let review_root = directory.path().join("review");
-        let attempt_root = review_root.join("repositories/repository/build-output/build/attempt");
+        let attempt_root = review_root.join("attempts/0123456789abcdef0123456789abcdef");
         let output_root = attempt_root.join("output");
-        let executable = output_root.join("cargo-target/debug/app.exe");
+        let executable = output_root.join("t/debug/app.exe");
         let worktree_root = directory.path().join("worktree");
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
         fs::create_dir_all(&worktree_root).unwrap();
@@ -315,7 +315,7 @@ mod tests {
 
         assert_eq!(
             output.storage_key.as_str(),
-            "repositories/repository/build-output/build/attempt/output"
+            "attempts/0123456789abcdef0123456789abcdef/output"
         );
         assert!(resolve_retained_output(&review_root, &workspace, &output).is_ok());
 

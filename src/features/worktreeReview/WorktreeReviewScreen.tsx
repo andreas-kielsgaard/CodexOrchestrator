@@ -17,6 +17,7 @@ import { BranchNavigator } from './BranchNavigator';
 import { BuildComposer } from './BuildComposer';
 import { BuildHistory } from './BuildHistory';
 import { ReadinessNotice } from './ReadinessNotice';
+import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
 import './worktreeReview.css';
 
@@ -29,7 +30,7 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
   const [branchRef, setBranchRef] = useState<BranchRef | ''>('');
   const [detail, setDetail] = useState<BranchReviewDetail | null>(null);
   const [associationId, setAssociationId] = useState<WorktreeAssociationId | ''>('');
-  const [repositoryRoot, setRepositoryRoot] = useState('');
+  const [registrationOpen, setRegistrationOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>('loading');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -136,25 +137,18 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
     }
   }
 
-  async function connectRepository() {
-    if (!client.connectRepository || !repositoryRoot.trim()) return;
-    setBusy('connect-repository');
-    setError(null);
-    setNotice(null);
-    try {
-      const value = await client.connectRepository(repositoryRoot.trim());
-      const selected = value.selectedRepositoryId ?? value.repositories[0]?.repositoryId ?? '';
-      setOverview(value);
-      setRepositoryId(selected);
-      const nextBranch = value.branches[0]?.branchRef ?? '';
-      setBranchRef(nextBranch);
-      setRepositoryRoot('');
-      if (selected && nextBranch) await loadBranch(selected, nextBranch);
-      else setBusy(null);
-    } catch (cause) {
-      setError(message(cause));
-      setBusy(null);
-    }
+  function registeredRepository(value: WorktreeReviewOverview) {
+    const selected = value.selectedRepositoryId ?? value.repositories[0]?.repositoryId ?? '';
+    const nextBranch = value.branches[0]?.branchRef ?? '';
+    setRegistrationOpen(false);
+    setOverview(value);
+    setRepositoryId(selected);
+    setBranchRef(nextBranch);
+    setDetail(null);
+    setAssociationId('');
+    setNotice('Repository registered and selected.');
+    if (selected && nextBranch) void loadBranch(selected, nextBranch);
+    else setBusy(null);
   }
 
   function changeBranch(nextBranchRef: BranchRef) {
@@ -228,7 +222,9 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
     try {
       const build = await client.createBuild(request);
       setDetail({ ...detail, builds: [build, ...detail.builds] });
-      setNotice(`Created ${build.name}. Its attempt and retained output are tracked independently.`);
+      setNotice(
+        `Created ${build.name}. Its attempt and retained output are tracked independently.`,
+      );
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -302,6 +298,7 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
           selectedBranchRef={branchRef}
           disabled={busy !== null}
           onRepositoryChange={(value) => void changeRepository(value)}
+          onRegisterRepository={() => setRegistrationOpen(true)}
           onBranchChange={changeBranch}
         />
 
@@ -310,41 +307,14 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
           aria-busy={busy === 'branch' || busy === 'loading'}
         >
           {overview.repositories.length === 0 && busy === null && (
-            <section
-              className="worktree-review__connect"
-              aria-labelledby="connect-repository-title"
-            >
+            <section className="worktree-review__connect" aria-labelledby="no-repositories-title">
               <div>
-                <h2 id="connect-repository-title">Connect a Git repository</h2>
+                <h2 id="no-repositories-title">No repositories registered</h2>
                 <p>
-                  Worktree Review verifies the repository and stores its stable identity before
-                  showing branches. The path is not used as durable operation authority.
+                  Use Add repository to choose a local directory or inspect repositories exposed by
+                  Codex and the active GitHub CLI login.
                 </p>
               </div>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void connectRepository();
-                }}
-              >
-                <label className="worktree-review__field">
-                  <span>Repository root</span>
-                  <input
-                    aria-label="Repository root"
-                    value={repositoryRoot}
-                    placeholder="C:\\Projects\\Repository"
-                    disabled={!client.connectRepository || busy !== null}
-                    onChange={(event) => setRepositoryRoot(event.target.value)}
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="worktree-review__primary"
-                  disabled={!client.connectRepository || !repositoryRoot.trim() || busy !== null}
-                >
-                  Verify repository
-                </button>
-              </form>
             </section>
           )}
           {selectedRepository && <ReadinessNotice repository={selectedRepository} />}
@@ -430,6 +400,13 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
           )}
         </div>
       </div>
+      {registrationOpen && (
+        <RepositoryRegistrationModal
+          client={client}
+          onClose={() => setRegistrationOpen(false)}
+          onRegistered={registeredRepository}
+        />
+      )}
     </main>
   );
 }

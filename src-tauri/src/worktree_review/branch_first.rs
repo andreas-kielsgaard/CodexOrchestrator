@@ -1,9 +1,9 @@
 use super::{
     association_observer::{observe_association, stable_association_id},
     branch_presentation::{
-        associated_worktree_view, association_candidate_view, baseline_view, branch_view,
-        commit_view as present_commit, persisted_repository_view, repository_name,
-        repository_readiness, repository_view, repository_view_with_readiness,
+        associated_worktree_view, association_candidate_view, available_repository_readiness,
+        baseline_view, branch_view, commit_view as present_commit, registered_repository_view,
+        repository_name, repository_readiness, repository_view_with_readiness,
         AssociateBaselineInput, AssociationCandidateView, BranchView, CommitView,
         WorkspaceOwnershipView, WorktreeAvailabilityView,
     },
@@ -15,7 +15,7 @@ use super::{
         WorktreeAssociationId, WorktreeAssociationLifecycle, WorktreeAssociationProvenance,
     },
     source_materialization::SourceMaterializationService,
-    state::WorktreeReviewApplication,
+    state::{CapabilityReadinessStatus, WorktreeReviewApplication},
     storage::{
         ReviewRepositoryRepository, WorkspaceRepository, WorktreeAssociationRepository,
         WorktreeReviewDatabase,
@@ -58,9 +58,22 @@ impl BranchFirstReviewService {
 
     pub(crate) fn overview(&self) -> Result<ProductOverviewView, String> {
         let application_overview = self.application.overview();
+        let registered = self
+            .application
+            .registered_repositories()
+            .map_err(|error| error.message)?;
+        let selected_id = application_overview
+            .selected_repository
+            .as_ref()
+            .map(|repository| repository.repository_id.clone());
         let Some(persisted) = application_overview.selected_repository.as_ref() else {
             return Ok(ProductOverviewView {
-                repositories: Vec::new(),
+                repositories: registered
+                    .iter()
+                    .map(|repository| {
+                        registered_repository_view(repository, available_repository_readiness())
+                    })
+                    .collect(),
                 selected_repository_id: None,
                 branches: Vec::new(),
                 active_build_context: self.application.active_build_context(),
@@ -70,10 +83,17 @@ impl BranchFirstReviewService {
             Ok(repository) => repository,
             Err(_) => {
                 return Ok(ProductOverviewView {
-                    repositories: vec![persisted_repository_view(
-                        persisted,
-                        &application_overview.capabilities,
-                    )],
+                    repositories: registered
+                        .iter()
+                        .map(|repository| {
+                            let readiness = if repository.id.as_str() == persisted.repository_id {
+                                repository_readiness(&application_overview.capabilities)
+                            } else {
+                                available_repository_readiness()
+                            };
+                            registered_repository_view(repository, readiness)
+                        })
+                        .collect(),
                     selected_repository_id: Some(persisted.repository_id.clone()),
                     branches: Vec::new(),
                     active_build_context: self.application.active_build_context(),
@@ -83,11 +103,20 @@ impl BranchFirstReviewService {
         let context = self.context()?;
         let branches = self.branches(&context, &repository)?;
         Ok(ProductOverviewView {
-            repositories: vec![repository_view_with_readiness(
-                &repository,
-                repository_readiness(&application_overview.capabilities),
-            )],
-            selected_repository_id: Some(repository.id.as_str().to_owned()),
+            repositories: registered
+                .iter()
+                .map(|record| {
+                    if record.id.as_str() == repository.id.as_str() {
+                        repository_view_with_readiness(
+                            &repository,
+                            repository_readiness(&application_overview.capabilities),
+                        )
+                    } else {
+                        registered_repository_view(record, available_repository_readiness())
+                    }
+                })
+                .collect(),
+            selected_repository_id: selected_id,
             branches,
             active_build_context: self.application.active_build_context(),
         })
@@ -97,14 +126,11 @@ impl BranchFirstReviewService {
         &self,
         repository_id: &str,
     ) -> Result<ProductOverviewView, String> {
-        let selected = self.repository(repository_id)?;
-        let context = self.context()?;
-        Ok(ProductOverviewView {
-            repositories: vec![repository_view(&selected)],
-            selected_repository_id: Some(selected.id.as_str().to_owned()),
-            branches: self.branches(&context, &selected)?,
-            active_build_context: self.application.active_build_context(),
-        })
+        let selected = self.application.select_repository(repository_id);
+        if selected.selection.status != CapabilityReadinessStatus::Ready {
+            return Err(selected.selection.message);
+        }
+        self.overview()
     }
 
     pub(crate) fn branch_detail(
@@ -332,6 +358,8 @@ impl BranchFirstReviewService {
             .save_repository(&StoredRepository {
                 id: domain_repository_id.clone(),
                 label: repository_name(repository.top_level.path()),
+                anchor_root: repository.top_level.path().to_path_buf(),
+                common_directory: repository.common_directory.path().to_path_buf(),
                 first_seen_at: now,
                 last_seen_at: now,
             })
@@ -649,18 +677,21 @@ mod tests {
     use super::*;
     use crate::worktree_review::{
         branch_presentation::CapabilityAvailabilityView,
-        domain::ReviewBuildId,
+        domain::{RepositoryId, ReviewBuildId, ReviewRepository},
         state::{
-            CapabilityReadinessStatus, CapabilityReadinessView, SelectedRepositoryView,
-            WorktreeReviewCapabilitiesView,
+            CapabilityReadinessStatus, CapabilityReadinessView, WorktreeReviewCapabilitiesView,
         },
     };
 
     #[test]
     fn persisted_unavailable_repository_remains_visible_with_typed_readiness() {
-        let repository = SelectedRepositoryView {
-            repository_id: "repository-stable-id".into(),
-            root: "C:/repositories/missing".into(),
+        let repository = ReviewRepository {
+            id: RepositoryId::new("repository-stable-id").unwrap(),
+            label: "missing".into(),
+            anchor_root: "C:/repositories/missing".into(),
+            common_directory: "C:/repositories/missing/.git".into(),
+            first_seen_at: Utc::now(),
+            last_seen_at: Utc::now(),
         };
         let capabilities = WorktreeReviewCapabilitiesView {
             repository_browsing: CapabilityReadinessView {
@@ -677,9 +708,9 @@ mod tests {
             },
         };
 
-        let view = persisted_repository_view(&repository, &capabilities);
+        let view = registered_repository_view(&repository, repository_readiness(&capabilities));
 
-        assert_eq!(view.repository_id, repository.repository_id);
+        assert_eq!(view.repository_id, repository.id.as_str());
         assert_eq!(view.readiness.state, "unavailable");
         assert_eq!(
             view.readiness.browse,

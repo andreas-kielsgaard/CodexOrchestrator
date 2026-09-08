@@ -331,6 +331,8 @@ mod tests {
         ReviewRepository {
             id: RepositoryId::new("repository-one").unwrap(),
             label: "Codex Orchestrator".into(),
+            anchor_root: "C:/repositories/codex-orchestrator".into(),
+            common_directory: "C:/repositories/codex-orchestrator/.git".into(),
             first_seen_at: now,
             last_seen_at: now,
         }
@@ -514,9 +516,19 @@ mod tests {
         let second = WorktreeReviewDatabase::open(&path).unwrap();
         let selection = PersistedRepositorySelection {
             repository_id: "repository-one".into(),
-            repository_root: directory.path().join("repository"),
         };
 
+        first
+            .repositories()
+            .save_repository(&ReviewRepository {
+                id: RepositoryId::new("repository-one").unwrap(),
+                label: "Repository".into(),
+                anchor_root: directory.path().join("repository"),
+                common_directory: directory.path().join("repository/.git"),
+                first_seen_at: Utc::now(),
+                last_seen_at: Utc::now(),
+            })
+            .unwrap();
         first.selection().save(&selection).unwrap();
 
         assert_eq!(second.selection().load().unwrap(), Some(selection));
@@ -562,12 +574,12 @@ mod tests {
                 let count: u32 = connection
                     .query_row(
                         "SELECT COUNT(*) FROM worktree_review_schema_migrations
-                         WHERE version IN (1, 2, 3, 4, 5)",
+                         WHERE version IN (1, 2, 3, 4, 5, 6)",
                         [],
                         |row| row.get(0),
                     )
                     .map_err(sql_error("verify serialized worktree review migrations"))?;
-                assert_eq!(count, 5);
+                assert_eq!(count, 6);
                 Ok(())
             })
             .unwrap();

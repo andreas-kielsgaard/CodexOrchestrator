@@ -4,12 +4,51 @@ use super::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewRepository {
     pub(crate) id: RepositoryId,
     pub(crate) label: String,
+    /// A verified local checkout used to re-open the repository.
+    pub(crate) anchor_root: PathBuf,
+    /// Git's canonical common directory; this is the source of repository identity.
+    pub(crate) common_directory: PathBuf,
+    pub(crate) first_seen_at: DateTime<Utc>,
+    pub(crate) last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RepositoryDisclosureKind {
+    ManualDirectory,
+    CodexTask,
+}
+
+impl RepositoryDisclosureKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ManualDirectory => "manual_directory",
+            Self::CodexTask => "codex_task",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "manual_directory" => Some(Self::ManualDirectory),
+            "codex_task" => Some(Self::CodexTask),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RepositoryDisclosure {
+    pub(crate) repository_id: RepositoryId,
+    pub(crate) kind: RepositoryDisclosureKind,
+    pub(crate) observed_path: PathBuf,
     pub(crate) first_seen_at: DateTime<Utc>,
     pub(crate) last_seen_at: DateTime<Utc>,
 }

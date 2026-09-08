@@ -9,6 +9,7 @@ import type {
   BuildId,
   CreateBuildRequest,
   RepositoryId,
+  RepositoryRegistrationOverview,
   ReviewBuild,
   ReviewBuildSource,
   WorktreeReviewClient,
@@ -27,16 +28,33 @@ import {
 } from './WorktreeReviewScreen.fixtures';
 
 describe('WorktreeReviewScreen', () => {
-  it('verifies a repository before presenting its branches on a fresh AppData state', async () => {
+  it('registers a directory in the separate repository modal before presenting branches', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient(branchDetailFixture(), { repositories: [], branches: [] });
     render(<WorktreeReviewScreen client={client} />);
 
-    const input = await screen.findByRole('textbox', { name: 'Repository root' });
+    await user.click(await screen.findByRole('button', { name: 'Add repository…' }));
+    const input = await screen.findByRole('textbox', {
+      name: 'Directory inside a Git repository',
+    });
     await user.type(input, 'C:\\Projects\\Codex Orchestrator');
-    await user.click(screen.getByRole('button', { name: 'Verify repository' }));
+    await user.click(screen.getByRole('button', { name: 'Add directory' }));
 
-    expect(client.connectCalls).toEqual(['C:\\Projects\\Codex Orchestrator']);
+    expect(client.registerDirectoryCalls).toEqual(['C:\\Projects\\Codex Orchestrator']);
+    expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
+  });
+
+  it('registers a local instance exposed through Codex while leaving remote-only repos informational', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient(branchDetailFixture(), { repositories: [], branches: [] });
+    render(<WorktreeReviewScreen client={client} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Add repository…' }));
+    expect(await screen.findByText('remote/only')).toBeVisible();
+    expect(screen.getByText('Not available locally')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Add to Worktree Review' }));
+
+    expect(client.registerCodexCalls).toEqual(['repository-one']);
     expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
   });
 
@@ -235,7 +253,8 @@ describe('WorktreeReviewScreen', () => {
 class FixtureClient implements WorktreeReviewClient {
   readonly createBuildCalls: CreateBuildRequest[] = [];
   readonly associateCalls: AssociateWorktreeRequest[] = [];
-  readonly connectCalls: string[] = [];
+  readonly registerDirectoryCalls: string[] = [];
+  readonly registerCodexCalls: RepositoryId[] = [];
   readonly branchHistoryCalls: { cursor?: string }[] = [];
   readonly openBuildCalls: BuildId[] = [];
 
@@ -245,8 +264,53 @@ class FixtureClient implements WorktreeReviewClient {
   ) {}
 
   overview = async (): Promise<WorktreeReviewOverview> => this.initialOverview;
-  connectRepository = async (repositoryRoot: string): Promise<WorktreeReviewOverview> => {
-    this.connectCalls.push(repositoryRoot);
+  repositoryRegistrationOverview = async (): Promise<RepositoryRegistrationOverview> => ({
+    codex: { state: 'ready', message: 'Directories from Codex tasks are available.' },
+    github: {
+      state: 'connected',
+      login: 'fixture-user',
+      message: 'GitHub CLI login is available.',
+    },
+    repositories: [
+      {
+        catalogId: 'github-one',
+        name: 'fixture/codex-orchestrator',
+        github: {
+          repositoryId: 'github-one',
+          nameWithOwner: 'fixture/codex-orchestrator',
+          visibility: 'private',
+          webUrl: 'https://github.com/fixture/codex-orchestrator',
+        },
+        localInstances: [
+          {
+            repositoryId: 'repository-one',
+            name: 'Codex Orchestrator',
+            locationLabel: 'C:\\Projects\\Codex Orchestrator',
+            registered: false,
+            disclosures: ['codex_task'],
+          },
+        ],
+      },
+      {
+        catalogId: 'github-remote-only',
+        name: 'remote/only',
+        github: {
+          repositoryId: 'github-remote-only',
+          nameWithOwner: 'remote/only',
+          visibility: 'public',
+          webUrl: 'https://github.com/remote/only',
+        },
+        localInstances: [],
+      },
+    ],
+  });
+  registerDirectory = async (repositoryRoot: string): Promise<WorktreeReviewOverview> => {
+    this.registerDirectoryCalls.push(repositoryRoot);
+    this.initialOverview = overviewFixture;
+    return overviewFixture;
+  };
+  registerCodexRepository = async (repositoryId: RepositoryId): Promise<WorktreeReviewOverview> => {
+    this.registerCodexCalls.push(repositoryId);
     this.initialOverview = overviewFixture;
     return overviewFixture;
   };

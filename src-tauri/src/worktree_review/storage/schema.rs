@@ -10,14 +10,24 @@ CREATE TABLE IF NOT EXISTS worktree_review_schema_migrations (
 CREATE TABLE IF NOT EXISTS review_repositories (
   repository_id TEXT PRIMARY KEY,
   label TEXT NOT NULL,
+  anchor_root TEXT NOT NULL,
+  common_directory TEXT NOT NULL,
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS review_repository_disclosures (
+  repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('manual_directory', 'codex_task')),
+  observed_path TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY(repository_id, kind, observed_path)
+);
+
 CREATE TABLE IF NOT EXISTS worktree_review_selection (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-  repository_id TEXT NOT NULL,
-  repository_root TEXT NOT NULL
+  repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS review_branches (
@@ -300,6 +310,92 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
             [],
         )
         .map_err(sql_error("record retained build output schema"))?;
+    let repository_columns = table_columns(connection, "review_repositories")?;
+    if !repository_columns
+        .iter()
+        .any(|column| column == "anchor_root")
+    {
+        connection
+            .execute(
+                "ALTER TABLE review_repositories ADD COLUMN anchor_root TEXT",
+                [],
+            )
+            .map_err(sql_error("add registered repository anchor"))?;
+    }
+    if !repository_columns
+        .iter()
+        .any(|column| column == "common_directory")
+    {
+        connection
+            .execute(
+                "ALTER TABLE review_repositories ADD COLUMN common_directory TEXT",
+                [],
+            )
+            .map_err(sql_error("add registered repository common directory"))?;
+    }
+    let selection_columns = table_columns(connection, "worktree_review_selection")?;
+    if selection_columns
+        .iter()
+        .any(|column| column == "repository_root")
+    {
+        connection
+            .execute_batch(
+                "INSERT OR IGNORE INTO review_repositories(
+                   repository_id, label, anchor_root, common_directory, first_seen_at, last_seen_at
+                 )
+                 SELECT repository_id, 'Registered repository', repository_root, repository_root,
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 FROM worktree_review_selection;
+                 UPDATE review_repositories
+                 SET anchor_root = COALESCE(anchor_root, (
+                       SELECT repository_root FROM worktree_review_selection
+                       WHERE worktree_review_selection.repository_id = review_repositories.repository_id
+                     )),
+                     common_directory = COALESCE(common_directory, (
+                       SELECT repository_root FROM worktree_review_selection
+                       WHERE worktree_review_selection.repository_id = review_repositories.repository_id
+                     ))
+                 WHERE repository_id IN (SELECT repository_id FROM worktree_review_selection);
+                 INSERT OR IGNORE INTO review_repository_disclosures(
+                   repository_id, kind, observed_path, first_seen_at, last_seen_at
+                 )
+                 SELECT repository_id, 'manual_directory', repository_root,
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 FROM worktree_review_selection;
+                 CREATE TABLE worktree_review_selection_v6 (
+                   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                   repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id)
+                     ON DELETE RESTRICT
+                 );
+                 INSERT INTO worktree_review_selection_v6(singleton, repository_id)
+                 SELECT singleton, repository_id FROM worktree_review_selection;
+                 DROP TABLE worktree_review_selection;
+                 ALTER TABLE worktree_review_selection_v6 RENAME TO worktree_review_selection;",
+            )
+            .map_err(sql_error("migrate registered repository selection"))?;
+    }
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS review_repository_disclosures (
+               repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id)
+                 ON DELETE CASCADE,
+               kind TEXT NOT NULL CHECK (kind IN ('manual_directory', 'codex_task')),
+               observed_path TEXT NOT NULL,
+               first_seen_at TEXT NOT NULL,
+               last_seen_at TEXT NOT NULL,
+               PRIMARY KEY(repository_id, kind, observed_path)
+             );",
+        )
+        .map_err(sql_error("initialize repository disclosure schema"))?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at)
+             VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            [],
+        )
+        .map_err(sql_error("record registered repository schema"))?;
     Ok(())
 }
 
