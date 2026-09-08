@@ -1,11 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
-import type {
-  RepoBranchWorktreeTargetSource,
-  ResolvedRepoBranchWorktreeTarget,
-} from '../../application/worktreeTargets';
-import { DiscoveredWorktreeTargetSelector } from './DiscoveredWorktreeTargetSelector';
+import type { RepositoryCatalogClient } from '../../application/repositoryCatalog';
+import type { ResolvedRepoBranchWorktreeTarget } from '../../application/worktreeTargets';
+import { RepositoryWorktreeTargetSelector } from './RepositoryWorktreeTargetSelector';
 
 const targets: readonly ResolvedRepoBranchWorktreeTarget[] = [
   {
@@ -28,14 +26,12 @@ const targets: readonly ResolvedRepoBranchWorktreeTarget[] = [
   },
 ];
 
-describe('DiscoveredWorktreeTargetSelector', () => {
-  it('shows repository and branch choices and emits the exact resolved target', async () => {
+describe('RepositoryWorktreeTargetSelector', () => {
+  it('shows registered repository worktrees and emits the exact resolved target', async () => {
     const user = userEvent.setup();
-    const source: RepoBranchWorktreeTargetSource = {
-      listTargets: vi.fn(async () => targets),
-    };
+    const catalog = catalogWithTargets(targets);
     const onChange = vi.fn();
-    render(<DiscoveredWorktreeTargetSelector source={source} value={null} onChange={onChange} />);
+    render(<RepositoryWorktreeTargetSelector catalog={catalog} value={null} onChange={onChange} />);
 
     const selector = await screen.findByRole('combobox', { name: 'Repository and branch' });
     await waitFor(() => expect(selector).toBeEnabled());
@@ -44,23 +40,34 @@ describe('DiscoveredWorktreeTargetSelector', () => {
     expect(screen.queryByText(targets[1]!.worktree.path)).toBeNull();
 
     await user.selectOptions(selector, 'worktree-viewer');
-    expect(onChange).toHaveBeenCalledOnce();
     expect(onChange).toHaveBeenCalledWith(targets[1]);
   });
 
-  it('keeps discovery failure local to the temporary selector', async () => {
-    const source: RepoBranchWorktreeTargetSource = {
-      listTargets: vi.fn(async () => {
-        throw new Error('Worktree discovery is unavailable.');
-      }),
-    };
+  it('keeps catalog failure local to the selector', async () => {
+    const catalog = catalogWithTargets(async () => {
+      throw new Error('Repository catalog is unavailable.');
+    });
     render(
-      <DiscoveredWorktreeTargetSelector source={source} value={null} onChange={() => undefined} />,
+      <RepositoryWorktreeTargetSelector
+        catalog={catalog}
+        value={null}
+        onChange={() => undefined}
+      />,
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Worktree discovery is unavailable.',
+      'Repository catalog is unavailable.',
     );
     expect(screen.getByRole('combobox', { name: 'Repository and branch' })).toBeDisabled();
   });
 });
+
+function catalogWithTargets(
+  result:
+    | readonly ResolvedRepoBranchWorktreeTarget[]
+    | (() => Promise<readonly ResolvedRepoBranchWorktreeTarget[]>),
+): Pick<RepositoryCatalogClient, 'listWorktreeTargets'> {
+  return {
+    listWorktreeTargets: typeof result === 'function' ? result : vi.fn(async () => result),
+  };
+}

@@ -1,6 +1,7 @@
 # Durable Worktree Review correction
 
-Status: implemented candidate; publication, integration, and acceptance remain separate.
+Status: implementation converged with current `main`; publication, integration, and acceptance
+remain separate.
 
 Baseline: `c998c34645847b618ff08354988a219fd00d2d9e` on
 `codex/worktree-review-runtime`.
@@ -62,7 +63,8 @@ React Worktree Review
   -> unconditional Tauri commands
   -> branch/build/cleanup application services
   -> Worktree Review domain and focused SQLite repositories
-  -> repository context + reusable physical-worktree application
+  -> shared repository catalog + repository context
+  -> reusable physical-worktree application
 
 ReviewBuildExecutor
   -> PhysicalWorktreeApplication
@@ -98,12 +100,22 @@ Worktree Review owns:
 An available output means only that its durable record and contained executable currently exist. It
 makes no source-quality or runtime-quality claim.
 
+The top-level `repository_catalog` capability owns repository registration and disclosure
+provenance for all consuming features. Its durable records live in the managed ActiveDatabase;
+branch and worktree availability are derived from live Git. Codex task directories and GitHub are
+optional discovery sources only. Worktree Review persists a review-time repository observation for
+its own foreign-key/evidence graph after the user selects a catalog entry, but it does not maintain
+a second registration authority.
+
 ## Responsibility consolidation
 
 - the shared Git process boundary owns environment isolation, bounded output, and executable
   selection; repository reads and physical worktree operations use typed adapters over it.
 - `PhysicalWorktreeApplication` is the single physical capture/checkout/build/open effect boundary
-  used by Worktree Review, orchestration worktree creation, and task worktree creation.
+  used by Worktree Review and current reusable worktree creation paths.
+- `RepositoryCatalog` is the single durable registration/disclosure authority used by Worktree
+  Review and Workflow target selection; it delegates current repository facts to
+  `repository_context`.
 - `association_observer` is the single constructor for observed association state, used by branch
   association, explicit creation, and build-created managed worktrees.
 - `SourceMaterializationService` accepts the minimal source request, records the server-observed
@@ -140,10 +152,11 @@ branches, other worktrees, or Worktree Review itself.
 
 ## Durability and cleanup
 
-One shared SQLite database under the canonical Worktree Review AppData root owns selection,
-associations, workspaces, builds, attempts, retained outputs, cleanup, settings, and attentions.
-SQLite uses WAL, a bounded busy timeout, and serialized migrations for multiple independent reviewed
-applications.
+The managed ActiveDatabase owns shared repository registrations and disclosure provenance. A
+separate SQLite database under the canonical Worktree Review AppData root owns selection,
+review-time repository observations, associations, workspaces, builds, attempts, retained outputs,
+cleanup, settings, and attentions. Both use WAL and bounded busy timeouts; their domains and
+transaction boundaries remain separate.
 
 Every created checkout has a workspace plan stored before `git worktree add`. A crash after the Git
 effect therefore leaves an identifiable planned workspace rather than an unexplained product-owned
@@ -189,18 +202,17 @@ using the shared AppData cache.
 
 ## Candidate validation
 
-- Worktree Review Rust suite: 39 passed.
-- Reusable physical-worktree application suite: 12 passed, including the borrowed-checkout
-  no-install policy.
-- The focused storage suite includes concurrent first-open migration and independent database-owner
-  visibility checks.
-- Development and release library checks passed; Worktree Review and physical-worktree commands are
-  present in the release composition. The crate still reports unrelated and focused dead-code
-  warnings, but the removed legacy runtime is no longer the warning source.
-- Focused frontend suite: 29 passed across Worktree Review, the native worktree adapter, local Git
-  reads, and local runtime composition.
-- TypeScript production build: passed, with the existing large-chunk advisory.
-- Focused ESLint, Rust formatting, and Git diff checks: passed.
+- The complete frontend suite passes: 142 files and 920 tests. The focused Worktree Review and
+  composition suite passes 35 tests across eight files.
+- The repository-catalog Rust suite passes 6 tests and the Worktree Review Rust suite passes 42
+  tests.
+- Development and release Rust library checks pass. The release build reports 28 existing
+  dead-code warnings; none represent a debug-gated Worktree Review path.
+- The complete Rust library suite reached one timing-sensitive, deprecated orchestration test
+  failure under parallel load; its isolated rerun passed. This is not claimed as a completely green
+  full-suite run.
+- The TypeScript production build, ESLint, focused Prettier check, and Git diff check pass. Vite
+  retains its existing large-chunk advisory.
 
 ## Known residuals
 

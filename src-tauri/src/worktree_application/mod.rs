@@ -4,7 +4,6 @@ mod checkout;
 mod domain;
 mod git;
 mod open;
-pub(crate) mod transport;
 
 use crate::repository_context::GitExecutable;
 #[allow(unused_imports)]

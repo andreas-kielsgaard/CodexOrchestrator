@@ -6,7 +6,7 @@
 
 | Data family                      | Capability owners                                                 |
 | -------------------------------- | ----------------------------------------------------------------- |
-| Application configuration        | `native_profiles`                                                 |
+| Application configuration        | `native_profiles` and `repository_catalog`                        |
 | Operational control              | `orchestration::execution_support`                                |
 | Authored definitions             | `workflows` definitions and Orchestration-owned Harness revisions |
 | Runtime transactions             | Workflow runtime, `agent_sessions`, and `harness_engine` bindings |
@@ -20,4 +20,12 @@ Product composition creates one `ActiveDatabase` handle per process. Persistence
 
 Application services do not receive connections or transactions. Managed operations cannot be nested inside a managed write, and domain errors explicitly roll that write back. A managed write contains SQL only; filesystem, Git, MCP, provider, and notification work happens outside it. Cross-capability operations remain staged application operations rather than one database transaction.
 
-Separate legacy, Worktree Runtime, Worktree Review, and test databases do not use this active-product boundary.
+The repository catalog stores only durable local registrations and their disclosure provenance.
+Branch and worktree inventories are live Git observations and are not copied into ActiveDatabase.
+Codex and GitHub discovery also remain external observations. Their filesystem, Git, and provider
+processes complete before a catalog write begins.
+
+Separate legacy, Worktree Review operational, and test databases do not use this active-product
+boundary. Worktree Review's separate database owns selected review context, source and worktree
+evidence, builds, attempts, outputs, retention, cleanup, and receipts; it does not own the shared
+repository catalog.

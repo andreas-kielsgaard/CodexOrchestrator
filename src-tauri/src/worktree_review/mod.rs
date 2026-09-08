@@ -7,7 +7,6 @@ mod build_service;
 mod build_storage;
 mod cleanup_service;
 pub(crate) mod domain;
-mod repository_registration;
 mod retention;
 mod source_materialization;
 mod state;

@@ -16,15 +16,6 @@ CREATE TABLE IF NOT EXISTS review_repositories (
   last_seen_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS review_repository_disclosures (
-  repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('manual_directory', 'codex_task')),
-  observed_path TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  PRIMARY KEY(repository_id, kind, observed_path)
-);
-
 CREATE TABLE IF NOT EXISTS worktree_review_selection (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id) ON DELETE RESTRICT
@@ -357,13 +348,6 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
                        WHERE worktree_review_selection.repository_id = review_repositories.repository_id
                      ))
                  WHERE repository_id IN (SELECT repository_id FROM worktree_review_selection);
-                 INSERT OR IGNORE INTO review_repository_disclosures(
-                   repository_id, kind, observed_path, first_seen_at, last_seen_at
-                 )
-                 SELECT repository_id, 'manual_directory', repository_root,
-                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                 FROM worktree_review_selection;
                  CREATE TABLE worktree_review_selection_v6 (
                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                    repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id)
@@ -377,25 +361,12 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
             .map_err(sql_error("migrate registered repository selection"))?;
     }
     connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS review_repository_disclosures (
-               repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id)
-                 ON DELETE CASCADE,
-               kind TEXT NOT NULL CHECK (kind IN ('manual_directory', 'codex_task')),
-               observed_path TEXT NOT NULL,
-               first_seen_at TEXT NOT NULL,
-               last_seen_at TEXT NOT NULL,
-               PRIMARY KEY(repository_id, kind, observed_path)
-             );",
-        )
-        .map_err(sql_error("initialize repository disclosure schema"))?;
-    connection
         .execute(
             "INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at)
              VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             [],
         )
-        .map_err(sql_error("record registered repository schema"))?;
+        .map_err(sql_error("record review repository evidence schema"))?;
     Ok(())
 }
 

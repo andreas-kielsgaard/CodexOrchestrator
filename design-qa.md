@@ -1,30 +1,45 @@
-# Worktree Review design QA
+# Sprint 5 Plan Builder UI design QA
 
-- Reference: `C:\Users\user\.codex\generated_images\019feac1-3010-71c2-90bb-a2d260720871\exec-0a0f1819-77be-45c5-b491-1887a6e9f8c6.png`
-- Default list: `C:\Users\user\Documents\Code Projects\Codex Orchestrator\worktree-review-attached-list.png`
-- Repository explorer: `C:\Users\user\Documents\Code Projects\Codex Orchestrator\worktree-review-explorer-archived.png`
-- Viewport and source pixels: 1536 x 1024
-- State: archived branch selected, no review worktree attached
+- Source visual truth: `C:\Users\user\AppData\Local\Temp\codex-clipboard-05269924-40a9-45ce-a2dd-0face68b82aa.png`
+- Focused source region: `C:\Users\user\AppData\Local\Temp\codex-clipboard-73a3b734-e8f3-40b7-94ee-35d479e0a234.png`
+- Implementation screenshot: unavailable; no controllable browser was exposed to this worker.
+- Intended viewport: 1920 x 1080 desktop.
+- Intended state: active pre-initiation Epic planning draft with a saved proposal.
 
-## Result
+## Full-view comparison evidence
 
-No actionable P0, P1, or P2 visual differences remain.
+Blocked. Both source screenshots were opened, but the implementation could not be captured in a browser. Automated tests establish the three-column DOM, fixed proposal header, internal scroll owners, default-expanded Sprints, action gating, and responsive overflow rules; they are not visual evidence.
 
-- The attached-worktree list is the primary view and excludes unattached and detached refs.
-- Repository history is a secondary modal surface.
-- The focused explorer retains the reference hierarchy: search and selection, common base, main and selected branch lanes, branch summary, warning, comparison, and worktree action.
-- The modal treatment is intentional so exploration remains secondary to the existing list.
-- The final implementation and reference were inspected together at the same viewport.
+## Focused region comparison evidence
 
-## Interaction and runtime checks
+Blocked for the same reason. The source proposal rail was inspected at original resolution. No implementation crop exists for a visual comparison.
 
-- Search reduces the repository options correctly.
-- Selecting the archived branch updates the focused lineage.
-- Creating and then using a review worktree adds it to the attached list.
-- Nested commit history closes back to the repository explorer.
-- Escape and close restore focus and background interactivity.
-- Console errors: none.
-- Horizontal overflow: none.
-- Native development executable launched from the main checkout after the final Rust rebuild.
+## Findings
 
-final result: passed
+- [P1] Rendered layout remains visually unverified.
+  - Location: Epic Plan Builder.
+  - Evidence: source screenshots are available; implementation screenshot is unavailable.
+  - Impact: column proportions, density, and visible overflow cannot be accepted from code or tests alone.
+  - Fix: launch the Tauri app through `launch-dev.bat`, capture the same desktop state, and compare it with both source images before G3 acceptance.
+
+## Required fidelity surfaces
+
+- Fonts and typography: blocked pending rendered capture.
+- Spacing and layout rhythm: blocked pending rendered capture.
+- Colors and visual tokens: blocked pending rendered capture.
+- Image quality and asset fidelity: no product imagery is present; Lucide icons and existing product tokens are used, but rendered fidelity is unverified.
+- Copy and content: deterministic tests cover Plan/Rebuild labels, the exact plan prompt, disabled initiation explanation, copy feedback, and proposal heading.
+
+## Comparison history
+
+- Initial pass: blocked because no browser surface was available. No visual fixes are claimed from this pass.
+
+## Implementation checklist
+
+1. Launch the combined development build with `launch-dev.bat`.
+2. Open an active Plan Builder draft at 1920 x 1080.
+3. Capture the full view and proposal rail.
+4. Compare column widths, fixed proposal heading, scroll bounds, density, and responsive overflow.
+5. Resolve any P0/P1/P2 differences before G3 acceptance.
+
+final result: blocked

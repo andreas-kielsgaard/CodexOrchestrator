@@ -1,12 +1,7 @@
-use super::domain::{
-    RepositoryDisclosure, RepositoryDisclosureKind, RepositoryId, ReviewBuildId, ReviewRepository,
-    WorktreeId,
-};
+use super::domain::{RepositoryId, ReviewBuildId, ReviewRepository, WorktreeId};
 use crate::{
-    repository_context::{
-        RepositoryContext, RepositoryContextError, RepositoryContextErrorKind, RepositoryIdentity,
-        WorktreeLocation as ObservedWorktreeLocation,
-    },
+    repository_catalog::RepositoryCatalog,
+    repository_context::{RepositoryContext, RepositoryIdentity},
     worktree_review::storage::{
         PersistedRepositorySelection, RepositorySelectionRepository, ReviewBuildRepository,
         ReviewRepositoryRepository, WorkspaceRepository, WorktreeReviewDatabase,
@@ -154,6 +149,7 @@ struct ApplicationState {
 pub(crate) struct WorktreeReviewApplication {
     review_root: PathBuf,
     database: Result<Arc<WorktreeReviewDatabase>, WorktreeReviewUnavailable>,
+    repository_catalog: Arc<RepositoryCatalog>,
     repository_context: Result<RepositoryContext, WorktreeReviewUnavailable>,
     active_build_context: Option<ActiveBuildContextView>,
     state: Mutex<ApplicationState>,
@@ -161,7 +157,7 @@ pub(crate) struct WorktreeReviewApplication {
 
 impl WorktreeReviewApplication {
     /// Opens a stable product application root. Environmental failures become capability facts.
-    pub(crate) fn open(review_root: PathBuf) -> Self {
+    pub(crate) fn open(review_root: PathBuf, repository_catalog: Arc<RepositoryCatalog>) -> Self {
         let requested_root = review_root;
         let data_root = SharedWorktreeReviewDataRoot::resolve(requested_root.clone())
             .and_then(SharedWorktreeReviewDataRoot::prepare);
@@ -183,7 +179,13 @@ impl WorktreeReviewApplication {
             },
             Err(_) => (None, false),
         };
-        let repository_context = RepositoryContext::discover().map_err(map_repository_error);
+        let repository_context =
+            repository_catalog
+                .repository_context()
+                .map_err(|message| WorktreeReviewUnavailable {
+                    status: CapabilityReadinessStatus::MissingTool,
+                    message,
+                });
         let active_build_context = database
             .as_ref()
             .ok()
@@ -191,6 +193,7 @@ impl WorktreeReviewApplication {
         Self {
             review_root,
             database,
+            repository_catalog,
             repository_context,
             active_build_context,
             state: Mutex::new(ApplicationState {
@@ -266,46 +269,27 @@ impl WorktreeReviewApplication {
         self.database.clone()
     }
 
-    pub(crate) fn register_repository(
-        &self,
-        candidate: PathBuf,
-        disclosure_kind: RepositoryDisclosureKind,
-    ) -> SelectRepositoryResultView {
-        let context = match self.repository_context() {
-            Ok(context) => context,
-            Err(error) => return self.selection_failed(error),
-        };
-        let repository = match context.identities().inspect(&candidate) {
+    pub(crate) fn select_repository(&self, repository_id: &str) -> SelectRepositoryResultView {
+        let (registered, repository) = match self.repository_catalog.resolve_verified(repository_id)
+        {
             Ok(repository) => repository,
-            Err(error) => return self.selection_failed(map_repository_error(error)),
+            Err(message) => {
+                return self.selection_failed(WorktreeReviewUnavailable {
+                    status: CapabilityReadinessStatus::RepositoryUnavailable,
+                    message,
+                })
+            }
         };
         let now = chrono::Utc::now();
-        let repository_id = match RepositoryId::new(repository.id.as_str()) {
+        let domain_repository_id = match RepositoryId::new(repository.id.as_str()) {
             Ok(id) => id,
             Err(_) => return self.selection_failed(storage_unavailable()),
         };
-        let anchor_root = context
-            .worktrees()
-            .list(&repository.id, repository.top_level.path())
-            .ok()
-            .and_then(|worktrees| worktrees.into_iter().next())
-            .and_then(|worktree| match worktree.location {
-                ObservedWorktreeLocation::Available(path) => Some(path.path().to_path_buf()),
-                ObservedWorktreeLocation::Unavailable(_) => None,
-            })
-            .unwrap_or_else(|| repository.top_level.path().to_path_buf());
         let record = ReviewRepository {
-            id: repository_id.clone(),
-            label: repository_label(&anchor_root),
-            anchor_root,
+            id: domain_repository_id,
+            label: registered.label,
+            anchor_root: registered.anchor_root,
             common_directory: repository.common_directory.path().to_path_buf(),
-            first_seen_at: now,
-            last_seen_at: now,
-        };
-        let disclosure = RepositoryDisclosure {
-            repository_id,
-            kind: disclosure_kind,
-            observed_path: std::fs::canonicalize(&candidate).unwrap_or(candidate),
             first_seen_at: now,
             last_seen_at: now,
         };
@@ -318,7 +302,6 @@ impl WorktreeReviewApplication {
                 database
                     .transaction(|transaction| {
                         transaction.repositories().save_repository(&record)?;
-                        transaction.repositories().save_disclosure(&disclosure)?;
                         transaction.selection().save(&selection)
                     })
                     .map_err(|_| storage_unavailable())
@@ -350,48 +333,31 @@ impl WorktreeReviewApplication {
         }
     }
 
-    pub(crate) fn select_repository(&self, repository_id: &str) -> SelectRepositoryResultView {
-        let selection = PersistedRepositorySelection {
-            repository_id: repository_id.to_owned(),
-        };
-        if let Err(error) = self.verify_selection(&selection) {
-            return self.selection_failed(error);
-        }
-        if self
-            .database()
-            .and_then(|database| {
-                database
-                    .selection()
-                    .save(&selection)
-                    .map_err(|_| storage_unavailable())
-            })
-            .is_err()
-        {
-            if let Ok(mut state) = self.state.lock() {
-                state.storage_available = false;
-            }
-            return self.selection_failed(storage_unavailable());
-        }
-        if let Ok(mut state) = self.state.lock() {
-            state.selection = Some(selection);
-            state.storage_available = true;
-        }
-        SelectRepositoryResultView {
-            selection: readiness(
-                CapabilityReadinessStatus::Ready,
-                "The repository selection was saved.",
-            ),
-            overview: self.overview(),
-        }
-    }
-
     pub(crate) fn registered_repositories(
         &self,
     ) -> Result<Vec<ReviewRepository>, WorktreeReviewUnavailable> {
-        self.database()?
-            .repositories()
-            .list_repositories()
-            .map_err(|_| storage_unavailable())
+        self.repository_catalog
+            .list_registered()
+            .map_err(|message| WorktreeReviewUnavailable {
+                status: CapabilityReadinessStatus::StorageUnavailable,
+                message,
+            })
+            .and_then(|repositories| {
+                repositories
+                    .into_iter()
+                    .map(|repository| {
+                        Ok(ReviewRepository {
+                            id: RepositoryId::new(repository.repository_id)
+                                .map_err(|_| storage_unavailable())?,
+                            label: repository.label,
+                            anchor_root: repository.anchor_root,
+                            common_directory: repository.git_common_directory,
+                            first_seen_at: repository.first_registered_at,
+                            last_seen_at: repository.last_verified_at,
+                        })
+                    })
+                    .collect()
+            })
     }
 
     pub(crate) fn selected_repository(
@@ -420,32 +386,12 @@ impl WorktreeReviewApplication {
         &self,
         selection: &PersistedRepositorySelection,
     ) -> Result<RepositoryIdentity, WorktreeReviewUnavailable> {
-        let repository = self
-            .repository_context()?
-            .identities()
-            .inspect(&self.registered_repository(selection)?.anchor_root)
-            .map_err(map_repository_error)?;
-        if repository.id.as_str() != selection.repository_id {
-            return Err(WorktreeReviewUnavailable {
+        self.repository_catalog
+            .resolve_verified(&selection.repository_id)
+            .map(|(_, repository)| repository)
+            .map_err(|message| WorktreeReviewUnavailable {
                 status: CapabilityReadinessStatus::RepositoryUnavailable,
-                message: "The saved repository identity no longer matches this location.".into(),
-            });
-        }
-        Ok(repository)
-    }
-
-    fn registered_repository(
-        &self,
-        selection: &PersistedRepositorySelection,
-    ) -> Result<ReviewRepository, WorktreeReviewUnavailable> {
-        let id = RepositoryId::new(&selection.repository_id).map_err(|_| storage_unavailable())?;
-        self.database()?
-            .repositories()
-            .find_repository(&id)
-            .map_err(|_| storage_unavailable())?
-            .ok_or_else(|| WorktreeReviewUnavailable {
-                status: CapabilityReadinessStatus::RepositoryUnavailable,
-                message: "The selected repository is no longer registered.".into(),
+                message,
             })
     }
 
@@ -453,8 +399,11 @@ impl WorktreeReviewApplication {
         &self,
         selection: &PersistedRepositorySelection,
     ) -> Option<SelectedRepositoryView> {
-        self.registered_repository(selection)
-            .ok()
+        self.database()
+            .ok()?
+            .repositories()
+            .find_repository(&RepositoryId::new(&selection.repository_id).ok()?)
+            .ok()?
             .map(|repository| SelectedRepositoryView {
                 repository_id: selection.repository_id.clone(),
                 root: repository.anchor_root.to_string_lossy().into_owned(),
@@ -467,14 +416,6 @@ impl WorktreeReviewApplication {
             overview: self.overview(),
         }
     }
-}
-
-fn repository_label(root: &Path) -> String {
-    root.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("Repository")
-        .to_owned()
 }
 
 fn load_active_build_context(database: &WorktreeReviewDatabase) -> Option<ActiveBuildContextView> {
@@ -502,21 +443,6 @@ fn readiness(
     CapabilityReadinessView {
         status,
         message: message.into(),
-    }
-}
-
-fn map_repository_error(error: RepositoryContextError) -> WorktreeReviewUnavailable {
-    let kind = error.kind;
-    WorktreeReviewUnavailable {
-        status: match kind {
-            RepositoryContextErrorKind::MissingGit => CapabilityReadinessStatus::MissingTool,
-            _ => CapabilityReadinessStatus::RepositoryUnavailable,
-        },
-        message: match kind {
-            RepositoryContextErrorKind::MissingGit => "Git is required for Worktree Review.",
-            _ => "The selected folder is not an available Git repository.",
-        }
-        .into(),
     }
 }
 
@@ -552,7 +478,20 @@ fn storage_unavailable() -> WorktreeReviewUnavailable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{persistence::ActiveDatabase, repository_catalog::REPOSITORY_CATALOG_SCHEMA};
+    use rusqlite::Connection;
     use std::process::Command;
+
+    fn catalog() -> Arc<RepositoryCatalog> {
+        let database =
+            ActiveDatabase::from_connection(Connection::open_in_memory().unwrap(), |connection| {
+                connection
+                    .execute_batch(REPOSITORY_CATALOG_SCHEMA)
+                    .map_err(|error| error.to_string())
+            })
+            .unwrap();
+        Arc::new(RepositoryCatalog::new(Arc::new(database)))
+    }
 
     #[test]
     fn host_process_uses_the_supplied_shared_data_root() {
@@ -618,7 +557,8 @@ mod tests {
     #[test]
     fn missing_selection_is_a_recoverable_product_state() {
         let directory = tempfile::tempdir().unwrap();
-        let application = WorktreeReviewApplication::open(directory.path().join("review"));
+        let application =
+            WorktreeReviewApplication::open(directory.path().join("review"), catalog());
         assert_eq!(
             application
                 .overview()
@@ -678,11 +618,10 @@ mod tests {
             .unwrap()
             .success());
         let review_root = directory.path().join("review");
-        let application = WorktreeReviewApplication::open(review_root.clone());
-        let selected = application.register_repository(
-            repository_root.clone(),
-            RepositoryDisclosureKind::ManualDirectory,
-        );
+        let catalog = catalog();
+        let registered = catalog.register_directory(repository_root.clone()).unwrap();
+        let application = WorktreeReviewApplication::open(review_root.clone(), catalog.clone());
+        let selected = application.select_repository(&registered.repository_id);
         assert_eq!(
             selected.overview.capabilities.repository_browsing.status,
             CapabilityReadinessStatus::Ready
@@ -692,7 +631,7 @@ mod tests {
             CapabilityReadinessStatus::NotEvaluated
         );
 
-        let reopened = WorktreeReviewApplication::open(review_root);
+        let reopened = WorktreeReviewApplication::open(review_root, catalog);
         let repository = reopened.selected_repository().unwrap();
         assert_eq!(
             repository.top_level.path(),
@@ -714,10 +653,11 @@ mod tests {
                 .unwrap()
                 .success());
         }
-        let application = WorktreeReviewApplication::open(directory.path().join("review"));
-
-        application.register_repository(first, RepositoryDisclosureKind::ManualDirectory);
-        application.register_repository(second.clone(), RepositoryDisclosureKind::CodexTask);
+        let catalog = catalog();
+        catalog.register_directory(first).unwrap();
+        let second_registration = catalog.register_directory(second.clone()).unwrap();
+        let application = WorktreeReviewApplication::open(directory.path().join("review"), catalog);
+        application.select_repository(&second_registration.repository_id);
 
         assert_eq!(application.registered_repositories().unwrap().len(), 2);
         assert_eq!(

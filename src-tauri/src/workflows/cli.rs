@@ -4,10 +4,7 @@ use super::{
         WorkflowConnectionConfig, WorkflowDefinition, WorkflowElementKind, WorkflowElementRef,
         WorkflowNodeConfig,
     },
-    instance_domain::{
-        ResolvedRepoBranchWorktreeTarget, WorkflowBranchTarget, WorkflowRepositoryTarget,
-        WorkflowWorktreeTarget,
-    },
+    instance_domain::ResolvedRepoBranchWorktreeTarget,
     repository::SqliteWorkflowRepository,
 };
 use crate::{
@@ -24,9 +21,9 @@ use crate::{
     native_profiles::NativeProfileService,
     persistence::ActiveDatabase,
     product_database,
+    repository_catalog::RepositoryCatalog,
     runtime::codex::CodexCliRuntime,
     storage,
-    worktree_targets_temp::DiscoveredWorktreeTargetSource,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -124,7 +121,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
             let worktree = absolute_path(required_option(&options, "worktree")?, "worktree")?;
             let context = compose_runtime(&app_data_dir)?;
             let definition = find_workflow(&context.workflow, workflow_reference)?;
-            let target = resolve_target(&app_data_dir, &worktree)?;
+            let target = resolve_target(context.database.clone(), &worktree)?;
             let instance = context.workflow.create_workflow_instance(
                 &definition.workflow_type.id,
                 name,
@@ -417,7 +414,7 @@ fn find_instance(
 }
 
 fn resolve_target(
-    app_data_dir: &Path,
+    database: Arc<ActiveDatabase>,
     requested_worktree: &Path,
 ) -> Result<ResolvedRepoBranchWorktreeTarget, String> {
     let requested = fs::canonicalize(requested_worktree).map_err(|error| {
@@ -426,10 +423,8 @@ fn resolve_target(
             requested_worktree.display()
         )
     })?;
-    let source =
-        DiscoveredWorktreeTargetSource::new(app_data_dir.join("codex-orchestrator.sqlite"));
-    let targets = source.list()?;
-    let target = targets
+    let targets = RepositoryCatalog::new(database).list_worktree_targets()?;
+    targets
         .into_iter()
         .find(|target| {
             fs::canonicalize(&target.worktree.path)
@@ -438,25 +433,10 @@ fn resolve_target(
         })
         .ok_or_else(|| {
             format!(
-                "Worktree {} is not a currently discovered temporary Workflow target.",
+                "Worktree {} is not attached to a registered repository branch.",
                 requested.display()
             )
-        })?;
-    Ok(ResolvedRepoBranchWorktreeTarget {
-        repository: WorkflowRepositoryTarget {
-            id: target.repository.id,
-            name: target.repository.name,
-            git_common_directory: target.repository.git_common_directory,
-        },
-        branch: WorkflowBranchTarget {
-            id: target.branch.id,
-            name: target.branch.name,
-        },
-        worktree: WorkflowWorktreeTarget {
-            id: target.worktree.id,
-            path: target.worktree.path,
-        },
-    })
+        })
 }
 
 fn send_to_node(

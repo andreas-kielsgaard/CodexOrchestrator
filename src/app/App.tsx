@@ -87,6 +87,7 @@ import type {
 import type { WorkflowApplicationClient } from '../application/workflows';
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
 import type { WorktreeReviewClient } from '../application/worktreeReview';
+import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
 import { WorkflowScreen } from '../features/workflows';
 import { WorktreeReviewScreen } from '../features/worktreeReview';
 
@@ -143,6 +144,8 @@ export interface AppProps {
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
   /** Product Worktree Review boundary. Product composition supplies this in every build profile. */
   readonly worktreeReviewClient?: WorktreeReviewClient;
+  /** Shared registered-repository authority used by Worktree Review and Workflow target selection. */
+  readonly repositoryCatalogClient?: RepositoryCatalogClient;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -181,13 +184,14 @@ export function App({
   productDecisionClient,
   productDecisionCorrectionClient,
   worktreeReviewClient,
+  repositoryCatalogClient,
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
     (initialSurface === 'workflows' && !workflowClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
-    (initialSurface === 'worktree-review' && !worktreeReviewClient)
+    (initialSurface === 'worktree-review' && (!worktreeReviewClient || !repositoryCatalogClient))
       ? 'epics'
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
@@ -226,7 +230,7 @@ export function App({
         case 'harness_inspector':
           return Boolean(harnessManagementPreviewSurface);
         case 'worktree_review':
-          return Boolean(worktreeReviewClient);
+          return Boolean(worktreeReviewClient && repositoryCatalogClient);
         case 'product_decision_publish':
           return Boolean(productDecisionClient);
       }
@@ -234,6 +238,7 @@ export function App({
     [
       fileReviewSource,
       harnessManagementPreviewSurface,
+      repositoryCatalogClient,
       worktreeReviewClient,
       productDecisionClient,
       workflowClient,
@@ -903,7 +908,7 @@ export function App({
               Harness Management
             </button>
           )}
-          {worktreeReviewClient && (
+          {worktreeReviewClient && repositoryCatalogClient && (
             <button
               className={surface === 'worktree-review' ? 'active' : undefined}
               type="button"
@@ -1075,8 +1080,11 @@ export function App({
               : undefined
           }
         />
-      ) : surface === 'worktree-review' && worktreeReviewClient ? (
-        <WorktreeReviewScreen client={worktreeReviewClient} />
+      ) : surface === 'worktree-review' && worktreeReviewClient && repositoryCatalogClient ? (
+        <WorktreeReviewScreen
+          client={worktreeReviewClient}
+          repositoryCatalog={repositoryCatalogClient}
+        />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}

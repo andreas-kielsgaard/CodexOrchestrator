@@ -1,7 +1,6 @@
 use super::{decode_time, encode_time, sql_error, ConnectionProvider, StorageError, StorageResult};
 use crate::worktree_review::domain::{
-    BranchRef, GitObjectId, RepositoryDisclosure, RepositoryDisclosureKind, RepositoryId,
-    ReviewBranch, ReviewRepository,
+    BranchRef, GitObjectId, RepositoryId, ReviewBranch, ReviewRepository,
 };
 use rusqlite::{params, OptionalExtension};
 use std::path::PathBuf;
@@ -9,12 +8,6 @@ use std::path::PathBuf;
 pub(crate) trait ReviewRepositoryRepository {
     fn save_repository(&self, repository: &ReviewRepository) -> StorageResult<()>;
     fn find_repository(&self, id: &RepositoryId) -> StorageResult<Option<ReviewRepository>>;
-    fn list_repositories(&self) -> StorageResult<Vec<ReviewRepository>>;
-    fn save_disclosure(&self, disclosure: &RepositoryDisclosure) -> StorageResult<()>;
-    fn list_disclosures(
-        &self,
-        repository_id: &RepositoryId,
-    ) -> StorageResult<Vec<RepositoryDisclosure>>;
     fn save_branch(&self, branch: &ReviewBranch) -> StorageResult<()>;
     fn find_branch(
         &self,
@@ -92,86 +85,6 @@ impl<Owner: ConnectionProvider> ReviewRepositoryRepository
         })
     }
 
-    fn list_repositories(&self) -> StorageResult<Vec<ReviewRepository>> {
-        self.owner.with_connection(|connection| {
-            let mut statement = connection
-                .prepare(
-                    "SELECT repository_id, label, anchor_root, common_directory,
-                            first_seen_at, last_seen_at
-                     FROM review_repositories
-                     WHERE anchor_root IS NOT NULL AND common_directory IS NOT NULL
-                     ORDER BY label COLLATE NOCASE, repository_id",
-                )
-                .map_err(sql_error("prepare registered repository query"))?;
-            let raw = statement
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                    ))
-                })
-                .map_err(sql_error("query registered repositories"))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error("read registered repositories"))?;
-            raw.into_iter().map(decode_repository).collect()
-        })
-    }
-
-    fn save_disclosure(&self, disclosure: &RepositoryDisclosure) -> StorageResult<()> {
-        self.owner.with_connection(|connection| {
-            connection
-                .execute(
-                    "INSERT INTO review_repository_disclosures(
-                       repository_id, kind, observed_path, first_seen_at, last_seen_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(repository_id, kind, observed_path) DO UPDATE SET
-                       last_seen_at = excluded.last_seen_at",
-                    params![
-                        disclosure.repository_id.as_str(),
-                        disclosure.kind.as_str(),
-                        disclosure.observed_path.to_string_lossy().as_ref(),
-                        encode_time(disclosure.first_seen_at),
-                        encode_time(disclosure.last_seen_at),
-                    ],
-                )
-                .map_err(sql_error("save registered repository disclosure"))?;
-            Ok(())
-        })
-    }
-
-    fn list_disclosures(
-        &self,
-        repository_id: &RepositoryId,
-    ) -> StorageResult<Vec<RepositoryDisclosure>> {
-        self.owner.with_connection(|connection| {
-            let mut statement = connection
-                .prepare(
-                    "SELECT repository_id, kind, observed_path, first_seen_at, last_seen_at
-                     FROM review_repository_disclosures WHERE repository_id = ?1
-                     ORDER BY first_seen_at, kind, observed_path",
-                )
-                .map_err(sql_error("prepare repository disclosure query"))?;
-            let raw = statement
-                .query_map([repository_id.as_str()], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                })
-                .map_err(sql_error("query repository disclosures"))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(sql_error("read repository disclosures"))?;
-            raw.into_iter().map(decode_disclosure).collect()
-        })
-    }
-
     fn save_branch(&self, branch: &ReviewBranch) -> StorageResult<()> {
         self.owner.with_connection(|connection| {
             connection
@@ -233,7 +146,6 @@ impl<Owner: ConnectionProvider> ReviewRepositoryRepository
 
 type RepositoryRow = (String, String, String, String, String, String);
 type BranchRow = (String, String, String, String);
-type DisclosureRow = (String, String, String, String, String);
 
 fn decode_branch_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BranchRow> {
     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -247,18 +159,6 @@ fn decode_repository(raw: RepositoryRow) -> StorageResult<ReviewRepository> {
         common_directory: PathBuf::from(raw.3),
         first_seen_at: decode_time(raw.4, "repository first seen")?,
         last_seen_at: decode_time(raw.5, "repository last seen")?,
-    })
-}
-
-fn decode_disclosure(raw: DisclosureRow) -> StorageResult<RepositoryDisclosure> {
-    Ok(RepositoryDisclosure {
-        repository_id: RepositoryId::new(raw.0)
-            .map_err(|error| StorageError::corrupt(error.to_string()))?,
-        kind: RepositoryDisclosureKind::parse(&raw.1)
-            .ok_or_else(|| StorageError::corrupt("invalid repository disclosure kind"))?,
-        observed_path: PathBuf::from(raw.2),
-        first_seen_at: decode_time(raw.3, "repository disclosure first seen")?,
-        last_seen_at: decode_time(raw.4, "repository disclosure last seen")?,
     })
 }
 

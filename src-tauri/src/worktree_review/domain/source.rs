@@ -19,40 +19,6 @@ pub(crate) struct ReviewRepository {
     pub(crate) last_seen_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RepositoryDisclosureKind {
-    ManualDirectory,
-    CodexTask,
-}
-
-impl RepositoryDisclosureKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::ManualDirectory => "manual_directory",
-            Self::CodexTask => "codex_task",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "manual_directory" => Some(Self::ManualDirectory),
-            "codex_task" => Some(Self::CodexTask),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RepositoryDisclosure {
-    pub(crate) repository_id: RepositoryId,
-    pub(crate) kind: RepositoryDisclosureKind,
-    pub(crate) observed_path: PathBuf,
-    pub(crate) first_seen_at: DateTime<Utc>,
-    pub(crate) last_seen_at: DateTime<Utc>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewBranch {

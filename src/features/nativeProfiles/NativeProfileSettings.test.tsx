@@ -165,7 +165,7 @@ describe('NativeProfileSettings', () => {
 
   it('contains the reported short viewport in an internal scroll region with narrow wrapping', async () => {
     render(<NativeProfileSettings client={client()} />);
-    const settings = await screen.findByRole('region', { name: 'Codex home profiles' });
+    const settings = await screen.findByRole('main', { name: 'Technical Codex settings' });
     expect(settings).toHaveClass('native-profile-settings');
     expect(settings).toHaveAttribute('tabindex', '0');
     const styles = readFileSync(resolve('src/features/nativeProfiles/nativeProfileSettings.css'), 'utf8');

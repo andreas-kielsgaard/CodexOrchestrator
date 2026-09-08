@@ -15,11 +15,7 @@ export interface ResolvedRepoBranchWorktreeTarget {
   };
 }
 
-export interface RepoBranchWorktreeTargetSource {
-  listTargets(): Promise<readonly ResolvedRepoBranchWorktreeTarget[]>;
-}
-
-/** Stable selector input shared by the temporary picker and its future replacement. */
+/** Stable Workflow input independent of repository-catalog presentation and transport. */
 export interface RepoBranchWorktreeTargetSelectorProps {
   readonly id?: string;
   readonly value: ResolvedRepoBranchWorktreeTarget | null;

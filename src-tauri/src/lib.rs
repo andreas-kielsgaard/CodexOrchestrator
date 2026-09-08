@@ -22,6 +22,7 @@ mod orchestration;
 mod persistence;
 mod product_database;
 mod product_decisions;
+mod repository_catalog;
 mod repository_context;
 mod repository_discovery;
 mod runtime;
@@ -29,7 +30,6 @@ mod storage;
 mod workflows;
 pub(crate) mod worktree_application;
 mod worktree_review;
-mod worktree_targets_temp;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 

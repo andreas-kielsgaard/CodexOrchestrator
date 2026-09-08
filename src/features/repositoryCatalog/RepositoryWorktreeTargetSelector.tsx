@@ -1,34 +1,33 @@
 import { useEffect, useState } from 'react';
+import type { RepositoryCatalogClient } from '../../application/repositoryCatalog';
 import type {
   RepoBranchWorktreeTargetSelectorProps,
-  RepoBranchWorktreeTargetSource,
   ResolvedRepoBranchWorktreeTarget,
 } from '../../application/worktreeTargets';
-import { tauriDiscoveredWorktreeTargetSource } from '../../infrastructure/worktreeTargetsTemp/tauriDiscoveredWorktreeTargetSource';
-import './discoveredWorktreeTargetSelector.css';
+import './repositoryWorktreeTargetSelector.css';
 
 type LoadState =
   | { readonly kind: 'loading' }
   | { readonly kind: 'ready'; readonly targets: readonly ResolvedRepoBranchWorktreeTarget[] }
   | { readonly kind: 'failed'; readonly message: string };
 
-export interface DiscoveredWorktreeTargetSelectorProps extends RepoBranchWorktreeTargetSelectorProps {
-  readonly source?: RepoBranchWorktreeTargetSource;
+export interface RepositoryWorktreeTargetSelectorProps extends RepoBranchWorktreeTargetSelectorProps {
+  readonly catalog: Pick<RepositoryCatalogClient, 'listWorktreeTargets'>;
 }
 
-export function DiscoveredWorktreeTargetSelector({
+export function RepositoryWorktreeTargetSelector({
   id,
   value,
   disabled = false,
   onChange,
-  source = tauriDiscoveredWorktreeTargetSource,
-}: DiscoveredWorktreeTargetSelectorProps) {
+  catalog,
+}: RepositoryWorktreeTargetSelectorProps) {
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
 
   useEffect(() => {
     let current = true;
     setLoad({ kind: 'loading' });
-    void source.listTargets().then(
+    void catalog.listWorktreeTargets().then(
       (targets) => current && setLoad({ kind: 'ready', targets }),
       (error: unknown) =>
         current &&
@@ -40,13 +39,13 @@ export function DiscoveredWorktreeTargetSelector({
     return () => {
       current = false;
     };
-  }, [source]);
+  }, [catalog]);
 
   const targets = load.kind === 'ready' ? load.targets : [];
   const unavailable = disabled || load.kind !== 'ready' || targets.length === 0;
 
   return (
-    <div className="discovered-worktree-target-selector">
+    <div className="repository-worktree-target-selector">
       <select
         id={id}
         aria-label={id ? undefined : 'Repository and branch'}
@@ -64,7 +63,7 @@ export function DiscoveredWorktreeTargetSelector({
           {load.kind === 'loading'
             ? 'Loading worktrees…'
             : targets.length === 0
-              ? 'No branch worktrees discovered'
+              ? 'No registered branch worktrees'
               : 'Select repository and branch'}
         </option>
         {targets.map((target) => (
@@ -74,7 +73,7 @@ export function DiscoveredWorktreeTargetSelector({
         ))}
       </select>
       {load.kind === 'failed' ? (
-        <p className="discovered-worktree-target-selector__error" role="alert">
+        <p className="repository-worktree-target-selector__error" role="alert">
           {load.message}
         </p>
       ) : null}

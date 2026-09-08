@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_the_legacy_selected_path_into_registration_inventory() {
+    fn migrates_the_legacy_selected_path_into_review_source_evidence() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("worktree-review.sqlite");
         let legacy = rusqlite::Connection::open(&path).unwrap();
@@ -140,10 +140,6 @@ mod tests {
             Some(PersistedRepositorySelection {
                 repository_id: "repository-legacy".into()
             })
-        );
-        assert_eq!(
-            database.repositories().list_disclosures(&id).unwrap().len(),
-            1
         );
     }
 }

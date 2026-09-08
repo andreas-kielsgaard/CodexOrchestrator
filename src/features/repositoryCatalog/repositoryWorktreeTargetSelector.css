@@ -1,15 +1,15 @@
-.discovered-worktree-target-selector {
+.repository-worktree-target-selector {
   display: grid;
   gap: 6px;
   min-width: 0;
 }
 
-.discovered-worktree-target-selector select {
+.repository-worktree-target-selector select {
   width: 100%;
   min-width: 0;
 }
 
-.discovered-worktree-target-selector__error {
+.repository-worktree-target-selector__error {
   margin: 0;
   color: #7a2e20;
   font-size: 0.82rem;

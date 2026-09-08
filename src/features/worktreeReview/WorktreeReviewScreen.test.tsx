@@ -1,6 +1,11 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
+  RegisteredRepository,
+  RepositoryCatalogClient,
+  RepositoryCatalogOverview,
+} from '../../application/repositoryCatalog';
+import type {
   AssociateWorktreeRequest,
   AssociatedWorktree,
   BranchRef,
@@ -9,7 +14,6 @@ import type {
   BuildId,
   CreateBuildRequest,
   RepositoryId,
-  RepositoryRegistrationOverview,
   ReviewBuild,
   ReviewBuildSource,
   WorktreeReviewClient,
@@ -31,7 +35,8 @@ describe('WorktreeReviewScreen', () => {
   it('registers a directory in the separate repository modal before presenting branches', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient(branchDetailFixture(), { repositories: [], branches: [] });
-    render(<WorktreeReviewScreen client={client} />);
+    const catalog = new FixtureCatalog();
+    renderScreen(client, catalog);
 
     await user.click(await screen.findByRole('button', { name: 'Add repository…' }));
     const input = await screen.findByRole('textbox', {
@@ -40,28 +45,31 @@ describe('WorktreeReviewScreen', () => {
     await user.type(input, 'C:\\Projects\\Codex Orchestrator');
     await user.click(screen.getByRole('button', { name: 'Add directory' }));
 
-    expect(client.registerDirectoryCalls).toEqual(['C:\\Projects\\Codex Orchestrator']);
+    expect(catalog.registerDirectoryCalls).toEqual(['C:\\Projects\\Codex Orchestrator']);
+    expect(client.selectRepositoryCalls).toEqual(['repository-one']);
     expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
   });
 
   it('registers a local instance exposed through Codex while leaving remote-only repos informational', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient(branchDetailFixture(), { repositories: [], branches: [] });
-    render(<WorktreeReviewScreen client={client} />);
+    const catalog = new FixtureCatalog();
+    renderScreen(client, catalog);
 
     await user.click(await screen.findByRole('button', { name: 'Add repository…' }));
     expect(await screen.findByText('remote/only')).toBeVisible();
     expect(screen.getByText('Not available locally')).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Add to Worktree Review' }));
+    await user.click(screen.getByRole('button', { name: 'Register repository' }));
 
-    expect(client.registerCodexCalls).toEqual(['repository-one']);
+    expect(catalog.registerCodexCalls).toEqual(['repository-one']);
+    expect(client.selectRepositoryCalls).toEqual(['repository-one']);
     expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
   });
 
   it('selects a branch before distinguishing multiple exact worktrees at the same commit', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
 
     expect(await screen.findByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
     const worktreeGroup = screen.getByRole('radiogroup', { name: 'Worktree checkout' });
@@ -89,7 +97,7 @@ describe('WorktreeReviewScreen', () => {
   it('records an exact worktree snapshot and discloses its retained owned checkout', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
@@ -126,7 +134,7 @@ describe('WorktreeReviewScreen', () => {
     const client = new FixtureClient(
       branchDetailFixture({ worktrees: [], associationCandidates: [], builds: [] }),
     );
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
 
     expect(await screen.findByText(/No associated worktree exists/)).toBeVisible();
     expect(screen.getByRole('radio', { name: /Specific branch commit/ })).toBeChecked();
@@ -151,7 +159,7 @@ describe('WorktreeReviewScreen', () => {
   it('requires an explicit branch association for a detached checkout and records the selected baseline', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
     expect(screen.getByText('Checkouts requiring association')).toBeVisible();
@@ -178,7 +186,7 @@ describe('WorktreeReviewScreen', () => {
 
   it('presents compilation outcome, retained output, and cleanup as independent durable facts', async () => {
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
     const builds = await screen.findByRole('heading', { name: 'Builds' });
     const region = builds.closest('section')!;
     const failed = within(region)
@@ -206,7 +214,7 @@ describe('WorktreeReviewScreen', () => {
         worktreeId: worktreeOne.worktreeId,
       },
     });
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
 
     const context = await screen.findByRole('region', { name: 'Active build context' });
     expect(context).toHaveTextContent(completedBuild.buildId);
@@ -227,7 +235,7 @@ describe('WorktreeReviewScreen', () => {
   it('loads paginated branch history only when the specific commit picker is opened', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
     expect(client.branchHistoryCalls).toHaveLength(0);
@@ -243,7 +251,7 @@ describe('WorktreeReviewScreen', () => {
   it('opens a completed build through the unconditional Worktree Review client', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
-    render(<WorktreeReviewScreen client={client} />);
+    renderScreen(client);
     const heading = await screen.findByRole('heading', { name: 'Completed review build' });
     await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Open' }));
     await waitFor(() => expect(client.openBuildCalls).toEqual([completedBuild.buildId]));
@@ -253,8 +261,7 @@ describe('WorktreeReviewScreen', () => {
 class FixtureClient implements WorktreeReviewClient {
   readonly createBuildCalls: CreateBuildRequest[] = [];
   readonly associateCalls: AssociateWorktreeRequest[] = [];
-  readonly registerDirectoryCalls: string[] = [];
-  readonly registerCodexCalls: RepositoryId[] = [];
+  readonly selectRepositoryCalls: RepositoryId[] = [];
   readonly branchHistoryCalls: { cursor?: string }[] = [];
   readonly openBuildCalls: BuildId[] = [];
 
@@ -264,57 +271,10 @@ class FixtureClient implements WorktreeReviewClient {
   ) {}
 
   overview = async (): Promise<WorktreeReviewOverview> => this.initialOverview;
-  repositoryRegistrationOverview = async (): Promise<RepositoryRegistrationOverview> => ({
-    codex: { state: 'ready', message: 'Directories from Codex tasks are available.' },
-    github: {
-      state: 'connected',
-      login: 'fixture-user',
-      message: 'GitHub CLI login is available.',
-    },
-    repositories: [
-      {
-        catalogId: 'github-one',
-        name: 'fixture/codex-orchestrator',
-        github: {
-          repositoryId: 'github-one',
-          nameWithOwner: 'fixture/codex-orchestrator',
-          visibility: 'private',
-          webUrl: 'https://github.com/fixture/codex-orchestrator',
-        },
-        localInstances: [
-          {
-            repositoryId: 'repository-one',
-            name: 'Codex Orchestrator',
-            locationLabel: 'C:\\Projects\\Codex Orchestrator',
-            registered: false,
-            disclosures: ['codex_task'],
-          },
-        ],
-      },
-      {
-        catalogId: 'github-remote-only',
-        name: 'remote/only',
-        github: {
-          repositoryId: 'github-remote-only',
-          nameWithOwner: 'remote/only',
-          visibility: 'public',
-          webUrl: 'https://github.com/remote/only',
-        },
-        localInstances: [],
-      },
-    ],
-  });
-  registerDirectory = async (repositoryRoot: string): Promise<WorktreeReviewOverview> => {
-    this.registerDirectoryCalls.push(repositoryRoot);
-    this.initialOverview = overviewFixture;
+  selectRepository = async (repositoryId: RepositoryId): Promise<WorktreeReviewOverview> => {
+    this.selectRepositoryCalls.push(repositoryId);
     return overviewFixture;
   };
-  registerCodexRepository = async (repositoryId: RepositoryId): Promise<WorktreeReviewOverview> => {
-    this.registerCodexCalls.push(repositoryId);
-    this.initialOverview = overviewFixture;
-    return overviewFixture;
-  };
-  selectRepository = async (): Promise<WorktreeReviewOverview> => overviewFixture;
   branchDetail = async (
     repositoryId: RepositoryId,
     branchRef: BranchRef,
@@ -366,6 +326,74 @@ class FixtureClient implements WorktreeReviewClient {
   openBuild = async ({ buildId }: { readonly buildId: BuildId }): Promise<void> => {
     this.openBuildCalls.push(buildId);
   };
+}
+
+class FixtureCatalog implements RepositoryCatalogClient {
+  readonly registerDirectoryCalls: string[] = [];
+  readonly registerCodexCalls: RepositoryId[] = [];
+
+  overview = async (): Promise<RepositoryCatalogOverview> => ({
+    codex: { state: 'ready', message: 'Directories from Codex tasks are available.' },
+    github: {
+      state: 'connected',
+      login: 'fixture-user',
+      message: 'GitHub CLI login is available.',
+    },
+    repositories: [
+      {
+        catalogId: 'github-one',
+        name: 'fixture/codex-orchestrator',
+        github: {
+          repositoryId: 'github-one',
+          nameWithOwner: 'fixture/codex-orchestrator',
+          visibility: 'private',
+          webUrl: 'https://github.com/fixture/codex-orchestrator',
+        },
+        localInstances: [
+          {
+            repositoryId: 'repository-one',
+            name: 'Codex Orchestrator',
+            locationLabel: 'C:\\Projects\\Codex Orchestrator',
+            registered: false,
+            disclosures: ['codex_task'],
+          },
+        ],
+      },
+      {
+        catalogId: 'github-remote-only',
+        name: 'remote/only',
+        github: {
+          repositoryId: 'github-remote-only',
+          nameWithOwner: 'remote/only',
+          visibility: 'public',
+          webUrl: 'https://github.com/remote/only',
+        },
+        localInstances: [],
+      },
+    ],
+  });
+  registerDirectory = async (repositoryRoot: string): Promise<RegisteredRepository> => {
+    this.registerDirectoryCalls.push(repositoryRoot);
+    return registeredRepository;
+  };
+  registerCodexRepository = async (repositoryId: RepositoryId): Promise<RegisteredRepository> => {
+    this.registerCodexCalls.push(repositoryId);
+    return registeredRepository;
+  };
+  listWorktreeTargets = async () => [];
+}
+
+const registeredRepository: RegisteredRepository = {
+  repositoryId: 'repository-one',
+  name: 'Codex Orchestrator',
+  locationLabel: 'C:\\Projects\\Codex Orchestrator',
+};
+
+function renderScreen(
+  client: WorktreeReviewClient,
+  repositoryCatalog: RepositoryCatalogClient = new FixtureCatalog(),
+) {
+  return render(<WorktreeReviewScreen client={client} repositoryCatalog={repositoryCatalog} />);
 }
 
 function sourceReceipt(input: CreateBuildRequest): ReviewBuildSource {

@@ -101,6 +101,14 @@ pub(crate) fn run() {
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let database = crate::product_database::open(&database_path)?;
+            let repository_catalog = Arc::new(crate::repository_catalog::RepositoryCatalog::new(
+                database.clone(),
+            ));
+            app.manage(
+                crate::repository_catalog::transport::RepositoryCatalogTauriState::new(
+                    repository_catalog.clone(),
+                ),
+            );
             let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::new(
                 database.clone(),
                 app_data_dir.clone(),
@@ -177,9 +185,6 @@ pub(crate) fn run() {
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
-            app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
-                app_data_dir.join("codex-orchestrator.sqlite"),
-            ));
             let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
                 Arc::new(
                     crate::workflows::repository::SqliteWorkflowRepository::from_database(
@@ -310,6 +315,7 @@ pub(crate) fn run() {
             );
             let review = Arc::new(crate::worktree_review::WorktreeReviewApplication::open(
                 worktree_review_root(&app_data_dir),
+                repository_catalog,
             ));
             app.manage(crate::worktree_review::transport::WorktreeReviewTauriState::new(
                 review,
@@ -357,7 +363,10 @@ pub(crate) fn run() {
             crate::workflows::transport::send_workflow_node_message,
             crate::workflows::transport::list_workflow_instances,
             crate::workflows::transport::load_workflow_instance,
-            crate::worktree_targets_temp::list_discovered_worktree_targets,
+            crate::repository_catalog::transport::repository_catalog_overview,
+            crate::repository_catalog::transport::register_repository_directory,
+            crate::repository_catalog::transport::register_codex_repository,
+            crate::repository_catalog::transport::list_registered_repository_worktree_targets,
             crate::native_profiles::load_native_profile_query,
             crate::native_profiles::discover_native_codex_homes,
             crate::native_profiles::register_native_profile,
@@ -398,9 +407,6 @@ pub(crate) fn run() {
             crate::orchestration::transport::load_sprint_runner_transition_query,
             crate::worktree_review::transport::worktree_review_overview,
             crate::worktree_review::transport::select_worktree_review_repository,
-            crate::worktree_review::transport::worktree_review_repository_registration_overview,
-            crate::worktree_review::transport::register_worktree_review_repository_directory,
-            crate::worktree_review::transport::register_codex_worktree_review_repository,
             crate::worktree_review::transport::worktree_review_branch_detail,
             crate::worktree_review::transport::worktree_review_branch_history,
             crate::worktree_review::transport::associate_worktree_review_worktree,

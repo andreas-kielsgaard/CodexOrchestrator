@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  RegisteredRepository,
+  RepositoryCatalogClient,
+} from '../../application/repositoryCatalog';
+import type {
   AssociateWorktreeRequest,
   BranchRef,
   BranchReviewDetail,
@@ -21,7 +25,13 @@ import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
 import './worktreeReview.css';
 
-export function WorktreeReviewScreen({ client }: { readonly client: WorktreeReviewClient }) {
+export function WorktreeReviewScreen({
+  client,
+  repositoryCatalog,
+}: {
+  readonly client: WorktreeReviewClient;
+  readonly repositoryCatalog: RepositoryCatalogClient;
+}) {
   const [overview, setOverview] = useState<WorktreeReviewOverview>({
     repositories: [],
     branches: [],
@@ -137,18 +147,26 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
     }
   }
 
-  function registeredRepository(value: WorktreeReviewOverview) {
-    const selected = value.selectedRepositoryId ?? value.repositories[0]?.repositoryId ?? '';
-    const nextBranch = value.branches[0]?.branchRef ?? '';
+  async function registeredRepository(repository: RegisteredRepository) {
     setRegistrationOpen(false);
-    setOverview(value);
-    setRepositoryId(selected);
-    setBranchRef(nextBranch);
+    setBusy('repository');
+    setError(null);
+    setNotice(null);
     setDetail(null);
     setAssociationId('');
-    setNotice('Repository registered and selected.');
-    if (selected && nextBranch) void loadBranch(selected, nextBranch);
-    else setBusy(null);
+    try {
+      const value = await client.selectRepository(repository.repositoryId);
+      const nextBranch = value.branches[0]?.branchRef ?? '';
+      setOverview(value);
+      setRepositoryId(repository.repositoryId);
+      setBranchRef(nextBranch);
+      if (nextBranch) await loadBranch(repository.repositoryId, nextBranch);
+      else setBusy(null);
+      setNotice('Repository registered and selected.');
+    } catch (cause) {
+      setError(message(cause));
+      setBusy(null);
+    }
   }
 
   function changeBranch(nextBranchRef: BranchRef) {
@@ -402,9 +420,9 @@ export function WorktreeReviewScreen({ client }: { readonly client: WorktreeRevi
       </div>
       {registrationOpen && (
         <RepositoryRegistrationModal
-          client={client}
+          catalog={repositoryCatalog}
           onClose={() => setRegistrationOpen(false)}
-          onRegistered={registeredRepository}
+          onRegistered={(repository) => void registeredRepository(repository)}
         />
       )}
     </main>

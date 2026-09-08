@@ -1,6 +1,8 @@
+import type { RepositoryId } from '../repositoryCatalog/contracts';
+
 export type OpaqueId<Kind extends string> = string & { readonly __kind?: Kind };
 
-export type RepositoryId = OpaqueId<'repository'>;
+export type { RepositoryId } from '../repositoryCatalog/contracts';
 export type BranchRef = OpaqueId<'branch-ref'>;
 export type WorktreeId = OpaqueId<'worktree'>;
 export type WorktreeAssociationId = OpaqueId<'worktree-association'>;
@@ -36,45 +38,6 @@ export interface ReviewRepository {
   /** Presentation-only. Never use this path as repository identity. */
   readonly locationLabel: string;
   readonly readiness: RepositoryReadiness;
-}
-
-export interface RepositoryDiscoveryStatus {
-  readonly state: 'ready' | 'unavailable';
-  readonly message: string;
-}
-
-export interface GitHubConnectionStatus {
-  readonly state: 'connected' | 'cli_unavailable' | 'not_authenticated' | 'unavailable';
-  readonly login?: string;
-  readonly message: string;
-}
-
-export interface GitHubRepositoryRegistrationFacts {
-  readonly repositoryId: string;
-  readonly nameWithOwner: string;
-  readonly visibility: 'public' | 'private';
-  readonly webUrl: string;
-}
-
-export interface LocalRepositoryRegistrationCandidate {
-  readonly repositoryId: RepositoryId;
-  readonly name: string;
-  readonly locationLabel: string;
-  readonly registered: boolean;
-  readonly disclosures: readonly ('manual_directory' | 'codex_task')[];
-}
-
-export interface RepositoryRegistrationCandidate {
-  readonly catalogId: string;
-  readonly name: string;
-  readonly github?: GitHubRepositoryRegistrationFacts;
-  readonly localInstances: readonly LocalRepositoryRegistrationCandidate[];
-}
-
-export interface RepositoryRegistrationOverview {
-  readonly codex: RepositoryDiscoveryStatus;
-  readonly github: GitHubConnectionStatus;
-  readonly repositories: readonly RepositoryRegistrationCandidate[];
 }
 
 export interface ReviewBranch {

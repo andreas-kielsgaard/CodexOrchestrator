@@ -9,7 +9,6 @@ import type {
   CreateWorktreeRequest,
   OpenBuildRequest,
   RepositoryId,
-  RepositoryRegistrationOverview,
   ReviewBuild,
   WorktreeReviewClient,
   WorktreeReviewOverview,
@@ -26,18 +25,6 @@ export function createTauriWorktreeReviewClient(
 ): WorktreeReviewClient {
   return {
     overview: () => invokeCommand<WorktreeReviewOverview>('worktree_review_overview'),
-    repositoryRegistrationOverview: () =>
-      invokeCommand<RepositoryRegistrationOverview>(
-        'worktree_review_repository_registration_overview',
-      ),
-    registerDirectory: (repositoryRoot: string) =>
-      invokeCommand<WorktreeReviewOverview>('register_worktree_review_repository_directory', {
-        input: { repositoryRoot },
-      }),
-    registerCodexRepository: (repositoryId: RepositoryId) =>
-      invokeCommand<WorktreeReviewOverview>('register_codex_worktree_review_repository', {
-        input: { repositoryId },
-      }),
     selectRepository: (repositoryId: RepositoryId) =>
       invokeCommand<WorktreeReviewOverview>('select_worktree_review_repository', {
         input: { repositoryId },

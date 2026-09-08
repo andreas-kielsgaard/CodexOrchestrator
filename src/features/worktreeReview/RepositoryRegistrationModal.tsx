@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LocalRepositoryRegistrationCandidate,
-  RepositoryRegistrationOverview,
-  WorktreeReviewClient,
-  WorktreeReviewOverview,
-} from '../../application/worktreeReview';
+  RegisteredRepository,
+  RepositoryCatalogClient,
+  RepositoryCatalogOverview,
+} from '../../application/repositoryCatalog';
 
 export function RepositoryRegistrationModal({
-  client,
+  catalog,
   onClose,
   onRegistered,
 }: {
-  readonly client: WorktreeReviewClient;
+  readonly catalog: RepositoryCatalogClient;
   readonly onClose: () => void;
-  readonly onRegistered: (overview: WorktreeReviewOverview) => void;
+  readonly onRegistered: (repository: RegisteredRepository) => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
-  const [overview, setOverview] = useState<RepositoryRegistrationOverview | null>(null);
+  const [overview, setOverview] = useState<RepositoryCatalogOverview | null>(null);
   const [directory, setDirectory] = useState('');
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState<string | null>('loading');
@@ -27,7 +27,7 @@ export function RepositoryRegistrationModal({
     setBusy('loading');
     setError(null);
     try {
-      setOverview(await client.repositoryRegistrationOverview());
+      setOverview(await catalog.overview());
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -61,7 +61,7 @@ export function RepositoryRegistrationModal({
     setBusy('directory');
     setError(null);
     try {
-      onRegistered(await client.registerDirectory(directory.trim()));
+      onRegistered(await catalog.registerDirectory(directory.trim()));
     } catch (cause) {
       setError(message(cause));
       setBusy(null);
@@ -72,7 +72,7 @@ export function RepositoryRegistrationModal({
     setBusy(candidate.repositoryId);
     setError(null);
     try {
-      onRegistered(await client.registerCodexRepository(candidate.repositoryId));
+      onRegistered(await catalog.registerCodexRepository(candidate.repositoryId));
     } catch (cause) {
       setError(message(cause));
       setBusy(null);
@@ -239,7 +239,7 @@ export function RepositoryRegistrationModal({
                         disabled={busy !== null || instance.registered}
                         onClick={() => void registerCodex(instance)}
                       >
-                        {instance.registered ? 'Registered' : 'Add to Worktree Review'}
+                        {instance.registered ? 'Registered' : 'Register repository'}
                       </button>
                     </div>
                   ))}

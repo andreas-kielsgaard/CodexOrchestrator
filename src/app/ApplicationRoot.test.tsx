@@ -8,5 +8,8 @@ describe('ApplicationRoot', () => {
 
     expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Plan an Epic' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Workflow' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Agent Sessions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Worktree Review' })).toBeVisible();
   });
 });

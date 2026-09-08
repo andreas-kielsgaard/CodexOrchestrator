@@ -13,9 +13,6 @@ describe('tauri Worktree Review client', () => {
     const client = createTauriWorktreeReviewClient(invoke);
 
     await client.overview();
-    await client.repositoryRegistrationOverview();
-    await client.registerDirectory('C:\\Projects\\Repository');
-    await client.registerCodexRepository('repository-codex');
     await client.selectRepository('repository-one');
     await client.branchDetail('repository-one', 'refs/heads/codex/review');
     await client.branchHistory('repository-one', 'refs/heads/codex/review');
@@ -47,15 +44,6 @@ describe('tauri Worktree Review client', () => {
 
     expect(calls).toEqual([
       { command: 'worktree_review_overview', args: undefined },
-      { command: 'worktree_review_repository_registration_overview', args: undefined },
-      {
-        command: 'register_worktree_review_repository_directory',
-        args: { input: { repositoryRoot: 'C:\\Projects\\Repository' } },
-      },
-      {
-        command: 'register_codex_worktree_review_repository',
-        args: { input: { repositoryId: 'repository-codex' } },
-      },
       {
         command: 'select_worktree_review_repository',
         args: { input: { repositoryId: 'repository-one' } },
