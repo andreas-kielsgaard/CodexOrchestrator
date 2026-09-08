@@ -26,7 +26,11 @@ use crate::repository_context::{
     RepositoryIdentity, WorktreeLocation, WorktreeObservation,
 };
 use chrono::Utc;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 pub(crate) use super::branch_presentation::{
     AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, BranchHistoryPageView,
@@ -142,9 +146,13 @@ impl BranchFirstReviewService {
         let context = self.context()?;
         let summary = find_branch_summary(&context, &repository, branch_ref)?;
         let branch = summary.branch.clone();
-        let branch_view = self.branch_summary_view(&repository, &summary)?;
+        let observations = context
+            .worktrees()
+            .list(&repository.id, repository.top_level.path())
+            .map_err(|error| error.to_string())?;
+        let branch_view = self.branch_summary_view(&repository, &summary, &observations)?;
         let (worktrees, association_candidates) =
-            self.worktrees_for_branch(&context, &repository, &branch)?;
+            self.worktrees_for_branch(&context, &repository, &branch, &observations)?;
         Ok(BranchDetailView {
             branch: branch_view,
             worktrees,
@@ -368,6 +376,10 @@ impl BranchFirstReviewService {
             .references()
             .remote_default_branch(repository.top_level.path())
             .map_err(|error| error.to_string())?;
+        let observations = context
+            .worktrees()
+            .list(&repository.id, repository.top_level.path())
+            .map_err(|error| error.to_string())?;
         context
             .references()
             .local_branch_summaries(repository.top_level.path(), default.as_ref())
@@ -383,7 +395,7 @@ impl BranchFirstReviewService {
                         observed_at: now,
                     })
                     .map_err(|error| error.to_string())?;
-                self.branch_summary_view(repository, &summary)
+                self.branch_summary_view(repository, &summary, &observations)
             })
             .collect()
     }
@@ -392,17 +404,17 @@ impl BranchFirstReviewService {
         &self,
         repository: &RepositoryIdentity,
         summary: &BranchSummary,
+        observations: &[WorktreeObservation],
     ) -> Result<BranchView, String> {
         let repository_id = domain_repository_id(repository)?;
         let branch_ref = domain_branch_ref(&summary.branch.full_name)?;
-        let associated_worktree_count = self
+        let associations = self
             .database
             .associations()
             .list_for_branch(&repository_id, &branch_ref)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .filter(|association| association.lifecycle == WorktreeAssociationLifecycle::Active)
-            .count();
+            .map_err(|error| error.to_string())?;
+        let associated_worktree_count =
+            visible_worktree_count(&summary.branch.full_name, &associations, observations);
         Ok(branch_view(
             repository,
             &summary.branch,
@@ -418,11 +430,8 @@ impl BranchFirstReviewService {
         context: &RepositoryContext,
         repository: &RepositoryIdentity,
         branch: &ObservedBranch,
+        observations: &[WorktreeObservation],
     ) -> Result<(Vec<AssociatedWorktreeView>, Vec<AssociationCandidateView>), String> {
-        let observations = context
-            .worktrees()
-            .list(&repository.id, repository.top_level.path())
-            .map_err(|error| error.to_string())?;
         let by_id = observations
             .iter()
             .map(|worktree| (worktree.id.as_str(), worktree))
@@ -437,7 +446,7 @@ impl BranchFirstReviewService {
         let existing_ids = associations
             .iter()
             .map(|association| association.worktree_id.as_str().to_owned())
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<HashSet<_>>();
         let attached_observations = observations
             .iter()
             .filter(|worktree| worktree.head_ref.as_ref() == Some(&branch.full_name))
@@ -479,7 +488,7 @@ impl BranchFirstReviewService {
         let associated = associations
             .iter()
             .map(|association| association.worktree_id.as_str())
-            .collect::<std::collections::HashSet<_>>();
+            .collect::<HashSet<_>>();
         let candidates = observations
             .iter()
             .filter(|worktree| worktree.head_ref.is_none())
@@ -565,6 +574,32 @@ impl BranchFirstReviewService {
             load_commit_view(context, repository.top_level.path(), &current)?,
         ))
     }
+}
+
+fn visible_worktree_count(
+    branch_ref: &FullRefName,
+    associations: &[WorktreeAssociation],
+    observations: &[WorktreeObservation],
+) -> usize {
+    distinct_worktree_count(
+        associations
+            .iter()
+            .filter(|association| association.lifecycle == WorktreeAssociationLifecycle::Active)
+            .map(|association| association.worktree_id.as_str()),
+        observations
+            .iter()
+            .filter(|worktree| worktree.head_ref.as_ref() == Some(branch_ref))
+            .map(|worktree| worktree.id.as_str()),
+    )
+}
+
+fn distinct_worktree_count<'a>(
+    associated_ids: impl IntoIterator<Item = &'a str>,
+    attached_ids: impl IntoIterator<Item = &'a str>,
+) -> usize {
+    let mut worktree_ids = associated_ids.into_iter().collect::<HashSet<_>>();
+    worktree_ids.extend(attached_ids);
+    worktree_ids.len()
 }
 
 fn workspace_ownership_view<'a>(
@@ -754,5 +789,13 @@ mod tests {
             std::iter::empty()
         )
         .is_err());
+    }
+
+    #[test]
+    fn branch_count_unifies_durable_associations_and_git_attached_worktrees() {
+        assert_eq!(
+            distinct_worktree_count(["persisted"], ["persisted", "git-attached"]),
+            2
+        );
     }
 }

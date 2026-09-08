@@ -94,6 +94,23 @@ describe('WorktreeReviewScreen', () => {
     expect(await screen.findByRole('heading', { name: 'main' })).toBeVisible();
   });
 
+  it('keeps the navigator count aligned with the selected branch detail', async () => {
+    const initialOverview = {
+      ...overviewFixture,
+      branches: overviewFixture.branches.map((branch) => ({
+        ...branch,
+        associatedWorktreeCount: 0,
+      })),
+    };
+    const client = new FixtureClient(branchDetailFixture(), initialOverview);
+    renderScreen(client);
+
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    expect(screen.getByRole('button', { name: /codex\/durable-review/ })).toHaveTextContent(
+      '2 worktrees',
+    );
+  });
+
   it('records an exact worktree snapshot and discloses its retained owned checkout', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();

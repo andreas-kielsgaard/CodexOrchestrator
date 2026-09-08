@@ -120,8 +120,7 @@ export function openLocalRuntimeServiceComposition(
   );
   const stores = database.stores;
   const git = options.git?.adapters ?? createLocalGitRuntimeAdapters(options.git);
-  const worktreeApplication =
-    options.worktreeApplication?.worktreeCreator ?? tauriWorktreeCreator;
+  const worktreeApplication = options.worktreeApplication?.worktreeCreator ?? tauriWorktreeCreator;
   const codex = options.codex?.runtime ?? createCodexRuntime(options.codex);
   const validation =
     options.validation?.runtime ?? createValidationCommandRuntime(options.validation);

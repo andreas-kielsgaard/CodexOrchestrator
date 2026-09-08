@@ -67,6 +67,7 @@ export function WorktreeReviewScreen({
         const value = await client.branchDetail(nextRepositoryId, nextBranchRef);
         if (request !== branchRequest.current) return;
         setDetail(value);
+        setOverview((current) => withBranchSummary(current, value.branch));
         setAssociationId((current) => preferredAssociation(value, current));
       } catch (cause) {
         if (request === branchRequest.current) setError(message(cause));
@@ -182,14 +183,16 @@ export function WorktreeReviewScreen({
     setError(null);
     try {
       const worktree = await client.createWorktree({ repositoryId, branchRef });
+      const branch = {
+        ...detail.branch,
+        associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
+      };
       setDetail({
         ...detail,
-        branch: {
-          ...detail.branch,
-          associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
-        },
+        branch,
         worktrees: [...detail.worktrees, worktree],
       });
+      setOverview((current) => withBranchSummary(current, branch));
       setAssociationId(worktree.associationId);
       setNotice(`Created and selected ${worktree.name}.`);
     } catch (cause) {
@@ -213,17 +216,19 @@ export function WorktreeReviewScreen({
         worktreeId: candidate.worktreeId,
         baseline,
       });
+      const branch = {
+        ...detail.branch,
+        associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
+      };
       setDetail({
         ...detail,
-        branch: {
-          ...detail.branch,
-          associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
-        },
+        branch,
         worktrees: [...detail.worktrees, worktree],
         associationCandidates: detail.associationCandidates.filter(
           (item) => item.worktreeId !== candidate.worktreeId,
         ),
       });
+      setOverview((current) => withBranchSummary(current, branch));
       setAssociationId(worktree.associationId);
       setNotice(`Associated and selected ${worktree.name}.`);
     } catch (cause) {
@@ -479,4 +484,16 @@ function uniqueCommits(commits: readonly GitCommit[]): readonly GitCommit[] {
     (commit, index) =>
       commits.findIndex((candidate) => candidate.objectId === commit.objectId) === index,
   );
+}
+
+function withBranchSummary(
+  overview: WorktreeReviewOverview,
+  branch: BranchReviewDetail['branch'],
+): WorktreeReviewOverview {
+  return {
+    ...overview,
+    branches: overview.branches.map((candidate) =>
+      candidate.branchRef === branch.branchRef ? branch : candidate,
+    ),
+  };
 }
