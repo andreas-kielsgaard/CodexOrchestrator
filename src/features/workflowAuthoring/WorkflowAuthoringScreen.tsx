@@ -18,17 +18,12 @@ import type {
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
-import {
-  runtimeProfileViewModel,
-  type AgentIdentityOption,
-  type CapabilityProfileOption,
-  type RuntimeProfileViewModel,
-} from '../executionConfiguration';
+import { useExecutionConfigurationCatalog } from '../executionConfiguration';
 import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { RecipeInstanceCreationDialog } from './RecipeInstanceCreationDialog';
-import { WorkflowInstancePanel } from './WorkflowInstancePanel';
+import { WorkflowInstanceView } from '../workflowInstances';
 import { errorMessage, defaultsWithinCapabilities } from './workflowAuthoringPresentation';
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
 import './workflowAuthoring.css';
@@ -80,12 +75,13 @@ export function WorkflowAuthoringScreen({
     setDraft(next);
   };
   useDraftCloseWarning(() => workspace.dirty());
-  const [runtime, setRuntime] = useState<RuntimeProfileViewModel | null>(null);
-  const [profiles, setProfiles] = useState<readonly CapabilityProfileOption[]>([]);
-  const [profileValues, setProfileValues] = useState<
-    ReadonlyMap<string, Awaited<ReturnType<ExecutionConfigurationClient['loadCapabilityProfile']>>>
-  >(new Map());
-  const [identities, setIdentities] = useState<readonly AgentIdentityOption[]>([]);
+  const {
+    runtime,
+    profiles,
+    profileValues,
+    identities,
+    error: catalogError,
+  } = useExecutionConfigurationCatalog(executionConfigurationClient, identityClient);
   const [selection, setSelection] = useState<WorkflowEditorSelection>({
     kind: 'node',
     id: null,
@@ -93,33 +89,6 @@ export function WorkflowAuthoringScreen({
   const [creatingName, setCreatingName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const loadCatalogs = useCallback(async () => {
-    const [runtimeSnapshot, capabilityProfiles, identityCatalog] = await Promise.all([
-      executionConfigurationClient.loadSelectedRuntimeProfile(),
-      executionConfigurationClient.listCapabilityProfiles(),
-      identityClient?.list() ?? Promise.resolve([]),
-    ]);
-    setRuntime(runtimeProfileViewModel(runtimeSnapshot));
-    setProfileValues(
-      new Map(capabilityProfiles.map((profile) => [profile.capabilityProfileId, profile])),
-    );
-    setProfiles(
-      capabilityProfiles.map((profile) => ({
-        id: profile.capabilityProfileId,
-        label: profile.name,
-        revision: profile.revision,
-      })),
-    );
-    setIdentities(
-      identityCatalog.map((identity) => ({
-        id: identity.id,
-        displayName: identity.displayName,
-        color: identity.color,
-        shape: identity.shape,
-      })),
-    );
-  }, [executionConfigurationClient, identityClient]);
 
   const loadSummaries = useCallback(async () => {
     const next = await client.listRecipes();
@@ -156,8 +125,8 @@ export function WorkflowAuthoringScreen({
     let active = true;
     setBusy(true);
     setError(null);
-    void Promise.all([loadCatalogs(), loadSummaries()])
-      .then(([, recipes]) => {
+    void loadSummaries()
+      .then((recipes) => {
         if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
         return undefined;
       })
@@ -167,7 +136,7 @@ export function WorkflowAuthoringScreen({
       active = false;
       openTicket.current += 1;
     };
-  }, [loadCatalogs, loadSummaries, openRecipe]);
+  }, [loadSummaries, openRecipe]);
 
   useEffect(() => {
     if (recipeId && recipeId !== selectedRef.current) void openRecipe(recipeId);
@@ -333,16 +302,18 @@ export function WorkflowAuthoringScreen({
       </aside>
 
       <section className="workflow-authoring-screen__main">
-        {error ? (
+        {error || catalogError ? (
           <div className="workflow-authoring-screen__error" role="alert">
-            {error}
+            {error ?? catalogError}
           </div>
         ) : null}
         {selectedInstanceId && instanceClient ? (
-          <WorkflowInstancePanel
+          <WorkflowInstanceView
             key={selectedInstanceId}
             instanceId={selectedInstanceId}
             client={instanceClient}
+            capabilityProfiles={profileValues}
+            identities={identities}
             sessionClient={sessionClient}
             profileClient={profileClient}
             queryClient={queryClient}

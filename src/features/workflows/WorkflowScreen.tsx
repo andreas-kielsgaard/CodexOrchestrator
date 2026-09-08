@@ -23,6 +23,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { AgentSessionClient } from '../../application/agentSessions';
+import '../workflowGraph/workflowGraph.css';
 import type { HarnessConfigurationCatalogs } from '../../application/conversationHarnesses';
 import type {
   WorkflowApplicationClient,

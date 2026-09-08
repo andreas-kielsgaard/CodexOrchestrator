@@ -1,7 +1,7 @@
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ResolvedValueField } from '../../components/ResolvedValueField';
-import type { CapabilitySetViewModel, SessionProfileViewModel } from './types';
-import { describeMcpTools } from './types';
+import { CapabilitySetInspector } from './CapabilitySetInspector';
+import type { SessionProfileViewModel } from './types';
 import './executionConfiguration.css';
 
 export interface SessionProfileInspectorProps {
@@ -64,7 +64,7 @@ export function SessionProfileInspector({ profile }: SessionProfileInspectorProp
         description="Capabilities exposed to workflow-triggered operation in this Session."
         className="execution-configuration__section"
       >
-        <ReadOnlyCapabilities value={profile.nodeCapabilities} source="Resolved Node Profile" />
+        <CapabilitySetInspector value={profile.nodeCapabilities} source="Resolved Node Profile" />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -96,9 +96,11 @@ export function SessionProfileInspector({ profile }: SessionProfileInspectorProp
             empty={profile.attachedRuntimeLocked.sandboxMode === null}
           />
         </dl>
-        <ReadOnlyCapabilities
+        <CapabilitySetInspector
           value={profile.attachedRuntimeCapabilities}
           source="Attached runtime"
+          inherited
+          locked
         />
       </CollapsibleSection>
     </div>
@@ -119,34 +121,5 @@ function SelectionField({
       source="Resolved Node Profile"
       empty={value === null}
     />
-  );
-}
-
-function ReadOnlyCapabilities({
-  value,
-  source,
-}: {
-  readonly value: CapabilitySetViewModel;
-  readonly source: string;
-}) {
-  const fields = [
-    ['Models', value.models],
-    ['Reasoning modes', value.reasoningModes],
-    ['MCP tools', describeMcpTools(value.mcpTools)],
-    ['Skills', value.skills],
-    ['Sandbox modes', value.sandboxModes],
-  ] as const;
-  return (
-    <dl className="execution-configuration__resolved-grid">
-      {fields.map(([label, entries]) => (
-        <ResolvedValueField
-          key={label}
-          label={label}
-          value={entries.length ? entries.join(', ') : 'None'}
-          source={source}
-          empty={entries.length === 0}
-        />
-      ))}
-    </dl>
   );
 }

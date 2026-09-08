@@ -22,6 +22,8 @@ export interface WorkflowEventAttempt {
   readonly id: string;
   readonly instanceId: string;
   readonly definitionRef: ReferenceIdentityDto;
+  /** The recipe node or connection that compiled into this attempt, when known. */
+  readonly workflowElementRef: ReferenceIdentityDto | null;
   readonly sourceSessionId: string | null;
   readonly createdAt: string;
   readonly eventGroup: ReferenceIdentityDto | null;

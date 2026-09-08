@@ -1,7 +1,7 @@
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ResolvedValueField } from '../../components/ResolvedValueField';
-import type { CapabilitySetViewModel, RuntimeProfileViewModel } from './types';
-import { describeMcpTools } from './types';
+import { CapabilitySetInspector } from './CapabilitySetInspector';
+import type { RuntimeProfileViewModel } from './types';
 import './executionConfiguration.css';
 
 export interface RuntimeProfileInspectorProps {
@@ -55,7 +55,12 @@ export function RuntimeProfileInspector({
           empty={runtime.lockedSelections.sandboxMode === null}
         />
       </dl>
-      <CapabilitySummary value={runtime.exposure} />
+      <CapabilitySetInspector
+        value={runtime.exposure}
+        source={runtime.sourceLabel}
+        inherited
+        locked
+      />
       {runtime.notes?.length ? (
         <ul className="execution-configuration__notes">
           {runtime.notes.map((note) => (
@@ -64,25 +69,5 @@ export function RuntimeProfileInspector({
         </ul>
       ) : null}
     </CollapsibleSection>
-  );
-}
-
-function CapabilitySummary({ value }: { readonly value: CapabilitySetViewModel }) {
-  const rows = [
-    ['Models', value.models],
-    ['Reasoning', value.reasoningModes],
-    ['MCP tools', describeMcpTools(value.mcpTools)],
-    ['Skills', value.skills],
-    ['Sandbox', value.sandboxModes],
-  ] as const;
-  return (
-    <dl className="execution-configuration__capability-summary">
-      {rows.map(([label, values]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{values.length ? values.join(', ') : 'None exposed'}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }

@@ -58,8 +58,8 @@ export function EventDeliveryList({
         <li className="event-delivery-list__item" key={referenceIdentityLabel(delivery.deliveryId)}>
           <details>
             <summary>
-              <span>
-                Delivery {delivery.ordinal} · {referenceIdentityLabel(delivery.targetSession)}
+              <span title={referenceIdentityLabel(delivery.targetSession)}>
+                Delivery {delivery.ordinal} · {delivery.targetSession.id}
               </span>
               <span
                 className={`session-event-record__status is-${delivery.outcome.kind}`}

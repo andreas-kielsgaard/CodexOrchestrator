@@ -1,5 +1,9 @@
 use super::authoring_service::WorkflowAuthoringService;
 use super::{
+    address_references::{
+        WorkflowConnectionReference, WorkflowEventDefinitionReference, WorkflowNodeReference,
+        WorkflowRecipeReference,
+    },
     compiler::WorkflowCompiler,
     instance_domain::ResolvedRepoBranchWorktreeTarget,
     instances::{RecipeInstance, WorkflowEventAttempt, WorkflowInstanceStore},
@@ -187,10 +191,12 @@ impl WorkflowExecutionService {
         definition: &SessionEventDefinition,
         mut occurrence: SessionEventOccurrence,
     ) -> Result<SessionEventResult, String> {
+        let instance = self.instances.load(instance_id)?;
         let attempt = WorkflowEventAttempt {
             id: occurrence.event_group_id.id().into(),
             instance_id: instance_id.into(),
             definition_ref: definition.definition_ref.clone(),
+            workflow_element_ref: workflow_element_ref(&instance, &definition.definition_ref)?,
             source_session_id: occurrence
                 .created_by_session
                 .as_ref()
@@ -205,7 +211,6 @@ impl WorkflowExecutionService {
             );
         }
         let result = (|| {
-            let instance = self.instances.load(instance_id)?;
             super::prompt_content::supply_referenced_content(
                 &instance,
                 definition,
@@ -221,6 +226,36 @@ impl WorkflowExecutionService {
         }
         result
     }
+}
+
+fn workflow_element_ref(
+    instance: &RecipeInstance,
+    definition_ref: &ReferenceIdentity,
+) -> Result<Option<ReferenceIdentity>, String> {
+    let recipe = WorkflowRecipeReference::new(&instance.recipe.recipe_id)
+        .map_err(|error| error.to_string())?;
+    for node in &instance.recipe.nodes {
+        let node = WorkflowNodeReference::new(&node.node_id).map_err(|error| error.to_string())?;
+        if WorkflowEventDefinitionReference::for_node(&recipe, &node)
+            .map_err(|error| error.to_string())?
+            .identity()
+            == definition_ref
+        {
+            return Ok(Some(node.into_identity()));
+        }
+    }
+    for connection in &instance.recipe.connections {
+        let connection = WorkflowConnectionReference::new(&connection.connection_id)
+            .map_err(|error| error.to_string())?;
+        if WorkflowEventDefinitionReference::for_connection(&recipe, &connection)
+            .map_err(|error| error.to_string())?
+            .identity()
+            == definition_ref
+        {
+            return Ok(Some(connection.into_identity()));
+        }
+    }
+    Ok(None)
 }
 
 fn event_group_identity() -> Result<ReferenceIdentity, String> {
@@ -445,5 +480,9 @@ mod tests {
             .event_group(&result.group.event_group_id)
             .unwrap()
             .is_some());
+        let attempts = execution.instances.attempts(&instance.id).unwrap();
+        let owner = attempts[0].workflow_element_ref.as_ref().unwrap();
+        assert_eq!(owner.kind(), "node");
+        assert_eq!(owner.id(), "reviewer");
     }
 }

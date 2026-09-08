@@ -79,7 +79,7 @@
 .workflow-authoring-screen__create button,
 .workflow-authoring-screen__toolbar input,
 .workflow-authoring-screen__toolbar button,
-.workflow-connection-editor input,
+.workflow-connection-editor input:not([type='checkbox']),
 .workflow-connection-editor select,
 .workflow-connection-editor textarea,
 .workflow-run-panel input,
@@ -382,91 +382,6 @@
 .workflow-instance-list small {
   color: #647169;
 }
-.workflow-authoring-screen__main:has(.recipe-instance-panel) {
+.workflow-authoring-screen__main:has(.workflow-instance-view) {
   grid-template-rows: minmax(0, 1fr);
-}
-.recipe-instance-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-width: 0;
-  min-height: 0;
-}
-.recipe-instance-panel > header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: start;
-  justify-content: space-between;
-  padding: 14px;
-  border-bottom: 1px solid #cbd4cd;
-}
-.recipe-instance-panel h1,
-.recipe-instance-panel h2,
-.recipe-instance-panel p {
-  margin: 0 0 8px;
-  overflow-wrap: anywhere;
-}
-.recipe-instance-panel__body {
-  display: grid;
-  grid-template-columns: minmax(200px, 270px) minmax(0, 1fr);
-  min-height: 0;
-}
-.recipe-instance-panel__body > aside {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  overflow: auto;
-  padding: 12px;
-}
-.recipe-instance-panel__body > aside > button,
-.recipe-instance-panel__body > aside > form {
-  display: grid;
-  gap: 7px;
-  padding: 10px;
-}
-.recipe-instance-panel > header > button,
-.recipe-instance-panel__body > aside > button,
-.recipe-instance-panel__body > aside > form > button {
-  padding: 8px 10px;
-  border: 1px solid #c4cec4;
-  border-radius: 7px;
-  background: #fffdf8;
-  color: #34483d;
-  font: inherit;
-  font-size: 0.8rem;
-}
-.recipe-instance-panel__body > aside > button[aria-pressed='true'] {
-  background: #dfeee4;
-  border-color: #39745a;
-}
-.recipe-instance-panel small {
-  display: block;
-  overflow-wrap: anywhere;
-}
-.recipe-instance-panel form label {
-  display: grid;
-  gap: 5px;
-}
-.recipe-instance-panel textarea {
-  resize: vertical;
-}
-.recipe-instance-panel__conversation {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-}
-.recipe-instance-panel__body > aside strong {
-  overflow-wrap: anywhere;
-}
-@media (max-width: 1050px) {
-  .recipe-instance-panel__body {
-    grid-template-columns: 1fr;
-    overflow: auto;
-    grid-template-rows: auto minmax(420px, 1fr);
-  }
-  .recipe-instance-panel__body > aside {
-    max-height: 260px;
-  }
-  .recipe-instance-panel__conversation {
-    min-height: 420px;
-  }
 }

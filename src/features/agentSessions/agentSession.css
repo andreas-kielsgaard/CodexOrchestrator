@@ -256,8 +256,9 @@
   min-height: 0;
 }
 
-.agent-session-workspace--header-hidden {
-  grid-template-rows: auto minmax(0, 1fr);
+.agent-session-workspace--with-settings,
+.agent-session-workspace--header-hidden.agent-session-workspace--with-settings {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .agent-session-conversation {

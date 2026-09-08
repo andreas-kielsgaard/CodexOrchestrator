@@ -34,6 +34,8 @@ pub(crate) struct WorkflowEventAttempt {
     pub(crate) id: String,
     pub(crate) instance_id: String,
     pub(crate) definition_ref: ReferenceIdentity,
+    #[serde(default)]
+    pub(crate) workflow_element_ref: Option<ReferenceIdentity>,
     pub(crate) source_session_id: Option<String>,
     pub(crate) created_at: String,
     pub(crate) event_group: Option<ReferenceIdentity>,
@@ -175,5 +177,26 @@ impl WorkflowInstanceStore {
             })
             .collect();
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_attempt_records_load_without_an_element_owner() {
+        let attempt: WorkflowEventAttempt = serde_json::from_value(serde_json::json!({
+            "id": "attempt-1",
+            "instanceId": "instance-1",
+            "definitionRef": {"namespace": "workflow", "kind": "event_definition", "id": "definition-1"},
+            "sourceSessionId": null,
+            "createdAt": "2026-09-08T00:00:00Z",
+            "eventGroup": null,
+            "error": null
+        }))
+        .unwrap();
+
+        assert!(attempt.workflow_element_ref.is_none());
     }
 }

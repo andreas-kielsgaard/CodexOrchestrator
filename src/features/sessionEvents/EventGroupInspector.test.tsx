@@ -55,7 +55,7 @@ describe('EventGroupInspector', () => {
     expect(screen.getByLabelText('Outcome: Delivered')).toBeVisible();
     expect(screen.getByText('User request · test:request/request-1')).toBeVisible();
 
-    fireEvent.click(screen.getByText('Delivery 1 · test:session/session-1'));
+    fireEvent.click(screen.getByText('Delivery 1 · session-1'));
     expect(screen.getByText('test:invocation/invocation-1')).toBeVisible();
     expect(screen.getByText('Review this.')).toBeVisible();
   });
