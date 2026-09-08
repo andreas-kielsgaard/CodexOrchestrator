@@ -1,5 +1,7 @@
 use super::*;
 mod continuation_tests;
+#[cfg(feature = "live-tests")]
+mod live_continuation;
 use crate::harness_engine::{
     catalog_service::HarnessCatalogService,
     domain::SidecarBindingRegistration,
