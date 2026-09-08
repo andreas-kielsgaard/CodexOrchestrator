@@ -1,3 +1,4 @@
+use super::trigger_capabilities::CONTINUATION_TOOL;
 use super::{
     application::WorkflowApplication,
     domain::{WorkflowInvocation, WorkflowMcpComponent, WorkflowMcpOutput},
@@ -92,6 +93,12 @@ fn start_server(
     let cancellation = CancellationToken::new();
     let cancel = cancellation.clone();
     let server_bearer = bearer.clone();
+    let workflow_tool_names = match &application {
+        WorkflowMcpApplication::Legacy(_) => vec![TOOL_NAME.to_string()],
+        WorkflowMcpApplication::SessionEvents(_) => {
+            vec![TOOL_NAME.to_string(), CONTINUATION_TOOL.to_string()]
+        }
+    };
     let thread = thread::Builder::new()
         .name("workflow-native-mcp".to_string())
         .spawn(move || {
@@ -112,7 +119,7 @@ fn start_server(
             name: SERVER_NAME.to_string(),
             url: format!("http://{address}/mcp"),
             bearer_token: bearer,
-            workflow_tool_name: Some(TOOL_NAME.to_string()),
+            workflow_tool_names,
             workflow_prepare_url: Some(format!("http://{address}/prepare")),
         },
         Box::new(WorkflowMcpServerOwner {
@@ -338,10 +345,14 @@ fn handle_session_event_request(
             application,
             &prepared.source_session_id,
             &prepared.source_invocation_id,
+            &prepared.tool_name,
         ) {
-            Ok(_) if prepared.server_name == SERVER_NAME && prepared.tool_name == TOOL_NAME => {
+            Ok(_)
+                if prepared.server_name == SERVER_NAME
+                    && [TOOL_NAME, CONTINUATION_TOOL].contains(&prepared.tool_name.as_str()) =>
+            {
                 json_response(json!({ "handoff": {
-                    "invocation": { "sourceInvocationId": prepared.source_invocation_id }, "warningText": "This call was delivered through the Workflow connection."
+                    "invocation": { "sourceInvocationId": prepared.source_invocation_id }, "warningText": "The Workflow action was processed."
                 }}))
             }
             Ok(_) => text(StatusCode::BAD_REQUEST, "Unknown handoff tool"),
@@ -359,10 +370,13 @@ fn handle_session_event_request(
             .status(StatusCode::ACCEPTED)
             .body(Body::empty())
             .unwrap(),
-        Some("tools/list") => {
-            json_response(json!({"jsonrpc":"2.0","id":id,"result":{"tools":[tool_metadata()]}}))
-        }
+        Some("tools/list") => json_response(
+            json!({"jsonrpc":"2.0","id":id,"result":{"tools":[tool_metadata(), continuation_metadata()]}}),
+        ),
         Some("tools/call") => {
+            if value.pointer("/params/name").and_then(Value::as_str) == Some(CONTINUATION_TOOL) {
+                return handle_continuation_call(id, &value, headers, application);
+            }
             let result = (|| -> Result<usize, String> {
                 if value.pointer("/params/name").and_then(Value::as_str) != Some(TOOL_NAME) {
                     return Err("Unknown handoff tool".into());
@@ -371,7 +385,7 @@ fn handle_session_event_request(
                     .ok_or("Trusted Session context is absent")?;
                 let invocation_id = header_value(headers, "x-workflow-invocation-id")
                     .ok_or("Trusted invocation context is absent")?;
-                validate_event_caller(application, session_id, invocation_id)?;
+                validate_event_caller(application, session_id, invocation_id, TOOL_NAME)?;
                 let arguments = value
                     .pointer("/params/arguments")
                     .ok_or("Tool arguments are required")?;
@@ -446,10 +460,76 @@ fn handle_session_event_request(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContinuationArguments {
+    #[serde(default)]
+    output_files: Vec<String>,
+}
+
+fn handle_continuation_call(
+    id: Value,
+    request: &Value,
+    headers: &hyper::HeaderMap,
+    application: &super::execution::WorkflowExecutionService,
+) -> Response<Body> {
+    let result = (|| -> Result<usize, String> {
+        let session_id = header_value(headers, "x-workflow-session-id")
+            .ok_or("Trusted Session context is absent")?;
+        let invocation_id = header_value(headers, "x-workflow-invocation-id")
+            .ok_or("Trusted invocation context is absent")?;
+        validate_event_caller(application, session_id, invocation_id, CONTINUATION_TOOL)?;
+        let mut arguments = request
+            .pointer("/params/arguments")
+            .cloned()
+            .unwrap_or(json!({}));
+        if arguments
+            .pointer("/_workflowInvocation/sourceInvocationId")
+            .and_then(Value::as_str)
+            != Some(invocation_id)
+        {
+            return Err("Continuation context does not match the active invocation".into());
+        }
+        arguments
+            .as_object_mut()
+            .ok_or("Tool arguments must be an object")?
+            .remove(RESERVED_ARGUMENT);
+        let arguments: ContinuationArguments =
+            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let source = crate::session_events::ReferenceIdentity::new(
+            "orchestrator.agent_sessions",
+            "session",
+            session_id,
+        )
+        .map_err(|error| error.to_string())?;
+        application.trigger_continuation(
+            &source,
+            &format!("mcp-call-{}", uuid::Uuid::new_v4()),
+            arguments.output_files,
+        )
+    })();
+    match result {
+        Ok(count) => json_response(json!({"jsonrpc":"2.0","id":id,"result":{
+            "content":[{"type":"text","text":format!("Workflow continuation dispatched {count} delivery(s).")}],
+            "isError":false}})),
+        Err(error) => tool_error(id, &error),
+    }
+}
+
+fn continuation_metadata() -> Value {
+    let capability = super::trigger_capabilities::continuation();
+    json!({"name":capability.tool,"title":"Trigger workflow continuation",
+        "description":"Trigger connections configured for this call from this node. Follow your instructions for when to call it. Optionally supply output file paths.",
+        "inputSchema":capability.input_schema,
+        "_meta":{"contractVersion":"workflow-tool-participation/v1","interface":"workflow-trigger/v1",
+            "trustedArgument":RESERVED_ARGUMENT,"workflowTrigger":capability}})
+}
+
 fn validate_event_caller(
     application: &super::execution::WorkflowExecutionService,
     session_id: &str,
     invocation_id: &str,
+    tool_name: &str,
 ) -> Result<(), String> {
     let id = crate::agent_sessions::domain::AgentSessionId::new(session_id)
         .map_err(|error| error.to_string())?;
@@ -472,7 +552,7 @@ fn validate_event_caller(
         .node_capabilities()
         .mcp_tools
         .get(SERVER_NAME)
-        .is_some_and(|tools| tools.contains(TOOL_NAME))
+        .is_some_and(|tools| tools.contains(tool_name))
     {
         return Err("Handoff tool is not exposed to this Session".into());
     }

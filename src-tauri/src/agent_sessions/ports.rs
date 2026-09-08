@@ -172,6 +172,17 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         invocation_id: &AgentInvocationId,
     ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError>;
+
+    /// Historical query, including unavailable Sessions. Never uses delivery-target filtering.
+    fn file_history_at_scope(
+        &self,
+        _scope: &crate::session_events::ReferenceIdentity,
+    ) -> Result<Vec<super::file_history::SessionFileChange>, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session file history is unavailable",
+        ))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -469,6 +469,33 @@ fn construction_enables_and_verifies_foreign_keys_for_injected_connections() {
     );
 }
 
+#[test]
+fn invalid_file_history_rolls_back_the_runtime_event() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("author", at(0)))
+        .unwrap();
+    let invocation = repository
+        .create_pending_invocation(test_invocation("write", &session.id, at(1)))
+        .unwrap();
+    let mut event = normalized_event("edit", &invocation.id, 1, at(2));
+    event.normalized.as_mut().unwrap().details = Some(json!({"fileChanges":[
+        {"path":"valid.md","operation":"create"},{"path":"","operation":"edit"}
+    ]}));
+    assert!(repository.append_event(event).is_err());
+    assert!(repository.list_events(&invocation.id).unwrap().is_empty());
+    let count: i64 = repository
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM agent_session_file_changes",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
 fn memory_repository() -> SqliteAgentSessionRepository {
     let connection = Connection::open_in_memory().expect("memory database");
     connection

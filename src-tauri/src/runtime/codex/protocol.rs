@@ -8,6 +8,51 @@ use crate::agent_sessions::{
 };
 use serde_json::{json, Map, Value};
 
+#[cfg(test)]
+mod file_change_tests {
+    use super::*;
+
+    fn changes(event: &str, status: &str, kind: &str) -> Option<Value> {
+        let output = CodexJsonlProtocol::default().normalize(json!({
+            "type":event,"item":{"id":"change-1","type":"file_change","status":status,
+            "changes":[{"path":"docs/plan.md","kind":kind}]}
+        }));
+        output.events[0]
+            .normalized
+            .as_ref()?
+            .details
+            .as_ref()?
+            .get("fileChanges")
+            .cloned()
+    }
+
+    #[test]
+    fn attributes_only_completed_harness_file_changes() {
+        for (kind, operation) in [("add", "create"), ("update", "edit"), ("delete", "delete")] {
+            assert_eq!(
+                changes("item.completed", "completed", kind),
+                Some(json!([{"path":"docs/plan.md","operation":operation}]))
+            );
+        }
+        assert_eq!(changes("item.started", "completed", "add"), None);
+        assert_eq!(changes("item.completed", "failed", "add"), None);
+        assert_eq!(changes("item.completed", "completed", "unknown"), None);
+        let output = CodexJsonlProtocol::default().normalize(json!({
+            "type":"item.completed","item":{"type":"mcp_tool_call","server":"workflow_handoff","tool":"trigger_workflow_continuation",
+            "arguments":{"outputFiles":["claimed.md"]},"status":"completed"}
+        }));
+        assert!(output.events[0]
+            .normalized
+            .as_ref()
+            .unwrap()
+            .details
+            .as_ref()
+            .unwrap()
+            .get("fileChanges")
+            .is_none());
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum JsonlTerminalEvidence {
     Completed,
@@ -260,7 +305,16 @@ impl CodexJsonlProtocol {
                     }
                     "command_execution" | "file_change" | "web_search" | "plan_update" => {
                         let text = item_text(item);
-                        let details = json!({"itemType": item_type, "eventType": event});
+                        let mut details = json!({"itemType": item_type, "eventType": event});
+                        if item_type == "file_change"
+                            && event == "item.completed"
+                            && item.get("status").and_then(Value::as_str) == Some("completed")
+                        {
+                            if let Some(changes) = reported_file_changes(item) {
+                                details["fileChanges"] = serde_json::to_value(changes)
+                                    .expect("serializable file changes");
+                            }
+                        }
                         events.push(draft(
                             raw,
                             normalized(
@@ -377,6 +431,29 @@ fn draft(raw_payload: Value, normalized: NormalizedRuntimeEvent) -> RuntimeEvent
         raw_payload,
         normalized: Some(normalized),
     }
+}
+
+fn reported_file_changes(
+    item: &Map<String, Value>,
+) -> Option<Vec<crate::agent_sessions::file_history::ReportedFileChange>> {
+    use crate::agent_sessions::file_history::{FileOperation, ReportedFileChange};
+    item.get("changes")?
+        .as_array()?
+        .iter()
+        .map(|change| {
+            let path = change.get("path")?.as_str()?.to_string();
+            if path.trim().is_empty() {
+                return None;
+            }
+            let operation = match change.get("kind")?.as_str()? {
+                "add" => FileOperation::Create,
+                "update" => FileOperation::Edit,
+                "delete" => FileOperation::Delete,
+                _ => return None,
+            };
+            Some(ReportedFileChange { path, operation })
+        })
+        .collect()
 }
 
 fn normalized(

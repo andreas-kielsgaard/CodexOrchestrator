@@ -210,6 +210,7 @@ impl WorkflowExecutionService {
                 &instance,
                 definition,
                 &mut occurrence,
+                self.sessions.as_ref(),
             )?;
             self.session_events
                 .dispatch_occurrence(definition, occurrence)

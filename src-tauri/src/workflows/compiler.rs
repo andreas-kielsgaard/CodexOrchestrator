@@ -85,6 +85,33 @@ fn compile_connection(
     let creation_configuration = (connection.target.missing == MissingTargetPolicy::Create)
         .then(|| creation_configuration(destination))
         .transpose()?;
+    for source in &connection.prompt_inputs {
+        let valid = match source {
+            WorkflowConnectionPromptInput::TriggerField { field } => {
+                super::trigger_capabilities::for_trigger(&connection.trigger).is_some_and(
+                    |capability| {
+                        capability
+                            .fields
+                            .iter()
+                            .any(|offered| offered.name == field)
+                    },
+                )
+            }
+            WorkflowConnectionPromptInput::NodeFiles { node_id, .. } => {
+                nodes.contains_key(node_id.as_str())
+            }
+            WorkflowConnectionPromptInput::McpArgument { .. } => {
+                super::trigger_capabilities::for_trigger(&connection.trigger).is_none()
+            }
+            _ => true,
+        };
+        if !valid {
+            return Err(WorkflowCompilationError::InvalidAuthoring(format!(
+                "Connection `{}` has an unavailable prompt input: {source:?}",
+                connection.reference.identity().id()
+            )));
+        }
+    }
     let definition = SessionEventDefinition {
         definition_ref: WorkflowEventDefinitionReference::for_connection(
             &input.recipe,
@@ -154,6 +181,12 @@ fn compile_connection_prompt(
         .prompt_inputs
         .iter()
         .map(|input| match input {
+            WorkflowConnectionPromptInput::TriggerField { .. }
+            | WorkflowConnectionPromptInput::NodeFiles { .. } => {
+                PromptSourceDefinition::ReferencedContent {
+                    reference: super::compiled_plan::input_reference(input),
+                }
+            }
             WorkflowConnectionPromptInput::InvocationOutput => {
                 PromptSourceDefinition::InvocationOutput
             }
@@ -443,6 +476,62 @@ mod tests {
             panic!("invocation-completed trigger");
         };
         assert_eq!(source.subject, start.reference.identity().clone());
+    }
+
+    #[test]
+    fn continuation_inputs_compile_as_content_and_reject_unavailable_fields_or_nodes() {
+        let start = node("start", None);
+        let destination = node("review", None);
+        let mut input = WorkflowCompilationInput {
+            instance: WorkflowInstanceReference::new("instance-1").unwrap(),
+            recipe: WorkflowRecipeReference::new("recipe-1").unwrap(),
+            starting_node: start.reference.clone(),
+            nodes: vec![start.clone(), destination.clone()],
+            connections: vec![WorkflowCompiledConnection {
+                reference: WorkflowConnectionReference::new("continue").unwrap(),
+                source_node: start.reference.clone(),
+                destination_node: destination.reference.clone(),
+                trigger: WorkflowConnectionTrigger::McpCall {
+                    server: ReferenceIdentity::new("mcp", "server", super::super::mcp::SERVER_NAME)
+                        .unwrap(),
+                    tool: ReferenceIdentity::new(
+                        "mcp",
+                        "tool",
+                        super::super::trigger_capabilities::CONTINUATION_TOOL,
+                    )
+                    .unwrap(),
+                },
+                prompt_inputs: vec![
+                    WorkflowConnectionPromptInput::TriggerField {
+                        field: "outputFiles".into(),
+                    },
+                    WorkflowConnectionPromptInput::NodeFiles {
+                        node_id: "start".into(),
+                        association: super::super::compiled_plan::FileAssociation::Either,
+                    },
+                ],
+                prompt_text: String::new(),
+                target: WorkflowConnectionTargetPlan::default(),
+            }],
+        };
+        let definitions = WorkflowCompiler::compile(input.clone()).unwrap();
+        assert!(definitions[1]
+            .prompt_sources
+            .iter()
+            .all(|source| matches!(source, PromptSourceDefinition::ReferencedContent { .. })));
+        input.connections[0].prompt_inputs[0] = WorkflowConnectionPromptInput::TriggerField {
+            field: "rawToolResult".into(),
+        };
+        assert!(WorkflowCompiler::compile(input.clone()).is_err());
+        input.connections[0].prompt_inputs[0] = WorkflowConnectionPromptInput::McpArgument {
+            name: "outputFiles".into(),
+        };
+        assert!(WorkflowCompiler::compile(input.clone()).is_err());
+        input.connections[0].prompt_inputs = vec![WorkflowConnectionPromptInput::NodeFiles {
+            node_id: "absent".into(),
+            association: super::super::compiled_plan::FileAssociation::Either,
+        }];
+        assert!(WorkflowCompiler::compile(input).is_err());
     }
 
     fn node(id: &str, initial_prompt: Option<&str>) -> WorkflowCompiledNode {

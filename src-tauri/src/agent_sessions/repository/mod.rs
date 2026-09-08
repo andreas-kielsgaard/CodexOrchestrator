@@ -1,3 +1,4 @@
+mod file_history;
 mod mapping;
 mod schema;
 
@@ -39,6 +40,9 @@ impl SqliteAgentSessionRepository {
             .map_err(sql_unavailable("configure Agent Session database"))?;
         ensure_agent_session_ownership_schema(&connection)
             .map_err(|error| RepositoryError::new(RepositoryErrorKind::Unavailable, error))?;
+        connection
+            .execute_batch(file_history::SCHEMA)
+            .map_err(sql_unavailable("initialize session file history"))?;
         let foreign_keys_enabled = connection
             .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
             .map_err(sql_unavailable("verify Agent Session foreign keys"))?;
@@ -605,6 +609,7 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_write("append runtime event"))?;
+        file_history::append(&transaction, &event)?;
         transaction
             .commit()
             .map_err(sql_unavailable("commit runtime event append"))?;
@@ -617,5 +622,13 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError> {
         let connection = self.lock()?;
         list_events_from(&connection, invocation_id)
+    }
+
+    fn file_history_at_scope(
+        &self,
+        scope: &ReferenceIdentity,
+    ) -> Result<Vec<super::file_history::SessionFileChange>, RepositoryError> {
+        let connection = self.lock()?;
+        file_history::query(&connection, scope)
     }
 }

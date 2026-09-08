@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   WorkflowAuthoringClient,
+  WorkflowTriggerCapabilityDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
@@ -18,6 +19,8 @@ export function createTauriWorkflowAuthoringClient(
   invokeCommand: WorkflowAuthoringInvoke = invoke,
 ): WorkflowAuthoringClient {
   return {
+    listTriggerCapabilities: () =>
+      invokeCommand<WorkflowTriggerCapabilityDto[]>('list_workflow_trigger_capabilities'),
     listRecipes: () => invokeCommand<WorkflowRecipeSummaryDto[]>('list_workflow_recipes'),
     loadRecipe: (recipeId) =>
       invokeCommand<WorkflowRecipeStateDto>('load_workflow_recipe', {

@@ -14,6 +14,7 @@ import type { ExecutionConfigurationClient } from '../../application/executionCo
 import type { IdentityManagementClient } from '../../application/identities';
 import type {
   WorkflowAuthoringClient,
+  WorkflowTriggerCapabilityDto,
   WorkflowRecipeDraftDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
@@ -93,6 +94,9 @@ export function WorkflowAuthoringScreen({
   const [creatingName, setCreatingName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [triggerCapabilities, setTriggerCapabilities] = useState<
+    readonly WorkflowTriggerCapabilityDto[]
+  >([]);
 
   const loadCatalogs = useCallback(async () => {
     const [runtimeSnapshot, capabilityProfiles, identityCatalog] = await Promise.all([
@@ -156,8 +160,9 @@ export function WorkflowAuthoringScreen({
     let active = true;
     setBusy(true);
     setError(null);
-    void Promise.all([loadCatalogs(), loadSummaries()])
-      .then(([, recipes]) => {
+    void Promise.all([loadCatalogs(), loadSummaries(), client.listTriggerCapabilities()])
+      .then(([, recipes, capabilities]) => {
+        if (active) setTriggerCapabilities(capabilities);
         if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
         return undefined;
       })
@@ -167,7 +172,7 @@ export function WorkflowAuthoringScreen({
       active = false;
       openTicket.current += 1;
     };
-  }, [loadCatalogs, loadSummaries, openRecipe]);
+  }, [client, loadCatalogs, loadSummaries, openRecipe]);
 
   useEffect(() => {
     if (recipeId && recipeId !== selectedRef.current) void openRecipe(recipeId);
@@ -568,6 +573,7 @@ export function WorkflowAuthoringScreen({
                     <WorkflowConnectionEditor
                       connection={selectedConnection}
                       nodes={draft.nodes}
+                      triggerCapabilities={triggerCapabilities}
                       onChange={(connection) =>
                         editDraft({
                           ...draft,

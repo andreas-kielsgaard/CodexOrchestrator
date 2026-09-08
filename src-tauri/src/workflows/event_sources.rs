@@ -98,6 +98,48 @@ impl WorkflowExecutionService {
         occurrence_id: &str,
         trigger: SessionEventOccurrenceTrigger,
     ) -> Result<usize, String> {
+        self.route_source_event(source, occurrence_id, trigger, BTreeMap::new())
+    }
+
+    pub(crate) fn trigger_continuation(
+        &self,
+        source: &ReferenceIdentity,
+        occurrence_id: &str,
+        output_files: Vec<String>,
+    ) -> Result<usize, String> {
+        use super::compiled_plan::{input_reference, WorkflowConnectionPromptInput};
+        let capability = super::trigger_capabilities::continuation();
+        let content = [(
+            input_reference(&WorkflowConnectionPromptInput::TriggerField {
+                field: "outputFiles".into(),
+            }),
+            serde_json::to_string_pretty(&output_files).map_err(|error| error.to_string())?,
+        )]
+        .into_iter()
+        .collect();
+        self.route_source_event(
+            source,
+            occurrence_id,
+            SessionEventOccurrenceTrigger::McpCall {
+                call: ReferenceIdentity::new("mcp", "call", occurrence_id)
+                    .map_err(|error| error.to_string())?,
+                server: ReferenceIdentity::new("mcp", "server", capability.server)
+                    .map_err(|error| error.to_string())?,
+                tool: ReferenceIdentity::new("mcp", "tool", capability.tool)
+                    .map_err(|error| error.to_string())?,
+                arguments: BTreeMap::new(),
+            },
+            content,
+        )
+    }
+
+    fn route_source_event(
+        &self,
+        source: &ReferenceIdentity,
+        occurrence_id: &str,
+        trigger: SessionEventOccurrenceTrigger,
+        mut content: BTreeMap<ReferenceIdentity, String>,
+    ) -> Result<usize, String> {
         let entry = self
             .directory
             .find_exact(source)
@@ -114,6 +156,21 @@ impl WorkflowExecutionService {
             return Err("Source Session does not have a Workflow address".into());
         }
         let instance = self.instances.load(address.scope.id())?;
+        let node = instance
+            .recipe
+            .nodes
+            .iter()
+            .find(|node| node.node_id == address.subject.id())
+            .ok_or("Source node is absent from the instance recipe")?;
+        content.insert(
+            super::compiled_plan::input_reference(
+                &super::compiled_plan::WorkflowConnectionPromptInput::TriggerField {
+                    field: "sourceNode".into(),
+                },
+            ),
+            serde_json::to_string_pretty(&serde_json::json!({"id":node.node_id,"name":node.name}))
+                .map_err(|error| error.to_string())?,
+        );
         let definitions = self.compile_instance(&instance.id, None)?;
         let mut dispatched = 0;
         let mut failures = Vec::new();
@@ -151,7 +208,7 @@ impl WorkflowExecutionService {
                 event_group_id: ReferenceIdentity::new("workflow", "event_group", identity)
                     .map_err(|error| error.to_string())?,
                 trigger: trigger.clone(),
-                referenced_content: BTreeMap::new(),
+                referenced_content: content.clone(),
                 created_by_session: Some(source.clone()),
                 direct_user_options: None,
             };

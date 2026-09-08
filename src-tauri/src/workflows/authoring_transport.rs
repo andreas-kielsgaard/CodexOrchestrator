@@ -66,6 +66,12 @@ pub(crate) fn list_workflow_recipes(
 }
 
 #[tauri::command]
+pub(crate) fn list_workflow_trigger_capabilities(
+) -> Vec<super::trigger_capabilities::TriggerCapability> {
+    vec![super::trigger_capabilities::continuation()]
+}
+
+#[tauri::command]
 pub(crate) fn load_workflow_recipe(
     state: State<'_, WorkflowAuthoringTauriState>,
     input: LoadWorkflowRecipeInput,

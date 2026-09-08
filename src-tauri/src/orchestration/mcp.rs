@@ -548,7 +548,7 @@ pub(crate) fn start_managed_invocation(
         name: "plan_builder".to_string(),
         url: server.url(),
         bearer_token: bearer.clone(),
-        workflow_tool_name: None,
+        workflow_tool_names: vec![],
         workflow_prepare_url: None,
     };
     let injection = CodexMcpInjection::new(&upstream.url, bearer, enabled_tools, required);

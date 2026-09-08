@@ -1,4 +1,5 @@
 use super::*;
+mod continuation_tests;
 use crate::harness_engine::{
     catalog_service::HarnessCatalogService,
     domain::SidecarBindingRegistration,
@@ -110,7 +111,12 @@ impl Fixture {
         if mediated {
             snapshot.exposure.mcp_tools.insert(
                 "workflow_handoff".into(),
-                ["handoff_to_agent".into()].into_iter().collect(),
+                [
+                    "handoff_to_agent".into(),
+                    "trigger_workflow_continuation".into(),
+                ]
+                .into_iter()
+                .collect(),
             );
         }
         let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));

@@ -221,7 +221,12 @@ async fn handle_proxy_request(
     let mut forwarded_body = body.clone();
     let mut workflow_warning = None;
     if let Some((id, tool_name)) = tool_call(&request_json) {
-        if exposure.upstream.workflow_tool_name.as_deref() == Some(tool_name) {
+        if exposure
+            .upstream
+            .workflow_tool_names
+            .iter()
+            .any(|name| name == tool_name)
+        {
             if has_reserved_workflow_argument(&request_json) {
                 return denied_tool_result(
                     id,
@@ -888,7 +893,7 @@ mod tests {
                     name: "workflow_handoff".into(),
                     url: format!("http://{upstream}/mcp"),
                     bearer_token: "secret".into(),
-                    workflow_tool_name: Some("handoff_to_agent".into()),
+                    workflow_tool_names: vec!["handoff_to_agent".into()],
                     workflow_prepare_url: Some(format!("http://{upstream}/prepare")),
                 },
                 access: HarnessToolAccess::EntireServer,
@@ -1075,7 +1080,7 @@ mod tests {
                     name: "plan_builder".into(),
                     url: format!("http://{upstream}/mcp"),
                     bearer_token: "managed-secret".into(),
-                    workflow_tool_name: None,
+                    workflow_tool_names: vec![],
                     workflow_prepare_url: None,
                 },
                 access,

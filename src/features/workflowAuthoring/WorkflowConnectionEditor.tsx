@@ -5,27 +5,36 @@ import type {
 import type {
   WorkflowAuthoringConnectionDto,
   WorkflowAuthoringNodeDto,
-  WorkflowConnectionPromptInputDto,
+  WorkflowTriggerCapabilityDto,
   WorkflowConnectionTriggerDto,
 } from '../../application/workflowAuthoring';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
-import {
-  PromptSourceListEditor,
-  TargetSelectionEditor,
-  TriggerBindingEditor,
-} from '../sessionEvents';
+import { TargetSelectionEditor, TriggerBindingEditor } from '../sessionEvents';
+import { WorkflowPromptInputsEditor } from './WorkflowPromptInputsEditor';
 
 export function WorkflowConnectionEditor({
   connection,
   nodes,
+  triggerCapabilities = [],
   onChange,
 }: {
   readonly connection: WorkflowAuthoringConnectionDto;
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
+  readonly triggerCapabilities?: readonly WorkflowTriggerCapabilityDto[];
   readonly onChange: (connection: WorkflowAuthoringConnectionDto) => void;
 }) {
   const trigger = workflowTriggerToEventTrigger(connection.trigger);
   const target = workflowTargetToEventTarget(connection);
+  const capability = triggerCapabilities.find(
+    (item) =>
+      connection.trigger.kind === 'mcp_call' &&
+      connection.trigger.server.namespace === 'mcp' &&
+      connection.trigger.server.kind === 'server' &&
+      connection.trigger.tool.namespace === 'mcp' &&
+      connection.trigger.tool.kind === 'tool' &&
+      connection.trigger.server.id === item.server &&
+      connection.trigger.tool.id === item.tool,
+  );
   return (
     <div className="workflow-connection-editor">
       <header>
@@ -83,53 +92,65 @@ export function WorkflowConnectionEditor({
         description="The source node address is derived when the recipe compiles."
         className="execution-configuration__section"
       >
-        <TriggerBindingEditor
-          value={trigger}
-          hideInvocationSourceAddress
-          allowedKinds={['invocation_completed', 'mcp_call', 'application_event']}
-          onChange={(next) =>
-            onChange({
-              ...connection,
-              trigger: eventTriggerToWorkflowTrigger(
-                next.kind === 'mcp_call' && !next.server.id && !next.tool.id
-                  ? {
-                      kind: 'mcp_call',
-                      server: { namespace: 'mcp', kind: 'server', id: 'workflow_handoff' },
-                      tool: { namespace: 'mcp', kind: 'tool', id: 'handoff_to_agent' },
-                    }
-                  : next,
-              ),
-            })
-          }
-        />
+        <label>
+          Workflow action
+          <select
+            value={capability?.id ?? ''}
+            onChange={(event) => {
+              const selected = triggerCapabilities.find((item) => item.id === event.target.value);
+              if (selected)
+                onChange({
+                  ...connection,
+                  trigger: {
+                    kind: 'mcp_call',
+                    server: { namespace: 'mcp', kind: 'server', id: selected.server },
+                    tool: { namespace: 'mcp', kind: 'tool', id: selected.tool },
+                  },
+                });
+              else onChange({ ...connection, trigger: { kind: 'invocation_completed' } });
+            }}
+          >
+            <option value="">Other trigger</option>
+            {triggerCapabilities.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!capability && (
+          <TriggerBindingEditor
+            value={trigger}
+            hideInvocationSourceAddress
+            allowedKinds={['invocation_completed', 'mcp_call', 'application_event']}
+            onChange={(next) =>
+              onChange({
+                ...connection,
+                trigger: eventTriggerToWorkflowTrigger(
+                  next.kind === 'mcp_call' && !next.server.id && !next.tool.id
+                    ? {
+                        kind: 'mcp_call',
+                        server: { namespace: 'mcp', kind: 'server', id: 'workflow_handoff' },
+                        tool: { namespace: 'mcp', kind: 'tool', id: 'handoff_to_agent' },
+                      }
+                    : next,
+                ),
+              })
+            }
+          />
+        )}
       </CollapsibleSection>
       <CollapsibleSection
         title="Prompt logic"
         description="Sources are materialized in order; fixed connection text is appended last."
         className="execution-configuration__section"
       >
-        <PromptSourceListEditor
+        <WorkflowPromptInputsEditor
           value={connection.promptInputs}
-          allowedKinds={[
-            ...(connection.trigger.kind === 'invocation_completed'
-              ? ['invocation_output' as const]
-              : []),
-            ...(connection.trigger.kind === 'mcp_call' ? ['mcp_argument' as const] : []),
-            ...(connection.trigger.kind === 'application_event'
-              ? ['application_event_field' as const]
-              : []),
-            'referenced_content',
-          ]}
-          onChange={(value) =>
-            onChange({
-              ...connection,
-              promptInputs: value.map((source) =>
-                source.kind === 'referenced_content' && !source.reference.id
-                  ? { ...source, reference: { namespace: 'file', kind: 'path', id: '' } }
-                  : source,
-              ) as readonly WorkflowConnectionPromptInputDto[],
-            })
-          }
+          trigger={connection.trigger}
+          nodes={nodes}
+          capability={capability}
+          onChange={(promptInputs) => onChange({ ...connection, promptInputs })}
         />
         <label className="workflow-connection-editor__prompt">
           <span>Fixed connection prompt</span>

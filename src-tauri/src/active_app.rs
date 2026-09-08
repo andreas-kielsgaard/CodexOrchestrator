@@ -201,7 +201,7 @@ pub(crate) fn run() {
                     crate::execution_configuration::NativeCodexCapabilityExposure {
                         capabilities: crate::execution_configuration::CapabilitySet {
                             // This tool is supplied by the application, not discovered in Codex.
-                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string()].into_iter().collect())].into_iter().collect(),
+                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string(), crate::workflows::trigger_capabilities::CONTINUATION_TOOL.to_string()].into_iter().collect())].into_iter().collect(),
                             models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
                                 .into_iter()
                                 .collect(),
@@ -562,6 +562,7 @@ pub(crate) fn run() {
             crate::workflows::transport::list_workflow_instances,
             crate::workflows::transport::load_workflow_instance,
             crate::workflows::authoring_transport::list_workflow_recipes,
+            crate::workflows::authoring_transport::list_workflow_trigger_capabilities,
             crate::workflows::authoring_transport::load_workflow_recipe,
             crate::workflows::authoring_transport::create_workflow_recipe,
             crate::workflows::authoring_transport::save_workflow_recipe_draft,

@@ -78,10 +78,40 @@ pub(crate) enum WorkflowConnectionTrigger {
     deny_unknown_fields
 )]
 pub(crate) enum WorkflowConnectionPromptInput {
+    TriggerField {
+        field: String,
+    },
+    NodeFiles {
+        node_id: String,
+        association: FileAssociation,
+    },
     InvocationOutput,
-    McpArgument { name: String },
-    ApplicationEventField { field: String },
-    ReferencedContent { reference: ReferenceIdentity },
+    McpArgument {
+        name: String,
+    },
+    ApplicationEventField {
+        field: String,
+    },
+    ReferencedContent {
+        reference: ReferenceIdentity,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FileAssociation {
+    Created,
+    Edited,
+    Either,
+}
+
+pub(crate) fn input_reference(input: &WorkflowConnectionPromptInput) -> ReferenceIdentity {
+    ReferenceIdentity::new(
+        "workflow",
+        "connection_input",
+        serde_json::to_string(input).expect("serializable prompt input"),
+    )
+    .expect("nonempty prompt input reference")
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

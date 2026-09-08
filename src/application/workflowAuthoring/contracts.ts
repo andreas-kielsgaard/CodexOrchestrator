@@ -24,6 +24,12 @@ export type WorkflowConnectionTriggerDto =
     };
 
 export type WorkflowConnectionPromptInputDto =
+  | { readonly kind: 'trigger_field'; readonly field: string }
+  | {
+      readonly kind: 'node_files';
+      readonly nodeId: string;
+      readonly association: 'created' | 'edited' | 'either';
+    }
   | { readonly kind: 'invocation_output' }
   | { readonly kind: 'mcp_argument'; readonly name: string }
   | { readonly kind: 'application_event_field'; readonly field: string }
@@ -98,6 +104,7 @@ export interface DispatchWorkflowUserRequestInput {
 }
 
 export interface WorkflowAuthoringClient {
+  listTriggerCapabilities(): Promise<readonly WorkflowTriggerCapabilityDto[]>;
   listRecipes(): Promise<readonly WorkflowRecipeSummaryDto[]>;
   loadRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
   createRecipe(name: string): Promise<WorkflowRecipeStateDto>;
@@ -109,4 +116,18 @@ export interface WorkflowAuthoringClient {
     instanceId: string,
   ): Promise<readonly SessionEventDefinitionDto[]>;
   dispatchUserRequest(input: DispatchWorkflowUserRequestInput): Promise<SessionEventResultDto>;
+}
+
+export interface WorkflowTriggerCapabilityDto {
+  readonly id: string;
+  readonly version: number;
+  readonly name: string;
+  readonly server: string;
+  readonly tool: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly fields: readonly {
+    readonly name: string;
+    readonly label: string;
+    readonly schema: Readonly<Record<string, unknown>>;
+  }[];
 }

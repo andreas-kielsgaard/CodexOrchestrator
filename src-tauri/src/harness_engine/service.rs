@@ -574,7 +574,7 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:48000/mcp".into(),
                 bearer_token: "upstream-secret".into(),
-                workflow_tool_name: None,
+                workflow_tool_names: vec![],
                 workflow_prepare_url: None,
             })
             .unwrap();
@@ -692,7 +692,7 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41001/mcp".into(),
                 bearer_token: "first".into(),
-                workflow_tool_name: None,
+                workflow_tool_names: vec![],
                 workflow_prepare_url: None,
             })
             .unwrap();
@@ -701,7 +701,7 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41002/mcp".into(),
                 bearer_token: "second".into(),
-                workflow_tool_name: None,
+                workflow_tool_names: vec![],
                 workflow_prepare_url: None,
             })
             .unwrap();
@@ -735,7 +735,7 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41001/mcp".into(),
                 bearer_token: "secret".into(),
-                workflow_tool_name: None,
+                workflow_tool_names: vec![],
                 workflow_prepare_url: None,
             })
             .unwrap();

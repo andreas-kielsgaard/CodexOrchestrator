@@ -132,14 +132,29 @@ impl WorkflowRecipeDraft {
             }
             for source in &connection.prompt_inputs {
                 let compatible = match source {
+                    WorkflowConnectionPromptInput::TriggerField { field } => {
+                        super::trigger_capabilities::for_trigger(&connection.trigger).is_some_and(
+                            |capability| {
+                                capability
+                                    .fields
+                                    .iter()
+                                    .any(|offered| offered.name == field)
+                            },
+                        )
+                    }
+                    WorkflowConnectionPromptInput::NodeFiles { node_id, .. } => {
+                        node_ids.contains(node_id.as_str())
+                    }
                     WorkflowConnectionPromptInput::InvocationOutput => matches!(
                         connection.trigger,
                         WorkflowConnectionTrigger::InvocationCompleted
                     ),
-                    WorkflowConnectionPromptInput::McpArgument { .. } => matches!(
-                        connection.trigger,
-                        WorkflowConnectionTrigger::McpCall { .. }
-                    ),
+                    WorkflowConnectionPromptInput::McpArgument { .. } => {
+                        matches!(
+                            connection.trigger,
+                            WorkflowConnectionTrigger::McpCall { .. }
+                        ) && super::trigger_capabilities::for_trigger(&connection.trigger).is_none()
+                    }
                     WorkflowConnectionPromptInput::ApplicationEventField { .. } => matches!(
                         connection.trigger,
                         WorkflowConnectionTrigger::ApplicationEvent { .. }

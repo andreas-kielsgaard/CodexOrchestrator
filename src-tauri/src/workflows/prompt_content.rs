@@ -9,6 +9,7 @@ pub(crate) fn supply_referenced_content(
     instance: &RecipeInstance,
     definition: &SessionEventDefinition,
     occurrence: &mut SessionEventOccurrence,
+    sessions: &dyn crate::agent_sessions::ports::AgentSessionRepository,
 ) -> Result<(), String> {
     for source in definition
         .prompt_sources
@@ -18,6 +19,33 @@ pub(crate) fn supply_referenced_content(
         let PromptSourceDefinition::ReferencedContent { reference } = source else {
             continue;
         };
+        if reference.namespace() == "workflow" && reference.kind() == "connection_input" {
+            let input: super::compiled_plan::WorkflowConnectionPromptInput =
+                serde_json::from_str(reference.id()).map_err(|error| error.to_string())?;
+            match input {
+                super::compiled_plan::WorkflowConnectionPromptInput::NodeFiles {
+                    node_id,
+                    association,
+                } => {
+                    let text = super::file_inputs::resolve_node_files(
+                        instance,
+                        &node_id,
+                        association,
+                        sessions,
+                    )?;
+                    occurrence
+                        .referenced_content
+                        .insert(reference.clone(), text);
+                }
+                super::compiled_plan::WorkflowConnectionPromptInput::TriggerField { field } => {
+                    if !occurrence.referenced_content.contains_key(reference) {
+                        return Err(format!("Trigger did not offer field `{field}`"));
+                    }
+                }
+                _ => return Err("Unsupported Workflow connection input".into()),
+            }
+            continue;
+        }
         if reference.namespace() == "workflow" && reference.kind() == "prompt_field" {
             let (recipe_id, revision, owner, field): (String, u64, String, String) =
                 serde_json::from_str(reference.id()).map_err(|error| error.to_string())?;

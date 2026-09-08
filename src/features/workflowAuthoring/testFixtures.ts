@@ -95,6 +95,7 @@ export function repairClients() {
     },
   };
   const authoring: WorkflowAuthoringClient = {
+    listTriggerCapabilities: async () => [],
     listRecipes: async () =>
       states.map(({ draft, active, updatedAt }) => ({
         recipeId: draft.recipeId,
