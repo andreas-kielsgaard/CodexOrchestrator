@@ -1,0 +1,372 @@
+{"kind":"deck","id":"pr/cg3z3l","name":"Deck"}
+{"kind":"layout","layoutId":"d99ed9cf-c440-4747-b5ac-f92cd730b2fa","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"ee33aef2-b3f2-4fb5-9fe7-618eda0202d5","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/40l07x","slide":1,"title":"CODEX ORCHESTRATOR","textShapes":5}
+{"kind":"textbox","id":"sh/repg3u50","slide":1,"name":"cover-kicker","text":"CODEX ORCHESTRATOR","textPreview":"CODEX ORCHESTRATOR","textChars":18,"textLines":1,"bbox":[46,40,320,22]}
+{"kind":"textbox","id":"sh/sfyxczml","slide":1,"name":"cover-title","text":"Session Event UI demo","textPreview":"Session Event UI demo","textChars":21,"textLines":1,"bbox":[46,170,520,80]}
+{"kind":"textbox","id":"sh/d07y54n6","slide":1,"name":"cover-subtitle","text":"A screen-by-screen tour of the current build","textPreview":"A screen-by-screen tour of the current build","textChars":44,"textLines":1,"bbox":[48,270,470,72]}
+{"kind":"shape","id":"sh/e1gfe94r","slide":1,"name":"cover-issue","bbox":[48,390,460,104]}
+{"kind":"textbox","id":"sh/f2pg7e5c","slide":1,"name":"cover-issue-text","text":"Also shown clearly:\n• the canvas was replaced by a list\n• Workflow instance creation is missing","textPreview":"Also shown clearly: | • the canvas was replaced by a list | • Workflow instance creation is missing","textChars":95,"textLines":3,"bbox":[72,414,412,68]}
+{"kind":"shape","id":"sh/03yxgzmh","slide":1,"name":"cover-frame","bbox":[620,56,610,405]}
+{"kind":"textbox","id":"sh/u5wf25o7","slide":1,"name":"cover-footer","text":"14 slides · no provider request was sent","textPreview":"14 slides · no provider request was sent","textChars":40,"textLines":1,"bbox":[48,654,470,22]}
+{"kind":"image","id":"im/g7e1c3yp","slide":1,"name":"","geometry":"roundRect","alt":"Current Workflow recipe editor","bbox":[626,62,598,397]}
+{"kind":"notes","id":"nt/40l07x","slide":1,"text":"This tour shows every changed screen in the current build. It also marks the two parts that need to be restored before the Workflow UI is acceptable.\n\n[Sources]\n- Local capture: 03-workflow-node-profile.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/s5veta","slide":2,"title":"UI DEMO","textShapes":16}
+{"kind":"textbox","id":"sh/obadwza5","slide":2,"name":"kicker-2","text":"UI DEMO","textPreview":"UI DEMO","textChars":7,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/na1wnutk","slide":2,"name":"title-2","text":"Capability Profiles are now a separate screen","textPreview":"Capability Profiles are now a separate screen","textChars":45,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/29svupsf","slide":2,"name":"number-2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/18jel4bu","slide":2,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/07adsza9","slide":2,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/f6hwjuto","slide":2,"name":"callout-title-1-132","text":"Profile list","textPreview":"Profile list","textChars":12,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/e58vqpc3","slide":2,"name":"callout-body-1-132","text":"Choose a profile or add a new one.","textPreview":"Choose a profile or add a new one.","textChars":34,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/d4zehkbi","slide":2,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/s3qdofux","slide":2,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/2x47etcf","slide":2,"name":"callout-title-2-236","text":"Profile details","textPreview":"Profile details","textChars":15,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/nydonyd0","slide":2,"name":"callout-body-2-236","text":"Name, key, and short description stay together.","textPreview":"Name, key, and short description stay together.","textChars":47,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/ozmpg3ul","slide":2,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/p0v6p8v6","slide":2,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/etk7a9cj","slide":2,"name":"callout-title-3-340","text":"Runtime profile","textPreview":"Runtime profile","textChars":15,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/futojed4","slide":2,"name":"callout-body-3-340","text":"The selected native runtime is shown as inherited and read-only.","textPreview":"The selected native runtime is shown as inherited and read-only.","textChars":64,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/0v2pcjup","slide":2,"name":"frame-01-capability-profile-overview.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/q5k769c7","slide":2,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/r6tofeds","slide":2,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/vy5cr6p8","slide":2,"name":"marker-1-585-236","bbox":[571,222,28,28]}
+{"kind":"textbox","id":"sh/uxwvy1o3","slide":2,"name":"marker-number-1-585-236","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[571,228,28,14]}
+{"kind":"shape","id":"sh/h07utg7e","slide":2,"name":"marker-2-845-230","bbox":[831,216,28,28]}
+{"kind":"textbox","id":"sh/wzyd0b6t","slide":2,"name":"marker-number-2-845-230","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[831,222,28,14]}
+{"kind":"shape","id":"sh/j2pcvqpk","slide":2,"name":"marker-3-973-424","bbox":[959,410,28,28]}
+{"kind":"textbox","id":"sh/i1gv2loz","slide":2,"name":"marker-number-3-973-424","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[959,416,28,14]}
+{"kind":"image","id":"im/mdcnuhoz","slide":2,"name":"","geometry":"roundRect","alt":"Screenshot: 01-capability-profile-overview.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/s5veta","slide":2,"text":"Open Capability Profiles. The left side selects a profile. The right side edits its details and shows which native runtime it uses.\n\n[Sources]\n- Local capture: 01-capability-profile-overview.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/cjvjhb","slide":3,"title":"UI DEMO","textShapes":16}
+{"kind":"textbox","id":"sh/3adgbypg","slide":3,"name":"kicker-3","text":"UI DEMO","textPreview":"UI DEMO","textChars":7,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/4bmh43q1","slide":3,"name":"title-3","text":"A profile limits the choices from the runtime","textPreview":"A profile limits the choices from the runtime","textChars":45,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/5cvyd87m","slide":3,"name":"number-3","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/qd4z6t8r","slide":3,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/redgfypc","slide":3,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/czmh83qx","slide":3,"name":"callout-title-1-132","text":"Models","textPreview":"Models","textChars":6,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/d0vyh87i","slide":3,"name":"callout-body-1-132","text":"Tick the models that nodes may use.","textPreview":"Tick the models that nodes may use.","textChars":35,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/6h0fu98n","slide":3,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/7itg3ep8","slide":3,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/byhk7u9c","slide":3,"name":"callout-title-2-236","text":"Reasoning","textPreview":"Reasoning","textChars":9,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/ax83ypsr","slide":3,"name":"callout-body-2-236","text":"Tick the reasoning levels that nodes may use.","textPreview":"Tick the reasoning levels that nodes may use.","textChars":45,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/x0j29kri","slide":3,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/czal0zax","slide":3,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/nuhk3a9g","slide":3,"name":"callout-title-3-340","text":"Inherited items","textPreview":"Inherited items","textChars":15,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/2t83u5sv","slide":3,"name":"callout-body-3-340","text":"MCP tools and skills are visible but locked in this build.","textPreview":"MCP tools and skills are visible but locked in this build.","textChars":58,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/pwz25krm","slide":3,"name":"frame-02-capability-allowed-selections.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/fqxkza94","slide":3,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/e5o3q5sj","slide":3,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/i1o3i5cr","slide":3,"name":"marker-1-824-284","bbox":[810,270,28,28]}
+{"kind":"textbox","id":"sh/32x4bqdc","slide":3,"name":"marker-number-1-824-284","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[810,276,28,14]}
+{"kind":"shape","id":"sh/436lkvuh","slide":3,"name":"marker-2-1038-284","bbox":[1024,270,28,28]}
+{"kind":"textbox","id":"sh/54fmd0v2","slide":3,"name":"marker-number-2-1038-284","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1024,276,28,14]}
+{"kind":"shape","id":"sh/qpo3m5cn","slide":3,"name":"marker-3-1015-483","bbox":[1001,469,28,28]}
+{"kind":"textbox","id":"sh/rqx4fad8","slide":3,"name":"marker-number-3-1015-483","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1001,475,28,14]}
+{"kind":"image","id":"im/7qxgfqhk","slide":3,"name":"","geometry":"roundRect","alt":"Screenshot: 02-capability-allowed-selections.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/cjvjhb","slide":3,"text":"This screen narrows the choices already exposed by the selected runtime. It does not set up provider accounts or connections.\n\n[Sources]\n- Local capture: 02-capability-allowed-selections.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/9335dm","slide":4,"title":"UI DEMO","textShapes":16}
+{"kind":"textbox","id":"sh/vmxgn2p0","slide":4,"name":"kicker-4","text":"UI DEMO","textPreview":"UI DEMO","textChars":7,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/wn6xg7ql","slide":4,"name":"title-4","text":"Profiles can be saved or deleted","textPreview":"Profiles can be saved or deleted","textChars":32,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/hofypc7q","slide":4,"name":"number-4","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/ip8fih8b","slide":4,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/jqhgrmpw","slide":4,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/4rqxkrqh","slide":4,"name":"callout-title-1-132","text":"Save","textPreview":"Save","textChars":4,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/5szytc72","slide":4,"name":"callout-body-1-132","text":"Save writes the current profile changes.","textPreview":"Save writes the current profile changes.","textChars":40,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/yt4f6d87","slide":4,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/zudwfi9s","slide":4,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/f6dcz2t0","slide":4,"name":"callout-title-2-236","text":"Delete","textPreview":"Delete","textChars":6,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/u5kb6xsf","slide":4,"name":"callout-body-2-236","text":"Delete removes the selected profile.","textPreview":"Delete removes the selected profile.","textChars":36,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/hsvu1cb6","slide":4,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/grmt87al","slide":4,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/72tcv2t4","slide":4,"name":"callout-title-3-340","text":"Revision","textPreview":"Revision","textChars":8,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/61kb2xsj","slide":4,"name":"callout-body-3-340","text":"The screen shows the saved revision and update time.","textPreview":"The screen shows the saved revision and update time.","textChars":52,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/t4buxsbu","slide":4,"name":"frame-12-capability-profile-save-and-delete.png","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/jytcrits","slide":4,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/ix0bydc7","slide":4,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/m90vadwf","slide":4,"name":"marker-1-1139-594","bbox":[1125,580,28,28]}
+{"kind":"textbox","id":"sh/nu9c3idk","slide":4,"name":"marker-number-1-1139-594","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[1125,586,28,14]}
+{"kind":"shape","id":"sh/8vidcne5","slide":4,"name":"marker-2-1008-594","bbox":[994,580,28,28]}
+{"kind":"textbox","id":"sh/9wru5svq","slide":4,"name":"marker-number-2-1008-594","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[994,586,28,14]}
+{"kind":"shape","id":"sh/ax0vedwb","slide":4,"name":"marker-3-802-482","bbox":[788,468,28,28]}
+{"kind":"textbox","id":"sh/vytc7idw","slide":4,"name":"marker-number-3-802-482","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[788,474,28,14]}
+{"kind":"image","id":"im/j2tovy5c","slide":4,"name":"","geometry":"roundRect","alt":"Screenshot: 12-capability-profile-save-and-delete.png","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/9335dm","slide":4,"text":"The profile form has clear save and delete actions. The saved revision is shown near the bottom of the form.\n\n[Sources]\n- Local capture: 12-capability-profile-save-and-delete.png\n[/Sources]"}
+{"kind":"slide","id":"sl/aokwsu","slide":5,"title":"WORKFLOW EDITOR","textShapes":18}
+{"kind":"textbox","id":"sh/0361wrep","slide":5,"name":"kicker-5","text":"WORKFLOW EDITOR","textPreview":"WORKFLOW EDITOR","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/zix0nmx4","slide":5,"name":"title-5","text":"Workflow editing now opens as a node list","textPreview":"Workflow editing now opens as a node list","textChars":41,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/ehoju1wz","slide":5,"name":"number-5","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/98zitgvm","slide":5,"name":"callout-circle-1-126","bbox":[42,128,30,30]}
+{"kind":"textbox","id":"sh/o7q10be1","slide":5,"name":"callout-number-1-126","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,134,30,15]}
+{"kind":"textbox","id":"sh/n6x0r6xg","slide":5,"name":"callout-title-1-126","text":"Recipe details","textPreview":"Recipe details","textChars":14,"textLines":1,"bbox":[86,126,330,24]}
+{"kind":"textbox","id":"sh/m5ojy1wv","slide":5,"name":"callout-body-1-126","text":"The Workflow name and key are still editable.","textPreview":"The Workflow name and key are still editable.","textChars":45,"textLines":1,"bbox":[86,156,330,58]}
+{"kind":"shape","id":"sh/xczixgvi","slide":5,"name":"callout-circle-2-230","bbox":[42,232,30,30]}
+{"kind":"textbox","id":"sh/wbq14bex","slide":5,"name":"callout-number-2-230","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,238,30,15]}
+{"kind":"textbox","id":"sh/ydcfelgv","slide":5,"name":"callout-title-2-230","text":"Node list","textPreview":"Node list","textChars":9,"textLines":1,"bbox":[86,230,330,24]}
+{"kind":"textbox","id":"sh/jelwnqxg","slide":5,"name":"callout-body-2-230","text":"Nodes are selected from a list on the left.","textPreview":"Nodes are selected from a list on the left.","textChars":43,"textLines":1,"bbox":[86,260,330,58]}
+{"kind":"shape","id":"sh/kfuxgvy1","slide":5,"name":"callout-circle-3-334","bbox":[42,336,30,30]}
+{"kind":"textbox","id":"sh/l0nep0fm","slide":5,"name":"callout-number-3-334","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,342,30,15]}
+{"kind":"textbox","id":"sh/61wfi5g7","slide":5,"name":"callout-title-3-334","text":"Node form","textPreview":"Node form","textChars":9,"textLines":1,"bbox":[86,334,330,24]}
+{"kind":"textbox","id":"sh/725wrqxs","slide":5,"name":"callout-body-3-334","text":"The selected node opens as a form on the right.","textPreview":"The selected node opens as a form on the right.","textChars":47,"textLines":1,"bbox":[86,364,330,58]}
+{"kind":"shape","id":"sh/83exkvyd","slide":5,"name":"issue-548","bbox":[42,548,374,86]}
+{"kind":"textbox","id":"sh/t4net0fi","slide":5,"name":"issue-text-548","text":"Known problem: this list replaced the old flow canvas. The canvas should return.","textPreview":"Known problem: this list replaced the old flow canvas. The canvas should return.","textChars":80,"textLines":1,"bbox":[60,563,338,58]}
+{"kind":"shape","id":"sh/m5sv61g3","slide":5,"name":"frame-03-workflow-node-profile.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/rqhcn2d0","slide":5,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/qp8bexwv","slide":5,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/dczupcv6","slide":5,"name":"marker-1-915-192","bbox":[901,178,28,28]}
+{"kind":"textbox","id":"sh/cbqtg7el","slide":5,"name":"marker-number-1-915-192","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[901,184,28,14]}
+{"kind":"shape","id":"sh/3mxsjid4","slide":5,"name":"marker-2-594-331","bbox":[580,317,28,28]}
+{"kind":"textbox","id":"sh/2lobaxwj","slide":5,"name":"marker-number-2-594-331","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[580,323,28,14]}
+{"kind":"shape","id":"sh/pofalsva","slide":5,"name":"marker-3-927-335","bbox":[913,321,28,28]}
+{"kind":"textbox","id":"sh/4n6tcnep","slide":5,"name":"marker-number-3-927-335","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[913,327,28,14]}
+{"kind":"shape","id":"sh/ni1cfmd8","slide":5,"name":"marker-!-688-331","bbox":[674,317,28,28]}
+{"kind":"textbox","id":"sh/mhsbmhwn","slide":5,"name":"marker-number-!-688-331","text":"!","textPreview":"!","textChars":1,"textLines":1,"bbox":[674,323,28,14]}
+{"kind":"image","id":"im/k3ql4nq5","slide":5,"name":"","geometry":"roundRect","alt":"Screenshot: 03-workflow-node-profile.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/aokwsu","slide":5,"text":"This is the current Workflow editor. It exposes the new node fields, but it wrongly replaced the old flow canvas with a list.\n\n[Sources]\n- Local capture: 03-workflow-node-profile.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/gx92f7","slide":6,"title":"WORKFLOW EDITOR","textShapes":16}
+{"kind":"textbox","id":"sh/je98ba1c","slide":6,"name":"kicker-6","text":"WORKFLOW EDITOR","textPreview":"WORKFLOW EDITOR","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/4fi94f2x","slide":6,"name":"title-6","text":"A node setup can be copied","textPreview":"A node setup can be copied","textChars":26,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/5grqdkji","slide":6,"name":"number-6","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/6h0r6503","slide":6,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/ri98fa18","slide":6,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/sji98fit","slide":6,"name":"callout-title-1-132","text":"Copy from","textPreview":"Copy from","textChars":9,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/tkrqhkje","slide":6,"name":"callout-body-1-132","text":"Pick an existing node as the source.","textPreview":"Pick an existing node as the source.","textChars":36,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/elkrap0z","slide":6,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/fmt8ju1k","slide":6,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/fy1cbipc","slide":6,"name":"callout-title-2-236","text":"Apply copy","textPreview":"Apply copy","textChars":10,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/edsb2d8r","slide":6,"name":"callout-body-2-236","text":"Copy its settings into the current node.","textPreview":"Copy its settings into the current node.","textChars":40,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/10juds72","slide":6,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/0zat4n6x","slide":6,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/rahc7ip0","slide":6,"name":"callout-title-3-340","text":"Edit after copy","textPreview":"Edit after copy","textChars":15,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/q98byd8f","slide":6,"name":"callout-body-3-340","text":"The new node remains separate and can be changed.","textPreview":"The new node remains separate and can be changed.","textChars":49,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/dcju9s76","slide":6,"name":"frame-11-copy-node-configuration.png","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/b6lcj2pk","slide":6,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/a5cbaxoz","slide":6,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/61wf2187","slide":6,"name":"marker-1-899-305","bbox":[885,291,28,28]}
+{"kind":"textbox","id":"sh/72pwb69s","slide":6,"name":"marker-number-1-899-305","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[885,297,28,14]}
+{"kind":"shape","id":"sh/83yx4bqx","slide":6,"name":"marker-2-1137-305","bbox":[1123,291,28,28]}
+{"kind":"textbox","id":"sh/to7edgri","slide":6,"name":"marker-number-2-1137-305","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1123,297,28,14]}
+{"kind":"shape","id":"sh/upgf6l83","slide":6,"name":"marker-3-945-409","bbox":[931,395,28,28]}
+{"kind":"textbox","id":"sh/vqpwfq9o","slide":6,"name":"marker-number-3-945-409","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[931,401,28,14]}
+{"kind":"image","id":"im/ryp0vuh4","slide":6,"name":"","geometry":"roundRect","alt":"Screenshot: 11-copy-node-configuration.png","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/gx92f7","slide":6,"text":"Nodes are not reusable objects in this build. Copy is the quick way to start from an existing node and then change it.\n\n[Sources]\n- Local capture: 11-copy-node-configuration.png\n[/Sources]"}
+{"kind":"slide","id":"sl/vhd4jh","slide":7,"title":"WORKFLOW EDITOR","textShapes":16}
+{"kind":"textbox","id":"sh/qlkfq1g3","slide":7,"name":"kicker-7","text":"WORKFLOW EDITOR","textPreview":"WORKFLOW EDITOR","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/dovy1wzu","slide":7,"name":"title-7","text":"A node sets defaults and limits","textPreview":"A node sets defaults and limits","textChars":31,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/cnmxsry9","slide":7,"name":"number-7","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/3ytgvmhc","slide":7,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/2xkfmhg7","slide":7,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/p0byxwzi","slide":7,"name":"callout-title-1-132","text":"Capability Profile","textPreview":"Capability Profile","textChars":18,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/4z2xoryx","slide":7,"name":"callout-body-1-132","text":"The node picks one profile as its starting limit.","textPreview":"The node picks one profile as its starting limit.","textChars":49,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/nuxg7qhw","slide":7,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/mt4fylgb","slide":7,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/crix8fyp","slide":7,"name":"callout-title-2-236","text":"Defaults","textPreview":"Defaults","textChars":8,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/dcrehkfa","slide":7,"name":"callout-body-2-236","text":"The node sets the model, reasoning, and sandbox used by Workflow messages.","textPreview":"The node sets the model, reasoning, and sandbox used by Workflow messages.","textChars":74,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/qp0f6pgj","slide":7,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/bq9wfax4","slide":7,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/onid4fyt","slide":7,"name":"callout-title-3-340","text":"Prompt and identity","textPreview":"Prompt and identity","textChars":19,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/poredkfe","slide":7,"name":"callout-body-3-340","text":"The node also stores its first prompt and display identity.","textPreview":"The node also stores its first prompt and display identity.","textChars":59,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/2lgv25gn","slide":7,"name":"frame-04-node-restrictions-and-defaults.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/gjydgvyh","slide":7,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/1k7e90f2","slide":7,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/hgzudw7q","slide":7,"name":"marker-1-780-263","bbox":[766,249,28,28]}
+{"kind":"textbox","id":"sh/gfqt4rql","slide":7,"name":"marker-number-1-780-263","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[766,255,28,14]}
+{"kind":"shape","id":"sh/vehcbm90","slide":7,"name":"marker-2-1020-353","bbox":[1006,339,28,28]}
+{"kind":"textbox","id":"sh/ud8b2h8f","slide":7,"name":"marker-number-2-1020-353","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1006,345,28,14]}
+{"kind":"shape","id":"sh/tczu9cru","slide":7,"name":"marker-3-976-539","bbox":[962,525,28,28]}
+{"kind":"textbox","id":"sh/8b6t0rq9","slide":7,"name":"marker-number-3-976-539","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[962,531,28,14]}
+{"kind":"image","id":"im/8ruhkjud","slide":7,"name":"","geometry":"roundRect","alt":"Screenshot: 04-node-restrictions-and-defaults.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/vhd4jh","slide":7,"text":"The node chooses a Capability Profile, then narrows it further. It also stores the first prompt and the identity shown in the product.\n\n[Sources]\n- Local capture: 04-node-restrictions-and-defaults.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/jnamlw","slide":8,"title":"WORKFLOW EDITOR","textShapes":16}
+{"kind":"textbox","id":"sh/3yt87650","slide":8,"name":"kicker-8","text":"WORKFLOW EDITOR","textPreview":"WORKFLOW EDITOR","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/oz290bml","slide":8,"name":"title-8","text":"A connection defines an event trigger","textPreview":"A connection defines an event trigger","textChars":37,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/p0vq9gn6","slide":8,"name":"number-8","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/q14r2l4r","slide":8,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/bmdsb65w","slide":8,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/cnm94bmh","slide":8,"name":"callout-title-1-132","text":"From and to","textPreview":"From and to","textChars":11,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/dovadgn2","slide":8,"name":"callout-body-1-132","text":"The connection names its source and destination nodes.","textPreview":"The connection names its source and destination nodes.","textChars":54,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/yp4r6l4n","slide":8,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/zqdsfq58","slide":8,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/bq587exo","slide":8,"name":"callout-title-2-236","text":"Trigger","textPreview":"Trigger","textChars":7,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/qpw7ytg3","slide":8,"name":"callout-body-2-236","text":"Choose what starts the event.","textPreview":"Choose what starts the event.","textChars":29,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/dsnq9ofe","slide":8,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/crep0jyt","slide":8,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/3m583exc","slide":8,"name":"callout-title-3-340","text":"Prompt order","textPreview":"Prompt order","textChars":12,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/2lc7u9gr","slide":8,"name":"callout-body-3-340","text":"The prompt sources are listed in delivery order.","textPreview":"The prompt sources are listed in delivery order.","textChars":48,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/ponq5ofi","slide":8,"name":"frame-05-connection-trigger-and-prompt.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/nip8fixg","slide":8,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/mhg76dgb","slide":8,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/idkbyh0j","slide":8,"name":"marker-1-842-217","bbox":[828,203,28,28]}
+{"kind":"textbox","id":"sh/jets72ho","slide":8,"name":"marker-number-1-842-217","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[828,209,28,14]}
+{"kind":"shape","id":"sh/kf2t07i9","slide":8,"name":"marker-2-945-311","bbox":[931,297,28,28]}
+{"kind":"textbox","id":"sh/5gba9czu","slide":8,"name":"marker-number-2-945-311","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[931,303,28,14]}
+{"kind":"shape","id":"sh/6hkb2h0f","slide":8,"name":"marker-3-927-478","bbox":[913,464,28,28]}
+{"kind":"textbox","id":"sh/7itsbmh0","slide":8,"name":"marker-number-3-927-478","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[913,470,28,14]}
+{"kind":"image","id":"im/3u1cz2hs","slide":8,"name":"","geometry":"roundRect","alt":"Screenshot: 05-connection-trigger-and-prompt.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/jnamlw","slide":8,"text":"Each connection becomes a Session Event definition. The editor shows which nodes it connects, what starts it, and the order of prompt parts.\n\n[Sources]\n- Local capture: 05-connection-trigger-and-prompt.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/snttui","slide":9,"title":"WORKFLOW EDITOR","textShapes":16}
+{"kind":"textbox","id":"sh/behw3ido","slide":9,"name":"kicker-9","text":"WORKFLOW EDITOR","textPreview":"WORKFLOW EDITOR","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/cfqxcnu9","slide":9,"name":"title-9","text":"A connection builds the prompt and finds Sessions","textPreview":"A connection builds the prompt and finds Sessions","textChars":49,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/xgze5svu","slide":9,"name":"number-9","text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/29ov6dw7","slide":9,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/naxwzids","slide":9,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/ob6d8ned","slide":9,"name":"callout-title-1-132","text":"Prompt sources","textPreview":"Prompt sources","textChars":14,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/pcfe18vi","slide":9,"name":"callout-body-1-132","text":"Connection text, MCP values, file name, and node prompt can be combined.","textPreview":"Connection text, MCP values, file name, and node prompt can be combined.","textChars":72,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/m5sfixcb","slide":9,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/761wb2dw","slide":9,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/zel0fqtk","slide":9,"name":"callout-title-2-236","text":"Target rules","textPreview":"Target rules","textChars":12,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/etcjmlsz","slide":9,"name":"callout-body-2-236","text":"Find Sessions by node and relation, then choose first, all, or newest.","textPreview":"Find Sessions by node and relation, then choose first, all, or newest.","textChars":70,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/1g3ih0bq","slide":9,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/0fu1ova5","slide":9,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/nil0jatg","slide":9,"name":"callout-title-3-340","text":"Create if missing","textPreview":"Create if missing","textChars":17,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/mhcjq5sb","slide":9,"name":"callout-body-3-340","text":"The event may create a Session when no match exists.","textPreview":"The event may create a Session when no match exists.","textChars":52,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/9k32l0bm","slide":9,"name":"frame-06-connection-prompt-and-target.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/bm5knats","slide":9,"name":"label-LIVE DEMO-144","bbox":[473,144,110,25]}
+{"kind":"textbox","id":"sh/alwju5s7","slide":9,"name":"label-text-LIVE DEMO-144","text":"LIVE DEMO","textPreview":"LIVE DEMO","textChars":9,"textLines":1,"bbox":[483,150,90,13]}
+{"kind":"shape","id":"sh/6hg3m9cf","slide":9,"name":"marker-1-811-248","bbox":[797,234,28,28]}
+{"kind":"textbox","id":"sh/7ip4fed0","slide":9,"name":"marker-number-1-811-248","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[797,240,28,14]}
+{"kind":"shape","id":"sh/sjylojul","slide":9,"name":"marker-2-960-425","bbox":[946,411,28,28]}
+{"kind":"textbox","id":"sh/t4rmhov6","slide":9,"name":"marker-number-2-960-425","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[946,417,28,14]}
+{"kind":"shape","id":"sh/ydg3i9cj","slide":9,"name":"marker-3-1095-560","bbox":[1081,546,28,28]}
+{"kind":"textbox","id":"sh/jep4bedo","slide":9,"name":"marker-number-3-1095-560","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1081,552,28,14]}
+{"kind":"image","id":"im/ratwvyp4","slide":9,"name":"","geometry":"roundRect","alt":"Screenshot: 06-connection-prompt-and-target.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/snttui","slide":9,"text":"The connection form makes prompt assembly and Session lookup explicit. These values compile into the generic Session Event model.\n\n[Sources]\n- Local capture: 06-connection-prompt-and-target.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/cfubcn","slide":10,"title":"COMPILE AND RUN","textShapes":18}
+{"kind":"textbox","id":"sh/7uxw7ed4","slide":10,"name":"kicker-10","text":"COMPILE AND RUN","textPreview":"COMPILE AND RUN","textChars":15,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/sv6dgjep","slide":10,"name":"title-10","text":"Compile builds Session Events for a run","textPreview":"Compile builds Session Events for a run","textChars":39,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/twfe9ova","slide":10,"name":"number-10","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/i5ova9wn","slide":10,"name":"callout-circle-1-126","bbox":[42,128,30,30]}
+{"kind":"textbox","id":"sh/j6xw3uxs","slide":10,"name":"callout-number-1-126","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,134,30,15]}
+{"kind":"textbox","id":"sh/k76dczed","slide":10,"name":"callout-title-1-126","text":"Instance ID","textPreview":"Instance ID","textChars":11,"textLines":1,"bbox":[86,126,330,24]}
+{"kind":"textbox","id":"sh/5sfe54vy","slide":10,"name":"callout-body-1-126","text":"A typed ID is used to scope the compiled event.","textPreview":"A typed ID is used to scope the compiled event.","textChars":47,"textLines":1,"bbox":[86,156,330,58]}
+{"kind":"shape","id":"sh/a14v6pwb","slide":10,"name":"callout-circle-2-230","bbox":[42,232,30,30]}
+{"kind":"textbox","id":"sh/v2dczuxw","slide":10,"name":"callout-number-2-230","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,238,30,15]}
+{"kind":"textbox","id":"sh/bad83yd4","slide":10,"name":"callout-title-2-230","text":"Compile","textPreview":"Compile","textChars":7,"textLines":1,"bbox":[86,230,330,24]}
+{"kind":"textbox","id":"sh/a947atwj","slide":10,"name":"callout-body-2-230","text":"Compile shows the event definitions before they run.","textPreview":"Compile shows the event definitions before they run.","textChars":52,"textLines":1,"bbox":[86,260,330,58]}
+{"kind":"shape","id":"sh/xcvq5ova","slide":10,"name":"callout-circle-3-334","bbox":[42,336,30,30]}
+{"kind":"textbox","id":"sh/cbmpc3ep","slide":10,"name":"callout-number-3-334","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,342,30,15]}
+{"kind":"textbox","id":"sh/zed87yd0","slide":10,"name":"callout-title-3-334","text":"Staged request","textPreview":"Staged request","textChars":14,"textLines":1,"bbox":[86,334,330,24]}
+{"kind":"textbox","id":"sh/yd47etcv","slide":10,"name":"callout-body-3-334","text":"A user-triggered event can be prepared without sending it.","textPreview":"A user-triggered event can be prepared without sending it.","textChars":58,"textLines":1,"bbox":[86,364,330,58]}
+{"kind":"shape","id":"sh/lgfq98v6","slide":10,"name":"issue-548","bbox":[42,548,374,86]}
+{"kind":"textbox","id":"sh/kf6pg3ul","slide":10,"name":"issue-text-548","text":"Known problem: the old instance list and Create Workflow instance flow are missing. A typed ID is not a replacement.","textPreview":"Known problem: the old instance list and Create Workflow instance flow are missing. A typed ID is not a replacement.","textChars":116,"textLines":1,"bbox":[60,563,338,58]}
+{"kind":"shape","id":"sh/fitovedw","slide":10,"name":"frame-07-compile-and-run.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/ix8bahwz","slide":10,"name":"label-LIVE · NOT SENT-144","bbox":[473,144,117,25]}
+{"kind":"textbox","id":"sh/3y1s3mxk","slide":10,"name":"label-text-LIVE · NOT SENT-144","text":"LIVE · NOT SENT","textPreview":"LIVE · NOT SENT","textChars":15,"textLines":1,"bbox":[483,150,97,13]}
+{"kind":"shape","id":"sh/4zatc7e5","slide":10,"name":"marker-1-804-220","bbox":[790,206,28,28]}
+{"kind":"textbox","id":"sh/50ja5cfq","slide":10,"name":"marker-number-1-804-220","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[790,212,28,14]}
+{"kind":"shape","id":"sh/u98b6xg3","slide":10,"name":"marker-2-1124-220","bbox":[1110,206,28,28]}
+{"kind":"textbox","id":"sh/vahsz2x8","slide":10,"name":"marker-number-2-1124-220","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1110,212,28,14]}
+{"kind":"shape","id":"sh/gbqt87yt","slide":10,"name":"marker-3-997-514","bbox":[983,500,28,28]}
+{"kind":"textbox","id":"sh/hwza1cfe","slide":10,"name":"marker-number-3-997-514","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[983,506,28,14]}
+{"kind":"shape","id":"sh/65or2xgr","slide":10,"name":"marker-!-679-220","bbox":[665,206,28,28]}
+{"kind":"textbox","id":"sh/76hsv2xc","slide":10,"name":"marker-number-!-679-220","text":"!","textPreview":"!","textChars":1,"textLines":1,"bbox":[665,212,28,14]}
+{"kind":"image","id":"im/9kzatknq","slide":10,"name":"","geometry":"roundRect","alt":"Screenshot: 07-compile-and-run.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/cfubcn","slide":10,"text":"Compile turns the recipe into Session Event definitions. The current screen only accepts a typed instance ID. The old list and Create Workflow instance flow need to return.\n\n[Sources]\n- Local capture: 07-compile-and-run.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/vgugqu","slide":11,"title":"AGENT SESSION","textShapes":16}
+{"kind":"textbox","id":"sh/x4r21cz6","slide":11,"name":"kicker-11","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/a1gj6xgf","slide":11,"name":"title-11","text":"Each Session shows its pinned profile","textPreview":"Each Session shows its pinned profile","textChars":37,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/v2pkz2h0","slide":11,"name":"number-11","text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/8zy14ny9","slide":11,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/9072xszu","slide":11,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/mdgj2xgj","slide":11,"name":"callout-title-1-132","text":"Next message","textPreview":"Next message","textChars":12,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/nepkv2h4","slide":11,"name":"callout-body-1-132","text":"A direct user message may pick model and reasoning for that message.","textPreview":"A direct user message may pick model and reasoning for that message.","textChars":68,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/0be10nyd","slide":11,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/lc729szy","slide":11,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/twvy54n6","slide":11,"name":"callout-title-2-236","text":"Pinned profile","textPreview":"Pinned profile","textChars":14,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/svmhczml","slide":11,"name":"callout-body-2-236","text":"The Session keeps the resolved profile revision and digest from creation.","textPreview":"The Session keeps the resolved profile revision and digest from creation.","textChars":73,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/rudg3u50","slide":11,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/6t4zap4f","slide":11,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/5svy14nu","slide":11,"name":"callout-title-3-340","text":"Source node","textPreview":"Source node","textChars":11,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/4rmh8zm9","slide":11,"name":"callout-body-3-340","text":"The Session shows which Workflow instance and node created it.","textPreview":"The Session shows which Workflow instance and node created it.","textChars":62,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/j6tgzu54","slide":11,"name":"frame-08-session-profile-and-message-controls.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/h4byxkny","slide":11,"name":"label-SEEDED SESSION-144","bbox":[473,144,110.8,25]}
+{"kind":"textbox","id":"sh/w32h4fmd","slide":11,"name":"label-text-SEEDED SESSION-144","text":"SEEDED SESSION","textPreview":"SEEDED SESSION","textChars":14,"textLines":1,"bbox":[483,150,90.8,13]}
+{"kind":"shape","id":"sh/8jqp0jil","slide":11,"name":"marker-1-896-266","bbox":[882,252,28,28]}
+{"kind":"textbox","id":"sh/9kzq9oz6","slide":11,"name":"marker-number-1-896-266","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[882,258,28,14]}
+{"kind":"shape","id":"sh/mxo7y90f","slide":11,"name":"marker-2-850-424","bbox":[836,410,28,28]}
+{"kind":"textbox","id":"sh/7ih87eh0","slide":11,"name":"marker-number-2-850-424","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[836,416,28,14]}
+{"kind":"shape","id":"sh/kv6pwzi9","slide":11,"name":"marker-3-1083-424","bbox":[1069,410,28,28]}
+{"kind":"textbox","id":"sh/lwfq54zu","slide":11,"name":"marker-number-3-1083-424","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1069,416,28,14]}
+{"kind":"image","id":"im/xo3qpozu","slide":11,"name":"","geometry":"roundRect","alt":"Screenshot: 08-session-profile-and-message-controls.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/vgugqu","slide":11,"text":"This seeded Session shows the new per-message controls and the profile pinned when the Session was created. No provider request was sent.\n\n[Sources]\n- Local seeded capture: 08-session-profile-and-message-controls.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/dfm7xx","slide":12,"title":"AGENT SESSION","textShapes":16}
+{"kind":"textbox","id":"sh/o7atobyx","slide":12,"name":"kicker-12","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/n61sf6xs","slide":12,"name":"title-12","text":"Node defaults are shown in the Session","textPreview":"Node defaults are shown in the Session","textChars":38,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/25sbm1g7","slide":12,"name":"number-12","text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/14jadwfm","slide":12,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/03atkry1","slide":12,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/f21sb6xg","slide":12,"name":"callout-title-1-132","text":"Workflow defaults","textPreview":"Workflow defaults","textChars":17,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/ehsbi1gv","slide":12,"name":"callout-body-1-132","text":"The pinned model, reasoning, and sandbox are shown together.","textPreview":"The pinned model, reasoning, and sandbox are shown together.","textChars":60,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/l0nup0fq","slide":12,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/kzutwvy5","slide":12,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/ex0ruhwb","slide":12,"name":"callout-title-2-236","text":"Allowed choices","textPreview":"Allowed choices","textChars":15,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/fi9s3mxw","slide":12,"name":"callout-body-2-236","text":"The Session shows the models and reasoning levels allowed by the node.","textPreview":"The Session shows the models and reasoning levels allowed by the node.","textChars":70,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/0j29wreh","slide":12,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/1kba5cfm","slide":12,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/qt0rqxwz","slide":12,"name":"callout-title-3-340","text":"Pinned time","textPreview":"Pinned time","textChars":11,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/ru9sz2xk","slide":12,"name":"callout-body-3-340","text":"The record shows when this configuration was fixed.","textPreview":"The record shows when this configuration was fixed.","textChars":51,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/svi9s7e5","slide":12,"name":"frame-09-pinned-defaults-and-node-capabilities.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/apkr21wj","slide":12,"name":"label-SEEDED SESSION-144","bbox":[473,144,110.8,25]}
+{"kind":"textbox","id":"sh/bqdsb6x4","slide":12,"name":"label-text-SEEDED SESSION-144","text":"SEEDED SESSION","textPreview":"SEEDED SESSION","textChars":14,"textLines":1,"bbox":[483,150,90.8,13]}
+{"kind":"shape","id":"sh/7ilg7u94","slide":12,"name":"marker-1-791-271","bbox":[777,257,28,28]}
+{"kind":"textbox","id":"sh/mhcfep8j","slide":12,"name":"marker-number-1-791-271","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[777,263,28,14]}
+{"kind":"shape","id":"sh/9k3y94ra","slide":12,"name":"marker-2-1032-271","bbox":[1018,257,28,28]}
+{"kind":"textbox","id":"sh/8juxgzqp","slide":12,"name":"marker-number-2-1032-271","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1018,263,28,14]}
+{"kind":"shape","id":"sh/vmlgbe9g","slide":12,"name":"marker-3-1110-470","bbox":[1096,456,28,28]}
+{"kind":"textbox","id":"sh/ulcfi98v","slide":12,"name":"marker-number-3-1110-470","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1096,462,28,14]}
+{"kind":"image","id":"im/ulk7mt8z","slide":12,"name":"","geometry":"roundRect","alt":"Screenshot: 09-pinned-defaults-and-node-capabilities.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/dfm7xx","slide":12,"text":"The Session view separates the defaults used by Workflow messages from the wider runtime choices available to a direct user prompt.\n\n[Sources]\n- Local seeded capture: 09-pinned-defaults-and-node-capabilities.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/ygnitt","slide":13,"title":"AGENT SESSION","textShapes":16}
+{"kind":"textbox","id":"sh/1oju5kbm","slide":13,"name":"kicker-13","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/elsva5cv","slide":13,"name":"title-13","text":"Runtime exposure and delivery history are separate","textPreview":"Runtime exposure and delivery history are separate","textChars":50,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/zm1c3atg","slide":13,"name":"number-13","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/8rudgfux","slide":13,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/9c3u9kbi","slide":13,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/mpsvepc7","slide":13,"name":"callout-title-1-132","text":"Attached runtime","textPreview":"Attached runtime","textChars":16,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/nqlc7uts","slide":13,"name":"callout-body-1-132","text":"Shows the models and reasoning modes the current runtime exposes.","textPreview":"Shows the models and reasoning modes the current runtime exposes.","textChars":65,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/wfudkza9","slide":13,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/xg3ud4bu","slide":13,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/hwvapwze","slide":13,"name":"callout-title-2-236","text":"Delivery history","textPreview":"Delivery history","textChars":16,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/gvmtgrit","slide":13,"name":"callout-body-2-236","text":"Lists Session Event deliveries tied to this Session.","textPreview":"Lists Session Event deliveries tied to this Session.","textChars":52,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/vudsnmh8","slide":13,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/ut4beh0n","slide":13,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/pkvatgza","slide":13,"name":"callout-title-3-340","text":"Open details","textPreview":"Open details","textChars":12,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/4zmtkbip","slide":13,"name":"callout-body-3-340","text":"A delivery can be expanded to inspect its source and prompt parts.","textPreview":"A delivery can be expanded to inspect its source and prompt parts.","textChars":66,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/3ydsr6h4","slide":13,"name":"frame-10-attached-runtime-and-delivery-provenance.jpg","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/lobahcz6","slide":13,"name":"label-SEEDED SESSION-144","bbox":[473,144,110.8,25]}
+{"kind":"textbox","id":"sh/k32987il","slide":13,"name":"label-text-SEEDED SESSION-144","text":"SEEDED SESSION","textPreview":"SEEDED SESSION","textChars":14,"textLines":1,"bbox":[483,150,90.8,13]}
+{"kind":"shape","id":"sh/c76t47qh","slide":13,"name":"marker-1-793-274","bbox":[779,260,28,28]}
+{"kind":"textbox","id":"sh/x8faxc72","slide":13,"name":"marker-number-1-793-274","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[779,266,28,14]}
+{"kind":"shape","id":"sh/a54b2h8b","slide":13,"name":"marker-2-849-482","bbox":[835,468,28,28]}
+{"kind":"textbox","id":"sh/b6dsv29w","slide":13,"name":"marker-number-2-849-482","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[835,474,28,14]}
+{"kind":"shape","id":"sh/kb6t8rqd","slide":13,"name":"marker-3-1129-548","bbox":[1115,534,28,28]}
+{"kind":"textbox","id":"sh/lcfa1w7y","slide":13,"name":"marker-number-3-1129-548","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[1115,540,28,14]}
+{"kind":"image","id":"im/l0ryxcv6","slide":13,"name":"","geometry":"roundRect","alt":"Screenshot: 10-attached-runtime-and-delivery-provenance.jpg","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/ygnitt","slide":13,"text":"The runtime card shows what the attached runtime can do. The delivery area below it records how Session Events reached this Session.\n\n[Sources]\n- Local seeded capture: 10-attached-runtime-and-delivery-provenance.jpg\n[/Sources]"}
+{"kind":"slide","id":"sl/tzkat4","slide":14,"title":"SESSION EVENT RESULT","textShapes":16}
+{"kind":"textbox","id":"sh/oju143et","slide":14,"name":"kicker-14","text":"SESSION EVENT RESULT","textPreview":"SESSION EVENT RESULT","textChars":20,"textLines":1,"bbox":[42,24,300,18]}
+{"kind":"textbox","id":"sh/3ilkbyd8","slide":14,"name":"title-14","text":"One event can show every delivery","textPreview":"One event can show every delivery","textChars":33,"textLines":1,"bbox":[42,48,1110,50]}
+{"kind":"textbox","id":"sh/2hcj2twn","slide":14,"name":"number-14","text":"14","textPreview":"14","textChars":2,"textLines":1,"bbox":[1190,28,46,18]}
+{"kind":"shape","id":"sh/d8n2h8va","slide":14,"name":"callout-circle-1-132","bbox":[42,134,30,30]}
+{"kind":"textbox","id":"sh/c7ul83ep","slide":14,"name":"callout-number-1-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,140,30,15]}
+{"kind":"textbox","id":"sh/b6lkfyd4","slide":14,"name":"callout-title-1-132","text":"Event result","textPreview":"Event result","textChars":12,"textLines":1,"bbox":[86,132,330,24]}
+{"kind":"textbox","id":"sh/q5c36twj","slide":14,"name":"callout-body-1-132","text":"Shows the event definition, trigger, and prompt source.","textPreview":"Shows the event definition, trigger, and prompt source.","textChars":55,"textLines":1,"bbox":[86,162,330,58]}
+{"kind":"shape","id":"sh/tcj254v6","slide":14,"name":"callout-circle-2-236","bbox":[42,238,30,30]}
+{"kind":"textbox","id":"sh/sba1wjel","slide":14,"name":"callout-number-2-236","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,244,30,15]}
+{"kind":"textbox","id":"sh/q9wbu94b","slide":14,"name":"callout-title-2-236","text":"Resolved Sessions","textPreview":"Resolved Sessions","textChars":17,"textLines":1,"bbox":[86,236,330,24]}
+{"kind":"textbox","id":"sh/ra5c3elw","slide":14,"name":"callout-body-2-236","text":"Shows every Session selected by the target rules.","textPreview":"Shows every Session selected by the target rules.","textChars":49,"textLines":1,"bbox":[86,266,330,58]}
+{"kind":"shape","id":"sh/sbedwzmh","slide":14,"name":"callout-circle-3-340","bbox":[42,342,30,30]}
+{"kind":"textbox","id":"sh/dcnu5432","slide":14,"name":"callout-number-3-340","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,348,30,15]}
+{"kind":"textbox","id":"sh/edwvy94n","slide":14,"name":"callout-title-3-340","text":"Delivery details","textPreview":"Delivery details","textChars":16,"textLines":1,"bbox":[86,340,330,24]}
+{"kind":"textbox","id":"sh/fe5c7el8","slide":14,"name":"callout-body-3-340","text":"Each delivery keeps its target, status, and prompt contribution.","textPreview":"Each delivery keeps its target, status, and prompt contribution.","textChars":64,"textLines":1,"bbox":[86,370,330,58]}
+{"kind":"shape","id":"sh/0fed0jmt","slide":14,"name":"frame-13-event-result-and-delivery-details.png","bbox":[455,126,780,518]}
+{"kind":"shape","id":"sh/2hgv2t4j","slide":14,"name":"label-COMPONENT FIXTURE-144","bbox":[473,144,129.4,25]}
+{"kind":"textbox","id":"sh/nipcbyl4","slide":14,"name":"label-text-COMPONENT FIXTURE-144","text":"COMPONENT FIXTURE","textPreview":"COMPONENT FIXTURE","textChars":17,"textLines":1,"bbox":[483,150,109.4,13]}
+{"kind":"shape","id":"sh/z6pcjy1c","slide":14,"name":"marker-1-808-220","bbox":[794,206,28,28]}
+{"kind":"textbox","id":"sh/y5gbqt0r","slide":14,"name":"marker-number-1-808-220","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[794,212,28,14]}
+{"kind":"shape","id":"sh/l8rul8ji","slide":14,"name":"marker-2-1055-358","bbox":[1041,344,28,28]}
+{"kind":"textbox","id":"sh/k7its3ix","slide":14,"name":"marker-number-2-1055-358","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[1041,350,28,14]}
+{"kind":"shape","id":"sh/bipsfe1g","slide":14,"name":"marker-3-850-507","bbox":[836,493,28,28]}
+{"kind":"textbox","id":"sh/ahgbm90v","slide":14,"name":"marker-number-3-850-507","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[836,499,28,14]}
+{"kind":"image","id":"im/2lonu5wr","slide":14,"name":"","geometry":"roundRect","alt":"Screenshot: 13-event-result-and-delivery-details.png","bbox":[461,132,768,510]}
+{"kind":"notes","id":"nt/tzkat4","slide":14,"text":"This component fixture shows a completed event with one delivery. The same result view can hold grouped fan-out deliveries. No provider request was sent.\n\n[Sources]\n- Local component fixture: 13-event-result-and-delivery-details.png\n[/Sources]"}

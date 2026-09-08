@@ -1,0 +1,365 @@
+{"kind":"deck","id":"pr/ksvk22","name":"Deck"}
+{"kind":"layout","layoutId":"9d2839ba-07b1-4740-b336-5c896334513f","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"d2bc01f9-fc75-4caa-b246-06aa5f549bed","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/4ij9n0","slide":1,"title":"CODEX ORCHESTRATOR","textShapes":5}
+{"kind":"textbox","id":"sh/6tk3it47","slide":1,"name":"cover-kicker","text":"CODEX ORCHESTRATOR","textPreview":"CODEX ORCHESTRATOR","textChars":18,"textLines":1,"bbox":[54,48,360,22]}
+{"kind":"textbox","id":"sh/tgvmt83y","slide":1,"name":"cover-title","text":"Merged Harness UI demo","textPreview":"Merged Harness UI demo","textChars":22,"textLines":1,"bbox":[54,190,820,86]}
+{"kind":"textbox","id":"sh/sv2lk3md","slide":1,"name":"cover-subtitle","text":"A screen-by-screen review of the current branch","textPreview":"A screen-by-screen review of the current branch","textChars":47,"textLines":1,"bbox":[58,292,700,54]}
+{"kind":"shape","id":"sh/jqtknelg","slide":1,"name":"cover-summary","bbox":[54,408,738,132]}
+{"kind":"textbox","id":"sh/ipk3e94b","slide":1,"name":"cover-summary-text","text":"The Workflow canvas and instance flow are restored.\nThis deck also marks the layout issues still visible in the merged UI.","textPreview":"The Workflow canvas and instance flow are restored. | This deck also marks the layout issues still visible in the merged UI.","textChars":122,"textLines":2,"bbox":[82,438,682,80]}
+{"kind":"textbox","id":"sh/5sbmpo3m","slide":1,"name":"cover-meta","text":"20 slides  ·  branch 2e378bc  ·  local fake clients  ·  no provider call","textPreview":"20 slides  ·  branch 2e378bc  ·  local fake clients  ·  no provider call","textChars":72,"textLines":1,"bbox":[56,646,820,24]}
+{"kind":"notes","id":"nt/4ij9n0","slide":1,"text":"This walkthrough uses fresh in-app browser captures from the merged Harness branch. The fixture mounts the real React components with local fake clients. No provider request was sent."}
+{"kind":"slide","id":"sl/t1lr9v","slide":2,"title":"CAPABILITY PROFILES","textShapes":13}
+{"kind":"textbox","id":"sh/47e5c7yx","slide":2,"name":"section-2","text":"CAPABILITY PROFILES","textPreview":"CAPABILITY PROFILES","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/365o3mxc","slide":2,"name":"title-2","text":"Capability Profile list and details","textPreview":"Capability Profile list and details","textChars":35,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/i5wnahg7","slide":2,"name":"number-2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/h4n61cfm","slide":2,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/g3e587y1","slide":2,"name":"callout-title-0-132","text":"Saved profiles","textPreview":"Saved profiles","textChars":14,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/vi5oz2xg","slide":2,"name":"callout-body-0-132","text":"The left side lists each profile and its revision.","textPreview":"The left side lists each profile and its revision.","textChars":50,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/uhcn6xgv","slide":2,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/1076dwfq","slide":2,"name":"callout-title-1-248","text":"Stable ID","textPreview":"Stable ID","textChars":9,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/0zypkry5","slide":2,"name":"callout-body-1-248","text":"The profile name can change. The profile ID stays fixed.","textPreview":"The profile name can change. The profile ID stays fixed.","textChars":56,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/u9s3idsb","slide":2,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/va1kbitw","slide":2,"name":"callout-title-2-364","text":"Read-only runtime","textPreview":"Read-only runtime","textChars":17,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/gbalknah","slide":2,"name":"callout-body-2-364","text":"The selected native runtime is shown as inherited.","textPreview":"The selected native runtime is shown as inherited.","textChars":50,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/hcj2dsb2","slide":2,"name":"frame-01-capability-profile.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/761k7itk","slide":2,"name":"evidence-01-capability-profile.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/87alg3a5","slide":2,"name":"evidence-text-01-capability-profile.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/1o76t43m","slide":2,"name":"","geometry":"roundRect","alt":"Capability Profile list and profile details","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/t1lr9v","slide":2,"text":"The new Capability Profiles screen is separate from Workflow authoring. The left side changes the selected profile. The right side edits the profile and shows the inherited runtime.\n\n[Sources]\n- Local in-app browser capture: 01-capability-profile.png\n[/Sources]"}
+{"kind":"slide","id":"sl/dxggth","slide":3,"title":"CAPABILITY PROFILES","textShapes":13}
+{"kind":"textbox","id":"sh/4f658rmd","slide":3,"name":"section-3","text":"CAPABILITY PROFILES","textPreview":"CAPABILITY PROFILES","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/jex4fml8","slide":3,"name":"title-3","text":"Allowed capabilities","textPreview":"Allowed capabilities","textChars":20,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/id4n6h4n","slide":3,"name":"number-3","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/t4f6lw3a","slide":3,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/s365crmp","slide":3,"name":"callout-title-0-132","text":"Models and reasoning","textPreview":"Models and reasoning","textChars":20,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/rix4jml4","slide":3,"name":"callout-body-0-132","text":"Tick the choices that nodes may use.","textPreview":"Tick the choices that nodes may use.","textChars":36,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/6hona14j","slide":3,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/18z6pg36","slide":3,"name":"callout-title-1-248","text":"Inherited items","textPreview":"Inherited items","textChars":15,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/g7q5gbml","slide":3,"name":"callout-body-1-248","text":"MCP tools and skills stay locked in this build.","textPreview":"MCP tools and skills stay locked in this build.","textChars":47,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/q1k3y5k3","slide":3,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/r2t47alo","slide":3,"name":"callout-title-2-364","text":"Save or delete","textPreview":"Save or delete","textChars":14,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/s32l0f29","slide":3,"name":"callout-body-2-364","text":"Both actions sit at the end of the profile form.","textPreview":"Both actions sit at the end of the profile form.","textChars":48,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/d4bm903u","slide":3,"name":"frame-02-allowed-capabilities.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/fqd4balk","slide":3,"name":"evidence-02-allowed-capabilities.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/0rml4f25","slide":3,"name":"evidence-text-02-allowed-capabilities.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/xsju5s7q","slide":3,"name":"","geometry":"roundRect","alt":"Capability Profile controls for models, reasoning, MCP, skills, and sandbox","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/dxggth","slide":3,"text":"This is the lower part of the same profile. Model and reasoning choices can be narrowed. MCP, skills, and sandbox show what comes from the selected runtime.\n\n[Sources]\n- Local in-app browser capture: 02-allowed-capabilities.png\n[/Sources]"}
+{"kind":"slide","id":"sl/j87qbr","slide":4,"title":"WORKFLOW","textShapes":13}
+{"kind":"textbox","id":"sh/gfudcz2h","slide":4,"name":"section-4","text":"WORKFLOW","textPreview":"WORKFLOW","textChars":8,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/velc3elw","slide":4,"name":"title-4","text":"Workflow canvas","textPreview":"Workflow canvas","textChars":15,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/udcva9kb","slide":4,"name":"number-4","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/54nu9o3y","slide":4,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/4jedgj2t","slide":4,"name":"callout-title-0-132","text":"The canvas is back","textPreview":"The canvas is back","textChars":18,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/3ilc7el8","slide":4,"name":"callout-body-0-132","text":"Nodes and connections are shown as a flow again.","textPreview":"Nodes and connections are shown as a flow again.","textChars":48,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/ihcve9kn","slide":4,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/lojuxk3u","slide":4,"name":"callout-title-1-248","text":"Edit tools","textPreview":"Edit tools","textChars":10,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/knat4f29","slide":4,"name":"callout-body-1-248","text":"Add, connect, copy, delete, drag, undo, and redo live above the canvas.","textPreview":"Add, connect, copy, delete, drag, undo, and redo live above the canvas.","textChars":71,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/ah47u5c7","slide":4,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/vid83qds","slide":4,"name":"callout-title-2-364","text":"Instances stay visible","textPreview":"Instances stay visible","textChars":22,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/wjmpwvux","slide":4,"name":"callout-body-2-364","text":"Saved Workflow instances sit below the recipe list.","textPreview":"Saved Workflow instances sit below the recipe list.","textChars":51,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/xkvq50vi","slide":4,"name":"frame-03-workflow-canvas.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/jmd87ado","slide":4,"name":"evidence-03-workflow-canvas.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/knmp0fu9","slide":4,"name":"evidence-text-03-workflow-canvas.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/l8z6d43e","slide":4,"name":"","geometry":"roundRect","alt":"Restored Workflow canvas with two nodes and instance list","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/j87qbr","slide":4,"text":"The merge fixes the largest problem in the last demo. The node list no longer replaces the flow. The canvas, recipe list, and instance list now share one screen.\n\n[Sources]\n- Local in-app browser capture: 03-workflow-canvas.png\n[/Sources]"}
+{"kind":"slide","id":"sl/5xlmzp","slide":5,"title":"WORKFLOW NODE","textShapes":13}
+{"kind":"textbox","id":"sh/2dkre5c3","slide":5,"name":"section-5","text":"WORKFLOW NODE","textPreview":"WORKFLOW NODE","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/pgbq9kbe","slide":5,"name":"title-5","text":"Node profile editor","textPreview":"Node profile editor","textChars":19,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/of29gfu9","slide":5,"name":"number-5","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/bit8butk","slide":5,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/qhkripcz","slide":5,"name":"callout-title-0-132","text":"Editor beside the flow","textPreview":"Editor beside the flow","textChars":22,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/dkvqdkbq","slide":5,"name":"callout-body-0-132","text":"Selecting a node opens its form on the right.","textPreview":"Selecting a node opens its form on the right.","textChars":45,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/cj29kfa5","slide":5,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/rm98zqtg","slide":5,"name":"callout-title-1-248","text":"Separate choices","textPreview":"Separate choices","textChars":16,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/6l076lcv","slide":5,"name":"callout-body-1-248","text":"Agent identity and Capability Profile have their own fields.","textPreview":"Agent identity and Capability Profile have their own fields.","textChars":60,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/o7il0jyt","slide":5,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/98r2tofe","slide":5,"name":"callout-title-2-364","text":"Collapsible sections","textPreview":"Collapsible sections","textChars":20,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/m503y9g3","slide":5,"name":"callout-body-2-364","text":"Node details, copy, prompt, limits, defaults, and runtime can fold.","textPreview":"Node details, copy, prompt, limits, defaults, and runtime can fold.","textChars":67,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/n69krex8","slide":5,"name":"frame-04-node-profile.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/xcb2xofq","slide":5,"name":"evidence-04-node-profile.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/a9032tgz","slide":5,"name":"evidence-text-04-node-profile.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/7ep8jmxs","slide":5,"name":"","geometry":"roundRect","alt":"Node Profile editor beside the Workflow canvas","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/5xlmzp","slide":5,"text":"The flow remains visible while the node form opens. The first screen shows the node name, identity, profile, copy section, and creation-only prompt.\n\n[Sources]\n- Local in-app browser capture: 04-node-profile.png\n[/Sources]"}
+{"kind":"slide","id":"sl/dnd8vp","slide":6,"title":"WORKFLOW NODE","textShapes":13}
+{"kind":"textbox","id":"sh/mxsvqhs3","slide":6,"name":"section-6","text":"WORKFLOW NODE","textPreview":"WORKFLOW NODE","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/9k3elwbu","slide":6,"name":"title-6","text":"Copy node setup","textPreview":"Copy node setup","textChars":15,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/8jadsra9","slide":6,"name":"number-6","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/zu1cfmtc","slide":6,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/ytsvmhs7","slide":6,"name":"callout-title-0-132","text":"Choose a source","textPreview":"Choose a source","textChars":15,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/lwjuhcbi","slide":6,"name":"callout-body-0-132","text":"Pick another node in the same Workflow.","textPreview":"Pick another node in the same Workflow.","textChars":39,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/kvado7ax","slide":6,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/bqhcb2tg","slide":6,"name":"callout-title-1-248","text":"Copy the setup","textPreview":"Copy the setup","textChars":14,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/ap8vixsv","slide":6,"name":"callout-body-1-248","text":"The button copies that node into this node.","textPreview":"The button copies that node into this node.","textChars":43,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/cnq983up","slide":6,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/xoza18vu","slide":6,"name":"callout-title-2-364","text":"Edit it here","textPreview":"Edit it here","textChars":12,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/alor6twj","slide":6,"name":"callout-body-2-364","text":"The copied values become separate local node state.","textPreview":"The copied values become separate local node state.","textChars":51,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/bmxszyd4","slide":6,"name":"frame-05-copy-node-profile.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/p0fqxovy","slide":6,"name":"evidence-05-copy-node-profile.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/2xor2tw7","slide":6,"name":"evidence-text-05-copy-node-profile.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/jypg3idw","slide":6,"name":"","geometry":"roundRect","alt":"Expanded copy node configuration section","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/dnd8vp","slide":6,"text":"There is no shared Node Profile catalog. This section supports the agreed copy-and-edit flow without creating reusable node objects.\n\n[Sources]\n- Local in-app browser capture: 05-copy-node-profile.png\n[/Sources]"}
+{"kind":"slide","id":"sl/57bu5n","slide":7,"title":"WORKFLOW NODE","textShapes":13}
+{"kind":"textbox","id":"sh/4jatobah","slide":7,"name":"section-7","text":"WORKFLOW NODE","textPreview":"WORKFLOW NODE","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/3i1sv6tw","slide":7,"name":"title-7","text":"Node limits and defaults","textPreview":"Node limits and defaults","textChars":24,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/ihsb21sb","slide":7,"name":"number-7","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/do3a10ry","slide":7,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/cnutsvad","slide":7,"name":"callout-title-0-132","text":"Inherited access","textPreview":"Inherited access","textChars":16,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/rmlszq9s","slide":7,"name":"callout-body-0-132","text":"MCP, skills, and sandbox show their runtime source.","textPreview":"MCP, skills, and sandbox show their runtime source.","textChars":51,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/qlcbqls7","slide":7,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/1cna50ru","slide":7,"name":"callout-title-1-248","text":"Workflow defaults","textPreview":"Workflow defaults","textChars":17,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/0rutwvap","slide":7,"name":"callout-body-1-248","text":"Model and reasoning are set for Workflow messages.","textPreview":"Model and reasoning are set for Workflow messages.","textChars":50,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/qp4rupgv","slide":7,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/rqds3uxg","slide":7,"name":"callout-title-2-364","text":"Locked sandbox","textPreview":"Locked sandbox","textChars":14,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/crm9wzy1","slide":7,"name":"callout-body-2-364","text":"The sandbox is visible but cannot change here.","textPreview":"The sandbox is visible but cannot change here.","textChars":46,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/dsva54fm","slide":7,"name":"frame-06-node-limits-defaults.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/zuds7exc","slide":7,"name":"evidence-06-node-limits-defaults.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/0v690jyx","slide":7,"name":"evidence-text-06-node-limits-defaults.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/5c3qtkbu","slide":7,"name":"","geometry":"roundRect","alt":"Node capability limits and pinned defaults","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/57bu5n","slide":7,"text":"The node may narrow its Capability Profile. The node also sets the model and reasoning used when the Workflow sends a message. The sandbox stays inherited.\n\n[Sources]\n- Local in-app browser capture: 06-node-limits-defaults.png\n[/Sources]"}
+{"kind":"slide","id":"sl/r7od1v","slide":8,"title":"WORKFLOW CONNECTION","textShapes":13}
+{"kind":"textbox","id":"sh/ze5sfy9k","slide":8,"name":"section-8","text":"WORKFLOW CONNECTION","textPreview":"WORKFLOW CONNECTION","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/0fyt83a5","slide":8,"name":"title-8","text":"Connection trigger","textPreview":"Connection trigger","textChars":18,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/1g7ah8rq","slide":8,"name":"number-8","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/mhgbatsb","slide":8,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/nipsjy9w","slide":8,"name":"callout-title-0-132","text":"The edge sets direction","textPreview":"The edge sets direction","textChars":23,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/ojytc3ah","slide":8,"name":"callout-body-0-132","text":"Author is the source. Reviewer is the destination.","textPreview":"Author is the source. Reviewer is the destination.","textChars":50,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/9k7al8rm","slide":8,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/algbeds7","slide":8,"name":"callout-title-1-248","text":"The trigger is explicit","textPreview":"The trigger is explicit","textChars":23,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/bm9sni9s","slide":8,"name":"callout-body-1-248","text":"This connection starts after an invocation completes.","textPreview":"This connection starts after an invocation completes.","textChars":53,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/7et4j65s","slide":8,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/mdkna147","slide":8,"name":"callout-title-2-364","text":"Prompt logic follows","textPreview":"Prompt logic follows","textChars":20,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/9gvmlgny","slide":8,"name":"callout-body-2-364","text":"The ordered prompt parts sit in the next section.","textPreview":"The ordered prompt parts sit in the next section.","textChars":49,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/8f25cbmd","slide":8,"name":"frame-07-connection-trigger.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/ypkn614b","slide":8,"name":"evidence-07-connection-trigger.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/lcbmhwnm","slide":8,"name":"evidence-text-07-connection-trigger.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/onaxojqh","slide":8,"name":"","geometry":"roundRect","alt":"Connection editor with source, destination, and trigger","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/r7od1v","slide":8,"text":"Selecting the line opens the connection editor. The top of the form names the nodes and the trigger that starts the Session Event.\n\n[Sources]\n- Local in-app browser capture: 07-connection-trigger.png\n[/Sources]"}
+{"kind":"slide","id":"sl/kqdnmu","slide":9,"title":"WORKFLOW CONNECTION","textShapes":14}
+{"kind":"textbox","id":"sh/qt0fqxsz","slide":9,"name":"section-9","text":"WORKFLOW CONNECTION","textPreview":"WORKFLOW CONNECTION","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/dwry1crq","slide":9,"name":"title-9","text":"Prompt and Session target","textPreview":"Prompt and Session target","textChars":25,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/cvixs7a5","slide":9,"name":"number-9","text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/36pwv29o","slide":9,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/25gfmxs3","slide":9,"name":"callout-title-0-132","text":"Fixed prompt","textPreview":"Fixed prompt","textChars":12,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/p8rexsre","slide":9,"name":"callout-body-0-132","text":"The connection can append its own text.","textPreview":"The connection can append its own text.","textChars":39,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/o7ixo7a9","slide":9,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/f2pwri9c","slide":9,"name":"callout-title-1-248","text":"Match rules","textPreview":"Match rules","textChars":11,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/e1gfidsr","slide":9,"name":"callout-body-1-248","text":"Choose the Session order and running state.","textPreview":"Choose the Session order and running state.","textChars":43,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/g729krq9","slide":9,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/h8bqtwre","slide":9,"name":"callout-title-2-364","text":"No match rule","textPreview":"No match rule","textChars":13,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/u50ri183","slide":9,"name":"callout-body-2-364","text":"The event can create a Session when none match.","textPreview":"The event can create a Session when none match.","textChars":47,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/f698rm9o","slide":9,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/83i9grqx","slide":9,"name":"issue-text-480","text":"Needs polish: the recorded-source checkbox sits too far from its label at this width.","textPreview":"Needs polish: the recorded-source checkbox sits too far from its label at this width.","textChars":85,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/t4rqpwri","slide":9,"name":"frame-08-connection-prompt-target.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/7298nm9c","slide":9,"name":"evidence-08-connection-prompt-target.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/czm9sbq1","slide":9,"name":"evidence-text-08-connection-prompt-target.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/p8bi1c3i","slide":9,"name":"","geometry":"roundRect","alt":"Connection prompt and Session addressing controls","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/kqdnmu","slide":9,"text":"This part controls prompt text and Session lookup. The behavior is present, but the checkbox layout is still awkward at the reviewed width.\n\n[Sources]\n- Local in-app browser capture: 08-connection-prompt-target.png\n[/Sources]"}
+{"kind":"slide","id":"sl/tazxru","slide":10,"title":"WORKFLOW CONNECTION","textShapes":13}
+{"kind":"textbox","id":"sh/ipkv6xw7","slide":10,"name":"section-10","text":"WORKFLOW CONNECTION","textPreview":"WORKFLOW CONNECTION","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/5sbe1cvy","slide":10,"name":"title-10","text":"MCP trigger references","textPreview":"MCP trigger references","textChars":22,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/4r2x87ed","slide":10,"name":"number-10","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/redw3md4","slide":10,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/qt4fahwj","slide":10,"name":"callout-title-0-132","text":"MCP call trigger","textPreview":"MCP call trigger","textChars":16,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/dgve5cvu","slide":10,"name":"callout-body-0-132","text":"The trigger type can change from completion to MCP call.","textPreview":"The trigger type can change from completion to MCP call.","textChars":56,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/sfmxcrep","slide":10,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/fidw7md0","slide":10,"name":"callout-title-1-248","text":"Server reference","textPreview":"Server reference","textChars":16,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/eh4fehwf","slide":10,"name":"callout-body-1-248","text":"Namespace, kind, and ID identify the MCP server.","textPreview":"Namespace, kind, and ID identify the MCP server.","textChars":48,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/kfytcfmx","slide":10,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/5g7alk3i","slide":10,"name":"callout-title-2-364","text":"Tool reference","textPreview":"Tool reference","textChars":14,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/ydgrap4r","slide":10,"name":"callout-body-2-364","text":"A second reference identifies the MCP tool.","textPreview":"A second reference identifies the MCP tool.","textChars":43,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/jepsjalc","slide":10,"name":"frame-17-mcp-trigger.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/t4rap43e","slide":10,"name":"evidence-17-mcp-trigger.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/61gbep43","slide":10,"name":"evidence-text-17-mcp-trigger.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/v61wzads","slide":10,"name":"","geometry":"roundRect","alt":"MCP trigger with server and tool references","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/tazxru","slide":10,"text":"This state shows the built-in MCP trigger. The connection stores separate typed references for the server and the tool.\n\n[Sources]\n- Local in-app browser capture: 17-mcp-trigger.png\n[/Sources]"}
+{"kind":"slide","id":"sl/l09662","slide":11,"title":"WORKFLOW CONNECTION","textShapes":13}
+{"kind":"textbox","id":"sh/va987ils","slide":11,"name":"section-11","text":"WORKFLOW CONNECTION","textPreview":"WORKFLOW CONNECTION","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/gbi9gn2d","slide":11,"name":"title-11","text":"Ordered prompt sources","textPreview":"Ordered prompt sources","textChars":22,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/hcbq9s3y","slide":11,"name":"number-11","text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/idkrixkj","slide":11,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/3et8b2lo","slide":11,"name":"callout-title-0-132","text":"One row per source","textPreview":"One row per source","textChars":18,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/4f29k729","slide":11,"name":"callout-body-0-132","text":"Each row has a type and the fields for that type.","textPreview":"Each row has a type and the fields for that type.","textChars":49,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/pgbqds3u","slide":11,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/yhg76tkz","slide":11,"name":"callout-title-1-248","text":"Order controls","textPreview":"Order controls","textChars":14,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/jip8zylk","slide":11,"name":"callout-body-1-248","text":"Move a row up or down, or remove it.","textPreview":"Move a row up or down, or remove it.","textChars":36,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/bih03et8","slide":11,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/ax8jatsn","slide":11,"name":"callout-title-2-364","text":"More prompt parts","textPreview":"More prompt parts","textChars":17,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/xkji5oby","slide":11,"name":"callout-body-2-364","text":"Add another source or fixed connection text.","textPreview":"Add another source or fixed connection text.","textChars":44,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/wja1cjad","slide":11,"name":"frame-19-prompt-sources.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/mt8j69sb","slide":11,"name":"evidence-19-prompt-sources.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/9wzi1ob2","slide":11,"name":"evidence-text-19-prompt-sources.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/4z218za9","slide":11,"name":"","geometry":"roundRect","alt":"Two ordered prompt source rows","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/l09662","slide":11,"text":"The screenshot shows an MCP argument and referenced file content in one ordered list. The order on screen is the order used in the prompt.\n\n[Sources]\n- Local in-app browser capture: 19-prompt-sources.png\n[/Sources]"}
+{"kind":"slide","id":"sl/x3x59b","slide":12,"title":"WORKFLOW CONNECTION","textShapes":14}
+{"kind":"textbox","id":"sh/pkbidkjy","slide":12,"name":"section-12","text":"WORKFLOW CONNECTION","textPreview":"WORKFLOW CONNECTION","textChars":19,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/2h0ji50n","slide":12,"name":"title-12","text":"Recorded-source filter","textPreview":"Recorded-source filter","textChars":22,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/3i90ba1s","slide":12,"name":"number-12","text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/gfi1gvih","slide":12,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/1gri90j2","slide":12,"name":"callout-title-0-132","text":"Optional filter","textPreview":"Optional filter","textChars":15,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/et0zel0b","slide":12,"name":"callout-body-0-132","text":"Limit matches to Sessions made by a recorded source.","textPreview":"Limit matches to Sessions made by a recorded source.","textChars":52,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/fe907q1w","slide":12,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/sryhcvi5","slide":12,"name":"callout-title-1-248","text":"Event reference","textPreview":"Event reference","textChars":15,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/tsri5gjq","slide":12,"name":"callout-body-1-248","text":"Namespace, kind, and ID name the creating event.","textPreview":"Namespace, kind, and ID name the creating event.","textChars":48,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/90vi9k7q","slide":12,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/8zm10f65","slide":12,"name":"callout-title-2-364","text":"Fallback","textPreview":"Fallback","textChars":8,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/nyd07apk","slide":12,"name":"callout-body-2-364","text":"Create a Session when no Session matches.","textPreview":"Create a Session when no Session matches.","textChars":41,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/mx4jy5oz","slide":12,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/lcvi507e","slide":12,"name":"issue-text-480","text":"Needs polish: checkbox size and label spacing are still uneven.","textPreview":"Needs polish: checkbox size and label spacing are still uneven.","textChars":63,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/0bm1wv6t","slide":12,"name":"frame-18-recorded-source-target.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/y94ja5o3","slide":12,"name":"evidence-18-recorded-source-target.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/d8bi107i","slide":12,"name":"evidence-text-18-recorded-source-target.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/4fut0zu1","slide":12,"name":"","geometry":"roundRect","alt":"Session lookup filtered by the recorded creating event","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/x3x59b","slide":12,"text":"This state shows the deeper Session addressing rule. It can match the event or Session that created the target. The fields work, but the checkbox layout needs another pass.\n\n[Sources]\n- Local in-app browser capture: 18-recorded-source-target.png\n[/Sources]"}
+{"kind":"slide","id":"sl/mmye1p","slide":13,"title":"WORKFLOW INSTANCE","textShapes":13}
+{"kind":"textbox","id":"sh/9g3yhofy","slide":13,"name":"section-13","text":"WORKFLOW INSTANCE","textPreview":"WORKFLOW INSTANCE","textChars":17,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/mdszmtw7","slide":13,"name":"title-13","text":"Create Workflow instance","textPreview":"Create Workflow instance","textChars":24,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/nelgfyxs","slide":13,"name":"number-13","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/0bahkjeh","slide":13,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/1cjydofm","slide":13,"name":"callout-title-0-132","text":"Choose a saved Workflow","textPreview":"Choose a saved Workflow","textChars":23,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/e9sfi9wb","slide":13,"name":"callout-body-0-132","text":"The picker uses an active saved revision.","textPreview":"The picker uses an active saved revision.","textChars":41,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/za1gbexw","slide":13,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/k7ehwnel","slide":13,"name":"callout-title-1-248","text":"Name the instance","textPreview":"Name the instance","textChars":17,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/58nypsv6","slide":13,"name":"callout-body-1-248","text":"The run gets a clear name in the instance list.","textPreview":"The run gets a clear name in the instance list.","textChars":47,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/doz2hone","slide":13,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/sn61o36t","slide":13,"name":"callout-title-2-364","text":"Choose a worktree","textPreview":"Choose a worktree","textChars":17,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/rmxkfy58","slide":13,"name":"callout-body-2-364","text":"The dialog states that creation does not start an agent.","textPreview":"The dialog states that creation does not start an agent.","textChars":56,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/qlojmto3","slide":13,"name":"frame-09-create-instance.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/4z61kj6x","slide":13,"name":"evidence-09-create-instance.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/3yxkbe5c","slide":13,"name":"evidence-text-09-create-instance.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/q18vydwr","slide":13,"name":"","geometry":"roundRect","alt":"Create Workflow instance dialog","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/mmye1p","slide":13,"text":"The missing instance flow is restored. The user chooses the Workflow, instance name, and worktree. Creating the instance saves it but does not send a request.\n\n[Sources]\n- Local in-app browser capture: 09-create-instance.png\n[/Sources]"}
+{"kind":"slide","id":"sl/w2xf1w","slide":14,"title":"WORKFLOW INSTANCE","textShapes":13}
+{"kind":"textbox","id":"sh/3qdcvy5g","slide":14,"name":"section-14","text":"WORKFLOW INSTANCE","textPreview":"WORKFLOW INSTANCE","textChars":17,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/ormdo361","slide":14,"name":"title-14","text":"Saved Workflow instance","textPreview":"Saved Workflow instance","textChars":23,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/psvux8nm","slide":14,"name":"number-14","text":"14","textPreview":"14","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/e1kvitoz","slide":14,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/f2tcrypk","slide":14,"name":"callout-title-0-132","text":"Pinned recipe","textPreview":"Pinned recipe","textChars":13,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/g32dk365","slide":14,"name":"callout-body-0-132","text":"The header shows the saved Workflow revision and worktree.","textPreview":"The header shows the saved Workflow revision and worktree.","textChars":58,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/14but87a","slide":14,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/yxovudo3","slide":14,"name":"callout-title-1-248","text":"Send to a node","textPreview":"Send to a node","textChars":14,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/zyxw3i5o","slide":14,"name":"callout-body-1-248","text":"Choose a node and enter the request for that node.","textPreview":"Choose a node and enter the request for that node.","textChars":50,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/zehcji1c","slide":14,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/yt8bqdkr","slide":14,"name":"callout-title-2-364","text":"Session list","textPreview":"Session list","textChars":12,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/lgjul8ji","slide":14,"name":"callout-body-2-364","text":"Sessions created for the instance appear beside the request form.","textPreview":"Sessions created for the instance appear beside the request form.","textChars":65,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/0fatsn2x","slide":14,"name":"frame-10-saved-instance.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/mhsbudk3","slide":14,"name":"evidence-10-saved-instance.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/9kjupsje","slide":14,"name":"evidence-text-10-saved-instance.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/43u947ap","slide":14,"name":"","geometry":"roundRect","alt":"Saved Workflow instance with node request form","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/w2xf1w","slide":14,"text":"Opening a saved instance shows its pinned recipe and worktree. Requests are sent to a selected node. The Session list records what belongs to the instance.\n\n[Sources]\n- Local in-app browser capture: 10-saved-instance.png\n[/Sources]"}
+{"kind":"slide","id":"sl/bcxd9v","slide":15,"title":"WORKFLOW INSTANCE","textShapes":13}
+{"kind":"textbox","id":"sh/2dkv6543","slide":15,"name":"section-15","text":"WORKFLOW INSTANCE","textPreview":"WORKFLOW INSTANCE","textChars":17,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/pgbeh0ne","slide":15,"name":"title-15","text":"Session inside an instance","textPreview":"Session inside an instance","textChars":26,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/of2d8fmt","slide":15,"name":"number-15","text":"15","textPreview":"15","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/bitwja5k","slide":15,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/qhkfa54z","slide":15,"name":"callout-title-0-132","text":"Workflow context stays open","textPreview":"Workflow context stays open","textChars":27,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/d4velknq","slide":15,"name":"callout-body-0-132","text":"The instance and node request remain on the left.","textPreview":"The instance and node request remain on the left.","textChars":49,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/cjmxcfm5","slide":15,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/z6dwnu5g","slide":15,"name":"callout-title-1-248","text":"Session opens on the right","textPreview":"Session opens on the right","textChars":26,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/y54fep4b","slide":15,"name":"callout-body-1-248","text":"The selected Session shows its identity and conversation.","textPreview":"The selected Session shows its identity and conversation.","textChars":57,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/0j6tcrad","slide":15,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/1kfulwry","slide":15,"name":"callout-title-2-364","text":"Back returns to the last view","textPreview":"Back returns to the last view","textChars":29,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/ehoba1s7","slide":15,"name":"callout-body-2-364","text":"The product navigation keeps this as one joined flow.","textPreview":"The product navigation keeps this as one joined flow.","textChars":53,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/fixcjm9s","slide":15,"name":"frame-11-instance-session.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/pozupgru","slide":15,"name":"evidence-11-instance-session.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/2lobe1sj","slide":15,"name":"evidence-text-11-instance-session.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/3alkb6p4","slide":15,"name":"","geometry":"roundRect","alt":"Workflow instance with selected Agent Session","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/bcxd9v","slide":15,"text":"A Session can be opened without leaving the Workflow instance. This gives the instance a useful working view while preserving normal Agent Session controls.\n\n[Sources]\n- Local in-app browser capture: 11-instance-session.png\n[/Sources]"}
+{"kind":"slide","id":"sl/4kpf6u","slide":16,"title":"AGENT SESSION","textShapes":14}
+{"kind":"textbox","id":"sh/ori9gz2t","slide":16,"name":"section-16","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/nq9s7u18","slide":16,"name":"title-16","text":"Direct message controls","textPreview":"Direct message controls","textChars":23,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/2p0repkn","slide":16,"name":"number-16","text":"16","textPreview":"16","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/xgbadoja","slide":16,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/wf29kj2p","slide":16,"name":"callout-title-0-132","text":"Next message only","textPreview":"Next message only","textChars":17,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/butsbe14","slide":16,"name":"callout-body-0-132","text":"Model and reasoning choices apply to one direct user message.","textPreview":"Model and reasoning choices apply to one direct user message.","textChars":61,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/at0ri9kj","slide":16,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/dk7a1k36","slide":16,"name":"callout-title-1-248","text":"Pinned Session profile","textPreview":"Pinned Session profile","textChars":22,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/sjy98f2l","slide":16,"name":"callout-body-1-248","text":"The resolved runtime, profile revision, and digest are read only.","textPreview":"The resolved runtime, profile revision, and digest are read only.","textChars":65,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/yhonq5wb","slide":16,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/zihojaxw","slide":16,"name":"callout-title-2-364","text":"Workflow messages stay pinned","textPreview":"Workflow messages stay pinned","textChars":29,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/kjq5sfeh","slide":16,"name":"callout-body-2-364","text":"They continue to use the node defaults.","textPreview":"They continue to use the node defaults.","textChars":39,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/lkz6lkf2","slide":16,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/ml8nu5wn","slide":16,"name":"issue-text-480","text":"Needs polish: the conversation card overlaps the open settings at this width.","textPreview":"Needs polish: the conversation card overlaps the open settings at this width.","textChars":77,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/7mhonax8","slide":16,"name":"frame-07-session-settings.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/98z6pkfy","slide":16,"name":"evidence-07-session-settings.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/u9snypwj","slide":16,"name":"evidence-text-07-session-settings.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/nulkz6ho","slide":16,"name":"","geometry":"roundRect","alt":"Agent Session with per-message model and reasoning controls","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/4kpf6u","slide":16,"text":"The user can choose any model and reasoning level exposed by the attached runtime for the next direct message. The Session Profile remains pinned. The open panel still collides with the conversation layer at this width.\n\n[Sources]\n- Local in-app browser capture: 07-session-settings.png\n[/Sources]"}
+{"kind":"slide","id":"sl/l8xkaz","slide":17,"title":"AGENT SESSION","textShapes":14}
+{"kind":"textbox","id":"sh/kvyd0fax","slide":17,"name":"section-17","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/jupcratc","slide":17,"name":"title-17","text":"Session profile details","textPreview":"Session profile details","textChars":23,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/itgvy5sr","slide":17,"name":"number-17","text":"17","textPreview":"17","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/x8nup0b6","slide":17,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/w7edwval","slide":17,"name":"callout-title-0-132","text":"Pinned defaults","textPreview":"Pinned defaults","textChars":15,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/v65cnqtg","slide":17,"name":"callout-body-0-132","text":"Model, reasoning, and sandbox show their node source.","textPreview":"Model, reasoning, and sandbox show their node source.","textChars":53,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/a5wbulsv","slide":17,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/94nulgba","slide":17,"name":"callout-title-1-248","text":"Node capabilities","textPreview":"Node capabilities","textChars":17,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/83etsvap","slide":17,"name":"callout-body-1-248","text":"The Session shows what Workflow messages may use.","textPreview":"The Session shows what Workflow messages may use.","textChars":49,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/qhwze9kj","slide":17,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/ri50nel4","slide":17,"name":"callout-title-2-364","text":"Runtime and deliveries","textPreview":"Runtime and deliveries","textChars":22,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/sjyhgj2p","slide":17,"name":"callout-body-2-364","text":"Both have separate collapsible sections below.","textPreview":"Both have separate collapsible sections below.","textChars":46,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/dk7ipo3a","slide":17,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/itwza9kn","slide":17,"name":"issue-text-480","text":"Needs polish: fixed conversation content covers the lower profile sections.","textPreview":"Needs polish: fixed conversation content covers the lower profile sections.","textChars":75,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/3u50jel8","slide":17,"name":"frame-13-session-runtime-and-deliveries.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/5gnil43y","slide":17,"name":"evidence-13-session-runtime-and-deliveries.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/upcz6pkb","slide":17,"name":"evidence-text-13-session-runtime-and-deliveries.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/vypo7ah4","slide":17,"name":"","geometry":"roundRect","alt":"Pinned defaults, node capabilities, attached runtime, and delivery sections","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/l8xkaz","slide":17,"text":"The source labels make the pinned values easy to trace. The structure is clear, but the conversation and composer layers cover part of the open configuration on this screen.\n\n[Sources]\n- Local in-app browser capture: 13-session-runtime-and-deliveries.png\n[/Sources]"}
+{"kind":"slide","id":"sl/l5bqfa","slide":18,"title":"SESSION EVENT","textShapes":14}
+{"kind":"textbox","id":"sh/fmt0n6ds","slide":18,"name":"section-18","text":"SESSION EVENT","textPreview":"SESSION EVENT","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/gn2hwbud","slide":18,"name":"title-18","text":"Delivery details","textPreview":"Delivery details","textChars":16,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/1obipgvy","slide":18,"name":"number-18","text":"18","textPreview":"18","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/6h0zq1cb","slide":18,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/rit0j6dw","slide":18,"name":"callout-title-0-132","text":"Delivery status","textPreview":"Delivery status","textChars":15,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/sj2hsruh","slide":18,"name":"callout-body-0-132","text":"The card shows that the request was dispatched.","textPreview":"The card shows that the request was dispatched.","textChars":47,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/tkbilwv2","slide":18,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/qd4j2lcf","slide":18,"name":"callout-title-1-248","text":"Recorded fields","textPreview":"Recorded fields","textChars":15,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/bed0vqt0","slide":18,"name":"callout-body-1-248","text":"Target, creation, sequence, and invocation are kept together.","textPreview":"Target, creation, sequence, and invocation are kept together.","textChars":61,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/rudg32tk","slide":18,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/qt4zaxsz","slide":18,"name":"callout-title-2-364","text":"Grouped with the instance","textPreview":"Grouped with the instance","textChars":25,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/dwvy5sbq","slide":18,"name":"callout-body-2-364","text":"The delivery sits beside the Session it addressed.","textPreview":"The delivery sits beside the Session it addressed.","textChars":50,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/cvmhc7a5","slide":18,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/zyxg72tw","slide":18,"name":"issue-text-480","text":"Needs polish: long IDs break into hard-to-read lines in the narrow column.","textPreview":"Needs polish: long IDs break into hard-to-read lines in the narrow column.","textChars":74,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/ex4zexsb","slide":18,"name":"frame-14-delivery-details.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/0z6hg7ah","slide":18,"name":"evidence-14-delivery-details.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/n2xgbmts","slide":18,"name":"evidence-text-14-delivery-details.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/mtwbeps3","slide":18,"name":"","geometry":"roundRect","alt":"Expanded Session Event delivery record in a Workflow instance","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/l5bqfa","slide":18,"text":"Expanding the delivery shows the stored delivery record. The information is useful, but raw identifiers need truncation, copy actions, or a wider detail view.\n\n[Sources]\n- Local in-app browser capture: 14-delivery-details.png\n[/Sources]"}
+{"kind":"slide","id":"sl/mb7raz","slide":19,"title":"AGENT SESSION","textShapes":13}
+{"kind":"textbox","id":"sh/5ovahwba","slide":19,"name":"section-19","text":"AGENT SESSION","textPreview":"AGENT SESSION","textChars":13,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/ilkr61cz","slide":19,"name":"title-19","text":"Agent identity","textPreview":"Agent identity","textChars":14,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/3mtsfmt4","slide":19,"name":"number-19","text":"19","textPreview":"19","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/sbmtcbu1","slide":19,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/dcvalgbm","slide":19,"name":"callout-title-0-132","text":"Initials preview","textPreview":"Initials preview","textChars":16,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/q94ba1cv","slide":19,"name":"callout-body-0-132","text":"The preview uses the Agent name inside the chosen shape.","textPreview":"The preview uses the Agent name inside the chosen shape.","textChars":56,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/radsj6tg","slide":19,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/0f6tgbux","slide":19,"name":"callout-title-1-248","text":"Color picker","textPreview":"Color picker","textChars":12,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/1gfapgbi","slide":19,"name":"callout-body-1-248","text":"The selected color and hex value appear together.","textPreview":"The selected color and hex value appear together.","textChars":49,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/103254bi","slide":19,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/0zulczad","slide":19,"name":"callout-title-2-364","text":"Three shapes","textPreview":"Three shapes","textChars":12,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/fylk3ets","slide":19,"name":"callout-body-2-364","text":"Circle, square, and hexagon are available.","textPreview":"Circle, square, and hexagon are available.","textChars":42,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/exc3a9s7","slide":19,"name":"frame-12-agent-identity.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/onelgja9","slide":19,"name":"evidence-12-agent-identity.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/n2lk7eto","slide":19,"name":"evidence-text-12-agent-identity.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/u94zapkn","slide":19,"name":"","geometry":"roundRect","alt":"Agent identity dialog with initials, color, and shape controls","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/mb7raz","slide":19,"text":"The requested identity controls are present in the Agent Session. The dialog changes display name, color, and shape for that Session.\n\n[Sources]\n- Local in-app browser capture: 12-agent-identity.png\n[/Sources]"}
+{"kind":"slide","id":"sl/csh5tj","slide":20,"title":"LEGACY SURFACE","textShapes":14}
+{"kind":"textbox","id":"sh/f21ovip8","slide":20,"name":"section-20","text":"LEGACY SURFACE","textPreview":"LEGACY SURFACE","textChars":14,"textLines":1,"bbox":[42,26,360,18]}
+{"kind":"textbox","id":"sh/03ap4n6t","slide":20,"name":"title-20","text":"Remaining Harness Management screen","textPreview":"Remaining Harness Management screen","textChars":35,"textLines":1,"bbox":[42,48,1120,52]}
+{"kind":"textbox","id":"sh/1oj6xs7e","slide":20,"name":"number-20","text":"20","textPreview":"20","textChars":2,"textLines":1,"bbox":[1198,31,38,18]}
+{"kind":"textbox","id":"sh/qxs7yd8r","slide":20,"name":"callout-number-0-132","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[42,133,30,28]}
+{"kind":"textbox","id":"sh/ry1orypc","slide":20,"name":"callout-title-0-132","text":"Still in the product","textPreview":"Still in the product","textChars":20,"textLines":1,"bbox":[76,132,330,27]}
+{"kind":"textbox","id":"sh/szap03qx","slide":20,"name":"callout-body-0-132","text":"Harness Management remains in the top navigation.","textPreview":"Harness Management remains in the top navigation.","textChars":49,"textLines":1,"bbox":[76,163,330,62]}
+{"kind":"textbox","id":"sh/d0j6t87i","slide":20,"name":"callout-number-1-248","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[42,249,30,28]}
+{"kind":"textbox","id":"sh/atc7axov","slide":20,"name":"callout-title-1-248","text":"Old mixed object","textPreview":"Old mixed object","textChars":16,"textLines":1,"bbox":[76,248,330,27]}
+{"kind":"textbox","id":"sh/bul832pg","slide":20,"name":"callout-body-1-248","text":"It still groups prompt, skills, tools, model, and sandbox.","textPreview":"It still groups prompt, skills, tools, model, and sandbox.","textChars":58,"textLines":1,"bbox":[76,279,330,62]}
+{"kind":"textbox","id":"sh/nu5szm9k","slide":20,"name":"callout-number-2-364","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[42,365,30,28]}
+{"kind":"textbox","id":"sh/mtwb6hsz","slide":20,"name":"callout-title-2-364","text":"Not yet retired","textPreview":"Not yet retired","textChars":15,"textLines":1,"bbox":[76,364,330,27]}
+{"kind":"textbox","id":"sh/9wna1wra","slide":20,"name":"callout-body-2-364","text":"The new screens now work beside this older screen.","textPreview":"The new screens now work beside this older screen.","textChars":50,"textLines":1,"bbox":[76,395,330,62]}
+{"kind":"shape","id":"sh/ovet8ra5","slide":20,"name":"issue-480","bbox":[42,566,368,98]}
+{"kind":"textbox","id":"sh/by5s369g","slide":20,"name":"issue-text-480","text":"Open decision: keep this only as a migration view, or remove it when the new UI is accepted.","textPreview":"Open decision: keep this only as a migration view, or remove it when the new UI is accepted.","textChars":92,"textLines":1,"bbox":[58,584,336,64]}
+{"kind":"shape","id":"sh/axwba1sv","slide":20,"name":"frame-16-legacy-harness-management.png","bbox":[448,112,790,596]}
+{"kind":"shape","id":"sh/wzytcba1","slide":20,"name":"evidence-16-legacy-harness-management.png","bbox":[464,128,164,26]}
+{"kind":"textbox","id":"sh/jmps769s","slide":20,"name":"evidence-text-16-legacy-harness-management.png","text":"LIVE LOCAL FIXTURE","textPreview":"LIVE LOCAL FIXTURE","textChars":18,"textLines":1,"bbox":[476,135,140,14]}
+{"kind":"image","id":"im/adgbe503","slide":20,"name":"","geometry":"roundRect","alt":"Existing Harness Management screen with prompt, skills, and tools","bbox":[454,118,778,584]}
+{"kind":"notes","id":"nt/csh5tj","slide":20,"text":"The merge did not remove the old Harness Management screen. It now sits beside Capability Profiles, Workflow node profiles, and Session Profiles. That overlap should be resolved in a later retirement pass.\n\n[Sources]\n- Local in-app browser capture: 16-legacy-harness-management.png\n[/Sources]"}
