@@ -8,7 +8,6 @@ import {
   createGitRepoScanner,
   type GitRepoScanner,
 } from './gitAdapter';
-import { normalizeGitPath } from './parsers';
 import type { GitCommandInput, GitCommandResult, GitCommandRunner } from './types';
 
 export interface GitProcessRunner {
@@ -184,59 +183,6 @@ export function createNodeGitProcessRunner(): GitProcessRunner {
   };
 }
 
-export interface LocalGitWorktreeCreator {
-  createWorktree(input: LocalGitCreateWorktreeInput): Promise<LocalGitCreateWorktreeResult>;
-}
-
-export interface LocalGitCreateWorktreeInput {
-  repoRootPath: string;
-  worktreePath: string;
-  branchName: string;
-  baseBranch?: string;
-}
-
-export interface LocalGitCreateWorktreeResult {
-  repoRootPath: string;
-  worktreePath: string;
-  branchName: string;
-  baseBranch?: string;
-}
-
-export interface LocalGitWorktreeCreatorDependencies {
-  commandRunner: GitCommandRunner;
-}
-
-export function buildGitWorktreeAddArgs(input: LocalGitCreateWorktreeInput): string[] {
-  return [
-    'worktree',
-    'add',
-    '-b',
-    input.branchName,
-    input.worktreePath,
-    ...(input.baseBranch === undefined ? [] : [input.baseBranch]),
-  ];
-}
-
-export function createLocalGitWorktreeCreator(
-  dependencies: LocalGitWorktreeCreatorDependencies,
-): LocalGitWorktreeCreator {
-  return {
-    async createWorktree(input) {
-      await dependencies.commandRunner.runGit({
-        cwd: input.repoRootPath,
-        args: buildGitWorktreeAddArgs(input),
-      });
-
-      return {
-        repoRootPath: normalizeGitPath(input.repoRootPath),
-        worktreePath: normalizeGitPath(input.worktreePath),
-        branchName: input.branchName,
-        ...(input.baseBranch === undefined ? {} : { baseBranch: input.baseBranch }),
-      };
-    },
-  };
-}
-
 export interface LocalGitDiffProvider {
   collectDiff(input: LocalGitDiffProviderInput): Promise<LocalGitDiffProviderResult>;
 }
@@ -281,7 +227,6 @@ export function createLocalGitDiffProvider(
 export interface LocalGitRuntimeAdapters {
   commandRunner: GitCommandRunner;
   repoScanner: GitRepoScanner;
-  worktreeCreator: LocalGitWorktreeCreator;
   diffProvider: LocalGitDiffProvider;
 }
 
@@ -303,7 +248,6 @@ export function createLocalGitRuntimeAdapters(
       commandRunner,
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     }),
-    worktreeCreator: createLocalGitWorktreeCreator({ commandRunner }),
     diffProvider: createLocalGitDiffProvider({ commandRunner }),
   };
 }

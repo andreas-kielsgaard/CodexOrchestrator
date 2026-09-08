@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 46;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 47;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
@@ -34,7 +34,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction =
             rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-                .map_err(|error| format!("Unable to begin active v46 schema evolution: {error}"))?;
+                .map_err(|error| format!("Unable to begin active v47 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
             &transaction,
         )
@@ -47,6 +47,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
+        transaction
+            .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to evolve repository catalog schema: {error}"))?;
         crate::orchestration::epic_settlement::initialize(&transaction)
             .map_err(|error| format!("Unable to evolve Epic settlement schema: {error}"))?;
         transaction
@@ -58,10 +61,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         initialize_replacement_workflow_schema(&transaction)?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v46 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v47 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=45).contains(&current_version) {
+    if (1..=46).contains(&current_version) {
         let transaction =
             rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
                 .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -165,6 +168,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
+        transaction
+            .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
+            .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
         if current_version <= 21 {
             transaction
                 .execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
@@ -420,6 +426,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     transaction
         .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
+    transaction
+        .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
+        .map_err(|error| format!("Unable to initialize repository catalog schema: {error}"))?;
     crate::orchestration::epic_settlement::initialize(&transaction)
         .map_err(|error| format!("Unable to initialize Epic settlement schema: {error}"))?;
     transaction
@@ -535,6 +544,20 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             |row| row.get::<_, bool>(0),
         )
         .map_err(|error| format!("Unable to inspect active Identity catalog schema: {error}"))?;
+    let repository_catalog_schema_is_present = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+                  'registered_repositories', 'registered_repository_disclosures'
+                ))=2
+                AND EXISTS(
+                  SELECT 1 FROM pragma_index_list('registered_repositories')
+                  WHERE name='registered_repositories_by_common_directory'
+                )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Unable to inspect repository catalog schema: {error}"))?;
     Ok(native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
@@ -543,7 +566,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         && session_profile_schema_is_present
         && harness_binding_schema_is_present
         && harness_catalog_schema_is_present
-        && identity_catalog_schema_is_present)
+        && identity_catalog_schema_is_present
+        && repository_catalog_schema_is_present)
 }
 /// Applies the app-wide policy to every SQLite connection before it is used. WAL permits readers
 /// while a writer commits, the bounded busy timeout handles brief contention deliberately, and FULL
@@ -703,6 +727,8 @@ mod tests {
                 "proposal_commands",
                 "proposal_events",
                 "proposal_revisions",
+                "registered_repositories",
+                "registered_repository_disclosures",
                 "session_event_deliveries",
                 "session_event_groups",
                 "session_harness_bindings",
@@ -1944,6 +1970,72 @@ mod tests {
                 )
                 .expect("retained historical canary"),
             1
+        );
+    }
+
+    #[test]
+    fn v46_migration_adds_repository_catalog_and_replacement_workflow_schema() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_active_database(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE registered_repository_disclosures;
+                 DROP TABLE registered_repositories;
+                 DROP TABLE workflow_recipe_attempts;
+                 DROP TABLE workflow_recipe_instances;
+                 DROP TABLE workflow_recipe_authoring;
+                 CREATE TABLE preserved_v46_fact(value TEXT NOT NULL);
+                 INSERT INTO preserved_v46_fact VALUES('preserved');
+                 PRAGMA user_version=46;",
+            )
+            .unwrap();
+
+        initialize_active_database(&connection).unwrap();
+
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
+        for table in [
+            "registered_repositories",
+            "registered_repository_disclosures",
+            "workflow_recipe_authoring",
+            "workflow_recipe_instances",
+            "workflow_recipe_attempts",
+        ] {
+            assert!(table_exists(&connection, table), "missing {table}");
+        }
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM preserved_v46_fact", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "preserved"
+        );
+    }
+
+    #[test]
+    fn current_schema_heals_a_missing_repository_catalog() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_active_database(&connection).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE registered_repository_disclosures;
+                 DROP TABLE registered_repositories;",
+            )
+            .unwrap();
+
+        initialize_active_database(&connection).unwrap();
+
+        assert!(table_exists(&connection, "registered_repositories"));
+        assert!(table_exists(
+            &connection,
+            "registered_repository_disclosures"
+        ));
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
         );
     }
 

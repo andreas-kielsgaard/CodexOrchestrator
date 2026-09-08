@@ -34,7 +34,7 @@ From any Codex Orchestrator worktree:
 
 ```powershell
 .\scripts\cargo-sccache.ps1 check --locked --timings
-.\scripts\cargo-sccache.ps1 test worktree_runtime -- --nocapture
+.\scripts\cargo-sccache.ps1 test worktree_application -- --nocapture
 ```
 
 The default target remains that worktree's `src-tauri\target`. For an already-isolated runtime
@@ -84,15 +84,15 @@ All commands ran sequentially with Rust/Cargo 1.96.1. Each full run used a fresh
 one shared cache, the stable Cargo working directory, CLI `--target-dir`, and
 `CARGO_INCREMENTAL=0`.
 
-| Checkpoint | Wall time | Hits | Misses | Non-cacheable calls | Result |
-| --- | ---: | ---: | ---: | ---: | --- |
-| No-wrapper fresh-target baseline, before cache integration | 143.128 s | n/a | n/a | n/a | passed |
-| Cold controlled workspace E | 414.090 s | 0 | 375 | 86 | passed |
-| Warm fresh workspace F, different absolute source and target | 351.619 s | 269 | 106 | 86 | passed |
-| Negative control: different target through `CARGO_TARGET_DIR` | 146.800 s | 0 | 375 | 86 | passed, no reuse |
-| sccache with `CARGO_INCREMENTAL=1` | 1.926 s | 0 | 0 | 0 | failed clearly |
-| Ordinary Cargo incremental local edit | 14.009 s | n/a | n/a | n/a | passed |
-| sccache non-incremental equivalent local edit | 29.256 s | 0 | 0 | 2 | passed |
+| Checkpoint                                                    | Wall time | Hits | Misses | Non-cacheable calls | Result           |
+| ------------------------------------------------------------- | --------: | ---: | -----: | ------------------: | ---------------- |
+| No-wrapper fresh-target baseline, before cache integration    | 143.128 s |  n/a |    n/a |                 n/a | passed           |
+| Cold controlled workspace E                                   | 414.090 s |    0 |    375 |                  86 | passed           |
+| Warm fresh workspace F, different absolute source and target  | 351.619 s |  269 |    106 |                  86 | passed           |
+| Negative control: different target through `CARGO_TARGET_DIR` | 146.800 s |    0 |    375 |                  86 | passed, no reuse |
+| sccache with `CARGO_INCREMENTAL=1`                            |   1.926 s |    0 |      0 |                   0 | failed clearly   |
+| Ordinary Cargo incremental local edit                         |  14.009 s |  n/a |    n/a |                 n/a | passed           |
+| sccache non-incremental equivalent local edit                 |  29.256 s |    0 |      0 |                   2 | passed           |
 
 The successful second-workspace run had a 71.73% Rust hit rate and was 62.471 seconds (15.1%)
 faster than its controlled cold pair. It remained slower than the earlier no-wrapper baseline;
@@ -168,12 +168,12 @@ at the same time:
 <worktree-b>\scripts\cargo-sccache.ps1 check --lib --locked --timings
 ```
 
-| Pair result | Worktree A | Worktree B |
-| --- | ---: | ---: |
-| Cargo timing duration | 212 s | 210 s |
-| Target files | 3,596 | 3,596 |
-| Package-cache lock messages | 2 | 2 |
-| Cargo result | `Finished` | `Finished` |
+| Pair result                 | Worktree A | Worktree B |
+| --------------------------- | ---------: | ---------: |
+| Cargo timing duration       |      212 s |      210 s |
+| Target files                |      3,596 |      3,596 |
+| Package-cache lock messages |          2 |          2 |
+| Cargo result                | `Finished` | `Finished` |
 
 Pair wall time was 214.979 seconds. Both Cargo logs had no `error:` line, produced independent
 timing reports, and ended in `Finished`; no Cargo or rustc process remained. The launcher did not
@@ -183,8 +183,8 @@ reconstructed exit-code claim.
 The authoritative global sccache delta belongs to the overlapping pair, not either helper output:
 
 | Hits | Misses | Non-cacheable requests | Non-cacheable compilations | Hit rate |
-| ---: | ---: | ---: | ---: | ---: |
-| 538 | 212 | 170 | 0 | 71.73% |
+| ---: | -----: | ---------------------: | -------------------------: | -------: |
+|  538 |    212 |                    170 |                          0 |   71.73% |
 
 Both commands used `%LOCALAPPDATA%\CodexOrchestrator\cargo-sccache-cwd` and the shared default
 cache, but their output roots were distinct absolute directories:
@@ -207,10 +207,10 @@ baseline removed `RUSTC_WRAPPER`; the helper leg used:
   test --lib --no-run --locked --timings
 ```
 
-| Mode | Wall time | Hits | Misses | Non-cacheable requests | Hit rate | Result |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| No wrapper | 191.127 s | 0 | 0 | 0 | n/a | passed, executable produced |
-| Helper, cache prewarmed by `cargo check` | 257.627 s | 40 | 286 | 88 | 12.27% | passed, executable produced |
+| Mode                                     | Wall time | Hits | Misses | Non-cacheable requests | Hit rate | Result                      |
+| ---------------------------------------- | --------: | ---: | -----: | ---------------------: | -------: | --------------------------- |
+| No wrapper                               | 191.127 s |    0 |      0 |                      0 |      n/a | passed, executable produced |
+| Helper, cache prewarmed by `cargo check` | 257.627 s |   40 |    286 |                     88 |   12.27% | passed, executable produced |
 
 The helper was 66.500 seconds (34.79%) slower. The prior `cargo check` cache did not broadly match
 the `cargo test --no-run` code-generation and linking arguments, so this was mostly a cold-key-shape

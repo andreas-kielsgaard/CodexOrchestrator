@@ -147,23 +147,7 @@ describe('App application surfaces', () => {
     ).toBeDisabled();
   });
 
-  it('adds Worktree Review only through the injected development composition', async () => {
-    render(
-      <App
-        agentSessionClient={emptyAgentClient()}
-        orchestrationClient={emptyOrchestrationClient()}
-        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
-    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Orchestration' }));
-    expect(screen.getByRole('main', { name: 'Orchestration' })).toBeVisible();
-  });
-
-  it('restores immediate typed destinations across injected shell surfaces', async () => {
+  it('restores immediate typed destinations across product shell surfaces', async () => {
     render(
       <App
         agentSessionClient={emptyAgentClient()}
@@ -171,7 +155,6 @@ describe('App application surfaces', () => {
         harnessManagementPreviewSurface={
           <main aria-label="Harness Management preview">Harness</main>
         }
-        humanReviewLauncherView={<main aria-label="Retained worktree builds">Launcher</main>}
       />,
     );
 
@@ -186,15 +169,6 @@ describe('App application surfaces', () => {
     );
     await waitFor(() => expect(back).toBeEnabled());
     fireEvent.click(back);
-    expect(await screen.findByText('Start with a message')).toBeVisible();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Worktree Review Dev' }));
-    expect(screen.getByRole('main', { name: 'Retained worktree builds' })).toBeVisible();
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
-        name: 'Back',
-      }),
-    );
     expect(await screen.findByText('Start with a message')).toBeVisible();
 
     fireEvent.click(

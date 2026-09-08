@@ -97,6 +97,9 @@ import type {
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
 import { ExecutionConfigurationScreen } from '../features/executionConfiguration';
 import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
+import type { WorktreeReviewClient } from '../application/worktreeReview';
+import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
+import { WorktreeReviewScreen } from '../features/worktreeReview';
 
 export type ApplicationSurface =
   | 'epics'
@@ -156,10 +159,10 @@ export interface AppProps {
   readonly productDecisionClient?: ProductDecisionClient;
   /** Product-owned decision correction conversation boundary; it is never a general chat client. */
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
-  /** Present only in the injected development launcher composition. */
-  readonly humanReviewLauncherView?: ReactNode;
-  /** Enumerated proof navigation; it cannot activate or focus a native window. */
-  readonly humanReviewLauncherNavigation?: () => Promise<'worktree-review' | null>;
+  /** Product Worktree Review boundary. Product composition supplies this in every build profile. */
+  readonly worktreeReviewClient?: WorktreeReviewClient;
+  /** Shared registered-repository authority used by Worktree Review and Workflow target selection. */
+  readonly repositoryCatalogClient?: RepositoryCatalogClient;
   readonly initialSurface?: ApplicationSurface;
 }
 
@@ -203,8 +206,8 @@ export function App({
   epicProductDecisionSource,
   productDecisionClient,
   productDecisionCorrectionClient,
-  humanReviewLauncherView,
-  humanReviewLauncherNavigation,
+  worktreeReviewClient,
+  repositoryCatalogClient,
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
@@ -212,7 +215,7 @@ export function App({
     (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
-    (initialSurface === 'worktree-review' && !humanReviewLauncherView)
+    (initialSurface === 'worktree-review' && (!worktreeReviewClient || !repositoryCatalogClient))
       ? 'epics'
       : initialSurface;
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
@@ -254,7 +257,7 @@ export function App({
         case 'harness_inspector':
           return Boolean(harnessManagementPreviewSurface);
         case 'worktree_review':
-          return Boolean(humanReviewLauncherView);
+          return Boolean(worktreeReviewClient && repositoryCatalogClient);
         case 'product_decision_publish':
           return Boolean(productDecisionClient);
       }
@@ -262,7 +265,8 @@ export function App({
     [
       fileReviewSource,
       harnessManagementPreviewSurface,
-      humanReviewLauncherView,
+      repositoryCatalogClient,
+      worktreeReviewClient,
       productDecisionClient,
       workflowAuthoringClient,
     ],
@@ -379,30 +383,6 @@ export function App({
     }
   }, [currentProductDestination]);
 
-  useEffect(() => {
-    if (!humanReviewLauncherView || !humanReviewLauncherNavigation) return;
-    let active = true;
-    const read = () =>
-      void humanReviewLauncherNavigation().then(
-        (route) => {
-          if (active && route === 'worktree-review') {
-            dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: { kind: 'worktree_review' },
-            });
-            setSurface(route);
-          }
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, 300);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [humanReviewLauncherNavigation, humanReviewLauncherView]);
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
   const [planningDrafts, setPlanningDrafts] = useState<readonly EpicPlanningDraftSummary[]>([]);
   const [initiationCapability, setInitiationCapability] = useState<EpicInitiationCapability>(
@@ -968,7 +948,7 @@ export function App({
               Harness Management
             </button>
           )}
-          {humanReviewLauncherView && (
+          {worktreeReviewClient && repositoryCatalogClient && (
             <button
               className={surface === 'worktree-review' ? 'active' : undefined}
               type="button"
@@ -983,7 +963,7 @@ export function App({
                 setSurface('worktree-review');
               }}
             >
-              Worktree Review <small>Dev</small>
+              Worktree Review
             </button>
           )}
           {fileReviewSource ? (
@@ -1156,8 +1136,11 @@ export function App({
               : undefined
           }
         />
-      ) : surface === 'worktree-review' && humanReviewLauncherView ? (
-        humanReviewLauncherView
+      ) : surface === 'worktree-review' && worktreeReviewClient && repositoryCatalogClient ? (
+        <WorktreeReviewScreen
+          client={worktreeReviewClient}
+          repositoryCatalog={repositoryCatalogClient}
+        />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           client={agentSessionClient}

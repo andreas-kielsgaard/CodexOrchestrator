@@ -1,5 +1,9 @@
 # Worktree Runtime offline review
 
+> Historical evidence only. The Worktree Runtime implementation and its live scripts were removed
+> when durable Worktree Review replaced that architecture. This package is not a runnable or
+> current product guide.
+
 Self-contained review package for `codex/explore-worktree-runtime`, inspected on 2026-07-17.
 Nothing here calls a provider or requires a network connection.
 

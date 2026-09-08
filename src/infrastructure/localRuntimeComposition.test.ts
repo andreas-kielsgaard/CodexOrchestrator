@@ -91,7 +91,7 @@ describe('local runtime service composition', () => {
       );
       expect(composition.services.repoRegistryScanService.store).toBe(composition.stores.repoSync);
       expect(composition.services.taskWorktreeSelectionService.worktreeCreator).toBe(
-        composition.runtimes.git.worktreeCreator,
+        composition.runtimes.worktreeApplication,
       );
       expect(composition.services.diffCollectionService.diffProvider).toBe(
         composition.runtimes.git.diffProvider,

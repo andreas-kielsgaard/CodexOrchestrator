@@ -13,9 +13,8 @@ use uuid::Uuid;
 
 mod active_app;
 mod agent_sessions;
-// Replacement contracts remain deliberately uncomposed until the bounded slice is reviewed.
-#[allow(dead_code)]
 mod execution_configuration;
+mod git_process;
 mod harness_engine;
 mod identities;
 mod native_profiles;
@@ -25,15 +24,15 @@ mod orchestration;
 mod persistence;
 mod product_database;
 mod product_decisions;
+mod repository_catalog;
+mod repository_context;
+mod repository_discovery;
 mod runtime;
 mod session_events;
 mod storage;
 mod workflows;
-#[cfg(debug_assertions)]
+pub(crate) mod worktree_application;
 mod worktree_review;
-#[allow(dead_code)]
-mod worktree_runtime;
-mod worktree_targets_temp;
 
 const APP_DATABASE_FILE_NAME: &str = "codex-orchestrator.sqlite";
 

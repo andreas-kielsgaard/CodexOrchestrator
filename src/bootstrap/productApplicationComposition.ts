@@ -31,7 +31,12 @@ import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
-import { DiscoveredWorktreeTargetSelector } from '../features/worktreeTargetsTemp/DiscoveredWorktreeTargetSelector';
+import { createRepositoryWorktreeTargetSelector } from '../features/repositoryCatalog';
+import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
+import { tauriRepositoryCatalog } from '../infrastructure/repositoryCatalog/tauriRepositoryCatalog';
+
+const RepositoryWorktreeTargetSelector =
+  createRepositoryWorktreeTargetSelector(tauriRepositoryCatalog);
 
 /** Product boot owns only available application boundaries; absent orchestration runtime stays explicit. */
 export function createProductApplicationComposition(): AppProps {
@@ -44,7 +49,9 @@ export function createProductApplicationComposition(): AppProps {
     identityManagementClient: tauriIdentityManagementClient,
     agentSessionProfileClient: tauriAgentSessionProfileClient,
     sessionEventQueryClient: tauriSessionEventQueryClient,
-    workflowTargetSelector: DiscoveredWorktreeTargetSelector,
+    workflowTargetSelector: RepositoryWorktreeTargetSelector,
+    repositoryCatalogClient: tauriRepositoryCatalog,
+    worktreeReviewClient: tauriWorktreeReview,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
