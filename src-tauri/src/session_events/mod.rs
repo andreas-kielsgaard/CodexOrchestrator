@@ -67,36 +67,41 @@ impl SessionEventApplication {
         command
             .validate()
             .map_err(SessionEventApplicationError::Domain)?;
-        let mut targets = addressing::resolve_existing(self.directory.as_ref(), &command.target)
-            .map_err(SessionEventApplicationError::Directory)?;
-        let mut created_session = None;
-
+        let create = |address: &SessionLogicalAddress| -> Result<SessionDirectoryEntry, SessionEventApplicationError> {
+            let created = self.directory.create_session(SessionCreationSpec {
+                logical_address: address.clone(),
+                event_group_id: command.event_group_id.clone(),
+                created_by_event: command.event_group_id.clone(),
+                created_by_session: command.created_by_session.clone(),
+                configuration: command.creation_configuration.clone().expect("validated creation configuration"),
+            }).map_err(SessionEventApplicationError::Directory)?;
+            validate_created_entry(&command, address, &created)?;
+            Ok(created)
+        };
+        let (mut targets, mut created_session) = match &command.target.target {
+            SessionTarget::New { address } => {
+                let created = create(address)?;
+                let id = created.session.clone();
+                (vec![created], Some(id))
+            }
+            _ => (
+                addressing::resolve_existing(self.directory.as_ref(), &command.target)
+                    .map_err(SessionEventApplicationError::Directory)?,
+                None,
+            ),
+        };
         if targets.is_empty() {
             match command.target.missing {
                 MissingTargetPolicy::Create => {
                     let SessionTarget::Logical { address } = &command.target.target else {
-                        unreachable!("validated create-on-missing target must be logical")
+                        unreachable!("validated logical creation")
                     };
-                    let created = self
-                        .directory
-                        .create_session(SessionCreationSpec {
-                            logical_address: address.clone(),
-                            event_group_id: command.event_group_id.clone(),
-                            created_by_event: command.event_group_id.clone(),
-                            created_by_session: command.created_by_session.clone(),
-                            configuration: command
-                                .creation_configuration
-                                .clone()
-                                .expect("validated create-on-missing configuration"),
-                        })
-                        .map_err(SessionEventApplicationError::Directory)?;
-                    validate_created_entry(&command, address, &created)?;
+                    let created = create(address)?;
                     created_session = Some(created.session.clone());
                     targets.push(created);
                 }
                 MissingTargetPolicy::Fail => {
-                    let result = build_empty_result(&command, EventGroupOutcome::NoTarget);
-                    self.store_result(&result)?;
+                    self.store_result(&build_empty_result(&command, EventGroupOutcome::NoTarget))?;
                     return Err(SessionEventApplicationError::NoTarget(
                         command.event_group_id,
                     ));

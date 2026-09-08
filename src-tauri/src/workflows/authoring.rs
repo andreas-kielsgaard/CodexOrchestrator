@@ -4,11 +4,11 @@ use super::{
         WorkflowRecipeReference,
     },
     compiled_plan::{
-        WorkflowCompilationInput, WorkflowCompiledConnection, WorkflowCompiledNode,
-        WorkflowConnectionPromptInput, WorkflowConnectionTargetPlan, WorkflowConnectionTrigger,
-        WorkflowSessionCreation,
+        WorkflowCompiledConnection, WorkflowCompiledNode, WorkflowCompiledPlan,
+        WorkflowConnectionPromptInput, WorkflowSessionCreation,
     },
 };
+use crate::otp_api::{CapabilityRef, OutputRef};
 use crate::{
     execution_configuration::{CapabilityProfile, NodeProfile, SessionCreationRequest},
     session_events::ReferenceIdentity,
@@ -16,7 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const WORKFLOW_RECIPE_CONTRACT_VERSION: u32 = 1;
+pub(crate) const WORKFLOW_RECIPE_CONTRACT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -26,6 +26,7 @@ pub(crate) struct WorkflowRecipeDraft {
     pub(crate) name: String,
     pub(crate) revision: u64,
     pub(crate) starting_node_id: Option<String>,
+    pub(crate) entry_action: CapabilityRef,
     pub(crate) nodes: Vec<WorkflowAuthoringNode>,
     pub(crate) connections: Vec<WorkflowAuthoringConnection>,
 }
@@ -50,10 +51,11 @@ pub(crate) struct WorkflowAuthoringConnection {
     pub(crate) name: String,
     pub(crate) source_node_id: String,
     pub(crate) destination_node_id: String,
-    pub(crate) trigger: WorkflowConnectionTrigger,
+    pub(crate) trigger: OutputRef,
+    pub(crate) action: CapabilityRef,
+    pub(crate) configuration: serde_json::Value,
     pub(crate) prompt_inputs: Vec<WorkflowConnectionPromptInput>,
     pub(crate) prompt_text: String,
-    pub(crate) target: WorkflowConnectionTargetPlan,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -124,50 +126,11 @@ impl WorkflowRecipeDraft {
 
         let mut connection_ids = BTreeSet::new();
         for connection in &self.connections {
-            if matches!(
-                connection.trigger,
-                WorkflowConnectionTrigger::EventGroupCompleted { .. }
-            ) {
-                return Err("Group completion is not supported yet".into());
-            }
             for source in &connection.prompt_inputs {
-                let compatible = match source {
-                    WorkflowConnectionPromptInput::TriggerField { field } => {
-                        super::trigger_capabilities::for_trigger(&connection.trigger).is_some_and(
-                            |capability| {
-                                capability
-                                    .fields
-                                    .iter()
-                                    .any(|offered| offered.name == field)
-                            },
-                        )
+                if let WorkflowConnectionPromptInput::NodeFiles { node_id, .. } = source {
+                    if !node_ids.contains(node_id.as_str()) {
+                        return Err(format!("File input references missing node {node_id}"));
                     }
-                    WorkflowConnectionPromptInput::NodeFiles { node_id, .. } => {
-                        node_ids.contains(node_id.as_str())
-                    }
-                    WorkflowConnectionPromptInput::InvocationOutput => matches!(
-                        connection.trigger,
-                        WorkflowConnectionTrigger::InvocationCompleted
-                    ),
-                    WorkflowConnectionPromptInput::McpArgument { .. } => {
-                        matches!(
-                            connection.trigger,
-                            WorkflowConnectionTrigger::McpCall { .. }
-                        ) && super::trigger_capabilities::for_trigger(&connection.trigger).is_none()
-                    }
-                    WorkflowConnectionPromptInput::ApplicationEventField { .. } => matches!(
-                        connection.trigger,
-                        WorkflowConnectionTrigger::ApplicationEvent { .. }
-                    ),
-                    WorkflowConnectionPromptInput::ReferencedContent { reference } => {
-                        reference.namespace() == "file" && reference.kind() == "path"
-                    }
-                };
-                if !compatible {
-                    return Err(format!(
-                        "Connection `{}` has a prompt source that does not match its trigger",
-                        connection.name
-                    ));
                 }
             }
             if !connection_ids.insert(connection.connection_id.as_str()) {
@@ -196,7 +159,7 @@ impl WorkflowRecipeDraft {
         &self,
         instance_id: &str,
         capability_profiles: &BTreeMap<String, CapabilityProfile>,
-    ) -> Result<WorkflowCompilationInput, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         self.build_compilation_input(instance_id, Some(capability_profiles), "")
     }
 
@@ -204,7 +167,7 @@ impl WorkflowRecipeDraft {
         &self,
         instance_id: &str,
         working_directory: &str,
-    ) -> Result<WorkflowCompilationInput, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         self.build_compilation_input(instance_id, None, working_directory)
     }
 
@@ -213,7 +176,7 @@ impl WorkflowRecipeDraft {
         instance_id: &str,
         capability_profiles: Option<&BTreeMap<String, CapabilityProfile>>,
         working_directory: &str,
-    ) -> Result<WorkflowCompilationInput, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         self.validate_activatable()?;
         validate_identifier("Workflow instance", "instanceId", instance_id)?;
 
@@ -283,12 +246,14 @@ impl WorkflowRecipeDraft {
                     trigger: connection.trigger.clone(),
                     prompt_inputs: connection.prompt_inputs.clone(),
                     prompt_text: connection.prompt_text.clone(),
-                    target: connection.target.clone(),
+                    action: connection.action.clone(),
+                    configuration: connection.configuration.clone(),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        Ok(WorkflowCompilationInput {
+        Ok(WorkflowCompiledPlan {
+            entry_action: self.entry_action.clone(),
             instance: WorkflowInstanceReference::new(instance_id.to_string())
                 .map_err(|error| error.to_string())?,
             recipe: WorkflowRecipeReference::new(self.recipe_id.clone())
@@ -455,6 +420,10 @@ mod tests {
             name: "Review".into(),
             revision: 1,
             starting_node_id: Some("planner".into()),
+            entry_action: crate::otp_api::CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
             nodes: vec![WorkflowAuthoringNode {
                 node_id: "planner".into(),
                 name: "Planner".into(),

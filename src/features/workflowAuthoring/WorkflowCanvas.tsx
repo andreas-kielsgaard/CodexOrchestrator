@@ -4,9 +4,8 @@ import {
   projectWorkflowNodeDrag,
   type WorkflowNodeDragState,
   type WorkflowNodeDragPreview,
-} from '../workflows/editor/workflowNodeDrag';
+} from './workflowNodeDrag';
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
-import '../workflows/workflow.css';
 import './workflowCanvas.css';
 
 export interface CanvasNode {

@@ -94,9 +94,7 @@ import type {
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
 } from '../application/productDecisions';
-import type { WorkflowApplicationClient } from '../application/workflows';
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
-import { WorkflowScreen } from '../features/workflows';
 import { ExecutionConfigurationScreen } from '../features/executionConfiguration';
 import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
 
@@ -118,7 +116,6 @@ export interface AppProps {
   /** Session-owned identity read; assignment and durability remain outside this view. */
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
   readonly orchestrationClient: OrchestrationApplicationClient;
-  readonly workflowClient?: WorkflowApplicationClient;
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
   readonly workflowInstanceClient?: WorkflowInstanceClient;
   readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
@@ -176,7 +173,6 @@ export function App({
   },
   managedPlanBuilderAgentIdentity,
   orchestrationClient,
-  workflowClient,
   workflowAuthoringClient,
   workflowInstanceClient,
   draftCloseGuard,
@@ -212,7 +208,7 @@ export function App({
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
-    (initialSurface === 'workflows' && !workflowClient && !workflowAuthoringClient) ||
+    (initialSurface === 'workflows' && !workflowAuthoringClient) ||
     (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
@@ -248,7 +244,7 @@ export function App({
         case 'agent_sessions':
           return true;
         case 'workflow':
-          return Boolean(workflowAuthoringClient || workflowClient);
+          return Boolean(workflowAuthoringClient);
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
           return sameFileReviewNavigationTarget(
@@ -268,7 +264,6 @@ export function App({
       harnessManagementPreviewSurface,
       humanReviewLauncherView,
       productDecisionClient,
-      workflowClient,
       workflowAuthoringClient,
     ],
   );
@@ -908,7 +903,7 @@ export function App({
           >
             Orchestration
           </button>
-          {workflowAuthoringClient || workflowClient ? (
+          {workflowAuthoringClient ? (
             <button
               className={surface === 'workflows' ? 'active' : undefined}
               type="button"
@@ -1144,32 +1139,6 @@ export function App({
                 workflowTypeId: null,
                 workflowInstanceId: instanceId,
               },
-            });
-          }}
-        />
-      ) : surface === 'workflows' &&
-        workflowClient &&
-        currentProductDestination.kind === 'workflow' ? (
-        <WorkflowScreen
-          client={workflowClient}
-          agentSessionClient={agentSessionClient}
-          targetSelector={workflowTargetSelector}
-          workflowTypeId={currentProductDestination.workflowTypeId}
-          workflowInstanceId={currentProductDestination.workflowInstanceId}
-          onOpenWorkflowType={(workflowTypeId) => {
-            productNavigationEpoch.current += 1;
-            dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: { kind: 'workflow', workflowTypeId, workflowInstanceId: null },
-            });
-          }}
-          onOpenWorkflowInstance={(workflowInstanceId) => {
-            productNavigationEpoch.current += 1;
-            dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: { kind: 'workflow', workflowTypeId: null, workflowInstanceId },
             });
           }}
         />

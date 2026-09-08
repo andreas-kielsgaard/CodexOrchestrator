@@ -38,7 +38,6 @@ impl LiveRun {
             Arc::new(SqliteHarnessBindingRepository::open(&database).unwrap()),
             Arc::new(LocalProxy::new()),
             registry.clone(),
-            HarnessCatalogService::in_memory(),
         )
         .unwrap();
         let providers = Arc::new(SystemAgentSessionProviders);
@@ -72,7 +71,7 @@ impl LiveRun {
         let capabilities = CapabilitySet {
             sandbox_modes: [ExecutionSandboxMode::WorkspaceWrite].into_iter().collect(),
             mcp_tools: [(
-                "workflow_handoff".into(),
+                "workflow".into(),
                 ["trigger_workflow_continuation".into()]
                     .into_iter()
                     .collect(),
@@ -120,6 +119,7 @@ impl LiveRun {
         let authoring = Arc::new(WorkflowAuthoringService::new(
             Arc::new(SqliteWorkflowAuthoringRepository::open(&database).unwrap()),
             profiles,
+            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         ));
         let execution = Arc::new(WorkflowExecutionService::new(
             authoring.clone(),
@@ -129,9 +129,12 @@ impl LiveRun {
             repository.clone(),
         ));
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
-        let (descriptor, owner) =
-            crate::workflows::mcp::start_session_event_server(Arc::downgrade(&execution)).unwrap();
-        let registration = registry.register(descriptor).unwrap();
+        let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
+            execution.registry.clone(),
+            Arc::downgrade(&execution),
+        )
+        .unwrap();
+        let registration = registry.register(descriptors.remove(0)).unwrap();
         assert!(registry.retain_owner(&registration, owner).is_ok());
         let mut draft = authoring
             .create("Live continuation exercise".into())
@@ -149,10 +152,7 @@ impl LiveRun {
             node_profile:crate::execution_configuration::NodeProfile {contract_version:1,allowed_capabilities:capabilities.clone(),pinned_defaults:RuntimeSelections::default()},
             initial_prompt:Some(format!("{base}\n{prompt}")),agent_identity_id:None
         }).collect();
-        let trigger = WorkflowConnectionTrigger::McpCall {
-            server: ReferenceIdentity::new("mcp", "server", "workflow_handoff").unwrap(),
-            tool: ReferenceIdentity::new("mcp", "tool", "trigger_workflow_continuation").unwrap(),
-        };
+        let trigger = otp_output("trigger_workflow_continuation", "continuation");
         let files = |id: &str| WorkflowConnectionPromptInput::NodeFiles {
             node_id: id.into(),
             association: FileAssociation::Either,
@@ -185,13 +185,13 @@ impl LiveRun {
         .map(|(id, from, to, mut inputs)| {
             inputs.insert(
                 0,
-                WorkflowConnectionPromptInput::TriggerField {
+                WorkflowConnectionPromptInput::OutputField {
                     field: "sourceNode".into(),
                 },
             );
             inputs.insert(
                 1,
-                WorkflowConnectionPromptInput::TriggerField {
+                WorkflowConnectionPromptInput::OutputField {
                     field: "outputFiles".into(),
                 },
             );
@@ -204,7 +204,11 @@ impl LiveRun {
                 prompt_inputs: inputs,
                 prompt_text: "Use the supplied file metadata and follow your node instructions."
                     .into(),
-                target: WorkflowConnectionTargetPlan::default(),
+                action: crate::otp_api::CapabilityRef {
+                    package: "workflow".into(),
+                    tool: "prompt_agent".into(),
+                },
+                configuration: json!({}),
             }
         })
         .collect();
@@ -334,6 +338,19 @@ impl LiveRun {
     }
 
     fn capture(&self, phase: &str) {
+        std::fs::write(
+            self.root.join("catalogue.json"),
+            serde_json::to_string_pretty(&self.execution.registry.catalogue()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            self.root.join("node-sessions.json"),
+            serde_json::to_string_pretty(
+                &self.execution.instance_sessions(&self.instance).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let histories = self.histories();
         let sessions:Vec<_>=histories.iter().map(|history|json!({
             "sessionId":history.session.id.as_str(),"title":history.session.title,
@@ -445,5 +462,54 @@ fn real_codex_continuation_exercise() {
     )
     .unwrap();
     live.capture("passed");
+    // Exercise the package's deliberate fresh-session mode against an existing population.
+    use crate::otp_api::*;
+    let mut context = InvocationContext {
+        instance_id: live.instance.id.clone(),
+        occurrence_id: "live-fresh-session".into(),
+        capability: live.instance.recipe.entry_action.clone(),
+        source: None,
+        connection_id: None,
+        output_node_id: Some("discussion".into()),
+    };
+    let run = |context: &InvocationContext, configuration| {
+        live.execution.dispatch_otp_action(&live.instance,context,None,json!({}),configuration,Ok(vec![ResolvedInput{reference:context.occurrence_id.clone(),value:json!("Discuss this additional session briefly. Reply READY_FOR_APPROVAL. Do not create files or call a workflow tool.")}])).unwrap()
+    };
+    let fresh = run(&context, json!({"mode":"new"}));
+    let created = fresh[0].group.created_session.clone().unwrap();
+    live.wait(5);
+    context.occurrence_id = "live-exact-session".into();
+    let selected = run(&context, json!({}));
+    assert_eq!(selected[0].deliveries[0].target_session, created);
+    assert!(selected[0].group.created_session.is_none());
+    assert!(selected[0].deliveries[0]
+        .included_created_session_contributions
+        .is_empty());
+    live.wait(5);
+    let history = live
+        .sessions
+        .load_session(&AgentSessionId::new(created.id()).unwrap())
+        .unwrap();
+    assert_eq!(history.invocations.len(), 2);
+    let store = SqliteSessionEventStore::open(&live.root.join("live.sqlite")).unwrap();
+    let mut deliveries = Vec::new();
+    for attempt in live
+        .execution
+        .instances
+        .attempts(&live.instance.id)
+        .unwrap()
+    {
+        assert!(attempt.error.is_none(), "{attempt:?}");
+        for group in attempt.event_groups {
+            deliveries.extend(store.deliveries_for_group(&group).unwrap());
+        }
+    }
+    std::fs::write(
+        live.root.join("deliveries.json"),
+        serde_json::to_string_pretty(&deliveries).unwrap(),
+    )
+    .unwrap();
+    live.capture("passed-with-fresh-and-exact");
     println!("LIVE PASS: approval, MCP fan-out, later revision, historical editor retention, reopen and output-path separation");
+    println!("LIVE PASS: new Session with existing candidates, exact Session follow-up and initialization once");
 }

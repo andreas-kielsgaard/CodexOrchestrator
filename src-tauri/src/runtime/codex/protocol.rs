@@ -38,7 +38,7 @@ mod file_change_tests {
         assert_eq!(changes("item.completed", "failed", "add"), None);
         assert_eq!(changes("item.completed", "completed", "unknown"), None);
         let output = CodexJsonlProtocol::default().normalize(json!({
-            "type":"item.completed","item":{"type":"mcp_tool_call","server":"workflow_handoff","tool":"trigger_workflow_continuation",
+            "type":"item.completed","item":{"type":"mcp_tool_call","server":"workflow","tool":"trigger_workflow_continuation",
             "arguments":{"outputFiles":["claimed.md"]},"status":"completed"}
         }));
         assert!(output.events[0]

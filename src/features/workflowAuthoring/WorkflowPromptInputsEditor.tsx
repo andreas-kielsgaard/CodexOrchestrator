@@ -3,54 +3,40 @@ import '../sessionEvents/sessionEvents.css';
 import type {
   WorkflowAuthoringNodeDto,
   WorkflowConnectionPromptInputDto as Input,
-  WorkflowConnectionTriggerDto,
-  WorkflowTriggerCapabilityDto,
+  OtpOutputDto,
 } from '../../application/workflowAuthoring';
 
 const names: Record<Input['kind'], string> = {
-  trigger_field: 'Trigger field',
+  output_field: 'Output field',
   node_files: 'Files associated with node',
-  invocation_output: 'Invocation output',
-  mcp_argument: 'MCP argument',
-  application_event_field: 'Application event field',
-  referenced_content: 'File content',
+  file_content: 'File content',
 };
 
 export function WorkflowPromptInputsEditor({
   value,
-  trigger,
   nodes,
-  capability,
+  output,
   onChange,
 }: {
   readonly value: readonly Input[];
-  readonly trigger: WorkflowConnectionTriggerDto;
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
-  readonly capability?: WorkflowTriggerCapabilityDto;
+  readonly output?: OtpOutputDto;
   readonly onChange: (value: readonly Input[]) => void;
 }) {
+  const fields = Object.keys(output?.schema.properties ?? {});
   const kinds: Input['kind'][] = [
-    ...(capability ? ['trigger_field' as const] : []),
-    ...(trigger.kind === 'invocation_completed' ? ['invocation_output' as const] : []),
-    ...(trigger.kind === 'mcp_call' && !capability ? ['mcp_argument' as const] : []),
-    ...(trigger.kind === 'application_event' ? ['application_event_field' as const] : []),
+    ...(fields.length ? ['output_field' as const] : []),
     'node_files',
-    'referenced_content',
+    'file_content',
   ];
   const make = (kind: Input['kind']): Input => {
     switch (kind) {
-      case 'trigger_field':
-        return { kind, field: capability?.fields[0]?.name ?? '' };
+      case 'output_field':
+        return { kind, field: fields[0] ?? '' };
       case 'node_files':
         return { kind, nodeId: nodes[0]?.nodeId ?? '', association: 'either' };
-      case 'mcp_argument':
-        return { kind, name: '' };
-      case 'application_event_field':
-        return { kind, field: '' };
-      case 'referenced_content':
-        return { kind, reference: { namespace: 'file', kind: 'path', id: '' } };
-      case 'invocation_output':
-        return { kind };
+      case 'file_content':
+        return { kind, path: '' };
     }
   };
   const update = (index: number, input: Input) =>
@@ -116,19 +102,19 @@ export function WorkflowPromptInputsEditor({
                 ))}
               </select>
             </label>
-            {input.kind === 'trigger_field' && (
+            {input.kind === 'output_field' && (
               <label className="session-event-editor__field">
-                Trigger field
+                Output field
                 <select
                   value={input.field}
                   onChange={(event) => update(index, { ...input, field: event.target.value })}
                 >
-                  {!capability?.fields.some((field) => field.name === input.field) && (
+                  {!fields.includes(input.field) && (
                     <option value={input.field}>Select an available field</option>
                   )}
-                  {capability?.fields.map((field) => (
-                    <option key={field.name} value={field.name}>
-                      {field.label}
+                  {fields.map((field) => (
+                    <option key={field} value={field}>
+                      {field}
                     </option>
                   ))}
                 </select>
@@ -170,33 +156,15 @@ export function WorkflowPromptInputsEditor({
                 </label>
               </>
             )}
-            {input.kind === 'mcp_argument' && (
-              <label className="session-event-editor__field">
-                Argument name
-                <input
-                  value={input.name}
-                  onChange={(event) => update(index, { ...input, name: event.target.value })}
-                />
-              </label>
-            )}
-            {input.kind === 'application_event_field' && (
-              <label className="session-event-editor__field">
-                Event field
-                <input
-                  value={input.field}
-                  onChange={(event) => update(index, { ...input, field: event.target.value })}
-                />
-              </label>
-            )}
-            {input.kind === 'referenced_content' && (
+            {input.kind === 'file_content' && (
               <label className="session-event-editor__field">
                 File path
                 <input
-                  value={input.reference.id}
+                  value={input.path}
                   onChange={(event) =>
                     update(index, {
                       ...input,
-                      reference: { namespace: 'file', kind: 'path', id: event.target.value },
+                      path: event.target.value,
                     })
                   }
                 />

@@ -93,6 +93,16 @@ export function EventGroupInspector({ group, deliveries }: EventGroupInspectorPr
           <dd>{sourceLabel(group.source)}</dd>
         </div>
         <div>
+          <dt>Target</dt>
+          <dd>
+            {group.targetSelection.target.kind === 'new'
+              ? 'New Session'
+              : group.targetSelection.target.kind === 'exact'
+                ? 'Exact Session'
+                : 'Logical address'}
+          </dd>
+        </div>
+        <div>
           <dt>Resolved Sessions</dt>
           <dd>{group.resolvedSessions.length}</dd>
         </div>

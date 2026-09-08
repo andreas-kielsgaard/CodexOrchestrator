@@ -1,4 +1,8 @@
-import type { WorkflowRecipeDraftDto } from './workflowAuthoring';
+import type {
+  WorkflowRecipeDraftDto,
+  OtpCapabilityRefDto,
+  OtpOutputRefDto,
+} from './workflowAuthoring';
 import type {
   ReferenceIdentityDto,
   SessionLogicalAddressDto,
@@ -22,9 +26,29 @@ export interface WorkflowEventAttempt {
   readonly id: string;
   readonly instanceId: string;
   readonly definitionRef: ReferenceIdentityDto;
-  readonly sourceSessionId: string | null;
+  readonly context: {
+    readonly instanceId: string;
+    readonly occurrenceId: string;
+    readonly capability: OtpCapabilityRefDto;
+    readonly source: {
+      readonly nodeId: string;
+      readonly nodeName: string;
+      readonly sessionId: string;
+      readonly invocationId: string;
+    } | null;
+    readonly connectionId: string | null;
+    readonly outputNodeId: string | null;
+  };
+  readonly output: OtpOutputRefDto | null;
+  readonly payload: unknown;
+  readonly sessionRequests: readonly {
+    readonly nodeId: string;
+    readonly target:
+      { readonly kind: 'new' } | { readonly kind: 'exact'; readonly sessionId: string };
+    readonly prompt: readonly { readonly reference: string; readonly text: string }[];
+  }[];
   readonly createdAt: string;
-  readonly eventGroup: ReferenceIdentityDto | null;
+  readonly eventGroups: readonly ReferenceIdentityDto[];
   readonly error: string | null;
 }
 export interface WorkflowInstanceDetails {

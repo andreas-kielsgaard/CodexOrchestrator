@@ -19,7 +19,7 @@ export interface TargetSelectionEditorProps {
 }
 
 function targetForKind(kind: SessionTarget['kind']): SessionTarget {
-  return kind === 'logical'
+  return kind !== 'exact'
     ? { kind, address: emptyLogicalAddress() }
     : { kind, session: emptyReference('session') };
 }
@@ -34,7 +34,10 @@ export function TargetSelectionEditor({
     onChange({
       ...value,
       target: targetForKind(kind),
-      missing: kind === 'exact' && value.missing === 'create' ? 'fail' : value.missing,
+      missing: kind !== 'logical' ? 'fail' : value.missing,
+      ...(kind === 'new'
+        ? ({ cardinality: 'first', running: 'any', createdBy: null } as const)
+        : {}),
     });
   };
 
@@ -51,53 +54,63 @@ export function TargetSelectionEditor({
             >
               <option value="logical">Logical address</option>
               <option value="exact">Exact Session</option>
+              <option value="new">New Session</option>
             </select>
           </label>
         ) : null}
-        <label className="session-event-editor__field">
-          <span>Match</span>
-          <select
-            value={value.cardinality}
-            onChange={(event) =>
-              onChange({ ...value, cardinality: event.target.value as TargetCardinality })
-            }
-          >
-            <option value="first">First matching Session</option>
-            <option value="all">All matching Sessions</option>
-          </select>
-        </label>
-        <label className="session-event-editor__field">
-          <span>Order matching Sessions by</span>
-          <select
-            value={value.ordering}
-            onChange={(event) =>
-              onChange({ ...value, ordering: event.target.value as TargetOrdering })
-            }
-          >
-            <option value="newest">Newest created</option>
-            <option value="last_addressed">Last addressed</option>
-          </select>
-        </label>
-        <label className="session-event-editor__field">
-          <span>Running state</span>
-          <select
-            value={value.running}
-            onChange={(event) =>
-              onChange({ ...value, running: event.target.value as RunningFilter })
-            }
-          >
-            <option value="any">Any</option>
-            <option value="running_only">Currently running</option>
-            <option value="not_running">Not running</option>
-          </select>
-        </label>
+        {value.target.kind !== 'new' && (
+          <>
+            <label className="session-event-editor__field">
+              <span>Match</span>
+              <select
+                value={value.cardinality}
+                onChange={(event) =>
+                  onChange({ ...value, cardinality: event.target.value as TargetCardinality })
+                }
+              >
+                <option value="first">First matching Session</option>
+                <option value="all">All matching Sessions</option>
+              </select>
+            </label>
+            <label className="session-event-editor__field">
+              <span>Order matching Sessions by</span>
+              <select
+                value={value.ordering}
+                onChange={(event) =>
+                  onChange({ ...value, ordering: event.target.value as TargetOrdering })
+                }
+              >
+                <option value="newest">Newest created</option>
+                <option value="last_addressed">Last addressed</option>
+              </select>
+            </label>
+            <label className="session-event-editor__field">
+              <span>Running state</span>
+              <select
+                value={value.running}
+                onChange={(event) =>
+                  onChange({ ...value, running: event.target.value as RunningFilter })
+                }
+              >
+                <option value="any">Any</option>
+                <option value="running_only">Currently running</option>
+                <option value="not_running">Not running</option>
+              </select>
+            </label>
+          </>
+        )}
       </div>
 
-      {!hideTargetAddress && value.target.kind === 'logical' ? (
+      {!hideTargetAddress && value.target.kind !== 'exact' ? (
         <LogicalAddressFields
           legend="Logical Session address"
           value={value.target.address}
-          onChange={(address) => onChange({ ...value, target: { kind: 'logical', address } })}
+          onChange={(address) =>
+            onChange({
+              ...value,
+              target: { kind: value.target.kind === 'new' ? 'new' : 'logical', address },
+            })
+          }
         />
       ) : !hideTargetAddress && value.target.kind === 'exact' ? (
         <ReferenceIdentityFields
@@ -107,95 +120,101 @@ export function TargetSelectionEditor({
         />
       ) : null}
 
-      <div className="session-event-editor__nested">
-        <label className="session-event-editor__check">
-          <input
-            type="checkbox"
-            checked={value.createdBy !== null}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                createdBy: event.target.checked
-                  ? { event: emptyReference('event_group'), session: null }
-                  : null,
-              })
-            }
-          />
-          Limit to Sessions created by a recorded source
-        </label>
-        {value.createdBy && (
+      {value.target.kind !== 'new' && (
+        <>
           <div className="session-event-editor__nested">
             <label className="session-event-editor__check">
               <input
                 type="checkbox"
-                checked={value.createdBy.event !== null}
+                checked={value.createdBy !== null}
                 onChange={(event) =>
                   onChange({
                     ...value,
-                    createdBy: {
-                      ...value.createdBy!,
-                      event: event.target.checked ? emptyReference('event_group') : null,
-                    },
+                    createdBy: event.target.checked
+                      ? { event: emptyReference('event_group'), session: null }
+                      : null,
                   })
                 }
               />
-              Match creating event
+              Limit to Sessions created by a recorded source
             </label>
-            {value.createdBy.event && (
-              <ReferenceIdentityFields
-                legend="Creating event"
-                value={value.createdBy.event}
-                onChange={(event) =>
-                  onChange({ ...value, createdBy: { ...value.createdBy!, event } })
-                }
-              />
-            )}
-            <label className="session-event-editor__check">
-              <input
-                type="checkbox"
-                checked={value.createdBy.session !== null}
-                onChange={(event) =>
-                  onChange({
-                    ...value,
-                    createdBy: {
-                      ...value.createdBy!,
-                      session: event.target.checked ? emptyReference('session') : null,
-                    },
-                  })
-                }
-              />
-              Match creating Session
-            </label>
-            {value.createdBy.session && (
-              <ReferenceIdentityFields
-                legend="Creating Session"
-                value={value.createdBy.session}
-                onChange={(session) =>
-                  onChange({ ...value, createdBy: { ...value.createdBy!, session } })
-                }
-              />
+            {value.createdBy && (
+              <div className="session-event-editor__nested">
+                <label className="session-event-editor__check">
+                  <input
+                    type="checkbox"
+                    checked={value.createdBy.event !== null}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        createdBy: {
+                          ...value.createdBy!,
+                          event: event.target.checked ? emptyReference('event_group') : null,
+                        },
+                      })
+                    }
+                  />
+                  Match creating event
+                </label>
+                {value.createdBy.event && (
+                  <ReferenceIdentityFields
+                    legend="Creating event"
+                    value={value.createdBy.event}
+                    onChange={(event) =>
+                      onChange({ ...value, createdBy: { ...value.createdBy!, event } })
+                    }
+                  />
+                )}
+                <label className="session-event-editor__check">
+                  <input
+                    type="checkbox"
+                    checked={value.createdBy.session !== null}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        createdBy: {
+                          ...value.createdBy!,
+                          session: event.target.checked ? emptyReference('session') : null,
+                        },
+                      })
+                    }
+                  />
+                  Match creating Session
+                </label>
+                {value.createdBy.session && (
+                  <ReferenceIdentityFields
+                    legend="Creating Session"
+                    value={value.createdBy.session}
+                    onChange={(session) =>
+                      onChange({ ...value, createdBy: { ...value.createdBy!, session } })
+                    }
+                  />
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
 
-      <label className="session-event-editor__field">
-        <span>If no Session matches</span>
-        <select
-          value={value.missing}
-          onChange={(event) =>
-            onChange({ ...value, missing: event.target.value as MissingTargetPolicy })
-          }
-        >
-          <option value="create" disabled={value.target.kind !== 'logical'}>
-            Create a Session
-          </option>
-          <option value="fail">Fail the event</option>
-          <option value="noop">Do nothing</option>
-        </select>
-      </label>
-      {value.target.kind !== 'logical' && (
-        <p className="session-event-editor__hint">Creating a Session requires a logical address.</p>
+          <label className="session-event-editor__field">
+            <span>If no Session matches</span>
+            <select
+              value={value.missing}
+              onChange={(event) =>
+                onChange({ ...value, missing: event.target.value as MissingTargetPolicy })
+              }
+            >
+              <option value="create" disabled={value.target.kind !== 'logical'}>
+                Create a Session
+              </option>
+              <option value="fail">Fail the event</option>
+              <option value="noop">Do nothing</option>
+            </select>
+          </label>
+          {value.target.kind !== 'logical' && (
+            <p className="session-event-editor__hint">
+              Creating a Session requires a logical address.
+            </p>
+          )}
+        </>
       )}
     </fieldset>
   );

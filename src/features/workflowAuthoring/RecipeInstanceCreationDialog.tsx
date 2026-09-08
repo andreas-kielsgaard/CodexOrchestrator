@@ -5,7 +5,7 @@ import type {
   ResolvedRepoBranchWorktreeTarget,
 } from '../../application/worktreeTargets';
 import type { WorkflowInstanceClient } from '../../application/workflowInstances';
-import '../workflows/workflowInstanceCreationDialog.css';
+import './recipeInstanceCreationDialog.css';
 
 export function RecipeInstanceCreationDialog({
   recipes,

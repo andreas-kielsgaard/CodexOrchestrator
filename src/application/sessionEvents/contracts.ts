@@ -100,7 +100,8 @@ export type PromptSourceDto =
 
 export type SessionTargetDto =
   | { readonly kind: 'exact'; readonly session: ReferenceIdentityDto }
-  | { readonly kind: 'logical'; readonly address: SessionLogicalAddressDto };
+  | { readonly kind: 'logical'; readonly address: SessionLogicalAddressDto }
+  | { readonly kind: 'new'; readonly address: SessionLogicalAddressDto };
 
 export type TargetCardinalityDto = 'first' | 'all';
 export type TargetOrderingDto = 'newest' | 'last_addressed';

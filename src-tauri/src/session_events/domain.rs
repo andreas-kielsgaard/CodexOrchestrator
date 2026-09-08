@@ -237,6 +237,7 @@ impl PromptSource {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum SessionTarget {
+    New { address: SessionLogicalAddress },
     Exact { session: ReferenceIdentity },
     Logical { address: SessionLogicalAddress },
 }
@@ -302,6 +303,16 @@ pub(crate) struct TargetSelection {
 
 impl TargetSelection {
     fn validate(&self) -> Result<(), SessionEventDomainError> {
+        if matches!(self.target, SessionTarget::New { .. })
+            && (self.cardinality != TargetCardinality::First
+                || self.running != RunningFilter::Any
+                || self.created_by.is_some()
+                || self.missing != MissingTargetPolicy::Fail)
+        {
+            return Err(SessionEventDomainError::InvalidTarget(
+                "A new Session request cannot include selection or missing-target policy".into(),
+            ));
+        }
         if let Some(filter) = &self.created_by {
             filter.validate()?;
         }
@@ -361,7 +372,8 @@ impl SessionEventDefinition {
         if let Some(configuration) = &self.creation_configuration {
             configuration.validate()?;
         }
-        if self.target.missing == MissingTargetPolicy::Create
+        if (self.target.missing == MissingTargetPolicy::Create
+            || matches!(self.target.target, SessionTarget::New { .. }))
             && self.creation_configuration.is_none()
         {
             return Err(SessionEventDomainError::InvalidCreationConfiguration(
@@ -399,7 +411,8 @@ impl SessionEventCommand {
         if let Some(configuration) = &self.creation_configuration {
             configuration.validate()?;
         }
-        if self.target.missing == MissingTargetPolicy::Create
+        if (self.target.missing == MissingTargetPolicy::Create
+            || matches!(self.target.target, SessionTarget::New { .. }))
             && self.creation_configuration.is_none()
         {
             return Err(SessionEventDomainError::InvalidCreationConfiguration(

@@ -71,7 +71,7 @@ impl WorkflowAuthoringRepository for SqliteWorkflowAuthoringRepository {
         let mut statement = connection
             .prepare(
                 "SELECT draft_json,active_json,updated_at \
-                 FROM workflow_recipe_authoring \
+                 FROM workflow_recipe_authoring WHERE json_extract(draft_json,'$.contractVersion')=2 \
                  ORDER BY json_extract(draft_json,'$.name') COLLATE NOCASE,recipe_id",
             )
             .map_err(storage_error("prepare Workflow recipe list"))?;
@@ -214,6 +214,11 @@ fn encode_draft(draft: &WorkflowRecipeDraft) -> Result<String, String> {
 }
 
 fn decode_draft(value: &str) -> Result<WorkflowRecipeDraft, String> {
+    let raw: serde_json::Value = serde_json::from_str(value).map_err(|e| e.to_string())?;
+    if raw.get("contractVersion").and_then(|v| v.as_u64()) != Some(2) {
+        return Err("Unsupported Workflow recipe contract; create a new recipe".into());
+    }
+
     let draft: WorkflowRecipeDraft = serde_json::from_str(value)
         .map_err(|error| format!("Unable to decode Workflow recipe: {error}"))?;
     draft.validate_storable()?;
@@ -247,6 +252,10 @@ mod tests {
             name: "Review".into(),
             revision,
             starting_node_id: None,
+            entry_action: crate::otp_api::CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
             nodes: vec![super::super::authoring::WorkflowAuthoringNode {
                 node_id: "reviewer".into(),
                 name: "Reviewer".into(),

@@ -7,7 +7,8 @@ describe('Tauri Workflow Authoring client', () => {
     const invoke = vi.fn().mockResolvedValue(null);
     const client = createTauriWorkflowAuthoringClient(invoke);
     const draft: WorkflowRecipeDraftDto = {
-      contractVersion: 1,
+      contractVersion: 2,
+      entryAction: { package: 'workflow', tool: 'prompt_agent' },
       recipeId: 'review',
       name: 'Review',
       revision: 2,
@@ -41,7 +42,7 @@ describe('Tauri Workflow Authoring client', () => {
       connections: [],
     };
 
-    await client.listTriggerCapabilities();
+    await client.listCapabilities();
     await client.listRecipes();
     await client.loadRecipe('review');
     await client.createRecipe('Review');
@@ -61,7 +62,7 @@ describe('Tauri Workflow Authoring client', () => {
     });
 
     expect(invoke.mock.calls).toEqual([
-      ['list_workflow_trigger_capabilities'],
+      ['list_workflow_capabilities'],
       ['list_workflow_recipes'],
       ['load_workflow_recipe', { input: { recipeId: 'review' } }],
       ['create_workflow_recipe', { input: { name: 'Review' } }],

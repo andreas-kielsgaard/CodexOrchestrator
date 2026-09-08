@@ -39,7 +39,8 @@ export type PromptSourceDefinition =
 
 export type SessionTarget =
   | { readonly kind: 'exact'; readonly session: ReferenceIdentity }
-  | { readonly kind: 'logical'; readonly address: SessionLogicalAddress };
+  | { readonly kind: 'logical'; readonly address: SessionLogicalAddress }
+  | { readonly kind: 'new'; readonly address: SessionLogicalAddress };
 
 export type TargetCardinality = 'first' | 'all';
 export type TargetOrdering = 'newest' | 'last_addressed';

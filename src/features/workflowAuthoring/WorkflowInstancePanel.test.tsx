@@ -1,4 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type {
+  SessionEventQueryClient,
+  SessionEventResultDto,
+} from '../../application/sessionEvents';
 import type {
   WorkflowInstanceClient,
   WorkflowInstanceDetails,
@@ -58,15 +62,102 @@ it('ignores results from an old instance and refreshes errors after an attempt i
         id: 'failed',
         instanceId: 'b',
         definitionRef: { namespace: 'workflow', kind: 'event_definition', id: 'review' },
-        sourceSessionId: 'source',
+        context: {
+          instanceId: 'b',
+          occurrenceId: 'call',
+          capability: { package: 'workflow', tool: 'prompt_agent' },
+          source: null,
+          connectionId: 'review',
+          outputNodeId: 'reviewer',
+        },
+        output: null,
+        payload: {},
+        sessionRequests: [],
         createdAt: 'today',
-        eventGroup: null,
+        eventGroups: [],
         error: 'Cannot read prompt file plan.md',
       },
     ],
   };
   vi.mocked(client.load).mockResolvedValue(updated);
   act(() => changed('b'));
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Handoffs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Workflow deliveries' }));
   await waitFor(() => expect(screen.getByText('Cannot read prompt file plan.md')).toBeVisible());
+});
+
+it('opens each recorded group in the main delivery inspector and can return to the conversation', async () => {
+  const reference = (kind: string, id: string) => ({ namespace: 'workflow', kind, id });
+  const eventGroupId = reference('event_group', 'second');
+  const recorded: SessionEventResultDto = {
+    group: {
+      eventGroupId,
+      definitionRef: reference('event_definition', 'review'),
+      trigger: { kind: 'application_event', event: reference('output', 'continuation') },
+      source: { kind: 'application_event', event: reference('output', 'continuation') },
+      promptSources: [],
+      createdSessionPromptSources: [],
+      targetSelection: {
+        target: { kind: 'exact', session: reference('session', 'reviewer') },
+        cardinality: 'first',
+        ordering: 'newest',
+        running: 'any',
+        createdBy: null,
+        missing: 'fail',
+      },
+      resolvedSessions: [],
+      createdSession: null,
+      outcome: 'noop',
+      deliveryCount: 0,
+    },
+    deliveries: [],
+  };
+  const value = details('inspect');
+  const loaded: WorkflowInstanceDetails = {
+    ...value,
+    attempts: [
+      {
+        id: 'attempt',
+        instanceId: 'inspect',
+        definitionRef: recorded.group.definitionRef,
+        context: {
+          instanceId: 'inspect',
+          occurrenceId: 'call',
+          capability: { package: 'workflow', tool: 'prompt_agent' },
+          source: null,
+          connectionId: 'review',
+          outputNodeId: 'reviewer',
+        },
+        output: null,
+        payload: {},
+        sessionRequests: [],
+        createdAt: 'today',
+        error: null,
+        eventGroups: [reference('event_group', 'first'), eventGroupId],
+      },
+    ],
+  };
+  const client: WorkflowInstanceClient = {
+    load: async () => loaded,
+    list: async () => [],
+    create: async () => value.instance,
+    messageNode: async () => recorded,
+  };
+  const queryClient: SessionEventQueryClient = {
+    loadRecordedEvent: vi.fn(async () => recorded),
+    loadEventGroup: async () => recorded.group,
+    listDeliveriesForGroup: async () => [],
+    listDeliveriesForSession: async () => [],
+  };
+  render(<WorkflowInstancePanel instanceId="inspect" client={client} queryClient={queryClient} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Expand Workflow deliveries' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Show delivery 2' }));
+  const inspector = await screen.findByRole('region', { name: 'Workflow delivery details' });
+  expect(queryClient.loadRecordedEvent).toHaveBeenCalledWith(eventGroupId);
+  expect(inspector.closest('aside')).toBeNull();
+  expect(within(inspector).getByText('Exact Session')).toBeVisible();
+  fireEvent.click(within(inspector).getByRole('button', { name: 'Close delivery details' }));
+  expect(
+    screen.queryByRole('region', { name: 'Workflow delivery details' }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText('Select a Session to open its conversation.')).toBeVisible();
 });

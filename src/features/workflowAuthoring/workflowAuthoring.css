@@ -454,6 +454,14 @@
   min-height: 0;
   display: grid;
 }
+.recipe-instance-panel__delivery {
+  min-width: 0;
+  overflow: auto;
+  padding: 16px;
+}
+.recipe-instance-panel__delivery > button {
+  margin-bottom: 12px;
+}
 .recipe-instance-panel__body > aside strong {
   overflow-wrap: anywhere;
 }

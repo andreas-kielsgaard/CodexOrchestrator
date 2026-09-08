@@ -1,5 +1,6 @@
 use super::{authoring::WorkflowRecipeDraft, instance_domain::ResolvedRepoBranchWorktreeTarget};
-use crate::session_events::{ReferenceIdentity, SessionEventResult};
+use crate::otp_api::{InvocationContext, OutputRef, SessionRequest};
+use crate::session_events::ReferenceIdentity;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -34,9 +35,12 @@ pub(crate) struct WorkflowEventAttempt {
     pub(crate) id: String,
     pub(crate) instance_id: String,
     pub(crate) definition_ref: ReferenceIdentity,
-    pub(crate) source_session_id: Option<String>,
+    pub(crate) context: InvocationContext,
+    pub(crate) output: Option<OutputRef>,
+    pub(crate) payload: serde_json::Value,
+    pub(crate) session_requests: Vec<SessionRequest>,
     pub(crate) created_at: String,
-    pub(crate) event_group: Option<ReferenceIdentity>,
+    pub(crate) event_groups: Vec<ReferenceIdentity>,
     pub(crate) error: Option<String>,
 }
 
@@ -108,7 +112,7 @@ impl WorkflowInstanceStore {
 
     pub(crate) fn list(&self) -> Result<Vec<RecipeInstance>, String> {
         let connection = self.lock()?;
-        let mut query = connection.prepare("SELECT record_json FROM workflow_recipe_instances ORDER BY json_extract(record_json,'$.createdAt') DESC,id")
+        let mut query = connection.prepare("SELECT record_json FROM workflow_recipe_instances WHERE json_extract(record_json,'$.recipe.contractVersion')=2 ORDER BY json_extract(record_json,'$.createdAt') DESC,id")
             .map_err(|error| error.to_string())?;
         let result = query
             .query_map([], |row| row.get::<_, String>(0))
@@ -132,7 +136,15 @@ impl WorkflowInstanceStore {
             .optional()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Workflow instance `{id}` does not exist"))?;
-        serde_json::from_str(&value).map_err(|error| error.to_string())
+        let raw: serde_json::Value = serde_json::from_str(&value).map_err(|e| e.to_string())?;
+        if raw
+            .pointer("/recipe/contractVersion")
+            .and_then(|v| v.as_u64())
+            != Some(2)
+        {
+            return Err("Unsupported Workflow instance contract; create a new instance".into());
+        }
+        serde_json::from_value(raw).map_err(|error| error.to_string())
     }
 
     pub(crate) fn begin_attempt(&self, attempt: &WorkflowEventAttempt) -> Result<bool, String> {
@@ -141,15 +153,7 @@ impl WorkflowInstanceStore {
             .map_err(|error| error.to_string())? == 1)
     }
 
-    pub(crate) fn finish_attempt(
-        &self,
-        mut attempt: WorkflowEventAttempt,
-        result: &Result<SessionEventResult, String>,
-    ) -> Result<(), String> {
-        match result {
-            Ok(result) => attempt.event_group = Some(result.group.event_group_id.clone()),
-            Err(error) => attempt.error = Some(error.clone()),
-        }
+    pub(crate) fn update_attempt(&self, attempt: &WorkflowEventAttempt) -> Result<(), String> {
         self.lock()?
             .execute(
                 "UPDATE workflow_recipe_attempts SET record_json=?2 WHERE id=?1",

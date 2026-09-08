@@ -943,8 +943,7 @@ mod tests {
                 name: "plan_builder".into(),
                 url: "http://127.0.0.1:41001/mcp".into(),
                 bearer_token: "secret".into(),
-                workflow_tool_names: vec![],
-                workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
         let stops = Arc::new(Mutex::new(0));

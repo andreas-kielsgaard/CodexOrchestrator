@@ -3,7 +3,6 @@ mod continuation_tests;
 #[cfg(feature = "live-tests")]
 mod live_continuation;
 use crate::harness_engine::{
-    catalog_service::HarnessCatalogService,
     domain::SidecarBindingRegistration,
     proxy::{run_proxy_listener, ProxyBindings},
     repository::SqliteHarnessBindingRepository,
@@ -18,9 +17,7 @@ use crate::{
         authoring::{WorkflowAuthoringConnection, WorkflowAuthoringNode},
         authoring_repository::SqliteWorkflowAuthoringRepository,
         authoring_service::WorkflowAuthoringService,
-        compiled_plan::{
-            WorkflowConnectionPromptInput, WorkflowConnectionTargetPlan, WorkflowConnectionTrigger,
-        },
+        compiled_plan::WorkflowConnectionPromptInput,
         execution::WorkflowExecutionService,
         instance_domain::*,
         instances::{RecipeInstance, WorkflowInstanceStore},
@@ -88,7 +85,6 @@ impl Fixture {
                 Arc::new(SqliteHarnessBindingRepository::open(&database).unwrap()),
                 Arc::new(LocalProxy::new()),
                 registry.clone(),
-                HarnessCatalogService::in_memory(),
             )
             .unwrap()
         });
@@ -112,7 +108,7 @@ impl Fixture {
         let mut snapshot = test_selected_runtime_profile();
         if mediated {
             snapshot.exposure.mcp_tools.insert(
-                "workflow_handoff".into(),
+                "workflow".into(),
                 [
                     "handoff_to_agent".into(),
                     "trigger_workflow_continuation".into(),
@@ -153,6 +149,7 @@ impl Fixture {
         let authoring = Arc::new(WorkflowAuthoringService::new(
             Arc::new(SqliteWorkflowAuthoringRepository::open(&database).unwrap()),
             profiles.clone(),
+            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         ));
         let execution = Arc::new(WorkflowExecutionService::new(
             authoring.clone(),
@@ -163,10 +160,12 @@ impl Fixture {
         ));
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
         if mediated {
-            let (descriptor, owner) =
-                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&execution))
-                    .unwrap();
-            let registration = registry.register(descriptor).unwrap();
+            let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
+                execution.registry.clone(),
+                Arc::downgrade(&execution),
+            )
+            .unwrap();
+            let registration = registry.register(descriptors.remove(0)).unwrap();
             assert!(registry.retain_owner(&registration, owner).is_ok());
         }
         let direct = AgentSessionProfileApplication::new(sessions.clone(), source);
@@ -218,21 +217,25 @@ impl Fixture {
                 agent_identity_id: None,
             })
             .collect();
-        let mut prompt_inputs = vec![WorkflowConnectionPromptInput::InvocationOutput];
+        let mut prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
+            field: "output".into(),
+        }];
         if let Some(file) = file {
-            prompt_inputs.push(WorkflowConnectionPromptInput::ReferencedContent {
-                reference: ReferenceIdentity::new("file", "path", file).unwrap(),
-            });
+            prompt_inputs.push(WorkflowConnectionPromptInput::FileContent { path: file.into() });
         }
         state.draft.connections = vec![WorkflowAuthoringConnection {
             connection_id: "a-to-b".into(),
             name: "Review the plan".into(),
             source_node_id: "a".into(),
             destination_node_id: "b".into(),
-            trigger: WorkflowConnectionTrigger::InvocationCompleted,
+            trigger: otp_output("on_invocation_completed", "completed"),
             prompt_inputs,
             prompt_text: "Review the result".into(),
-            target: WorkflowConnectionTargetPlan::default(),
+            action: crate::otp_api::CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
+            configuration: json!({}),
         }];
         state = self.authoring.save_draft(state.draft).unwrap();
         self.authoring.activate(&state.draft.recipe_id).unwrap();
@@ -641,14 +644,14 @@ fn prompt_files_are_read_and_fixed_prompt_references_survive_in_delivery_records
     let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
     let group = attempts
         .iter()
-        .find(|attempt| attempt.source_session_id.is_some())
+        .find(|attempt| attempt.context.source.is_some())
         .unwrap()
-        .event_group
-        .as_ref()
+        .event_groups
+        .first()
         .unwrap();
     let records = store.deliveries_for_group(group).unwrap();
-    assert!(records[0].prompt_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "prompt_field" && text == "Review the result")));
-    assert!(records[0].included_created_session_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "prompt_field" && text == "Initial for b")));
+    assert!(records[0].prompt_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "prompt_input" && text == "Review the result")));
+    assert!(records[0].included_created_session_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "initial_prompt" && text == "Initial for b")));
 }
 
 #[test]
@@ -656,8 +659,8 @@ fn invalid_source_pairs_and_escaping_file_references_do_not_launch_receiver() {
     let fixture = Fixture::new();
     let instance = fixture.instance(None);
     let mut draft = instance.recipe.clone();
-    draft.connections[0].prompt_inputs = vec![WorkflowConnectionPromptInput::McpArgument {
-        name: "promptText".into(),
+    draft.connections[0].prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
+        field: "promptText".into(),
     }];
     let saved = fixture.authoring.save_draft(draft).unwrap();
     assert!(fixture
@@ -689,22 +692,19 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
     let baseline = fixture.instance(None);
     let mut draft = baseline.recipe.clone();
     let tools = [(
-        "workflow_handoff".into(),
+        "workflow".into(),
         ["handoff_to_agent".into()].into_iter().collect(),
     )]
     .into_iter()
     .collect();
     draft.nodes[0].node_profile.allowed_capabilities.mcp_tools = tools;
-    draft.connections[0].trigger = WorkflowConnectionTrigger::McpCall {
-        server: ReferenceIdentity::new("mcp", "server", "workflow_handoff").unwrap(),
-        tool: ReferenceIdentity::new("mcp", "tool", "handoff_to_agent").unwrap(),
-    };
+    draft.connections[0].trigger = otp_output("handoff_to_agent", "handoff");
     draft.connections[0].prompt_inputs = vec![
-        WorkflowConnectionPromptInput::McpArgument {
-            name: "promptText".into(),
+        WorkflowConnectionPromptInput::OutputField {
+            field: "promptText".into(),
         },
-        WorkflowConnectionPromptInput::McpArgument {
-            name: "filePaths".into(),
+        WorkflowConnectionPromptInput::OutputField {
+            field: "filePaths".into(),
         },
     ];
     draft = fixture.authoring.save_draft(draft).unwrap().draft;
@@ -760,10 +760,10 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
     .await
     .unwrap();
     assert_eq!(response["result"]["isError"], false, "{response}");
-    assert_eq!(
-        response["result"]["structuredContent"]["filePaths"],
-        json!(["plan.md"])
-    );
+    assert!(response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("1 delivery"));
     assert_eq!(fixture.launches().len(), 2);
     let receiver = fixture.launches()[1].session_id.clone();
     assert_eq!(
@@ -774,7 +774,7 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
             .invocations[0]
             .invocation
             .submitted_text,
-        "Review this\n\nplan.md\n\nReview the result"
+        "Review this\n\n[\n  \"plan.md\"\n]\n\nReview the result"
     );
     assert_eq!(
         fixture
@@ -791,71 +791,260 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
         .is_empty());
 }
 
+fn otp_output(tool: &str, output: &str) -> crate::otp_api::OutputRef {
+    crate::otp_api::OutputRef {
+        capability: crate::otp_api::CapabilityRef {
+            package: "workflow".into(),
+            tool: tool.into(),
+        },
+        output: output.into(),
+    }
+}
+
 #[test]
-fn application_event_entry_uses_the_source_instance_and_configured_field() {
+fn otp_node_handles_and_new_exact_requests_use_one_dispatcher() {
+    use crate::otp_api::*;
     let fixture = Fixture::new();
-    let baseline = fixture.instance(None);
-    let mut draft = baseline.recipe.clone();
-    let event_kind = ReferenceIdentity::new("application", "event_kind", "plan_ready").unwrap();
-    draft.connections[0].trigger = WorkflowConnectionTrigger::ApplicationEvent {
-        event_kind: event_kind.clone(),
+    let instance = fixture.instance(None);
+    let mut context = InvocationContext {
+        instance_id: instance.id.clone(),
+        occurrence_id: "fresh-one".into(),
+        capability: instance.recipe.entry_action.clone(),
+        source: None,
+        connection_id: Some("a-to-b".into()),
+        output_node_id: Some("b".into()),
     };
-    draft.connections[0].prompt_inputs =
-        vec![WorkflowConnectionPromptInput::ApplicationEventField {
-            field: "context".into(),
-        }];
-    draft = fixture.authoring.save_draft(draft).unwrap().draft;
-    fixture
-        .authoring
-        .activate_revision(&draft.recipe_id, draft.revision)
-        .unwrap();
-    let instance = fixture
-        .execution
-        .create_instance(
-            &draft.recipe_id,
-            draft.revision,
-            "Event run".into(),
-            fixture.target(),
-        )
-        .unwrap();
-    let first = fixture
-        .execution
-        .dispatch_user_request(&draft.recipe_id, &instance.id, "Plan".into())
-        .unwrap();
-    let source = first.group.created_session.unwrap();
-    assert_eq!(fixture.launches().len(), 1);
-    let trigger = crate::session_events::SessionEventOccurrenceTrigger::ApplicationEvent {
-        event: ReferenceIdentity::new("application", "event", "ready-1").unwrap(),
-        event_kind,
-        fields: [("context".into(), "Ready to review".into())]
-            .into_iter()
-            .collect(),
+    let host = crate::otp_host::workflow::WorkflowHost {
+        execution: &fixture.execution,
+        instance: &instance,
+        context: &context,
     };
+    let node = host.node(&context, "b").unwrap();
+    assert_eq!(node.initial_prompt.as_deref(), Some("Initial for b"));
+    assert_eq!(
+        node.configuration["capabilityProfileId"],
+        "test-capabilities"
+    );
+    let connection = host.connection(&context).unwrap().unwrap();
+    assert_eq!(connection.id, "a-to-b");
+    assert_eq!(connection.configuration["destinationNodeId"], "b");
+    assert!(host.sessions(&context, "a").is_err());
+    let mut forged = context.clone();
+    forged.instance_id = "foreign".into();
+    assert!(host.node(&forged, "b").is_err());
+    let run = |context: &InvocationContext, config| {
+        fixture
+            .execution
+            .dispatch_otp_action(
+                &instance,
+                context,
+                None,
+                json!({}),
+                config,
+                Ok(vec![ResolvedInput {
+                    reference: context.occurrence_id.clone(),
+                    value: json!("Review"),
+                }]),
+            )
+            .unwrap()
+    };
+    let first = run(&context, json!({"mode":"new"}));
+    context.occurrence_id = "fresh-two".into();
+    let second = run(&context, json!({"mode":"new"}));
+    assert_ne!(
+        first[0].group.created_session,
+        second[0].group.created_session
+    );
+    context.occurrence_id = "select-one".into();
+    let exact = run(&context, json!({}));
+    assert_eq!(
+        exact[0].deliveries[0].target_session,
+        second[0].deliveries[0].target_session
+    );
+    assert!(exact[0].group.created_session.is_none());
+    context.occurrence_id = "fresh-three".into();
+    run(&context, json!({"mode":"new"}));
     assert_eq!(
         fixture
             .execution
-            .receive_source_event(&source, "ready-1", trigger.clone())
-            .unwrap(),
+            .instance_sessions(&instance)
+            .unwrap()
+            .len(),
+        3
+    );
+    let launches = fixture.launches();
+    assert_eq!(launches.len(), 4);
+    for index in [0, 1, 3] {
+        assert_eq!(
+            launches[index]
+                .launch_extension
+                .as_ref()
+                .unwrap()
+                .initial_prompt_prefix
+                .as_ref()
+                .unwrap()
+                .content,
+            "Initial for b"
+        )
+    }
+    assert!(launches[2]
+        .launch_extension
+        .as_ref()
+        .is_none_or(|e| e.initial_prompt_prefix.is_none()));
+    assert!(run(&context, json!({"mode":"new"})).is_empty());
+    assert_eq!(
+        fixture.launches().len(),
+        4,
+        "an occurrence is not dispatched twice"
+    );
+    let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
+    assert_eq!(attempts.len(), 4);
+    assert!(attempts
+        .iter()
+        .all(|a| a.session_requests.len() == 1 && a.event_groups.len() == 1));
+    assert!(matches!(
+        attempts
+            .iter()
+            .find(|a| a.context.occurrence_id == "select-one")
+            .unwrap()
+            .session_requests[0]
+            .target,
+        SessionRequestTarget::Exact { .. }
+    ));
+}
+
+#[test]
+fn otp_selection_keeps_busy_session_failure_visible_without_relaunch() {
+    use crate::otp_api::*;
+    let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, false);
+    let instance = fixture.instance(None);
+    let mut context = InvocationContext {
+        instance_id: instance.id.clone(),
+        occurrence_id: "new".into(),
+        capability: instance.recipe.entry_action.clone(),
+        source: None,
+        connection_id: None,
+        output_node_id: Some("b".into()),
+    };
+    let run = |ctx: &InvocationContext| {
+        fixture
+            .execution
+            .dispatch_otp_action(
+                &instance,
+                ctx,
+                None,
+                json!({}),
+                json!({}),
+                Ok(vec![ResolvedInput {
+                    reference: ctx.occurrence_id.clone(),
+                    value: json!("Review"),
+                }]),
+            )
+            .unwrap()
+    };
+    run(&context);
+    context.occurrence_id = "busy".into();
+    let failed = run(&context);
+    assert!(matches!(
+        failed[0].deliveries[0].outcome,
+        crate::session_events::DeliveryOutcome::Failed { .. }
+    ));
+    assert_eq!(fixture.launches().len(), 1);
+    assert_eq!(
+        fixture.execution.instances.attempts(&instance.id).unwrap()[0]
+            .event_groups
+            .len(),
         1
     );
-    assert_eq!(
-        fixture
-            .execution
-            .receive_source_event(&source, "ready-1", trigger)
-            .unwrap(),
-        0
+}
+
+#[test]
+fn otp_compilation_requires_imported_outputs_actions_and_valid_configuration() {
+    let fixture = Fixture::new();
+    let instance = fixture.instance(None);
+    let plan = fixture
+        .execution
+        .compile_instance(&instance.id, None)
+        .unwrap();
+    let empty = crate::otp_host::OtpRegistry::import(&[]).unwrap();
+    assert!(
+        crate::workflows::compiler::WorkflowCompiler::compile(plan.clone(), &empty)
+            .unwrap_err()
+            .contains("not imported")
     );
-    assert_eq!(fixture.launches().len(), 2);
+    let check = |plan| {
+        crate::workflows::compiler::WorkflowCompiler::compile(plan, &fixture.execution.registry)
+    };
+    let mut invalid = plan.clone();
+    invalid.connections[0].trigger.output = "absent".into();
+    assert!(check(invalid).is_err());
+    let mut invalid = plan.clone();
+    invalid.connections[0].action = invalid.connections[0].trigger.capability.clone();
+    assert!(check(invalid).is_err());
+    let mut invalid = plan.clone();
+    invalid.connections[0].configuration = json!({"mode":"random"});
+    assert!(check(invalid).is_err());
+    let mut invalid = plan.clone();
+    invalid.connections[0].prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
+        field: "undeclared".into(),
+    }];
+    assert!(check(invalid).is_err());
+    let mut invalid = plan;
+    invalid.connections[0].destination_node =
+        crate::workflows::address_references::WorkflowNodeReference::new("absent").unwrap();
+    assert!(check(invalid).is_err());
+}
+
+#[test]
+fn unsupported_recipes_and_instances_remain_stored_but_are_not_executed() {
+    let fixture = Fixture::new();
+    let instance = fixture.instance(None);
+    let database = rusqlite::Connection::open(fixture.folder.path().join("repair.sqlite")).unwrap();
+    let recipe = r#"{"contractVersion":1,"old":"recipe bytes"}"#;
+    let record = r#"{"recipe":{"contractVersion":1},"old":"instance bytes"}"#;
+    database
+        .execute(
+            "UPDATE workflow_recipe_authoring SET draft_json=?1,active_json=?1 WHERE recipe_id=?2",
+            rusqlite::params![recipe, instance.recipe.recipe_id],
+        )
+        .unwrap();
+    database
+        .execute(
+            "UPDATE workflow_recipe_instances SET record_json=?1 WHERE id=?2",
+            rusqlite::params![record, instance.id],
+        )
+        .unwrap();
+    assert!(fixture.authoring.list().unwrap().is_empty());
+    assert!(fixture.execution.instances.list().unwrap().is_empty());
+    assert!(fixture
+        .authoring
+        .load(&instance.recipe.recipe_id)
+        .unwrap_err()
+        .contains("Unsupported"));
     assert!(fixture
         .execution
-        .instance_sessions(&baseline)
-        .unwrap()
-        .is_empty());
-    let receiver = &fixture.launches()[1].session_id;
+        .instances
+        .load(&instance.id)
+        .unwrap_err()
+        .contains("Unsupported"));
     assert_eq!(
-        fixture.sessions.load_session(receiver).unwrap().invocations[0]
-            .invocation
-            .submitted_text,
-        "Ready to review\n\nReview the result"
+        database
+            .query_row(
+                "SELECT record_json FROM workflow_recipe_instances",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        record
+    );
+    assert_eq!(
+        database
+            .query_row(
+                "SELECT draft_json FROM workflow_recipe_authoring",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        recipe
     );
 }

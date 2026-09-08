@@ -214,6 +214,57 @@ fn direct_user_options_require_a_user_request_and_exact_target() {
 }
 
 #[test]
+fn explicit_new_session_does_not_reuse_existing_candidates_and_exact_prompt_does_not_reinitialize()
+{
+    let directory = Arc::new(FakeDirectory::with_entries(vec![
+        entry("one", 1, None, false),
+        entry("two", 2, None, false),
+    ]));
+    let dispatcher = Arc::new(FakeDispatcher::default());
+    let store = Arc::new(InMemorySessionEventStore::default());
+    let app = application(directory.clone(), dispatcher.clone(), store.clone());
+    let exact = app
+        .dispatch(command(
+            "exact",
+            SessionTarget::Exact {
+                session: reference("session", "one"),
+            },
+            MissingTargetPolicy::Fail,
+        ))
+        .unwrap();
+    assert!(!exact.deliveries[0].target_created);
+    assert!(dispatcher.requests.lock().unwrap()[0]
+        .initial_prompt
+        .is_none());
+    let mut fresh = command(
+        "fresh",
+        SessionTarget::New { address: address() },
+        MissingTargetPolicy::Fail,
+    );
+    assert!(fresh.validate().is_err());
+    fresh.creation_configuration = Some(SessionCreationConfiguration {
+        contract: reference("creation", "v1"),
+        payload: json!({"profile":"test"}),
+        assigned_identity: None,
+    });
+    let result = app.dispatch(fresh).unwrap();
+    assert_eq!(directory.entries.lock().unwrap().len(), 3);
+    assert_eq!(directory.creations.lock().unwrap().len(), 1);
+    assert!(result.deliveries[0].target_created);
+    assert_eq!(
+        dispatcher.requests.lock().unwrap()[1]
+            .initial_prompt
+            .as_deref(),
+        Some("Initial context")
+    );
+    assert!(store
+        .event_group(&result.group.event_group_id)
+        .unwrap()
+        .is_some());
+    assert_eq!(dispatcher.requests.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn direct_user_options_are_forwarded_to_an_unaddressed_exact_session() {
     let session = reference("session", "existing");
     let mut existing = entry("existing", 1, None, true);

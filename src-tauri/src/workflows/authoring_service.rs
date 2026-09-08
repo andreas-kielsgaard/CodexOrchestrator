@@ -8,7 +8,9 @@ use super::{
 };
 use crate::{
     execution_configuration::{CapabilityProfile, CapabilityProfileService},
-    session_events::SessionEventDefinition,
+    otp_api::{CapabilityRef, Entrypoint},
+    otp_host::OtpRegistry,
+    workflows::compiled_plan::WorkflowCompiledPlan,
 };
 use std::{collections::BTreeMap, sync::Arc};
 use uuid::Uuid;
@@ -16,17 +18,37 @@ use uuid::Uuid;
 pub(crate) struct WorkflowAuthoringService {
     repository: Arc<dyn WorkflowAuthoringRepository>,
     capability_profiles: Arc<CapabilityProfileService>,
+    pub(crate) registry: Arc<OtpRegistry>,
 }
 
 impl WorkflowAuthoringService {
     pub(crate) fn new(
         repository: Arc<dyn WorkflowAuthoringRepository>,
         capability_profiles: Arc<CapabilityProfileService>,
+        registry: Arc<OtpRegistry>,
     ) -> Self {
         Self {
             repository,
             capability_profiles,
+            registry,
         }
+    }
+
+    fn default_action(&self) -> Result<CapabilityRef, String> {
+        self.registry
+            .catalogue()
+            .into_iter()
+            .find_map(|package| {
+                package
+                    .tools
+                    .into_iter()
+                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action))
+                    .map(|tool| CapabilityRef {
+                        package: package.id,
+                        tool: tool.id,
+                    })
+            })
+            .ok_or("Import an OTP with an agent action before creating a Workflow".into())
     }
 
     pub(crate) fn list(&self) -> Result<Vec<WorkflowRecipeSummary>, String> {
@@ -46,6 +68,7 @@ impl WorkflowAuthoringService {
             name,
             revision: 1,
             starting_node_id: None,
+            entry_action: self.default_action()?,
             nodes: Vec::new(),
             connections: Vec::new(),
         };
@@ -127,7 +150,7 @@ impl WorkflowAuthoringService {
         &self,
         recipe_id: &str,
         instance_id: &str,
-    ) -> Result<Vec<SessionEventDefinition>, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         let state = self.load(recipe_id)?;
         let active = state
             .active
@@ -139,10 +162,10 @@ impl WorkflowAuthoringService {
         &self,
         recipe: &WorkflowRecipeDraft,
         instance_id: &str,
-    ) -> Result<Vec<SessionEventDefinition>, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         let profiles = self.load_capability_profiles(recipe)?;
         let input = recipe.compilation_input(instance_id, &profiles)?;
-        WorkflowCompiler::compile(input).map_err(|error| error.to_string())
+        WorkflowCompiler::compile(input, &self.registry).map_err(|error| error.to_string())
     }
 
     fn load_capability_profiles(
@@ -228,6 +251,7 @@ mod tests {
         WorkflowAuthoringService::new(
             Arc::new(SqliteWorkflowAuthoringRepository::in_memory()),
             profiles,
+            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         )
     }
 
@@ -265,7 +289,7 @@ mod tests {
             .compile_active_for_instance(&active.draft.recipe_id, "instance-1")
             .unwrap();
 
-        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions.nodes.len(), 1);
         assert_eq!(active.active.unwrap().revision, 2);
     }
 

@@ -19,6 +19,9 @@ mod execution_configuration;
 mod harness_engine;
 mod identities;
 mod native_profiles;
+mod otp_api;
+mod otp_host;
+mod otp_packages;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;

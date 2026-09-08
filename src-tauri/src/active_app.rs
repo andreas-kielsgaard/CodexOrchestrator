@@ -24,7 +24,6 @@ struct ManagedPlanBuilderNotifier {
             >,
         >,
     >,
-    workflow: Arc<Mutex<Option<Weak<crate::workflows::application::WorkflowApplication>>>>,
     workflow_execution:
         Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
 }
@@ -40,7 +39,6 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         {
             self.registry.on_terminal(invocation);
         }
-        let workflow = self.workflow.lock().ok().and_then(|slot| slot.clone());
         let execution = self
             .workflow_execution
             .lock()
@@ -50,11 +48,6 @@ impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBui
         if let Some(execution) = execution {
             // Handoff failures have their own stored attempt; never relabel the sender's result.
             let _ = execution.on_agent_notification(&notification);
-        }
-        if let Some(workflow) = workflow.and_then(|application| application.upgrade()) {
-            // Workflow execution is a best-effort callback after the sender's terminal fact is
-            // durable. Its failure must not change or obscure that Agent Session completion.
-            let _ = workflow.on_agent_notification(&notification);
         }
         // Runtime launch provenance is persisted synchronously before the process start returns.
         // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
@@ -141,7 +134,6 @@ pub(crate) fn run() {
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
                 &database_path,
                 managed_mcp_upstreams.clone(),
-                harness_catalog.clone(),
             )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
@@ -160,7 +152,6 @@ pub(crate) fn run() {
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
-            let workflow_notification = Arc::new(Mutex::new(None));
             let workflow_execution_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(ManagedPlanBuilderNotifier {
@@ -172,7 +163,6 @@ pub(crate) fn run() {
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
-                    workflow: workflow_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let providers =
@@ -195,13 +185,14 @@ pub(crate) fn run() {
             application
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
+            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow"])?;
             let selected_runtime_profile = Arc::new(
                 crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
                     native_profiles.clone(),
                     crate::execution_configuration::NativeCodexCapabilityExposure {
                         capabilities: crate::execution_configuration::CapabilitySet {
                             // This tool is supplied by the application, not discovered in Codex.
-                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string(), crate::workflows::trigger_capabilities::CONTINUATION_TOOL.to_string()].into_iter().collect())].into_iter().collect(),
+                            mcp_tools: otp_registry.mcp_tools(),
                             models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
                                 .into_iter()
                                 .collect(),
@@ -286,6 +277,7 @@ pub(crate) fn run() {
                         )?,
                     ),
                     capability_profiles,
+                    otp_registry.clone(),
                 ),
             );
             app.manage(
@@ -303,33 +295,18 @@ pub(crate) fn run() {
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
             app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
-            let workflows = Arc::new(crate::workflows::application::WorkflowApplication::new(
-                Arc::new(crate::workflows::repository::SqliteWorkflowRepository::open(
-                    &database_path,
-                )?),
-                application.clone(),
-                harness_engine.clone(),
-                Arc::new(
-                    crate::workflows::legacy_node_configuration::LegacyWorkflowNodeConfigurationSource,
-                ),
-            ));
-            let (workflow_mcp, workflow_mcp_owner) =
-                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&workflow_execution))?;
-            let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
-            if let Err(workflow_mcp_owner) = managed_mcp_upstreams
-                .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
-            {
-                workflow_mcp_owner.stop();
-                managed_mcp_upstreams.unregister(&workflow_mcp_registration);
-                return Err("Unable to retain the Workflow MCP server.".into());
+            let (descriptors, owner) = crate::otp_host::mcp::start_server(otp_registry, Arc::downgrade(&workflow_execution))?;
+            let mut owner = Some(owner);
+            for descriptor in descriptors {
+                let registration = managed_mcp_upstreams.register(descriptor)?;
+                if let Some(server_owner) = owner.take() {
+                    if let Err(server_owner) = managed_mcp_upstreams.retain_owner(&registration, server_owner) {
+                        server_owner.stop();
+                        managed_mcp_upstreams.unregister(&registration);
+                        return Err("Unable to retain the OTP MCP server.".into());
+                    }
+                }
             }
-            *workflow_notification
-                .lock()
-                .map_err(|_| "Workflow notification registry is unavailable".to_string())? =
-                Some(Arc::downgrade(&workflows));
-            app.manage(crate::workflows::transport::WorkflowTauriState::new(
-                workflows,
-            ));
             app.manage(crate::harness_engine::HarnessEngineTauriState::new(
                 harness_engine,
             ));
@@ -541,28 +518,8 @@ pub(crate) fn run() {
             crate::harness_engine::transport::publish_session_harness_override,
             crate::harness_engine::transport::order_harness_version_replacement,
             crate::harness_engine::transport::resolve_harness_version,
-            crate::workflows::transport::list_workflow_types,
-            crate::workflows::transport::list_workflow_roles,
-            crate::workflows::transport::list_workflow_mcp_components,
-            crate::workflows::transport::create_workflow_role,
-            crate::workflows::transport::update_workflow_role,
-            crate::workflows::transport::create_workflow_type,
-            crate::workflows::transport::load_workflow_type,
-            crate::workflows::transport::update_workflow_type,
-            crate::workflows::transport::save_workflow_node_draft,
-            crate::workflows::transport::delete_workflow_node_draft,
-            crate::workflows::transport::detach_workflow_node_role,
-            crate::workflows::transport::save_workflow_node_as_role,
-            crate::workflows::transport::save_workflow_connection_draft,
-            crate::workflows::transport::delete_workflow_connection_draft,
-            crate::workflows::transport::activate_workflow_changes,
-            crate::workflows::transport::load_workflow_native_query,
-            crate::workflows::transport::create_workflow_instance,
-            crate::workflows::transport::send_workflow_node_message,
-            crate::workflows::transport::list_workflow_instances,
-            crate::workflows::transport::load_workflow_instance,
             crate::workflows::authoring_transport::list_workflow_recipes,
-            crate::workflows::authoring_transport::list_workflow_trigger_capabilities,
+            crate::workflows::authoring_transport::list_workflow_capabilities,
             crate::workflows::authoring_transport::load_workflow_recipe,
             crate::workflows::authoring_transport::create_workflow_recipe,
             crate::workflows::authoring_transport::save_workflow_recipe_draft,

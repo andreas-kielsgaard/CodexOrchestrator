@@ -1,14 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   WorkflowAuthoringClient,
-  WorkflowTriggerCapabilityDto,
+  WorkflowCompiledPlanDto,
+  OtpPackageDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
-import type {
-  SessionEventDefinitionDto,
-  SessionEventResultDto,
-} from '../../application/sessionEvents';
+import type { SessionEventResultDto } from '../../application/sessionEvents';
 
 export type WorkflowAuthoringInvoke = <T>(
   command: string,
@@ -19,8 +17,7 @@ export function createTauriWorkflowAuthoringClient(
   invokeCommand: WorkflowAuthoringInvoke = invoke,
 ): WorkflowAuthoringClient {
   return {
-    listTriggerCapabilities: () =>
-      invokeCommand<WorkflowTriggerCapabilityDto[]>('list_workflow_trigger_capabilities'),
+    listCapabilities: () => invokeCommand<OtpPackageDto[]>('list_workflow_capabilities'),
     listRecipes: () => invokeCommand<WorkflowRecipeSummaryDto[]>('list_workflow_recipes'),
     loadRecipe: (recipeId) =>
       invokeCommand<WorkflowRecipeStateDto>('load_workflow_recipe', {
@@ -41,7 +38,7 @@ export function createTauriWorkflowAuthoringClient(
         input: { recipeId, expectedRevision },
       }),
     compileRecipeInstance: (recipeId, instanceId) =>
-      invokeCommand<SessionEventDefinitionDto[]>('compile_workflow_recipe_instance', {
+      invokeCommand<WorkflowCompiledPlanDto>('compile_workflow_recipe_instance', {
         input: { recipeId, instanceId },
       }),
     dispatchUserRequest: (input) =>

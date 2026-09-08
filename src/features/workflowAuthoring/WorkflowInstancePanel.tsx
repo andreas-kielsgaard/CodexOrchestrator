@@ -10,7 +10,7 @@ import type {
   SessionEventResultDto,
 } from '../../application/sessionEvents';
 import { ProfiledSessionPane } from '../agentSessions/ProfiledSessionPane';
-import { EventDeliveryList } from '../sessionEvents';
+import { EventGroupInspector } from '../sessionEvents';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 
 export function WorkflowInstancePanel({
@@ -109,8 +109,11 @@ export function WorkflowInstancePanel({
             <button
               type="button"
               key={entry.session.id}
-              aria-pressed={selected === entry.session.id}
-              onClick={() => setSelected(entry.session.id)}
+              aria-pressed={!result && selected === entry.session.id}
+              onClick={() => {
+                setResult(null);
+                setSelected(entry.session.id);
+              }}
             >
               {instance.recipe.nodes.find(
                 (node) => node.nodeId === entry.logicalAddress?.subject.id,
@@ -134,7 +137,7 @@ export function WorkflowInstancePanel({
                 })
                 .then(async (value) => {
                   if (!mounted.current) return;
-                  setResult(value);
+                  setResult(null);
                   setText('');
                   setSelected(value.deliveries[0]?.targetSession.id ?? null);
                   await load();
@@ -165,34 +168,56 @@ export function WorkflowInstancePanel({
             <button disabled={busy || !text.trim()}>{busy ? 'Sending…' : 'Send request'}</button>
             <small>Uses this instance's Workflow. Creates a Session if needed.</small>
           </form>
-          <CollapsibleSection title="Handoffs" defaultExpanded={false}>
+          <CollapsibleSection title="Workflow deliveries" defaultExpanded={false}>
             {details.attempts.map((attempt) => (
               <div key={attempt.id}>
-                <strong>{attempt.definitionRef.id}</strong>
+                <strong>
+                  {attempt.context.capability.package} / {attempt.context.capability.tool}
+                </strong>
+                <p>
+                  {attempt.context.source?.nodeName ?? 'User request'} →{' '}
+                  {
+                    instance.recipe.nodes.find(
+                      (node) => node.nodeId === attempt.context.outputNodeId,
+                    )?.name
+                  }
+                </p>
                 <p>
                   {attempt.error ??
-                    (attempt.eventGroup ? 'Delivery recorded' : 'Preparing delivery')}
+                    (attempt.eventGroups.length ? 'Delivery recorded' : 'No delivery recorded')}
                 </p>
-                {attempt.eventGroup && queryClient ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void queryClient.loadRecordedEvent(attempt.eventGroup!).then(
-                        (value) => mounted.current && setResult(value),
-                        (cause) => mounted.current && setError(String(cause)),
-                      );
-                    }}
-                  >
-                    Show delivery
-                  </button>
-                ) : null}
+                {queryClient
+                  ? attempt.eventGroups.map((group, index) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => {
+                          void queryClient.loadRecordedEvent(group).then(
+                            (value) => mounted.current && setResult(value),
+                            (cause) => mounted.current && setError(String(cause)),
+                          );
+                        }}
+                      >
+                        Show delivery {index + 1}
+                      </button>
+                    ))
+                  : null}
               </div>
             ))}
           </CollapsibleSection>
-          {result ? <EventDeliveryList deliveries={result.deliveries} /> : null}
         </aside>
         <div className="recipe-instance-panel__conversation">
-          {selected && sessionClient && profileClient ? (
+          {result ? (
+            <section
+              className="recipe-instance-panel__delivery"
+              aria-label="Workflow delivery details"
+            >
+              <button type="button" onClick={() => setResult(null)}>
+                Close delivery details
+              </button>
+              <EventGroupInspector group={result.group} deliveries={result.deliveries} />
+            </section>
+          ) : selected && sessionClient && profileClient ? (
             <ProfiledSessionPane
               key={selected}
               sessionId={selected}

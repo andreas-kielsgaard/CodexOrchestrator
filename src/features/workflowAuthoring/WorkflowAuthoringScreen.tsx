@@ -14,7 +14,7 @@ import type { ExecutionConfigurationClient } from '../../application/executionCo
 import type { IdentityManagementClient } from '../../application/identities';
 import type {
   WorkflowAuthoringClient,
-  WorkflowTriggerCapabilityDto,
+  OtpPackageDto,
   WorkflowRecipeDraftDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
@@ -25,6 +25,7 @@ import {
   type CapabilityProfileOption,
   type RuntimeProfileViewModel,
 } from '../executionConfiguration';
+import { offeredOutputs, offeredActions } from './otpPresentation';
 import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
 import { WorkflowCanvas } from './WorkflowCanvas';
@@ -94,9 +95,7 @@ export function WorkflowAuthoringScreen({
   const [creatingName, setCreatingName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [triggerCapabilities, setTriggerCapabilities] = useState<
-    readonly WorkflowTriggerCapabilityDto[]
-  >([]);
+  const [packages, setPackages] = useState<readonly OtpPackageDto[]>([]);
 
   const loadCatalogs = useCallback(async () => {
     const [runtimeSnapshot, capabilityProfiles, identityCatalog] = await Promise.all([
@@ -160,9 +159,9 @@ export function WorkflowAuthoringScreen({
     let active = true;
     setBusy(true);
     setError(null);
-    void Promise.all([loadCatalogs(), loadSummaries(), client.listTriggerCapabilities()])
+    void Promise.all([loadCatalogs(), loadSummaries(), client.listCapabilities()])
       .then(([, recipes, capabilities]) => {
-        if (active) setTriggerCapabilities(capabilities);
+        if (active) setPackages(capabilities);
         if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
         return undefined;
       })
@@ -465,6 +464,12 @@ export function WorkflowAuthoringScreen({
                   setSelection({ kind: 'node', id: nodeId });
                 }}
                 onConnect={(sourceNodeId, destinationNodeId) => {
+                  const output = offeredOutputs(packages)[0];
+                  const action = offeredActions(packages)[0];
+                  if (!output || !action) {
+                    setError('Import a package with a trigger output and destination action.');
+                    return;
+                  }
                   const connectionId = `connection-${crypto.randomUUID()}`;
                   editDraft({
                     ...draft,
@@ -475,16 +480,13 @@ export function WorkflowAuthoringScreen({
                         name: `${draft.nodes.find((node) => node.nodeId === sourceNodeId)?.name} → ${draft.nodes.find((node) => node.nodeId === destinationNodeId)?.name}`,
                         sourceNodeId,
                         destinationNodeId,
-                        trigger: { kind: 'invocation_completed' },
-                        promptInputs: [{ kind: 'invocation_output' }],
+                        trigger: output.ref,
+                        promptInputs: Object.keys(output.output.schema.properties ?? {})
+                          .slice(0, 1)
+                          .map((field) => ({ kind: 'output_field' as const, field })),
                         promptText: '',
-                        target: {
-                          cardinality: 'first',
-                          ordering: 'newest',
-                          running: 'any',
-                          createdBy: null,
-                          missing: 'create',
-                        },
+                        action: action.ref,
+                        configuration: {},
                       },
                     ],
                   });
@@ -573,7 +575,7 @@ export function WorkflowAuthoringScreen({
                     <WorkflowConnectionEditor
                       connection={selectedConnection}
                       nodes={draft.nodes}
-                      triggerCapabilities={triggerCapabilities}
+                      packages={packages}
                       onChange={(connection) =>
                         editDraft({
                           ...draft,

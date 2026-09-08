@@ -366,54 +366,8 @@ pub(crate) struct ManagedMcpUpstreamDescriptor {
     pub(crate) name: String,
     pub(crate) url: String,
     pub(crate) bearer_token: String,
-    #[serde(
-        default,
-        alias = "workflowToolName",
-        deserialize_with = "deserialize_workflow_tool_names"
-    )]
-    pub(crate) workflow_tool_names: Vec<String>,
     #[serde(default)]
-    pub(crate) workflow_prepare_url: Option<String>,
-}
-
-fn deserialize_workflow_tool_names<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<String>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Names {
-        One(String),
-        Many(Vec<String>),
-    }
-    // Persisted mediation snapshots used a nullable single-tool field.
-    Ok(match Option::<Names>::deserialize(deserializer)? {
-        Some(Names::One(name)) => vec![name],
-        Some(Names::Many(names)) => names,
-        None => Vec::new(),
-    })
-}
-
-#[cfg(test)]
-#[test]
-fn workflow_tool_names_preserve_existing_mediation_snapshots() {
-    let old = serde_json::json!({"name":"workflow_handoff","url":"http://localhost/mcp","bearerToken":"test","workflowToolName":"handoff_to_agent"});
-    let descriptor: ManagedMcpUpstreamDescriptor = serde_json::from_value(old.clone()).unwrap();
-    assert_eq!(descriptor.workflow_tool_names, vec!["handoff_to_agent"]);
-    assert_eq!(
-        serde_json::from_value::<ManagedMcpUpstreamDescriptor>(
-            serde_json::to_value(&descriptor).unwrap()
-        )
-        .unwrap(),
-        descriptor
-    );
-    let mut absent = old;
-    absent["workflowToolName"] = serde_json::Value::Null;
-    assert!(
-        serde_json::from_value::<ManagedMcpUpstreamDescriptor>(absent)
-            .unwrap()
-            .workflow_tool_names
-            .is_empty()
-    );
+    pub(crate) caller_context: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

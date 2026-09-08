@@ -1,46 +1,77 @@
 import type { NodeProfileDto } from '../executionConfiguration';
-import type {
-  ReferenceIdentityDto,
-  RunningFilterDto,
-  SessionCreationFilterDto,
-  SessionEventDefinitionDto,
-  SessionEventResultDto,
-  TargetCardinalityDto,
-  TargetOrderingDto,
-  MissingTargetPolicyDto,
-} from '../sessionEvents';
+import type { ReferenceIdentityDto, SessionEventResultDto } from '../sessionEvents';
 
-export type WorkflowConnectionTriggerDto =
-  | { readonly kind: 'invocation_completed' }
-  | {
-      readonly kind: 'mcp_call';
-      readonly server: ReferenceIdentityDto;
-      readonly tool: ReferenceIdentityDto;
-    }
-  | { readonly kind: 'application_event'; readonly eventKind: ReferenceIdentityDto }
-  | {
-      readonly kind: 'event_group_completed';
-      readonly sourceDefinition: ReferenceIdentityDto;
-    };
-
+export interface OtpCapabilityRefDto {
+  readonly package: string;
+  readonly tool: string;
+}
+export interface OtpOutputRefDto {
+  readonly capability: OtpCapabilityRefDto;
+  readonly output: string;
+}
+export interface OtpOutputDto {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'data' | 'session_request';
+  readonly schema: {
+    readonly type: string;
+    readonly properties?: Readonly<Record<string, { readonly type: string }>>;
+  };
+}
+export interface OtpConfigurationFieldDto {
+  readonly key: string;
+  readonly label: string;
+  readonly choices: readonly string[];
+  readonly defaultValue: string;
+  readonly when: readonly [string, string] | null;
+}
+export interface OtpToolDto {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly entrypoint:
+    | { readonly kind: 'mcp'; readonly inputSchema: Readonly<Record<string, unknown>> }
+    | { readonly kind: 'session_event'; readonly event: 'invocation_terminal' }
+    | { readonly kind: 'action' };
+  readonly outputs: readonly OtpOutputDto[];
+  readonly configuration: readonly OtpConfigurationFieldDto[];
+}
+export interface OtpPackageDto {
+  readonly id: string;
+  readonly contractVersion: number;
+  readonly requestedHandles: readonly ('definitions' | 'node_sessions' | 'emit_output')[];
+  readonly tools: readonly OtpToolDto[];
+}
 export type WorkflowConnectionPromptInputDto =
-  | { readonly kind: 'trigger_field'; readonly field: string }
+  | { readonly kind: 'output_field'; readonly field: string }
   | {
       readonly kind: 'node_files';
       readonly nodeId: string;
       readonly association: 'created' | 'edited' | 'either';
     }
-  | { readonly kind: 'invocation_output' }
-  | { readonly kind: 'mcp_argument'; readonly name: string }
-  | { readonly kind: 'application_event_field'; readonly field: string }
-  | { readonly kind: 'referenced_content'; readonly reference: ReferenceIdentityDto };
+  | { readonly kind: 'file_content'; readonly path: string };
 
-export interface WorkflowConnectionTargetPlanDto {
-  readonly cardinality: TargetCardinalityDto;
-  readonly ordering: TargetOrderingDto;
-  readonly running: RunningFilterDto;
-  readonly createdBy: SessionCreationFilterDto | null;
-  readonly missing: MissingTargetPolicyDto;
+export interface WorkflowCompiledPlanDto {
+  readonly instance: ReferenceIdentityDto;
+  readonly recipe: ReferenceIdentityDto;
+  readonly startingNode: ReferenceIdentityDto;
+  readonly entryAction: OtpCapabilityRefDto;
+  readonly nodes: readonly {
+    readonly reference: ReferenceIdentityDto;
+    readonly initialPrompt: string | null;
+    readonly assignedIdentity: ReferenceIdentityDto | null;
+    readonly sessionCreation: unknown;
+  }[];
+  readonly connections: readonly {
+    readonly reference: ReferenceIdentityDto;
+    readonly sourceNode: ReferenceIdentityDto;
+    readonly destinationNode: ReferenceIdentityDto;
+    readonly trigger: OtpOutputRefDto;
+    readonly action: OtpCapabilityRefDto;
+    readonly configuration: Readonly<Record<string, unknown>>;
+    readonly promptInputs: readonly WorkflowConnectionPromptInputDto[];
+    readonly promptText: string;
+  }[];
 }
 
 export interface WorkflowAuthoringNodeDto {
@@ -59,18 +90,20 @@ export interface WorkflowAuthoringConnectionDto {
   readonly name: string;
   readonly sourceNodeId: string;
   readonly destinationNodeId: string;
-  readonly trigger: WorkflowConnectionTriggerDto;
+  readonly trigger: OtpOutputRefDto;
   readonly promptInputs: readonly WorkflowConnectionPromptInputDto[];
   readonly promptText: string;
-  readonly target: WorkflowConnectionTargetPlanDto;
+  readonly action: OtpCapabilityRefDto;
+  readonly configuration: Readonly<Record<string, unknown>>;
 }
 
 export interface WorkflowRecipeDraftDto {
-  readonly contractVersion: 1;
+  readonly contractVersion: 2;
   readonly recipeId: string;
   readonly name: string;
   readonly revision: number;
   readonly startingNodeId: string | null;
+  readonly entryAction: OtpCapabilityRefDto;
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
   readonly connections: readonly WorkflowAuthoringConnectionDto[];
 }
@@ -104,30 +137,13 @@ export interface DispatchWorkflowUserRequestInput {
 }
 
 export interface WorkflowAuthoringClient {
-  listTriggerCapabilities(): Promise<readonly WorkflowTriggerCapabilityDto[]>;
+  listCapabilities(): Promise<readonly OtpPackageDto[]>;
   listRecipes(): Promise<readonly WorkflowRecipeSummaryDto[]>;
   loadRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
   createRecipe(name: string): Promise<WorkflowRecipeStateDto>;
   saveDraft(draft: WorkflowRecipeDraftDto): Promise<WorkflowRecipeStateDto>;
   copyNodeConfiguration(input: CopyWorkflowNodeConfigurationInput): Promise<WorkflowRecipeStateDto>;
   activateRecipe(recipeId: string, expectedRevision: number): Promise<WorkflowRecipeStateDto>;
-  compileRecipeInstance(
-    recipeId: string,
-    instanceId: string,
-  ): Promise<readonly SessionEventDefinitionDto[]>;
+  compileRecipeInstance(recipeId: string, instanceId: string): Promise<WorkflowCompiledPlanDto>;
   dispatchUserRequest(input: DispatchWorkflowUserRequestInput): Promise<SessionEventResultDto>;
-}
-
-export interface WorkflowTriggerCapabilityDto {
-  readonly id: string;
-  readonly version: number;
-  readonly name: string;
-  readonly server: string;
-  readonly tool: string;
-  readonly inputSchema: Readonly<Record<string, unknown>>;
-  readonly fields: readonly {
-    readonly name: string;
-    readonly label: string;
-    readonly schema: Readonly<Record<string, unknown>>;
-  }[];
 }

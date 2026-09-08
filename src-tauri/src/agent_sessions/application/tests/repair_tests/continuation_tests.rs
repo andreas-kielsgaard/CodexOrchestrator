@@ -1,8 +1,6 @@
 use super::*;
-use crate::workflows::{
-    compiled_plan::FileAssociation, file_inputs::resolve_node_files,
-    trigger_capabilities::CONTINUATION_TOOL,
-};
+const CONTINUATION_TOOL: &str = "trigger_workflow_continuation";
+use crate::workflows::{compiled_plan::FileAssociation, file_inputs::resolve_node_files};
 
 fn continuation_instance(fixture: &Fixture) -> RecipeInstance {
     let baseline = fixture.instance(None);
@@ -13,22 +11,19 @@ fn continuation_instance(fixture: &Fixture) -> RecipeInstance {
     draft.nodes.push(third);
     for node in &mut draft.nodes {
         node.node_profile.allowed_capabilities.mcp_tools = [(
-            "workflow_handoff".into(),
+            "workflow".into(),
             [CONTINUATION_TOOL.into()].into_iter().collect(),
         )]
         .into_iter()
         .collect();
     }
     let connection = &mut draft.connections[0];
-    connection.trigger = WorkflowConnectionTrigger::McpCall {
-        server: ReferenceIdentity::new("mcp", "server", "workflow_handoff").unwrap(),
-        tool: ReferenceIdentity::new("mcp", "tool", CONTINUATION_TOOL).unwrap(),
-    };
+    connection.trigger = otp_output(CONTINUATION_TOOL, "continuation");
     connection.prompt_inputs = vec![
-        WorkflowConnectionPromptInput::TriggerField {
+        WorkflowConnectionPromptInput::OutputField {
             field: "outputFiles".into(),
         },
-        WorkflowConnectionPromptInput::TriggerField {
+        WorkflowConnectionPromptInput::OutputField {
             field: "sourceNode".into(),
         },
         WorkflowConnectionPromptInput::NodeFiles {
@@ -66,15 +61,6 @@ fn start(fixture: &Fixture, instance: &RecipeInstance) -> RuntimeInvocationReque
         .dispatch_user_request(&instance.recipe.recipe_id, &instance.id, "Discuss".into())
         .unwrap();
     fixture.launches().last().unwrap().clone()
-}
-
-fn source(launch: &RuntimeInvocationRequest) -> ReferenceIdentity {
-    ReferenceIdentity::new(
-        "orchestrator.agent_sessions",
-        "session",
-        launch.session_id.as_str(),
-    )
-    .unwrap()
 }
 
 fn proxy_url(launch: &RuntimeInvocationRequest) -> String {
@@ -158,13 +144,10 @@ async fn continuation_mcp_routes_only_this_node_and_call_without_closing_the_sou
         .iter()
         .find(|tool| tool["name"] == CONTINUATION_TOOL)
         .unwrap();
+    assert_eq!(tool["_meta"]["otp"]["package"], "workflow");
     assert_eq!(
-        tool["_meta"]["workflowTrigger"]["fields"][0]["name"],
-        "outputFiles"
-    );
-    assert_eq!(
-        tool["_meta"]["workflowTrigger"]["fields"][1]["name"],
-        "sourceNode"
+        tool["_meta"]["otp"]["tool"]["outputs"][0]["schema"]["properties"]["outputFiles"]["type"],
+        "array"
     );
     for arguments in [
         json!({"_workflowInvocation":{"sourceInvocationId":"foreign"}}),
@@ -233,7 +216,13 @@ fn node_file_history_survives_later_editors_archival_and_reopen_and_stays_in_its
     );
     fixture
         .execution
-        .trigger_continuation(&source(&author), "route", vec![])
+        .invoke_mcp(
+            "workflow",
+            CONTINUATION_TOOL,
+            author.session_id.as_str(),
+            author.invocation_id.as_str(),
+            json!({}),
+        )
         .unwrap();
     let reviewer = fixture.launches()[1].clone();
     let clarification = fixture.launches()[2].clone();

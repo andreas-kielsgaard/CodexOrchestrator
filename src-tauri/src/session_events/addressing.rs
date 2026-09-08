@@ -10,6 +10,11 @@ pub(super) fn resolve_existing(
     selection: &TargetSelection,
 ) -> Result<Vec<SessionDirectoryEntry>, SessionDirectoryError> {
     let mut entries = match &selection.target {
+        SessionTarget::New { .. } => {
+            return Err(SessionDirectoryError::new(
+                "New Sessions must use explicit creation",
+            ))
+        }
         SessionTarget::Exact { session } => directory.find_exact(session)?.into_iter().collect(),
         SessionTarget::Logical { address } => directory.list_at_address(address)?,
     };
