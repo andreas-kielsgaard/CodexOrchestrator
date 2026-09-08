@@ -14,10 +14,11 @@ const require = createRequire(
     : import.meta.url,
 );
 const { chromium } = require('playwright');
+const port = Number(process.env.REVIEW_PORT ?? 2382);
 await fs.mkdir(output, { recursive: true });
 const server = await createServer({
   root,
-  server: { host: '127.0.0.1', port: 2382, strictPort: true },
+  server: { host: '127.0.0.1', port, strictPort: true },
 });
 await server.listen();
 const browser = await chromium.launch({
@@ -25,13 +26,17 @@ const browser = await chromium.launch({
   channel: process.env.REVIEW_BROWSER_CHANNEL ?? 'msedge',
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 850 } });
+page.setDefaultTimeout(60_000);
 const errors = [];
 const results = [];
 page.on('pageerror', (error) => errors.push(String(error)));
 page.on('dialog', (dialog) => dialog.accept());
 const shot = (name) => page.screenshot({ path: path.join(output, `${name}.png`), fullPage: true });
 try {
-  await page.goto('http://127.0.0.1:2382/docs/regression-review/repairs/browser.html');
+  await page.goto(`http://127.0.0.1:${port}/docs/regression-review/repairs/browser.html`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 120_000,
+  });
   await page.getByRole('button', { name: 'Configure Author', exact: true }).waitFor();
   await shot('01-flow');
   const author = page.getByRole('button', { name: 'Configure Author', exact: true });
@@ -101,7 +106,8 @@ try {
   );
   const id = await page.evaluate(() => window.repairs.instances[0].id);
   await shot('05-saved-instance');
-  await page.getByLabel('Request', { exact: true }).fill('Review this plan.');
+  await page.getByRole('button', { name: 'Open Author', exact: true }).click();
+  await page.getByLabel('Message this node', { exact: true }).fill('Review this plan.');
   await page.getByRole('button', { name: 'Send request', exact: true }).click();
   await page.getByRole('button', { name: 'Edit identity', exact: true }).waitFor();
   await shot('06-instance-session');
@@ -109,12 +115,15 @@ try {
   await page.getByRole('button', { name: /Review run Review workflow/ }).click();
   await page.getByRole('heading', { name: 'Review run', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.repairs.instances[0].id), id);
-  results.push('Stored instance creation, node request, Session pane, Back and reopen');
+  results.push('Stored instance creation, node message, Session pane, Back and reopen');
   await page.reload();
   await page.getByRole('button', { name: /Review run Review workflow/ }).click();
   await page.getByRole('heading', { name: 'Review run', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.repairs.instances[0].id), id);
-  results.push('Reload and reopen saved instance (browser fixture storage)');
+  await page.getByRole('button', { name: 'Open Author', exact: true }).click();
+  await page.getByRole('button', { name: 'Idle session-1', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit identity', exact: true }).waitFor();
+  results.push('Reload and reopen saved instance and Session (browser fixture storage)');
   assert.deepEqual(errors, []);
   await fs.writeFile(
     path.join(output, 'results.json'),

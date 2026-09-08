@@ -17,7 +17,9 @@ const instances: WorkflowRecipeInstance[] = JSON.parse(
   localStorage.getItem('repair-instances') ?? '[]',
 );
 const ref = (kind: string, id: string) => ({ namespace: 'orchestrator.agent_sessions', kind, id });
-const sent = new Set<string>();
+const sent = new Set<string>(
+  JSON.parse(localStorage.getItem('repair-sent-instances') ?? '[]'),
+);
 const results = new Map<string, SessionEventResultDto>();
 const calls = { births: 0, messages: 0 };
 const instanceClient: WorkflowInstanceClient = {
@@ -56,6 +58,7 @@ const instanceClient: WorkflowInstanceClient = {
   messageNode: async ({ instanceId }) => {
     calls.messages++;
     sent.add(instanceId);
+    localStorage.setItem('repair-sent-instances', JSON.stringify([...sent]));
     const result: SessionEventResultDto = {
       group: {
         eventGroupId: ref('event_group', 'group'),

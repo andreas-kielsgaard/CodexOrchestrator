@@ -5,8 +5,8 @@
     "958px: collapse, checkbox, workflow picker and instance dialog",
     "850px: collapse, checkbox, workflow picker and instance dialog",
     "640px: collapse, checkbox, workflow picker and instance dialog",
-    "Stored instance creation, node request, Session pane, Back and reopen",
-    "Reload and reopen saved instance (browser fixture storage)"
+    "Stored instance creation, node message, Session pane, Back and reopen",
+    "Reload and reopen saved instance and Session (browser fixture storage)"
   ],
   "errors": [],
   "evidence": "Real components with fake clients, not a native or provider run."

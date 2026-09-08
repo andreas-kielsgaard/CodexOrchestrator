@@ -39,8 +39,11 @@ These file splits are practical choices for this repair, not a requirement to re
 - The full Rust run reported **711 passed, one timeout, two ignored**. The timeout was `work_slice_planning_request_launches_one_prepared_planner_and_marks_readiness`, in the existing orchestration tests. Its isolated rerun passed. This is not an all-green full-suite result.
 - TypeScript/Vite build and native `cargo build` passed. Vite still reports its large-chunk warning; Rust reports unused legacy/library items. Neither was suppressed or turned into a cleanup project.
 - The [browser checks](run-browser.mjs) passed at **1280, 958, 850 and 640 pixels**, with no page errors. They use real components and fake clients. See [recorded results](evidence/results.json).
+- The browser evidence was refreshed on 8 September after the Workflow instance screen moved to the shared node canvas. The reload check now reopens both the stored instance and its fixture Session.
 
 The final frontend test count and final rerun results are recorded in [verification](verification.md). Do not add focused-test counts to full-suite counts.
+
+The later [pre-merge audit](pre-merge-audit-2026-09-08.md) records the current node-based instance flow, fresh browser evidence, and the remaining merge choices.
 
 ## Replay and screenshots
 
@@ -52,7 +55,7 @@ cargo build --manifest-path src-tauri/Cargo.toml
 node docs/regression-review/repairs/run-browser.mjs
 ```
 
-The browser runner needs Playwright and Edge. If Playwright is outside the repo, set `REVIEW_NODE_MODULES` to its `node_modules` directory. `REVIEW_BROWSER_CHANNEL` can choose another installed Playwright browser channel. The runner uses port 2382, an isolated browser context, and closes its processes afterward.
+The browser runner needs Playwright and Edge. If Playwright is outside the repo, set `REVIEW_NODE_MODULES` to its `node_modules` directory. `REVIEW_BROWSER_CHANNEL` can choose another installed Playwright browser channel. It defaults to port 2382; set `REVIEW_PORT` when another isolated port is needed. The runner uses an isolated browser context and closes its processes afterward.
 
 - [Flow canvas](evidence/01-flow.png)
 - [Connection editor](evidence/02-connection.png)
