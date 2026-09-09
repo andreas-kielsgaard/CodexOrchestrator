@@ -6,6 +6,8 @@ pub(crate) const CAPABILITY_PROFILE_CONTRACT_VERSION: u32 = 1;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CapabilityProfile {
+    #[serde(default)]
+    pub(crate) defaults: super::runtime_profile::RuntimeSelections,
     pub(crate) contract_version: u32,
     pub(crate) capability_profile_id: String,
     pub(crate) name: String,
@@ -31,6 +33,11 @@ impl CapabilityProfile {
             return Err("Capability Profile revision must be positive".into());
         }
         self.allowed_capabilities
-            .validate("Capability Profile allowed capabilities")
+            .validate("Capability Profile allowed capabilities")?;
+        self.defaults.validate("Capability Profile defaults")?;
+        super::runtime_profile::validate_selection_availability(
+            &self.defaults,
+            &self.allowed_capabilities,
+        )
     }
 }

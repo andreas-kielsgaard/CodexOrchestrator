@@ -8,7 +8,7 @@ import type {
 } from '../../application/workflowInstances';
 import type { RepoBranchWorktreeTargetSelectorProps } from '../../application/worktreeTargets';
 import type { AgentSessionClient } from '../../application/agentSessions';
-import type { AgentSessionProfileClient } from '../../application/agentSessionProfiles';
+import type { AgentSessionProfileClient } from '../../application/agentSessions';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type { IdentityManagementClient } from '../../application/identities';

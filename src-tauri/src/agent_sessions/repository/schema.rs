@@ -8,6 +8,7 @@ CREATE TABLE agent_sessions (
   external_context_id TEXT,
   runtime_version TEXT,
   working_directory TEXT,
+  workspace_origin TEXT,
   requested_options_json TEXT NOT NULL CHECK (json_valid(requested_options_json)),
   session_profile_json TEXT CHECK (session_profile_json IS NULL OR json_valid(session_profile_json)),
   harness_version_ref_json TEXT CHECK (harness_version_ref_json IS NULL OR json_valid(harness_version_ref_json)),
@@ -86,6 +87,13 @@ pub(crate) fn ensure_agent_session_ownership_schema(conn: &Connection) -> Result
     let columns = table_columns(conn, "agent_sessions")?;
     if columns.is_empty() {
         return Ok(());
+    }
+    if !columns.iter().any(|column| column == "workspace_origin") {
+        conn.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN workspace_origin TEXT",
+            [],
+        )
+        .map_err(|error| format!("Unable to add Session workspace origin: {error}"))?;
     }
     if !columns
         .iter()

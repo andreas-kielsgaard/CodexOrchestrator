@@ -16,6 +16,34 @@ pub(crate) struct CapabilityProfileService {
 }
 
 impl CapabilityProfileService {
+    pub(crate) fn native_inventory(
+        &self,
+    ) -> Result<super::NativeCapabilityInventory, CapabilityProfileServiceError> {
+        self.runtime_profile_source
+            .native_inventory()
+            .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
+    }
+    pub(crate) fn default_profile_id(
+        &self,
+    ) -> Result<Option<String>, CapabilityProfileServiceError> {
+        self.repository.default_profile_id().map_err(Into::into)
+    }
+    pub(crate) fn set_default_profile(
+        &self,
+        id: &str,
+    ) -> Result<(), CapabilityProfileServiceError> {
+        self.repository.set_default_profile(id).map_err(Into::into)
+    }
+    pub(crate) fn default_profile(
+        &self,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        self.repository.default_profile()?.ok_or_else(|| {
+            CapabilityProfileServiceError::InvalidInput(
+                "Choose a default Capability Profile in Capabilities before starting a new session"
+                    .into(),
+            )
+        })
+    }
     pub(crate) fn new(
         repository: Arc<dyn CapabilityProfileRepository>,
         runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
@@ -68,8 +96,23 @@ impl CapabilityProfileService {
         name: String,
         allowed_capabilities: CapabilitySet,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        self.create_with_defaults(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            Default::default(),
+        )
+    }
+    pub(crate) fn create_with_defaults(
+        &self,
+        capability_profile_id: String,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
         let capability_profile = CapabilityProfile {
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+            defaults,
             capability_profile_id,
             name,
             revision: 1,
@@ -87,6 +130,21 @@ impl CapabilityProfileService {
         allowed_capabilities: CapabilitySet,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
         let current = self.read(capability_profile_id)?;
+        self.update_with_defaults(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            current.defaults,
+        )
+    }
+    pub(crate) fn update_with_defaults(
+        &self,
+        capability_profile_id: &str,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        let current = self.read(capability_profile_id)?;
         let revision = current.revision.checked_add(1).ok_or_else(|| {
             CapabilityProfileServiceError::RevisionOverflow {
                 capability_profile_id: capability_profile_id.into(),
@@ -94,6 +152,7 @@ impl CapabilityProfileService {
         })?;
         let replacement = CapabilityProfile {
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+            defaults,
             capability_profile_id: current.capability_profile_id,
             name,
             revision,

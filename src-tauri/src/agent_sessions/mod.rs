@@ -9,6 +9,7 @@
 pub(crate) mod application;
 pub(crate) mod domain;
 pub(crate) mod ports;
+pub(crate) mod references;
 pub(crate) mod repository;
 pub(crate) mod session_event_adapter;
 pub(crate) mod transport;
@@ -18,3 +19,7 @@ mod tests;
 
 #[cfg(all(test, feature = "live-tests"))]
 mod live_smoke;
+
+pub(crate) mod workspace;
+
+pub(crate) mod interactions;

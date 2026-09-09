@@ -1,5 +1,6 @@
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
+import type { SessionInteractionDto } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   projectedTranscriptContent,
@@ -8,6 +9,7 @@ import {
   type TranscriptAnchorRange,
 } from './transcriptProjector';
 import { useTranscriptFollow } from './useTranscriptFollow';
+import { pendingRequestLabel, pendingSessionRequests } from './sessionAttention';
 import type { AgentIdentity } from '../../application/agentSessions';
 
 export interface ConversationViewportSegment {
@@ -18,6 +20,10 @@ export interface ConversationViewportSegment {
 }
 
 export interface ConversationViewportComposerTarget {
+  steeringAvailable?: boolean;
+  needsWorkingDirectory?: boolean;
+  interactions?: readonly SessionInteractionDto[];
+  respondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
   sessionId: string | null;
   draft: string;
   workingDirectory: string;
@@ -71,16 +77,36 @@ export function ConversationViewport({
   composerPresentation,
   agentIdentity,
 }: ConversationViewportProps) {
-  const revision = segments
-    .map(
-      (segment) =>
-        `${segment.id}:${segment.transcript.invocations.map((item) => `${item.id}:${item.status}:${item.processing.length}:${item.technical.length}:${item.finalResponse?.eventId ?? ''}`).join(',')}`,
-    )
-    .join('|');
-  const follow = useTranscriptFollow(segments.map((segment) => segment.id).join('|'), revision);
+  const requests = composerTarget?.respondToRequest
+    ? pendingSessionRequests(composerTarget.interactions)
+    : [];
+  const revision =
+    segments
+      .map(
+        (segment) =>
+          `${segment.id}:${segment.transcript.invocations.map((item) => `${item.id}:${item.status}:${item.processing.length}:${item.technical.length}:${item.finalResponse?.eventId ?? ''}`).join(',')}`,
+      )
+      .join('|') +
+    JSON.stringify(composerTarget?.interactions?.map((item) => [item.id, item.state]));
+  const follow = useTranscriptFollow(
+    segments.map((segment) => segment.id).join('|'),
+    revision,
+    requests[0]?.id,
+  );
 
   return (
     <div className="agent-session-conversation">
+      {requests.length > 0 && (
+        <section className="session-request-notice" aria-label="Pending agent requests">
+          <span role="status">
+            {pendingRequestLabel} ·{' '}
+            {requests.length === 1 ? '1 request' : `${requests.length} requests`}
+          </span>
+          <button type="button" onClick={follow.reviewRequest}>
+            Review request
+          </button>
+        </section>
+      )}
       {error && (
         <section className="agent-session-error" role="alert">
           <AlertCircle size={17} aria-hidden="true" />
@@ -101,6 +127,11 @@ export function ConversationViewport({
         {segments.map((segment) => (
           <AgentSessionTranscript
             key={segment.id}
+            onRespondToRequest={
+              segment.transcript.sessionId === composerTarget?.sessionId
+                ? composerTarget?.respondToRequest
+                : undefined
+            }
             transcript={segment.transcript}
             content={
               segment.range
@@ -133,6 +164,8 @@ export function ConversationViewport({
           sending={composerTarget.sending}
           sendUnavailableReason={composerTarget.sendUnavailableReason}
           active={composerTarget.active}
+          steeringAvailable={composerTarget.steeringAvailable}
+          needsWorkingDirectory={composerTarget.needsWorkingDirectory}
           canceling={composerTarget.canceling}
           messageLabel={composerPresentation?.messageLabel}
           messagePlaceholder={composerPresentation?.messagePlaceholder}

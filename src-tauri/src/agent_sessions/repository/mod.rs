@@ -1,3 +1,4 @@
+mod addressing;
 mod mapping;
 mod schema;
 
@@ -23,7 +24,6 @@ use super::{
         ListAgentSessionsQuery, RepositoryError, RepositoryErrorKind,
     },
 };
-use crate::session_events::{ReferenceIdentity, SessionLogicalAddress};
 use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -57,51 +57,6 @@ impl SqliteAgentSessionRepository {
             .map(Arc::new)
             .map(Self::from_database)
             .map_err(persistence_unavailable)
-    }
-
-    /// Persists a newly prepared Agent Session and its generic logical address in one transaction.
-    /// This is the concrete atomic boundary used by the Session Event adapter.
-    pub(crate) fn create_addressed_session(
-        &self,
-        session: AgentSession,
-        logical_address: &SessionLogicalAddress,
-        created_by_event: &ReferenceIdentity,
-        created_by_session: Option<&ReferenceIdentity>,
-    ) -> Result<(AgentSession, u64), RepositoryError> {
-        validate_session(&session).map_err(contract_error)?;
-        let created_by_event_json = to_json(created_by_event)?;
-        let created_by_session_json = created_by_session.map(to_json).transpose()?;
-        self.write("create addressed Agent Session", |transaction| {
-            insert_session(transaction, &session)?;
-            transaction
-                .execute("INSERT INTO agent_session_address_clock DEFAULT VALUES", [])
-                .map_err(sql_unavailable("allocate Session address sequence"))?;
-            let created_sequence =
-                u64::try_from(transaction.last_insert_rowid()).map_err(|_| {
-                    RepositoryError::new(
-                        RepositoryErrorKind::InvalidState,
-                        "Invalid Session address sequence",
-                    )
-                })?;
-            transaction
-                .execute(
-                    "INSERT INTO agent_session_addresses(session_id,scope_namespace,scope_kind,scope_id,subject_namespace,subject_kind,subject_id,created_by_event_json,created_by_session_json,created_sequence) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                    params![
-                        session.id.as_str(),
-                        logical_address.scope.namespace(),
-                        logical_address.scope.kind(),
-                        logical_address.scope.id(),
-                        logical_address.subject.namespace(),
-                        logical_address.subject.kind(),
-                        logical_address.subject.id(),
-                        created_by_event_json,
-                        created_by_session_json,
-                        created_sequence,
-                    ],
-                )
-                .map_err(sql_write("store Agent Session address"))?;
-            Ok((session, created_sequence))
-        })
     }
 
     fn load_session_history_snapshot(
@@ -160,17 +115,31 @@ impl SqliteAgentSessionRepository {
                     .map_err(sql_unavailable("count Agent Session invocations"))?;
                 let latest = transaction
                     .query_row(
-                        "SELECT status, submitted_text FROM agent_session_invocations WHERE session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
+                        "SELECT status, submitted_text, id FROM agent_session_invocations WHERE session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
                         params![session.id.as_str()],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
                     )
                     .optional()
                     .map_err(sql_unavailable("load latest Agent Session invocation"))?;
-                let (latest_invocation_status, latest_submitted_text) = match latest {
-                    Some((status, text)) => (Some(parse_status(&status)?), Some(text)),
-                    None => (None, None),
+                let (latest_invocation_status, latest_submitted_text, pending_request_count) = match latest {
+                    Some((status, text, id)) => {
+                        let status = parse_status(&status)?;
+                        let count = if status.is_active() {
+                            let id = AgentInvocationId::new(id).map_err(contract_error)?;
+                            let invocation = get_invocation_from(&transaction, &id)?
+                                .ok_or_else(|| RepositoryError::new(RepositoryErrorKind::Unavailable, "Latest invocation disappeared"))?;
+                            super::interactions::pending_request_count(&[AgentInvocationHistory {
+                                invocation,
+                                launch_accepted_at: None,
+                                events: list_events_from(&transaction, &id)?,
+                            }])
+                        } else { 0 };
+                        (Some(status), Some(text), count)
+                    }
+                    None => (None, None, 0),
                 };
                 Ok(AgentSessionSummary {
+                    pending_request_count,
                     session,
                     invocation_count,
                     latest_invocation_status,
@@ -203,6 +172,27 @@ impl SqliteAgentSessionRepository {
 }
 
 impl AgentSessionRepository for SqliteAgentSessionRepository {
+    fn resolve_working_directory(
+        &self,
+        session_id: &AgentSessionId,
+        path: &str,
+        origin: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.write("resolve Session working directory", |connection| {
+        let changed = connection.execute("UPDATE agent_sessions SET working_directory=?2,workspace_origin=?3,updated_at=?4 WHERE id=?1 AND working_directory IS NULL", params![session_id.as_str(),path,origin,timestamp(updated_at)]).map_err(sql_write("resolve Session working context"))?;
+        let session = get_session_from(&connection, session_id)?.ok_or_else(|| {
+            RepositoryError::new(RepositoryErrorKind::NotFound, "Session not found")
+        })?;
+        if changed == 0 && session.working_directory.as_deref() != Some(path) {
+            return Err(RepositoryError::new(
+                RepositoryErrorKind::Conflict,
+                "Session already has a different working directory",
+            ));
+        }
+        Ok(session)
+        })
+    }
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError> {
         validate_session(&session).map_err(contract_error)?;
         self.write("create Agent Session", |transaction| {
@@ -585,6 +575,7 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
     ensure_agent_session_ownership_schema(connection)?;
+    initialize_session_address_storage(connection)?;
     connection
         .execute_batch(AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA)
         .map_err(|error| format!("Unable to initialize Agent Session launch storage: {error}"))
@@ -599,4 +590,10 @@ fn managed_error(error: ManagedOperationError<RepositoryError>) -> RepositoryErr
         ManagedOperationError::Infrastructure(error) => persistence_unavailable(error),
         ManagedOperationError::Domain(error) => error,
     }
+}
+
+pub(crate) fn initialize_session_address_storage(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(addressing::SCHEMA)
+        .map_err(|error| format!("Unable to initialize Session addresses: {error}"))
 }

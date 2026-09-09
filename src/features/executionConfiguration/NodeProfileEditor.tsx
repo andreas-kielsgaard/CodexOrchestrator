@@ -1,3 +1,4 @@
+import { RuntimeDefaultsFields } from './RuntimeDefaultsFields';
 import { useState } from 'react';
 import {
   CatalogSingleSelect,
@@ -169,75 +170,15 @@ export function NodeProfileEditor({
         description="Workflow-triggered messages use these defaults. Runtime locks remain inherited."
         className="execution-configuration__section"
       >
-        <div className="execution-configuration__field-grid">
-          <DefaultSelection
-            label="Default model"
-            catalog={withinExposure(capabilityCatalogs.models, value.exposedCapabilities.models)}
-            value={value.pinnedDefaults.model}
-            lockedValue={runtimeLockedSelections?.model}
-            onChange={(model) =>
-              onChange({ ...value, pinnedDefaults: { ...value.pinnedDefaults, model } })
-            }
-          />
-          <DefaultSelection
-            label="Default reasoning"
-            catalog={withinExposure(
-              capabilityCatalogs.reasoningModes,
-              value.exposedCapabilities.reasoningModes,
-            )}
-            value={value.pinnedDefaults.reasoningMode}
-            lockedValue={runtimeLockedSelections?.reasoningMode}
-            onChange={(reasoningMode) =>
-              onChange({
-                ...value,
-                pinnedDefaults: { ...value.pinnedDefaults, reasoningMode },
-              })
-            }
-          />
-          <DefaultSelection
-            label="Default sandbox"
-            catalog={withinExposure(
-              capabilityCatalogs.sandboxModes,
-              value.exposedCapabilities.sandboxModes,
-            )}
-            value={value.pinnedDefaults.sandboxMode}
-            lockedValue={runtimeLockedSelections?.sandboxMode}
-            onChange={(sandboxMode) =>
-              onChange({
-                ...value,
-                pinnedDefaults: { ...value.pinnedDefaults, sandboxMode },
-              })
-            }
-          />
-        </div>
+        <RuntimeDefaultsFields
+          catalogs={capabilityCatalogs}
+          allowed={value.exposedCapabilities}
+          value={value.pinnedDefaults}
+          locked={runtimeLockedSelections}
+          onChange={(pinnedDefaults) => onChange({ ...value, pinnedDefaults })}
+        />
       </CollapsibleSection>
     </div>
-  );
-}
-
-function DefaultSelection<T extends string>({
-  label,
-  catalog,
-  value,
-  lockedValue,
-  onChange,
-}: {
-  readonly label: string;
-  readonly catalog: CatalogState<T>;
-  readonly value: T | null;
-  readonly lockedValue?: T | null;
-  onChange(value: T | null): void;
-}) {
-  const locked = lockedValue !== null && lockedValue !== undefined;
-  return (
-    <CatalogSingleSelect
-      label={label}
-      catalog={catalog}
-      value={locked ? lockedValue : value}
-      disabled={locked}
-      hint={locked ? `Inherited runtime lock: ${lockedValue}` : undefined}
-      onChange={onChange}
-    />
   );
 }
 
@@ -246,14 +187,4 @@ function asCatalog<T extends string>(
   sourceLabel: string,
 ): CatalogState<T> {
   return { availability: 'available', options, sourceLabel };
-}
-
-function withinExposure<T extends string>(
-  catalog: CatalogState<T>,
-  exposed: readonly T[],
-): CatalogState<T> {
-  return {
-    ...catalog,
-    options: catalog.options.filter((option) => exposed.includes(option.value)),
-  };
 }

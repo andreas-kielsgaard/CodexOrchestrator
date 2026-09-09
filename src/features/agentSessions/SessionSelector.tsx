@@ -8,6 +8,7 @@ import {
   PanelLeftOpen,
   RefreshCw,
 } from 'lucide-react';
+import { pendingRequestLabel } from './sessionAttention';
 import {
   useEffect,
   useMemo,
@@ -340,6 +341,7 @@ function SessionTreeLabel({ session }: { readonly session: AgentSessionNavigatio
 }
 
 function sessionStatus(session: AgentSessionNavigationSession) {
+  if (session.summary.pendingRequestCount) return { kind: 'attention', label: pendingRequestLabel };
   const status = session.summary.latestInvocationStatus;
   if (status === 'pending') return { kind: 'active', label: 'Starting' };
   if (status === 'running' || session.summary.hasActiveInvocation)

@@ -89,7 +89,7 @@ impl CodexJsonlProtocol {
         self.normalize(raw)
     }
 
-    fn normalize(&mut self, raw: Value) -> ProtocolOutput {
+    pub(super) fn normalize(&mut self, raw: Value) -> ProtocolOutput {
         let event_type = raw.get("type").and_then(Value::as_str).map(str::to_string);
         let Some(event_type) = event_type else {
             return malformed(
@@ -142,6 +142,21 @@ impl CodexJsonlProtocol {
                     None,
                 ),
             )),
+            "usage.updated" => {
+                if let Some(usage) = raw.get("usage").and_then(Value::as_object) {
+                    let value = parse_usage(usage);
+                    events.push(draft(
+                        raw,
+                        normalized(
+                            NormalizedRuntimeEventKind::Usage,
+                            None,
+                            None,
+                            Some(value),
+                            None,
+                        ),
+                    ));
+                }
+            }
             "turn.completed" => {
                 if let Some(message) = self.take_agent_message("final") {
                     events.push(message);

@@ -25,6 +25,7 @@ export interface RuntimeProfileSnapshotDto {
 
 /** Reusable capability ceiling selected by a Workflow node. */
 export interface CapabilityProfileDto {
+  readonly defaults?: RuntimeSelectionsDto;
   readonly contractVersion: 1;
   readonly capabilityProfileId: string;
   readonly name: string;
@@ -64,22 +65,38 @@ export interface DirectUserInvocationResolutionDto {
 }
 
 export interface CreateCapabilityProfileInput {
+  readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;
   readonly allowedCapabilities: CapabilitySetDto;
 }
 
 export interface UpdateCapabilityProfileInput {
+  readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;
   readonly allowedCapabilities: CapabilitySetDto;
 }
 
 export interface ExecutionConfigurationClient {
+  loadNativeCapabilityInventory?(): Promise<NativeCapabilityInventoryDto>;
+  loadDefaultCapabilityProfile?(): Promise<string | null>;
+  setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;
   loadSelectedRuntimeProfile(): Promise<RuntimeProfileSnapshotDto>;
   listCapabilityProfiles(): Promise<readonly CapabilityProfileDto[]>;
   loadCapabilityProfile(capabilityProfileId: string): Promise<CapabilityProfileDto>;
   createCapabilityProfile(input: CreateCapabilityProfileInput): Promise<CapabilityProfileDto>;
   updateCapabilityProfile(input: UpdateCapabilityProfileInput): Promise<CapabilityProfileDto>;
   deleteCapabilityProfile(capabilityProfileId: string): Promise<void>;
+}
+
+export interface NativeCapabilityInventoryDto {
+  readonly entries: readonly {
+    readonly name: string;
+    readonly kind: string;
+    readonly origin: string;
+    readonly state: string;
+    readonly support: string;
+  }[];
+  readonly limitations: readonly string[];
 }

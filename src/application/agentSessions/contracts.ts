@@ -31,6 +31,7 @@ export interface AgentRuntimeBindingDto {
 }
 
 export interface AgentSessionDto {
+  workspaceOrigin?: 'explicit' | 'allocated' | 'native_metadata' | null;
   id: AgentSessionIdDto;
   title: string;
   availability: AgentSessionAvailabilityDto;
@@ -172,11 +173,13 @@ export interface AgentInvocationDetailsDto {
 }
 
 export interface AgentSessionDetailsDto {
+  interactions?: SessionInteractionDto[];
   session: AgentSessionDto;
   invocations: AgentInvocationDetailsDto[];
 }
 
 export interface AgentSessionSummaryDto {
+  pendingRequestCount: number;
   id: AgentSessionIdDto;
   title: string;
   availability: AgentSessionAvailabilityDto;
@@ -226,6 +229,7 @@ export interface SendAgentSessionMessageResultDto {
 }
 
 export type AgentSessionUpdateDto =
+  | { kind: 'steering_accepted'; sessionId: string; invocationId: string; inputId: string }
   | {
       kind: 'event_persisted';
       sessionId: AgentSessionIdDto;
@@ -248,6 +252,20 @@ export type AgentSessionUpdateDto =
 export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void;
 
 export interface AgentSessionClient {
+  resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;
+  steerSession?(input: {
+    sessionId: string;
+    invocationId: string;
+    inputId: string;
+    text: string;
+  }): Promise<SessionInteractionDto>;
+  respondToRuntimeRequest?(input: {
+    sessionId: string;
+    invocationId: string;
+    requestId: string;
+    response: unknown;
+  }): Promise<void>;
+
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
   updateHarness?(command: UpdateAgentSessionHarnessCommandDto): Promise<AgentSessionDto>;
   updateIdentity?(command: UpdateAgentSessionIdentityCommandDto): Promise<AgentSessionDto>;
@@ -278,4 +296,45 @@ export interface UpdateAgentSessionIdentityCommandDto {
 export interface UpdateAgentSessionModelOverrideCommandDto {
   readonly sessionId: AgentSessionIdDto;
   readonly model: string | null;
+}
+
+export interface SessionInteractionDto {
+  id: string;
+  invocationId: string;
+  sequence: number;
+  kind: 'steering' | 'request';
+  state:
+    | 'pending'
+    | 'accepted'
+    | 'rejected'
+    | 'uncertain'
+    | 'responding'
+    | 'answered'
+    | 'expired'
+    | 'unsupported';
+  content: {
+    permissions?: unknown;
+    grantRoot?: string;
+    text?: string;
+    title?: string;
+    command?: string;
+    cwd?: string;
+    url?: string;
+    supported?: boolean;
+    kind?: string;
+    choices?: Array<{
+      label: string;
+      description?: string;
+      scope?: string | null;
+      response: unknown;
+    }>;
+    questions?: Array<{
+      id: string;
+      question: string;
+      isSecret?: boolean;
+      isOther?: boolean;
+      options?: Array<{ label: string; description: string }>;
+    }>;
+  };
+  result: string | null;
 }

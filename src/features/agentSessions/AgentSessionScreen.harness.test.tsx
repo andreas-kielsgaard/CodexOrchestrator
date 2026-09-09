@@ -76,8 +76,11 @@ describe('AgentSessionScreen with recorded scenarios', () => {
     });
     render(<AgentSessionScreen client={client} />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Recorded subscription failed');
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    for (const alert of screen.getAllByRole('alert'))
+      expect(alert).toHaveTextContent('Recorded subscription failed');
+    for (const dismiss of screen.getAllByRole('button', { name: 'Dismiss error' }))
+      fireEvent.click(dismiss);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -124,7 +127,9 @@ describe('AgentSessionScreen with recorded scenarios', () => {
       client.advanceAll();
       await Promise.resolve();
     });
-    expect(await screen.findByText('FUTURE_EVENT')).toBeVisible();
+    expect(await screen.findByText('FUTURE_EVENT')).not.toBeVisible();
+    fireEvent.click(screen.getByText('Technical details (3)'));
+    expect(screen.getByText('FUTURE_EVENT')).toBeVisible();
     expect(screen.getByText('stderr text')).toBeVisible();
     expect(screen.getByText('Technical details (3)')).toBeVisible();
     expect(screen.getAllByText('Raw event').length).toBeGreaterThan(0);

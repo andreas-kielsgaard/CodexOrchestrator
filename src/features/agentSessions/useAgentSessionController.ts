@@ -1,9 +1,12 @@
+import { sessionErrorMessage as errorMessage } from './sessionErrors';
+import { sessionSummaryChanged } from './sessionAttention';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSessionClient,
   AgentSessionDetailsDto,
   AgentSessionSummaryDto,
   AgentSessionUpdateDto,
+  AgentSessionProfileClient,
 } from '../../application/agentSessions';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 
@@ -27,6 +30,9 @@ export interface AgentSessionController {
   /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
   sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
+  respondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  steeringAvailable?: boolean;
+
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
   clearError(): void;
@@ -44,78 +50,15 @@ export type AgentSessionWorkspaceController = Omit<
   'summaries' | 'selectSession' | 'startNewSession'
 >;
 
-export interface AgentSessionCollectionOptions {
-  readonly selectedSessionId?: string | null;
-  readonly onSelectedSessionChange?: (sessionId: string | null) => void;
-}
-
-export function useAgentSessionCollection(
-  client: AgentSessionClient,
-  options: AgentSessionCollectionOptions = {},
-): AgentSessionCollectionController {
-  const { selectedSessionId: controlledSelectedSessionId, onSelectedSessionChange } = options;
-  const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    controlledSelectedSessionId ?? null,
-  );
-  const selectedSessionIdRef = useRef<string | null>(controlledSelectedSessionId ?? null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await client.listSessions({ availability: 'available' });
-      setSummaries(next);
-      const selected =
-        selectedSessionIdRef.current ?? controlledSelectedSessionId ?? next[0]?.id ?? null;
-      if (selected !== selectedSessionIdRef.current) {
-        selectedSessionIdRef.current = selected;
-        setSelectedSessionId(selected);
-        onSelectedSessionChange?.(selected);
-      }
-    } catch (caught) {
-      if (mountedRef.current) setError(`Session list reload failed: ${errorMessage(caught)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [client, controlledSelectedSessionId, onSelectedSessionChange]);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    void reload();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [reload]);
-  useEffect(() => {
-    if (controlledSelectedSessionId === undefined) return;
-    selectedSessionIdRef.current = controlledSelectedSessionId;
-    setSelectedSessionId(controlledSelectedSessionId);
-  }, [controlledSelectedSessionId]);
-  return {
-    summaries,
-    selectedSessionId,
-    loading,
-    error,
-    selectSession: async (id) => {
-      setError(null);
-      selectedSessionIdRef.current = id;
-      setSelectedSessionId(id);
-      onSelectedSessionChange?.(id);
-    },
-    startNewSession: () => {
-      setError(null);
-      selectedSessionIdRef.current = null;
-      setSelectedSessionId(null);
-      onSelectedSessionChange?.(null);
-    },
-    reload,
-    clearError: () => setError(null),
-  };
-}
+export { useAgentSessionCollection } from './useAgentSessionCollection';
+export type { AgentSessionCollectionOptions } from './useAgentSessionCollection';
 
 export interface UseAgentSessionOptions {
+  execution?: {
+    readonly client: AgentSessionProfileClient;
+    readonly selection: { readonly model: string | null; readonly reasoningMode: string | null };
+    afterAccepted(): void;
+  };
   startSession?(input: {
     readonly submittedText: string;
     readonly workingDirectory: string | null;
@@ -143,10 +86,12 @@ export function useAgentSession(
     sendExistingMessage: options.sendExistingMessage,
     startSession: options.startSession,
     sessionTitle: options.sessionTitle,
+    execution: options.execution,
   });
 }
 
 interface ControllerOptions {
+  execution?: UseAgentSessionOptions['execution'];
   startSession?: UseAgentSessionOptions['startSession'];
   controlledSessionId?: string | null;
   skipCollection?: boolean;
@@ -214,10 +159,7 @@ export function useAgentSessionController(
       }
       try {
         await loadSelected(update.sessionId, true);
-        if (
-          update.kind !== 'event_persisted' ||
-          update.event.normalized?.kind === 'invocation_completed'
-        ) {
+        if (sessionSummaryChanged(update)) {
           await refreshSummaries();
         }
       } catch (caught) {
@@ -331,34 +273,86 @@ export function useAgentSessionController(
       try {
         await subscriptionReadyRef.current;
         const existingSessionId = selectedIdRef.current;
+        const activeInvocationId =
+          details && details.session.id === existingSessionId
+            ? projectAgentSessionTranscript(details).activeInvocationId
+            : null;
+        if (existingSessionId && activeInvocationId) {
+          if (!client.steerSession)
+            throw new Error('Turn steering is unavailable for this connection.');
+          const outcome = await client.steerSession({
+            sessionId: existingSessionId,
+            invocationId: activeInvocationId,
+            inputId: crypto.randomUUID(),
+            text: submittedText,
+          });
+          if (outcome.state === 'accepted' || outcome.state === 'uncertain') {
+            if (clearComposer && selectedIdRef.current === existingSessionId)
+              setDraft((current) => (current === value ? '' : current));
+          }
+          if (outcome.state !== 'accepted')
+            setError(
+              outcome.result ??
+                `Steering ${outcome.state}. It will not be sent again automatically.`,
+            );
+          if (selectedIdRef.current === existingSessionId)
+            await loadSelected(existingSessionId, true);
+          return;
+        }
+        if (
+          existingSessionId &&
+          details?.session.id === existingSessionId &&
+          !details.session.workingDirectory &&
+          workingDirectory.trim()
+        ) {
+          if (!client.resolveWorkingDirectory)
+            throw new Error('Working context selection is unavailable.');
+          await client.resolveWorkingDirectory(existingSessionId, workingDirectory.trim());
+        }
         const acknowledgement =
           existingSessionId && options.sendExistingMessage
             ? await options.sendExistingMessage({
                 sessionId: existingSessionId,
                 submittedText,
               })
-            : !existingSessionId && options.startSession
-              ? await options.startSession({
-                  submittedText,
-                  workingDirectory: workingDirectory.trim() || null,
-                  title: options.sessionTitle ?? null,
-                })
-              : await client.sendMessage({
-                  ...(existingSessionId ? { sessionId: existingSessionId } : {}),
-                  submittedText,
-                  ...(!existingSessionId && options.sessionTitle
-                    ? { title: options.sessionTitle }
-                    : {}),
-                  ...(!existingSessionId && workingDirectory.trim()
-                    ? { workingDirectory: workingDirectory.trim() }
-                    : {}),
-                });
-        selectedIdRef.current = acknowledgement.sessionId;
-        invocationIdsRef.current.add(acknowledgement.invocationId);
-        setSelectedSessionId(acknowledgement.sessionId);
+            : options.execution
+              ? existingSessionId
+                ? await options.execution.client.sendDirectUserMessage({
+                    sessionId: existingSessionId,
+                    submittedText,
+                    ...options.execution.selection,
+                  })
+                : await options.execution.client.startDirectUserSession({
+                    submittedText,
+                    workingDirectory: workingDirectory.trim() || null,
+                    title: options.sessionTitle ?? null,
+                    ...options.execution.selection,
+                  })
+              : !existingSessionId && options.startSession
+                ? await options.startSession({
+                    submittedText,
+                    workingDirectory: workingDirectory.trim() || null,
+                    title: options.sessionTitle ?? null,
+                  })
+                : await client.sendMessage({
+                    ...(existingSessionId ? { sessionId: existingSessionId } : {}),
+                    submittedText,
+                    ...(!existingSessionId && options.sessionTitle
+                      ? { title: options.sessionTitle }
+                      : {}),
+                    ...(!existingSessionId && workingDirectory.trim()
+                      ? { workingDirectory: workingDirectory.trim() }
+                      : {}),
+                  });
+        options.execution?.afterAccepted();
         if (!existingSessionId) options.onSessionCreated?.(acknowledgement.sessionId);
-        if (clearComposer) setDraft('');
-        await loadSelected(acknowledgement.sessionId, true);
+        if (selectedIdRef.current === existingSessionId) {
+          selectedIdRef.current = acknowledgement.sessionId;
+          invocationIdsRef.current.add(acknowledgement.invocationId);
+          setSelectedSessionId(acknowledgement.sessionId);
+          if (clearComposer) setDraft((current) => (current === value ? '' : current));
+          await loadSelected(acknowledgement.sessionId, true);
+        }
         await refreshSummaries();
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
@@ -366,7 +360,7 @@ export function useAgentSessionController(
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, loadSelected, options, refreshSummaries, sending, workingDirectory],
+    [client, details, loadSelected, options, refreshSummaries, sending, workingDirectory],
   );
 
   const send = useCallback(() => sendText(draft, true), [draft, sendText]);
@@ -388,6 +382,22 @@ export function useAgentSessionController(
       if (mountedRef.current) setCanceling(false);
     }
   }, [canceling, client, details, loadSelected, refreshSummaries]);
+
+  const respondToRequest = useCallback(
+    async (invocationId: string, requestId: string, response: unknown) => {
+      const sessionId = selectedIdRef.current;
+      if (!sessionId || !client.respondToRuntimeRequest) return;
+      try {
+        await client.respondToRuntimeRequest({ sessionId, invocationId, requestId, response });
+      } catch (caught) {
+        if (mountedRef.current && selectedIdRef.current === sessionId)
+          setError(errorMessage(caught));
+      } finally {
+        if (selectedIdRef.current === sessionId) await loadSelected(sessionId, true);
+      }
+    },
+    [client, loadSelected],
+  );
 
   const toggleProcessing = useCallback((invocationId: string) => {
     setExpandedProcessing((current) => {
@@ -425,6 +435,8 @@ export function useAgentSessionController(
   }, [loadSelected, refreshSummaries, selectedSessionId, transcript?.activeInvocationId]);
 
   return {
+    respondToRequest,
+    steeringAvailable: Boolean(client.steerSession),
     summaries,
     selectedSessionId,
     details,
@@ -447,8 +459,4 @@ export function useAgentSessionController(
     toggleProcessing,
     clearError: () => setError(null),
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

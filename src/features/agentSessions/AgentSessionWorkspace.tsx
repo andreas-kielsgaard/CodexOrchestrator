@@ -2,6 +2,7 @@ import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentIdentityMarker } from './AgentIdentityMarker';
+import { pendingRequestLabel, pendingSessionRequests } from './sessionAttention';
 import { ConversationViewport } from './ConversationViewport';
 import { AgentSessionTurnInspector } from './AgentSessionTurnInspector';
 import type { TranscriptAnchorRange } from './transcriptProjector';
@@ -71,6 +72,12 @@ export function AgentSessionWorkspace({
 }: AgentSessionWorkspaceProps) {
   const contextualChrome = useContext(AgentSessionChromeContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
+  const awaitingResponse = pendingSessionRequests(controller.details?.interactions).length > 0;
+  const activityStatus = active ? (
+    <span className={awaitingResponse ? 'waiting-status' : 'working-status'} role="status">
+      {awaitingResponse ? pendingRequestLabel : 'Working'}
+    </span>
+  ) : null;
   const title = controller.details?.session.title ?? 'New Agent Session';
   const showHeader = presentation.showHeader ?? true;
   const identityHeader = presentation.identityHeader;
@@ -138,11 +145,7 @@ export function AgentSessionWorkspace({
           <div className="agent-session-identity-header__actions">
             {contextualChrome.actions}
             {copyAction}
-            {active && (
-              <span className="working-status" role="status">
-                Working
-              </span>
-            )}
+            {activityStatus}
           </div>
         </header>
       ) : showHeader ? (
@@ -163,17 +166,14 @@ export function AgentSessionWorkspace({
           <div className="agent-session-header__actions">
             {contextualChrome.actions}
             {copyAction}
-            {active && (
-              <span className="working-status" role="status">
-                Working
-              </span>
-            )}
+            {activityStatus}
           </div>
         </header>
       ) : (
         <div className="agent-session-utility-bar">
           {contextualChrome.actions}
           {copyAction}
+          {activityStatus}
         </div>
       )}
       {contextualChrome.settings && (
@@ -210,13 +210,24 @@ export function AgentSessionWorkspace({
           error={controller.error}
           onClearError={controller.clearError}
           emptyState={presentation.emptyState}
-          composerPresentation={presentation.composer}
+          composerPresentation={
+            controller.details && !controller.details.session.workingDirectory
+              ? { ...presentation.composer, showWorkingDirectory: true }
+              : presentation.composer
+          }
           composerTarget={{
+            steeringAvailable: controller.steeringAvailable,
+            needsWorkingDirectory: Boolean(
+              controller.details && !controller.details.session.workingDirectory,
+            ),
+            interactions: controller.details?.interactions,
+            respondToRequest: controller.respondToRequest,
             sessionId: controller.selectedSessionId,
             draft: controller.draft,
             workingDirectory: controller.workingDirectory,
             sending: controller.sending,
-            sendUnavailableReason,
+            sendUnavailableReason:
+              active && controller.steeringAvailable ? undefined : sendUnavailableReason,
             active,
             canceling: controller.canceling,
             setDraft: controller.setDraft,

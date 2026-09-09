@@ -1,7 +1,7 @@
 import { RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentSessionClient } from '../../application/agentSessions';
-import type { AgentSessionProfileClient } from '../../application/agentSessionProfiles';
+import type { AgentSessionProfileClient } from '../../application/agentSessions';
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import type {
   SessionEventQueryClient,

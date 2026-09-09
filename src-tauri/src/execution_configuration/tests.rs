@@ -73,6 +73,7 @@ fn runtime_profile() -> RuntimeProfileSnapshot {
 fn capability_profile() -> CapabilityProfile {
     CapabilityProfile {
         contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+        defaults: Default::default(),
         capability_profile_id: "implementation".into(),
         name: "Implementation".into(),
         revision: 3,
@@ -227,7 +228,10 @@ fn unavailable_pinned_default_fails_without_fallback() {
 
 #[test]
 fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let mut native = runtime_profile();
+    native.locked.sandbox_mode = None;
+    native.exposure.sandbox_modes.insert(SandboxMode::ReadOnly);
+    let source = FixedProfileSource(Ok(native));
     let mut request = creation_request();
     request.node_profile.allowed_capabilities.models = set(&["codex-a"]);
     request.node_profile.allowed_capabilities.reasoning_modes = set(&["high"]);
@@ -242,11 +246,16 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
             model: Some("codex-b".into()),
             reasoning_mode: Some("medium".into()),
+            sandbox_mode: Some(SandboxMode::ReadOnly),
         },
     )
     .unwrap();
 
     assert_eq!(invocation.selections.model.as_deref(), Some("codex-b"));
+    assert_eq!(
+        invocation.selections.sandbox_mode,
+        Some(SandboxMode::ReadOnly)
+    );
     assert_eq!(
         invocation.selections.reasoning_mode.as_deref(),
         Some("medium")
@@ -272,6 +281,7 @@ fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
             model: Some("unavailable".into()),
             reasoning_mode: None,
+            sandbox_mode: None,
         },
     );
 
@@ -299,6 +309,7 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
                 contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
                 model: None,
                 reasoning_mode: None,
+                sandbox_mode: None,
             },
         ),
         Err(ResolutionError::RuntimeProfileChanged { .. })
@@ -387,4 +398,35 @@ fn source_failure_is_a_typed_resolution_error() {
             "no ready profile".into()
         ))
     );
+}
+#[test]
+fn required_default_profile_is_atomic_retained_and_cannot_be_deleted() {
+    use super::CapabilityProfileRepository;
+    let folder = tempfile::tempdir().unwrap();
+    let database = folder.path().join("profiles.sqlite");
+    let repository = super::SqliteCapabilityProfileRepository::open(&database).unwrap();
+    assert!(repository.default_profile().unwrap().is_none());
+    assert!(repository.set_default_profile("missing").is_err());
+    let first = super::CapabilityProfile {
+        contract_version: 1,
+        capability_profile_id: "first".into(),
+        name: "First".into(),
+        revision: 1,
+        allowed_capabilities: Default::default(),
+        defaults: Default::default(),
+    };
+    let second = super::CapabilityProfile {
+        capability_profile_id: "second".into(),
+        name: "Second".into(),
+        ..first.clone()
+    };
+    repository.insert(&first).unwrap();
+    repository.insert(&second).unwrap();
+    repository.set_default_profile("first").unwrap();
+    assert_eq!(repository.default_profile().unwrap(), Some(first.clone()));
+    assert!(repository.remove("first").is_err());
+    repository.set_default_profile("second").unwrap();
+    repository.remove("first").unwrap();
+    let reopened = super::SqliteCapabilityProfileRepository::open(&database).unwrap();
+    assert_eq!(reopened.default_profile().unwrap(), Some(second));
 }

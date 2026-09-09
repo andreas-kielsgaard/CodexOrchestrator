@@ -14,6 +14,11 @@ export function createTauriExecutionConfigurationClient(
   invokeCommand: ExecutionConfigurationInvoke = invoke,
 ): ExecutionConfigurationClient {
   return {
+    loadNativeCapabilityInventory: () => invokeCommand('load_native_capability_inventory'),
+    loadDefaultCapabilityProfile: () => invokeCommand('load_default_capability_profile'),
+    setDefaultCapabilityProfile: (capabilityProfileId) =>
+      invokeCommand('set_default_capability_profile', { input: { capabilityProfileId } }),
+
     loadSelectedRuntimeProfile: () =>
       invokeCommand<RuntimeProfileSnapshotDto>('load_selected_runtime_profile'),
     listCapabilityProfiles: () => invokeCommand<CapabilityProfileDto[]>('list_capability_profiles'),

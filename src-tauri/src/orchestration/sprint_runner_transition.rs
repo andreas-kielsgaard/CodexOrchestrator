@@ -1,7 +1,8 @@
 //! The first downstream boundary: one Epic Runner semantic request creates one ready Sprint Runner.
 
+pub(crate) mod storage;
+
 use super::accepted_candidate_authority::reconcile_accepted_candidate_authorities_managed;
-#[cfg(test)]
 use super::accepted_candidate_authority::ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA;
 use super::accepted_integration::reconcile_accepted_integrations_managed;
 use super::conversation_harness::{self, ConversationHarnessRole};
@@ -1278,118 +1279,7 @@ impl SprintRunnerTransitionService {
         })?;
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
-        connection.execute_batch(SCHEMA).map_err(|e| {
-            SprintRunnerTransitionError::Unavailable(format!(
-                "initialize Sprint Runner transition schema: {e}"
-            ))
-        })?;
-        connection.execute_batch(ACCEPTED_CANDIDATE_AUTHORITY_SCHEMA).map_err(|e| {
-                SprintRunnerTransitionError::Unavailable(format!("initialize accepted candidate authority schema: {e}"))
-            })?;
-        connection.execute_batch(crate::orchestration::work_unit_dependency_wave::WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).map_err(|e| {
-                SprintRunnerTransitionError::Unavailable(format!("initialize dependency-wave schema: {e}"))
-            })?;
-        sprint_continuation_settlement::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        crate::orchestration::epic_settlement::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
-        // The first pre-start route was shipped before these evidence boundaries.  Keep an
-        // existing local database readable without treating an absent fact as a positive fact.
-        for column in [
-            "pre_start_semantic_outcome_recorded_at TEXT", "pre_start_outcome_fact_id TEXT", "pre_start_outcome_invocation_id TEXT",
-            "pre_start_forecast TEXT", "pre_start_material_uncertainty TEXT", "pre_start_prerequisite TEXT",
-            "pre_start_upgrade_invocation_id TEXT", "pre_start_upgrade_harness_key TEXT", "pre_start_upgrade_harness_version INTEGER", "pre_start_upgrade_harness_applied_at TEXT", "pre_start_upgrade_launch_accepted_at TEXT",
-            "pre_start_lifecycle_status TEXT", "pre_start_lifecycle_invocation_id TEXT", "pre_start_lifecycle_observed_at TEXT",
-            "pre_start_outcome_accepted_at TEXT", "parent_continuation_delivery_requested_at TEXT",
-            "parent_continuation_delivery_persisted_at TEXT", "epic_continuation_invocation_id TEXT",
-            "parent_continuation_delivery_fact_id TEXT", "parent_continuation_delivered_outcome_fact_id TEXT",
-            "epic_continuation_harness_key TEXT", "epic_continuation_harness_version INTEGER",
-            "epic_continuation_harness_applied_at TEXT", "epic_continuation_launch_accepted_at TEXT",
-            "provider_receiver_activation_observed_at TEXT", "epic_start_semantic_authorization_requested_at TEXT",
-            "epic_start_semantic_authorization_recorded_at TEXT", "sprint_start_authorized_at TEXT",
-            "sprint_start_persisted_at TEXT", "sprint_continuation_invocation_id TEXT",
-            "sprint_continuation_harness_key TEXT", "sprint_continuation_harness_version INTEGER",
-            "sprint_continuation_harness_applied_at TEXT", "sprint_continuation_launch_accepted_at TEXT",
-            "repository_branch_reevaluation_fact_id TEXT", "repository_branch_reevaluation_recorded_at TEXT",
-            "repository_branch_evaluation TEXT", "started_forecast_and_concerns TEXT",
-            "started_reevaluation_lifecycle_status TEXT", "started_reevaluation_lifecycle_invocation_id TEXT",
-            "started_reevaluation_lifecycle_observed_at TEXT", "planning_control_delivery_requested_at TEXT",
-            "planning_control_delivery_persisted_at TEXT", "planning_control_invocation_id TEXT",
-            "planning_control_harness_key TEXT", "planning_control_harness_version INTEGER",
-            "planning_control_harness_applied_at TEXT", "planning_control_launch_accepted_at TEXT",
-            "planning_ready_at TEXT",
-        ] {
-            let name = column.split_whitespace().next().expect("migration column name");
-            let exists = connection.prepare("PRAGMA table_info(sprint_runner_transitions)")
-                .and_then(|mut statement| {
-                    statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()
-                })
-                .map_err(|e| {
-                    SprintRunnerTransitionError::Unavailable(format!("inspect Sprint Runner transition schema: {e}"))
-                })?
-                .iter().any(|existing| existing == name);
-            if !exists { connection.execute_batch(&format!("ALTER TABLE sprint_runner_transitions ADD COLUMN {column}"))
-                .map_err(|e| {
-                        SprintRunnerTransitionError::Unavailable(format!("migrate Sprint Runner transition schema: {e}"))
-                    })?; }
-        }
-        for column in [
-            "authority_id TEXT", "authority_epic_id TEXT", "authority_provenance_id TEXT",
-            "authority_repository_id TEXT", "authority_worktree_id TEXT",
-            "authority_baseline_object_id TEXT", "authority_current_object_id TEXT",
-            "authority_source_fingerprint TEXT",
-            "planner_session_created_at TEXT", "planner_invocation_created_at TEXT",
-            "planner_harness_applied_at TEXT", "planner_harness_json TEXT",
-            "planner_launch_requested_at TEXT", "planner_launch_accepted_at TEXT",
-            "planner_ready_at TEXT", "planner_provider_activation_observed_at TEXT",
-            "planner_lifecycle_observed_at TEXT",
-        ] {
-            let name = column.split_whitespace().next().expect("planning request migration column name");
-            let exists = connection.prepare("PRAGMA table_info(work_slice_planning_requests)")
-                .and_then(|mut statement| {
-                    statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()
-                })
-                .map_err(|e| {
-                    SprintRunnerTransitionError::Unavailable(format!("inspect Work Slice planning request schema: {e}"))
-                })?
-                .iter().any(|existing| existing == name);
-            if !exists { connection.execute_batch(&format!("ALTER TABLE work_slice_planning_requests ADD COLUMN {column}"))
-                .map_err(|e| {
-                        SprintRunnerTransitionError::Unavailable(format!("migrate Work Slice planning request schema: {e}"))
-                    })?; }
-        }
-        let handler_columns = [
-            "handler_harness_revision_id TEXT",
-            "handler_harness_configuration_digest TEXT",
-            "handler_harness_repository_commit_ref TEXT",
-        ];
-        for column in handler_columns {
-            let name = column.split_whitespace().next().expect("Handler activation migration column name");
-            let exists = connection.prepare("PRAGMA table_info(work_unit_handler_activations)")
-                .and_then(|mut statement| {
-                    statement.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()
-                })
-                .map_err(|e| {
-                    SprintRunnerTransitionError::Unavailable(format!("inspect Handler activation schema: {e}"))
-                })?
-                .iter().any(|existing| existing == name);
-            if !exists { connection.execute_batch(&format!("ALTER TABLE work_unit_handler_activations ADD COLUMN {column}"))
-                .map_err(|e| {
-                        SprintRunnerTransitionError::Unavailable(format!("migrate Handler activation schema: {e}"))
-                    })?; }
-        }
-        migrate_legacy_implementer_activations(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        ensure_handler_activation_failure_reason(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        ensure_handler_action_failure_reason(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        ensure_implementer_outcome_evidence_columns(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        migrate_work_unit_attempt_history(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        migrate_work_unit_retry_attempt_history(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
-        migrate_handler_decision_retry_contract(&connection)
-            .map_err(SprintRunnerTransitionError::Unavailable)?;
+        storage::initialize(&connection).map_err(SprintRunnerTransitionError::Unavailable)?;
         let database = ActiveDatabase::from_connection(connection, |_| Ok(()))
             .map(Arc::new)
             .map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
@@ -1986,6 +1876,7 @@ impl SprintRunnerTransitionService {
         self: &Arc<Self>, notification: &AgentSessionNotification,
     ) -> Result<(), SprintRunnerTransitionError> {
         let (notification_invocation, handler_invocation) = match notification {
+            AgentSessionNotification::SteeringAccepted { .. } => return Ok(()),
             AgentSessionNotification::EventPersisted { event, .. } => {
                 let handler = self.read_database("identify Handler notification", |connection| connection.query_row(
                     "SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations WHERE handler_invocation_id=?1)",
@@ -2325,7 +2216,7 @@ impl SprintRunnerTransitionService {
             }
             ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {}
             ApplicationInvocationLaunchEvidence::NeverPersisted => {
-                let injection=self.prepare_pre_start_action(invocation.clone())?; let mut additional_args=harness.runtime_configuration_args();additional_args.extend(injection.configuration_args); let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id:invocation, message:SendAgentSessionMessageCommand { session_id:Some(session), submitted_text:format!("Maintain the selected Sprint in a truthful pre-start ready state. Submit exactly one structured pre-start outcome through report_pre_start_outcome, then stop. Do not create Work Slice planning or Work Units.\n\nEpic ID: {}\nSprint ID: {}",record.epic_id,record.sprint_id), title:None, working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options:Some(harness.runtime_options()) }}, Some(RuntimeLaunchExtension { additional_args, environment:vec![injection.environment], initial_prompt_prefix:Some(harness.initial_prompt_prefix()) })).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+                let injection=self.prepare_pre_start_action(invocation.clone())?; let mut config_overrides=harness.runtime_config_overrides();config_overrides.extend(injection.config_overrides); let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id:invocation, message:SendAgentSessionMessageCommand { session_id:Some(session), submitted_text:format!("Maintain the selected Sprint in a truthful pre-start ready state. Submit exactly one structured pre-start outcome through report_pre_start_outcome, then stop. Do not create Work Slice planning or Work Units.\n\nEpic ID: {}\nSprint ID: {}",record.epic_id,record.sprint_id), title:None, working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options:Some(harness.runtime_options()) }}, Some(RuntimeLaunchExtension { managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None, config_overrides, environment:vec![injection.environment], initial_prompt_prefix:Some(harness.initial_prompt_prefix()) })).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
                 self.mark(&record.sprint_id, "harness_applied_at")?;
                 if launch.launch_accepted {
                     self.mark(&record.sprint_id, "launch_accepted_at")?;
@@ -2344,7 +2235,7 @@ impl SprintRunnerTransitionService {
         self.write_database("record pre-start Harness upgrade", |transaction| transaction.execute("UPDATE sprint_runner_transitions SET pre_start_upgrade_invocation_id=COALESCE(pre_start_upgrade_invocation_id,?2),pre_start_upgrade_harness_key=COALESCE(pre_start_upgrade_harness_key,?3),pre_start_upgrade_harness_version=COALESCE(pre_start_upgrade_harness_version,?4) WHERE sprint_id=?1",params![record.sprint_id,id,harness.key,harness.version]).map(|_| ()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string())))?;let invocation=AgentInvocationId::new(id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=> {
                 self.mark(&record.sprint_id,"pre_start_upgrade_launch_accepted_at")?
             }
-            ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{},ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_pre_start_action(invocation.clone())?;let mut additional_args=harness.runtime_configuration_args();additional_args.extend(injection.configuration_args);let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("The prior pre-start invocation applied Sprint Runner Harness v1. It remains historical. This fresh application-owned v2 pre-start invocation must submit one outcome through report_pre_start_outcome, then stop.\n\nEpic ID: {}\nSprint ID: {}",record.epic_id,record.sprint_id),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{additional_args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark(&record.sprint_id,"pre_start_upgrade_harness_applied_at")?;if launch.launch_accepted{self.mark(&record.sprint_id,"pre_start_upgrade_launch_accepted_at")?;}}};self.reconcile_accepted_pre_start(&record.sprint_id)
+            ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{},ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_pre_start_action(invocation.clone())?;let mut config_overrides=harness.runtime_config_overrides();config_overrides.extend(injection.config_overrides);let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("The prior pre-start invocation applied Sprint Runner Harness v1. It remains historical. This fresh application-owned v2 pre-start invocation must submit one outcome through report_pre_start_outcome, then stop.\n\nEpic ID: {}\nSprint ID: {}",record.epic_id,record.sprint_id),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark(&record.sprint_id,"pre_start_upgrade_harness_applied_at")?;if launch.launch_accepted{self.mark(&record.sprint_id,"pre_start_upgrade_launch_accepted_at")?;}}};self.reconcile_accepted_pre_start(&record.sprint_id)
     }
 
     fn reconcile_accepted_pre_start(self: &Arc<Self>, sprint_id: &str) -> Result<(), SprintRunnerTransitionError> {
@@ -2377,7 +2268,7 @@ impl SprintRunnerTransitionService {
                 }
                 ApplicationInvocationLaunchEvidence::PersistedNotAccepted => { self.mark(sprint_id,"parent_continuation_delivery_persisted_at")?; },
                 ApplicationInvocationLaunchEvidence::NeverPersisted => {
-                    let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).map_err(SprintRunnerTransitionError::Unavailable)?;let outcome:(String,String,String)=self.read_database("load pre-start outcome", |connection| connection.query_row("SELECT pre_start_forecast,pre_start_material_uncertainty,pre_start_prerequisite FROM sprint_runner_transitions WHERE sprint_id=?1",[sprint_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string())))?;let injection=self.prepare_epic_start_action(invocation.clone())?;let mut additional_args=harness.runtime_configuration_args();additional_args.extend(injection.configuration_args); let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("The application accepted and correlates this exact completed pre-start outcome. Review it and use start_selected_sprint only if you semantically authorize start. Delivery is not authorization.\n\nEpic ID: {epic_id}\nSelected Sprint ID: {sprint_id}\n\nForecast and concerns:\n{}\n\nMaterial uncertainty:\n{}\n\nApplication-owned prerequisite:\n{}",outcome.0,outcome.1,outcome.2),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{additional_args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+                    let harness=conversation_harness::profile(ConversationHarnessRole::EpicRunner).map_err(SprintRunnerTransitionError::Unavailable)?;let outcome:(String,String,String)=self.read_database("load pre-start outcome", |connection| connection.query_row("SELECT pre_start_forecast,pre_start_material_uncertainty,pre_start_prerequisite FROM sprint_runner_transitions WHERE sprint_id=?1",[sprint_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string())))?;let injection=self.prepare_epic_start_action(invocation.clone())?;let mut config_overrides=harness.runtime_config_overrides();config_overrides.extend(injection.config_overrides); let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("The application accepted and correlates this exact completed pre-start outcome. Review it and use start_selected_sprint only if you semantically authorize start. Delivery is not authorization.\n\nEpic ID: {epic_id}\nSelected Sprint ID: {sprint_id}\n\nForecast and concerns:\n{}\n\nMaterial uncertainty:\n{}\n\nApplication-owned prerequisite:\n{}",outcome.0,outcome.1,outcome.2),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;
                     self.mark(sprint_id,"parent_continuation_delivery_persisted_at")?; self.mark(sprint_id,"epic_continuation_harness_applied_at")?; if launch.launch_accepted{self.mark(sprint_id,"epic_continuation_launch_accepted_at")?;}
                 }
             }
@@ -2390,7 +2281,7 @@ impl SprintRunnerTransitionService {
             if launch.is_none(){ let session=AgentSessionId::new(sprint_session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; let invocation=AgentInvocationId::new(id).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?; match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))? { ApplicationInvocationLaunchEvidence::LaunchAccepted=> {
                         self.mark(sprint_id,"sprint_continuation_launch_accepted_at")?
                     }
-                    ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{}, ApplicationInvocationLaunchEvidence::NeverPersisted=>{let harness=conversation_harness::profile(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?;let injection=self.prepare_started_action(invocation.clone())?;let mut additional_args=harness.runtime_configuration_args();additional_args.extend(injection.configuration_args);let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("Sprint start is durably authorized. Reevaluate the repository and branch, then submit that semantic evidence through record_started_reevaluation. Do not create a planning point, Work Slice Planner, or Work Units.\n\nEpic ID: {epic_id}\nSprint ID: {sprint_id}"),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{additional_args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark(sprint_id,"sprint_continuation_harness_applied_at")?;if launch.launch_accepted{self.mark(sprint_id,"sprint_continuation_launch_accepted_at")?;}}}}
+                    ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{}, ApplicationInvocationLaunchEvidence::NeverPersisted=>{let harness=conversation_harness::profile(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?;let injection=self.prepare_started_action(invocation.clone())?;let mut config_overrides=harness.runtime_config_overrides();config_overrides.extend(injection.config_overrides);let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation,message:SendAgentSessionMessageCommand{session_id:Some(session),submitted_text:format!("Sprint start is durably authorized. Reevaluate the repository and branch, then submit that semantic evidence through record_started_reevaluation. Do not create a planning point, Work Slice Planner, or Work Units.\n\nEpic ID: {epic_id}\nSprint ID: {sprint_id}"),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunner).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}},Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;self.mark(sprint_id,"sprint_continuation_harness_applied_at")?;if launch.launch_accepted{self.mark(sprint_id,"sprint_continuation_launch_accepted_at")?;}}}}
         }
         self.reconcile_planning_control(sprint_id)
     }
@@ -2419,8 +2310,8 @@ impl SprintRunnerTransitionService {
             }
             ApplicationInvocationLaunchEvidence::NeverPersisted => {
                 let injection=self.prepare_planning_control_action(invocation.clone())?;
-                let mut additional_args=harness.runtime_configuration_args(); additional_args.extend(injection.configuration_args);
-                let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id:invocation, message:SendAgentSessionMessageCommand { session_id:Some(session), submitted_text:format!("The completed started reevaluation is durably observed. This is the only current planning-control invocation. Request exactly one Work Slice Planner through request_work_slice_planner only if this Sprint needs one current temporal planning decision. Do not create Work Units, Handlers, or Implementers.\n\nEpic ID: {epic_id}\nSprint ID: {sprint_id}"), title:None, working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options:Some(harness.runtime_options()) }}, Some(RuntimeLaunchExtension { additional_args, environment:vec![injection.environment], initial_prompt_prefix:Some(harness.initial_prompt_prefix()) })).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
+                let mut config_overrides=harness.runtime_config_overrides(); config_overrides.extend(injection.config_overrides);
+                let launch=self.sessions.send_idempotent_application_message_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id:invocation, message:SendAgentSessionMessageCommand { session_id:Some(session), submitted_text:format!("The completed started reevaluation is durably observed. This is the only current planning-control invocation. Request exactly one Work Slice Planner through request_work_slice_planner only if this Sprint needs one current temporal planning decision. Do not create Work Units, Handlers, or Implementers.\n\nEpic ID: {epic_id}\nSprint ID: {sprint_id}"), title:None, working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerPlanningControl).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options:Some(harness.runtime_options()) }}, Some(RuntimeLaunchExtension { managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None, config_overrides, environment:vec![injection.environment], initial_prompt_prefix:Some(harness.initial_prompt_prefix()) })).map_err(|e| SprintRunnerTransitionError::Unavailable(e.to_string()))?;
                 self.mark(sprint_id,"planning_control_delivery_persisted_at")?; self.mark(sprint_id,"planning_control_harness_applied_at")?;
                 if launch.launch_accepted { self.mark(sprint_id,"planning_control_launch_accepted_at")?; self.mark(sprint_id,"planning_ready_at")?; }
             }
@@ -2821,7 +2712,7 @@ impl SprintRunnerTransitionService {
             let package=handler.construct_for_pinned_profile(&attempt,WorkUnitHarnessRole::Implementer,reporting.profile).map_err(|_|SprintRunnerTransitionError::Conflict)?;
             let reporting_invocation=AgentInvocationId::new(stored_reporting).map_err(|_|SprintRunnerTransitionError::Conflict)?;
             let injection=self.prepare_work_unit_implementer_reporting_action(reporting_invocation.clone())?;
-            let mut runtime=package.runtime_launch_configuration();runtime.extension.additional_args.extend(injection.configuration_args);runtime.extension.environment.push(injection.environment);
+            let mut runtime=package.runtime_launch_configuration();runtime.extension.config_overrides.extend(injection.config_overrides);runtime.extension.environment.push(injection.environment);
             let prompt="Work Unit Implementer reporting continuation. Invoke submit_implementation_outcome with exactly one ReviewPending outcome containing summary and validationStatement claims, then invoke complete_implementation_outcome. Do not finish without both operations and do not use any other tool. Claims are not evidence; tool success is not application acceptance or Handler review. Do not move later workflow.".to_string();
             self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:reporting_invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:prompt.clone(),title:None,working_directory:Some(package.working_directory().into()),requested_options:Some(runtime.requested_options.clone())}}).map_err(|error|SprintRunnerTransitionError::Unavailable(error.to_string()))?;
             self.mark_reporting(&attempt,"reporting_prepared_at")?;
@@ -3038,7 +2929,7 @@ impl SprintRunnerTransitionService {
         let package = handler.construct_for_pinned_profile(&context.handler_authority_attempt_id, WorkUnitHarnessRole::Handler, pinned.profile).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let session = AgentSessionId::new(context.session_id.clone()).map_err(|_| SprintRunnerTransitionError::Conflict)?;
         let injection = self.prepare_work_unit_handler_review_action(invocation.clone())?;
-        let mut runtime = package.runtime_launch_configuration(); runtime.extension.additional_args.extend(injection.configuration_args); runtime.extension.environment.push(injection.environment);
+        let mut runtime = package.runtime_launch_configuration(); runtime.extension.config_overrides.extend(injection.config_overrides); runtime.extension.environment.push(injection.environment);
         let prompt = "Independent Handler review continuation. The application has bound the exact accepted outcome and evidence. Use read_handler_review_evidence, submit exactly one accept or structured return judgment, then end successfully. Do not perform later workflow.".to_string();
         self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: prompt.clone(), title: None, working_directory: Some(package.working_directory().into()), requested_options: Some(runtime.requested_options.clone()) } }).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
         self.mark_handler_review(&context.attempt_id, "delivery_persisted_at")?;
@@ -3305,23 +3196,23 @@ impl SprintRunnerTransitionService {
                 // server. Recreate the scoped server, re-bind the catalog revision, and launch
                 // the exact prepared invocation; merely restamping delivery would strand it.
                 let injection = self.prepare_handback_reassessment_action(invocation.clone())?;
-                let mut args = harness.runtime_configuration_args();
-                args.extend(injection.configuration_args);
+                let mut args = harness.runtime_config_overrides();
+                args.extend(injection.config_overrides);
                 self.mark_handback_delivery(handback, "delivery_persisted_at")?;
                 self.mark_handback_delivery(handback, "harness_bound_at")?;
                 self.mark_handback_delivery(handback, "launch_requested_at")?;
-                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }, Some(RuntimeLaunchExtension { additional_args: args, environment: vec![injection.environment], initial_prompt_prefix: Some(harness.initial_prompt_prefix()) })).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }, Some(RuntimeLaunchExtension { managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None, config_overrides: args, environment: vec![injection.environment], initial_prompt_prefix: Some(harness.initial_prompt_prefix()) })).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 if launch.launch_accepted { self.mark_handback_delivery(handback, "launch_accepted_at")?; }
             }
             ApplicationInvocationLaunchEvidence::NeverPersisted => {
                 let injection = self.prepare_handback_reassessment_action(invocation.clone())?;
-                let mut args = harness.runtime_configuration_args();
-                args.extend(injection.configuration_args);
+                let mut args = harness.runtime_config_overrides();
+                args.extend(injection.config_overrides);
                 self.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation.clone(), message: SendAgentSessionMessageCommand { session_id: Some(session.clone()), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 self.mark_handback_delivery(handback, "delivery_persisted_at")?;
                 self.mark_handback_delivery(handback, "harness_bound_at")?;
                 self.mark_handback_delivery(handback, "launch_requested_at")?;
-                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }, Some(RuntimeLaunchExtension { additional_args: args, environment: vec![injection.environment], initial_prompt_prefix: Some(harness.initial_prompt_prefix()) })).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
+                let launch = self.sessions.launch_prepared_application_invocation_with_launch_observation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: invocation, message: SendAgentSessionMessageCommand { session_id: Some(session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).map_err(SprintRunnerTransitionError::Unavailable)?), requested_options: Some(harness.runtime_options()) } }, Some(RuntimeLaunchExtension { managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None, config_overrides: args, environment: vec![injection.environment], initial_prompt_prefix: Some(harness.initial_prompt_prefix()) })).map_err(|error| SprintRunnerTransitionError::Unavailable(error.to_string()))?;
                 if launch.launch_accepted { self.mark_handback_delivery(handback, "launch_accepted_at")?; }
             }
         }
@@ -3383,7 +3274,7 @@ impl SprintRunnerTransitionService {
         })?;let session=AgentSessionId::new(session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let history=self.sessions.load_session(&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if history.invocations.iter().any(|entry| {
             !entry.invocation.status.is_terminal()&&entry.invocation.id.as_str()!=invocation
         }){return Ok(());
-        }let invocation=AgentInvocationId::new(invocation).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let message=SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"The application delivered one exact locally exhausted Sprint concern. Read only the supplied Epic reassessment context, then stop. Do not record an Epic disposition, request downstream work, select or start a Sprint, or claim settlement, completion, or acceptance.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunnerEscalationReassessment).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}};match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>{let _=self.prepare_epic_escalation_reassessment_action(invocation)?;for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}}ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{let injection=self.prepare_epic_escalation_reassessment_action(invocation.clone())?;let mut args=harness.runtime_configuration_args();args.extend(injection.configuration_args);for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{additional_args:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_epic_escalation_receiver(&handback,"launch_accepted_at")?;}}ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_epic_escalation_reassessment_action(invocation.clone())?;let mut args=harness.runtime_configuration_args();args.extend(injection.configuration_args);self.sessions.prepare_idempotent_application_invocation(message.clone()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{additional_args:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_epic_escalation_receiver(&handback,"launch_accepted_at")?;}}}Ok(())}
+        }let invocation=AgentInvocationId::new(invocation).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;let message=SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"The application delivered one exact locally exhausted Sprint concern. Read only the supplied Epic reassessment context, then stop. Do not record an Epic disposition, request downstream work, select or start a Sprint, or claim settlement, completion, or acceptance.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunnerEscalationReassessment).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}};match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>{let _=self.prepare_epic_escalation_reassessment_action(invocation)?;for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}}ApplicationInvocationLaunchEvidence::PersistedNotAccepted=>{let injection=self.prepare_epic_escalation_reassessment_action(invocation.clone())?;let mut args=harness.runtime_config_overrides();args.extend(injection.config_overrides);for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_epic_escalation_receiver(&handback,"launch_accepted_at")?;}}ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_epic_escalation_reassessment_action(invocation.clone())?;let mut args=harness.runtime_config_overrides();args.extend(injection.config_overrides);self.sessions.prepare_idempotent_application_invocation(message.clone()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;for stage in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_epic_escalation_receiver(&handback,stage)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_epic_escalation_receiver(&handback,"launch_accepted_at")?;}}}Ok(())}
     fn mark_epic_escalation_receiver(&self,handback:&str,column:&str)->Result<(),SprintRunnerTransitionError>{if !["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at"].contains(&column){return Err(SprintRunnerTransitionError::Unavailable("invalid Epic escalation receiver stage".into()));
         }
         self.write_database("mark Epic escalation receiver", |transaction| {
@@ -3487,7 +3378,7 @@ impl SprintRunnerTransitionService {
         })?;let session=AgentSessionId::new(session).map_err(|_|SprintRunnerTransitionError::Conflict)?;let history=self.sessions.load_session(&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if history.invocations.iter().any(|entry| {
             !entry.invocation.status.is_terminal()&&entry.invocation.id.as_str()!=invocation
         }){return Ok(());
-        }let invocation=AgentInvocationId::new(invocation).map_err(|_|SprintRunnerTransitionError::Conflict)?;let message=SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"The application delivered one exact durable Sprint result. Read only the supplied Epic reassessment context and record exactly one identity-free, concern-preserving disposition through the supplied action, then stop. A request is not delivery or continuation. Do not select or start a Sprint, or claim settlement, completion, or acceptance.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunnerSprintResultReassessment).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}};match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>{let _=self.prepare_sprint_result_reassessment_action(invocation)?;for column in ["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at"]{self.mark_sprint_result_receiver(&result,column)?;}}ApplicationInvocationLaunchEvidence::PersistedNotAccepted|ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_sprint_result_reassessment_action(invocation.clone())?;let mut args=harness.runtime_configuration_args();args.extend(injection.configuration_args);if matches!(self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?,ApplicationInvocationLaunchEvidence::NeverPersisted){self.sessions.prepare_idempotent_application_invocation(message.clone()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;}for column in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_sprint_result_receiver(&result,column)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{additional_args:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_sprint_result_receiver(&result,"launch_accepted_at")?;}}}Ok(())}
+        }let invocation=AgentInvocationId::new(invocation).map_err(|_|SprintRunnerTransitionError::Conflict)?;let message=SendIdempotentApplicationAgentSessionMessageCommand{invocation_id:invocation.clone(),message:SendAgentSessionMessageCommand{session_id:Some(session.clone()),submitted_text:"The application delivered one exact durable Sprint result. Read only the supplied Epic reassessment context and record exactly one identity-free, concern-preserving disposition through the supplied action, then stop. A request is not delivery or continuation. Do not select or start a Sprint, or claim settlement, completion, or acceptance.".into(),title:None,working_directory:Some(conversation_harness::role_discovery_root(ConversationHarnessRole::EpicRunnerSprintResultReassessment).map_err(SprintRunnerTransitionError::Unavailable)?),requested_options:Some(harness.runtime_options())}};match self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?{ApplicationInvocationLaunchEvidence::LaunchAccepted=>{let _=self.prepare_sprint_result_reassessment_action(invocation)?;for column in ["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at"]{self.mark_sprint_result_receiver(&result,column)?;}}ApplicationInvocationLaunchEvidence::PersistedNotAccepted|ApplicationInvocationLaunchEvidence::NeverPersisted=>{let injection=self.prepare_sprint_result_reassessment_action(invocation.clone())?;let mut args=harness.runtime_config_overrides();args.extend(injection.config_overrides);if matches!(self.sessions.application_invocation_launch_evidence(&invocation,&session).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?,ApplicationInvocationLaunchEvidence::NeverPersisted){self.sessions.prepare_idempotent_application_invocation(message.clone()).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;}for column in ["delivery_persisted_at","harness_bound_at","launch_requested_at"]{self.mark_sprint_result_receiver(&result,column)?;}let launch=self.sessions.launch_prepared_application_invocation_with_launch_observation(message,Some(RuntimeLaunchExtension{managed_mcp_servers:Vec::new(),skill_roots:Vec::new(),ignore_user_rules:false,reasoning_mode:None,config_overrides:args,environment:vec![injection.environment],initial_prompt_prefix:Some(harness.initial_prompt_prefix())})).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string()))?;if launch.launch_accepted{self.mark_sprint_result_receiver(&result,"launch_accepted_at")?;}}}Ok(())}
     fn mark_sprint_result_receiver(&self,result:&str,column:&str)->Result<(),SprintRunnerTransitionError>{if !["delivery_persisted_at","harness_bound_at","launch_requested_at","launch_accepted_at","provider_activation_observed_at"].contains(&column){return Err(SprintRunnerTransitionError::Invalid);
         }let changed=self.write_database("mark Sprint result receiver", |transaction| transaction.execute(&format!("UPDATE epic_runner_sprint_result_receivers SET {column}=COALESCE({column},?2) WHERE result_id=?1"),params![result,chrono::Utc::now().to_rfc3339()]).map_err(|e|SprintRunnerTransitionError::Unavailable(e.to_string())))?;if changed!=1{return Err(SprintRunnerTransitionError::Conflict);
         }Ok(())}
@@ -4133,7 +4024,7 @@ impl SprintRunnerTransitionService {
                     );
                 }
                 let injection = self.prepare_work_unit_handler_action(invocation.clone())?;
-                runtime.extension.additional_args.extend(injection.configuration_args);
+                runtime.extension.config_overrides.extend(injection.config_overrides);
                 runtime.extension.environment.push(injection.environment);
                 let launch = match self.sessions.launch_prepared_application_invocation_with_launch_observation(
                     SendIdempotentApplicationAgentSessionMessageCommand {
@@ -4586,7 +4477,7 @@ impl SprintRunnerTransitionService {
             ApplicationInvocationLaunchEvidence::PersistedNotAccepted => {
                 self.mark_planner(sprint_id, "planner_launch_requested_at", None)?;
                 let injection=self.prepare_work_slice_planner_action(invocation.clone())?;
-                let mut args=harness.runtime_configuration_args();args.extend(injection.configuration_args);
+                let mut args=harness.runtime_config_overrides();args.extend(injection.config_overrides);
                 let launch = self
                     .sessions
                     .launch_prepared_application_invocation_with_launch_observation(
@@ -4601,7 +4492,8 @@ impl SprintRunnerTransitionService {
                             },
                         },
                         Some(RuntimeLaunchExtension {
-                            additional_args: args,
+                            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                            config_overrides: args,
                             environment: vec![injection.environment],
                             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
                         }),

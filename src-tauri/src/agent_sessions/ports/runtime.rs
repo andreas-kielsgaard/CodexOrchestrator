@@ -1,209 +1,11 @@
-use super::domain::{
-    AgentDiagnostic, AgentInvocation, AgentInvocationId, AgentInvocationTerminalStatus,
-    AgentRuntimeBinding, AgentRuntimeEvent, AgentRuntimeEventSource, AgentRuntimeFailure,
-    AgentRuntimeOptions, AgentSession, AgentSessionAvailability, AgentSessionId,
-    ExternalRuntimeContextId, InvocationCompletion, NormalizedRuntimeEvent,
+use crate::agent_sessions::domain::{
+    AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource, AgentRuntimeFailure,
+    AgentRuntimeOptions, AgentSessionId, ExternalRuntimeContextId, NormalizedRuntimeEvent,
 };
-use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt, sync::Arc};
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentSessionHistory {
-    pub(crate) session: AgentSession,
-    pub(crate) invocations: Vec<AgentInvocationHistory>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentInvocationHistory {
-    pub(crate) invocation: AgentInvocation,
-    /// The application/process launch acknowledgement, if durably recorded. This is not
-    /// inferred from invocation lifecycle fields or provider events.
-    pub(crate) launch_accepted_at: Option<DateTime<Utc>>,
-    pub(crate) events: Vec<AgentRuntimeEvent>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct AgentSessionSummary {
-    pub(crate) session: AgentSession,
-    pub(crate) invocation_count: u64,
-    pub(crate) latest_invocation_status: Option<super::domain::AgentInvocationStatus>,
-    pub(crate) latest_submitted_text: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ListAgentSessionsQuery {
-    pub(crate) availability: Option<AgentSessionAvailability>,
-    pub(crate) limit: Option<u32>,
-}
-
-/// Durable Agent Session storage operations.
-///
-/// Implementations must make `create_pending_invocation` atomically reject a second active
-/// invocation for the same session and must make identical terminal completion requests
-/// idempotent. Session lists are ordered by update time descending with ID as a stable tie-breaker;
-/// invocation lists are ordered by creation time ascending with ID as a tie-breaker; event lists
-/// are ordered by sequence ascending. Event append implementations enforce invocation ownership
-/// and increasing sequence.
-pub(crate) trait AgentSessionRepository: Send + Sync {
-    fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError>;
-
-    fn get_session(
-        &self,
-        session_id: &AgentSessionId,
-    ) -> Result<Option<AgentSession>, RepositoryError>;
-
-    fn list_sessions(
-        &self,
-        query: ListAgentSessionsQuery,
-    ) -> Result<Vec<AgentSession>, RepositoryError>;
-
-    /// Loads one complete, consistently ordered session snapshot.
-    fn load_session_history(
-        &self,
-        session_id: &AgentSessionId,
-    ) -> Result<Option<AgentSessionHistory>, RepositoryError>;
-
-    /// Lists consistently read session summaries using the repository's snapshot boundary.
-    fn list_session_summaries(
-        &self,
-        query: ListAgentSessionsQuery,
-    ) -> Result<Vec<AgentSessionSummary>, RepositoryError>;
-
-    fn set_session_availability(
-        &self,
-        session_id: &AgentSessionId,
-        availability: AgentSessionAvailability,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError>;
-
-    fn update_runtime_binding(
-        &self,
-        session_id: &AgentSessionId,
-        binding: AgentRuntimeBinding,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError>;
-
-    /// Replaces the exact Harness reference after explicit assignment or Harness-owned migration.
-    fn update_harness_version(
-        &self,
-        session_id: &AgentSessionId,
-        harness_version: Option<HarnessVersionRef>,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError>;
-
-    /// Assigns a Session-owned identity snapshot or clears the current assignment.
-    fn update_assigned_identity(
-        &self,
-        session_id: &AgentSessionId,
-        assigned_identity: Option<AssignedAgentIdentity>,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError>;
-
-    /// Updates the Session-owned model preference without changing its sandbox selection.
-    fn update_session_model_override(
-        &self,
-        session_id: &AgentSessionId,
-        model: Option<String>,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError>;
-
-    fn create_pending_invocation(
-        &self,
-        invocation: AgentInvocation,
-    ) -> Result<AgentInvocation, RepositoryError>;
-
-    fn get_invocation(
-        &self,
-        invocation_id: &AgentInvocationId,
-    ) -> Result<Option<AgentInvocation>, RepositoryError>;
-
-    fn list_invocations(
-        &self,
-        session_id: &AgentSessionId,
-    ) -> Result<Vec<AgentInvocation>, RepositoryError>;
-
-    fn mark_invocation_running(
-        &self,
-        invocation_id: &AgentInvocationId,
-        started_at: DateTime<Utc>,
-        effective_options: AgentRuntimeOptions,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentInvocation, RepositoryError>;
-
-    /// Records the durable application fact that the runtime accepted this exact invocation.
-    fn record_invocation_launch_accepted(
-        &self,
-        invocation_id: &AgentInvocationId,
-        accepted_at: DateTime<Utc>,
-    ) -> Result<(), RepositoryError>;
-
-    fn invocation_launch_accepted_at(
-        &self,
-        invocation_id: &AgentInvocationId,
-    ) -> Result<Option<DateTime<Utc>>, RepositoryError>;
-
-    /// Returns only a classified restart interruption to pending. This never reattaches a
-    /// process and never accepts a launch marker by inference.
-    fn recover_pre_acceptance_interruption(
-        &self,
-        invocation_id: &AgentInvocationId,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentInvocation, RepositoryError>;
-
-    fn finish_invocation(
-        &self,
-        invocation_id: &AgentInvocationId,
-        completion: InvocationCompletion,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentInvocation, RepositoryError>;
-
-    fn append_invocation_diagnostic(
-        &self,
-        invocation_id: &AgentInvocationId,
-        diagnostic: AgentDiagnostic,
-    ) -> Result<AgentInvocation, RepositoryError>;
-
-    fn append_event(&self, event: AgentRuntimeEvent) -> Result<AgentRuntimeEvent, RepositoryError>;
-
-    fn list_events(
-        &self,
-        invocation_id: &AgentInvocationId,
-    ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError>;
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RepositoryErrorKind {
-    NotFound,
-    Conflict,
-    InvalidState,
-    Unavailable,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RepositoryError {
-    pub(crate) kind: RepositoryErrorKind,
-    pub(crate) message: String,
-}
-
-impl RepositoryError {
-    pub(crate) fn new(kind: RepositoryErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for RepositoryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl Error for RepositoryError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeInvocationRequest {
@@ -212,20 +14,33 @@ pub(crate) struct RuntimeInvocationRequest {
     pub(crate) submitted_text: String,
     pub(crate) working_directory: Option<String>,
     pub(crate) options: AgentRuntimeOptions,
-    /// Opt-in child-process configuration supplied by an application-owned invocation service.
-    /// Ordinary Agent Session sends always leave this absent.
+    /// Prepared native-home binding, capability additions and explicit domain launch selections.
     pub(crate) launch_extension: Option<RuntimeLaunchExtension>,
 }
 
-/// Concrete-runtime launch data. This carries no session role, product identity, or authority;
-/// an application service must explicitly opt into it for one invocation.
+/// Launch data prepared by the application. Authority is established before crossing this port.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RuntimeLaunchExtension {
-    pub(crate) additional_args: Vec<String>,
+    /// Product-owned connections added to native configuration by the provider adapter.
+    pub(crate) managed_mcp_servers: Vec<RuntimeManagedMcpServer>,
+    /// Semantic invocation choice. Only the provider adapter serializes its configuration.
+    pub(crate) reasoning_mode: Option<String>,
+    /// Explicit existing Harness intent; never inherited by ordinary sessions.
+    pub(crate) ignore_user_rules: bool,
+    /// Additional native discovery roots for this invocation only.
+    pub(crate) skill_roots: Vec<String>,
+    /// Codex KEY=TOML_VALUE overrides; this cannot carry process flags.
+    pub(crate) config_overrides: Vec<String>,
     pub(crate) environment: Vec<(String, String)>,
     /// Neutral, application-provenance text delivered before the initial user prompt. The
     /// persisted invocation remains the user's submitted text and generic callers leave this absent.
     pub(crate) initial_prompt_prefix: Option<InitialPromptPrefix>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeManagedMcpServer {
+    pub(crate) name: String,
+    pub(crate) url: String,
 }
 
 /// Explicit, non-user provenance delivered before an initial user query.
@@ -407,6 +222,40 @@ pub(crate) trait AgentRuntimeUpdateSink: Send + Sync {
 /// checks durable invocation state: an already-terminal invocation is left unchanged, while a
 /// still-active invocation is durably failed from the returned launch error.
 pub(crate) trait AgentRuntime: Send + Sync {
+    fn active_turn(
+        &self,
+        _invocation_id: &AgentInvocationId,
+    ) -> Result<RuntimeTurnTarget, RuntimePortError> {
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::NotActive,
+            "Runtime has no active steerable turn",
+        ))
+    }
+
+    fn steer(
+        &self,
+        _invocation_id: &AgentInvocationId,
+        _target: &RuntimeTurnTarget,
+        _input_id: &str,
+        _text: &str,
+    ) -> Result<(), RuntimePortError> {
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::UnsupportedOptions,
+            "Turn steering is unavailable for this runtime",
+        ))
+    }
+
+    fn respond(
+        &self,
+        _invocation_id: &AgentInvocationId,
+        _request_id: &str,
+        _response: Value,
+    ) -> Result<(), RuntimePortError> {
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::UnsupportedOptions,
+            "Runtime request responses are unavailable",
+        ))
+    }
     fn preflight_invocation(
         &self,
         mode: RuntimeInvocationMode,
@@ -433,6 +282,13 @@ pub(crate) trait AgentRuntime: Send + Sync {
     fn shutdown(&self) -> Result<(), RuntimePortError> {
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeTurnTarget {
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

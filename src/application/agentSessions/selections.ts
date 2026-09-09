@@ -1,6 +1,7 @@
 import type {
   DirectUserInvocationResolutionDto,
   SessionCreationResolutionDto,
+  SandboxModeDto,
 } from '../executionConfiguration';
 
 export interface PinnedAgentSessionProfileDto {
@@ -14,6 +15,7 @@ export interface SendDirectUserAgentSessionMessageInput {
   readonly submittedText: string;
   readonly model: string | null;
   readonly reasoningMode: string | null;
+  readonly sandboxMode?: SandboxModeDto | null;
 }
 
 export interface SendDirectUserAgentSessionMessageResultDto {

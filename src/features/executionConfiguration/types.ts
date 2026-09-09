@@ -29,6 +29,7 @@ export interface RuntimeProfileViewModel {
 }
 
 export interface CapabilityProfileDraft {
+  readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;
   readonly revision: number | null;

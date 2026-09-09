@@ -629,7 +629,7 @@ fn package_runtime_launch_configuration(
     harness: &ConversationHarnessProfile,
     working_directory: &str,
 ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
-    let mut additional_args = harness.runtime_configuration_args();
+    let mut config_overrides = harness.runtime_config_overrides();
     // A worktree-runtime instance gives Codex a private CODEX_HOME without a trust record for
     // this just-created isolated worktree. Codex 0.144 then treats it as untrusted; with approval
     // set to never that reduces a requested WorkspaceWrite invocation to read-only. The application
@@ -640,20 +640,14 @@ fn package_runtime_launch_configuration(
         // The package ignores execpolicy rules and clears inherited MCP configuration. A bound
         // worktree with local Codex discovery was already denied above. The application passes
         // the only allowed reporting MCP configuration separately on its exact continuation.
-        additional_args.extend([
-            "--ignore-rules".into(),
-            "-c".into(),
-            "mcp_servers={}".into(),
-        ]);
-        additional_args.extend([
-            "-c".into(),
-            workspace_trust_configuration(working_directory),
-        ]);
+        config_overrides.push("mcp_servers={}".into());
+        config_overrides.push(workspace_trust_configuration(working_directory));
     }
     WorkUnitExecutionRuntimeLaunchConfiguration {
         requested_options: harness.runtime_options(),
         extension: RuntimeLaunchExtension {
-            additional_args,
+            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: is_exact_implementer_profile(harness), reasoning_mode: None,
+            config_overrides,
             environment: vec![],
             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
         },
@@ -717,8 +711,8 @@ mod tests {
             conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
         let configuration = package_runtime_launch_configuration(&profile, "C:/read-only");
         assert_eq!(
-            configuration.extension.additional_args,
-            ["-c", "approval_policy=\"never\""]
+            configuration.extension.config_overrides,
+            ["approval_policy=\"never\""]
         );
         assert_eq!(
             configuration.requested_options.sandbox,
@@ -748,25 +742,22 @@ mod tests {
         malformed_workspace_write.mcp.enabled_tools = vec!["unexpected".into()];
         let malformed = package_runtime_launch_configuration(&malformed_workspace_write, working_directory);
 
-        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
-            arguments[0] == "-c"
-                && arguments[1]
+        assert!(writable.extension.config_overrides.iter().any(|argument| {
+            argument
                     == r#"projects.'c:\isolated\execution-workspace'.trust_level="trusted""#
         }));
-        assert!(!read_only.extension.additional_args.iter().any(|argument| {
+        assert!(!read_only.extension.config_overrides.iter().any(|argument| {
             argument.contains("trust_level") || argument.contains("execution-workspace")
         }));
         assert!(read_only.extension.environment.is_empty());
         for configuration in [&foreign, &malformed] {
-            assert!(!configuration.extension.additional_args.iter().any(|argument| {
+            assert!(!configuration.extension.config_overrides.iter().any(|argument| {
                     argument.contains("trust_level")
                     || argument == "--ignore-rules"
                     || argument == "mcp_servers={}"
             }));
         }
-        assert!(writable.extension.additional_args.iter().any(|argument| argument == "--ignore-rules"));
-        assert!(writable.extension.additional_args.windows(2).any(|arguments| {
-            arguments == ["-c", "mcp_servers={}"]
-        }));
+        assert!(writable.extension.ignore_user_rules);
+        assert!(writable.extension.config_overrides.iter().any(|value| value == "mcp_servers={}"));
     }
 }

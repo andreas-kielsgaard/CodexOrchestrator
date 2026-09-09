@@ -24,6 +24,7 @@ pub(super) type SessionRow = (
     Option<String>,
     String,
     String,
+    Option<String>,
 );
 pub(super) type InvocationRow = (
     String,
@@ -57,6 +58,7 @@ pub(super) fn session_row(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         row.get(9)?,
         row.get(10)?,
         row.get(11)?,
+        row.get(12)?,
     ))
 }
 
@@ -93,6 +95,7 @@ pub(super) fn event_row(row: &Row<'_>) -> rusqlite::Result<EventRow> {
 
 pub(super) fn map_session_row(row: SessionRow) -> Result<AgentSession, RepositoryError> {
     let session = AgentSession {
+        workspace_origin: row.12,
         id: AgentSessionId::new(row.0).map_err(contract_error)?,
         title: row.1,
         availability: parse_availability(&row.2)?,
@@ -188,8 +191,8 @@ pub(super) fn insert_session(
     session: &AgentSession,
 ) -> Result<(), RepositoryError> {
     transaction.execute(
-        "INSERT INTO agent_sessions (id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![session.id.as_str(), session.title, availability_text(session.availability), session.runtime_binding.external_context_id.as_ref().map(|id| id.as_str()), session.runtime_binding.runtime_version, session.working_directory, to_json(&session.requested_options)?, session.session_profile.as_ref().map(to_json).transpose()?, session.harness_version.as_ref().map(to_json).transpose()?, session.assigned_identity.as_ref().map(to_json).transpose()?, timestamp(session.created_at), timestamp(session.updated_at)],
+        "INSERT INTO agent_sessions (id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at, workspace_origin) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![session.id.as_str(), session.title, availability_text(session.availability), session.runtime_binding.external_context_id.as_ref().map(|id| id.as_str()), session.runtime_binding.runtime_version, session.working_directory, to_json(&session.requested_options)?, session.session_profile.as_ref().map(to_json).transpose()?, session.harness_version.as_ref().map(to_json).transpose()?, session.assigned_identity.as_ref().map(to_json).transpose()?, timestamp(session.created_at), timestamp(session.updated_at), session.workspace_origin],
     ).map_err(sql_write("create Agent Session"))?;
     Ok(())
 }
@@ -216,7 +219,7 @@ pub(super) fn update_invocation(
     Ok(())
 }
 
-pub(super) const SESSION_SELECT: &str = "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at FROM agent_sessions";
+pub(super) const SESSION_SELECT: &str = "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at, workspace_origin FROM agent_sessions";
 pub(super) const INVOCATION_SELECT: &str = "SELECT id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at FROM agent_session_invocations";
 
 pub(super) fn list_sessions_from(
@@ -227,7 +230,7 @@ pub(super) fn list_sessions_from(
     let limit = i64::from(query.limit.unwrap_or(u32::MAX));
     let mut statement = conn
         .prepare(
-            "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at FROM agent_sessions WHERE (?1 IS NULL OR availability = ?1) ORDER BY updated_at DESC, id ASC LIMIT ?2",
+            "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at, workspace_origin FROM agent_sessions WHERE (?1 IS NULL OR availability = ?1) ORDER BY updated_at DESC, id ASC LIMIT ?2",
         )
         .map_err(sql_unavailable("prepare Agent Session list"))?;
     let rows = statement

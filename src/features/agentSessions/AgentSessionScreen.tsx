@@ -1,10 +1,7 @@
 import { AlertCircle, ArrowUpRight, ChevronDown, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
-import type {
-  AgentSessionProfileClient,
-  PinnedAgentSessionProfileDto,
-} from '../../application/agentSessionProfiles';
+import type { AgentSessionProfileClient } from '../../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import { useSessionDeliveries } from '../sessionEvents/useSessionDeliveries';
@@ -22,7 +19,7 @@ import type { ProductDecisionEvidenceDestination } from '../../application/produ
 import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
-import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import { useSessionExecutionSelection } from './useSessionExecutionSelection';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
@@ -30,6 +27,7 @@ import { ResizableSplitSurface } from '../orchestrations/components/ResizableSpl
 import './agentSession.css';
 
 export interface AgentSessionScreenProps {
+  readonly onConfigureCapabilities?: () => void;
   readonly client: AgentSessionClient;
   readonly orchestrations?: ProductReadModelsV1;
   readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
@@ -65,6 +63,7 @@ export function StandaloneAgentSessionScreen({
   focusInvocationId,
   focusEvidence,
   returnOrigin,
+  onConfigureCapabilities,
 }: AgentSessionScreenProps) {
   const [localExpandedNodeIds, setLocalExpandedNodeIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -76,35 +75,14 @@ export function StandaloneAgentSessionScreen({
     [onSelectedSessionChange, selectedSessionId],
   );
   const collection = useAgentSessionCollection(client, collectionOptions);
-  const [pinnedProfile, setPinnedProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
+  const {
+    profile: pinnedProfile,
+    error: profileError,
+    selection: runtimeSelection,
+    setSelection: setRuntimeSelection,
+    execution,
+  } = useSessionExecutionSelection(profileClient, collection.selectedSessionId);
   const deliveryQuery = useSessionDeliveries(sessionEventQueryClient, collection.selectedSessionId);
-  const [runtimeSelection, setRuntimeSelection] = useState<PerMessageRuntimeSelection>({
-    model: null,
-    reasoningMode: null,
-  });
-  useEffect(() => {
-    const sessionId = collection.selectedSessionId;
-    let active = true;
-    setPinnedProfile(null);
-    setProfileError(null);
-    setRuntimeSelection({ model: null, reasoningMode: null });
-    if (!sessionId || !profileClient)
-      return () => {
-        active = false;
-      };
-    void profileClient.loadPinnedProfile(sessionId).then(
-      (profile) => {
-        if (active) setPinnedProfile(profile);
-      },
-      (caught) => {
-        if (active) setProfileError(errorMessage(caught));
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [collection.selectedSessionId, profileClient, sessionEventQueryClient]);
   const onCreated = useCallback(
     (id: string) => {
       onSelectedSessionChange?.(id);
@@ -112,40 +90,10 @@ export function StandaloneAgentSessionScreen({
     },
     [collection, onSelectedSessionChange],
   );
-  const sendExistingMessage = useCallback(
-    async ({ sessionId, submittedText }: { sessionId: string; submittedText: string }) => {
-      if (!profileClient || pinnedProfile?.sessionId !== sessionId) {
-        throw new Error('Pinned Session Profile is not available for this Session.');
-      }
-      const acknowledgement = await profileClient.sendDirectUserMessage({
-        sessionId,
-        submittedText,
-        model: runtimeSelection.model,
-        reasoningMode: runtimeSelection.reasoningMode,
-      });
-      setRuntimeSelection({ model: null, reasoningMode: null });
-      return acknowledgement;
-    },
-    [pinnedProfile?.sessionId, profileClient, runtimeSelection],
-  );
   const session = useAgentSession(client, {
     selectedSessionId: collection.selectedSessionId,
     onSessionCreated: onCreated,
-    ...(profileClient
-      ? {
-          startSession: (input: {
-            submittedText: string;
-            workingDirectory: string | null;
-            title: string | null;
-          }) =>
-            profileClient.startDirectUserSession({
-              ...input,
-              model: runtimeSelection.model,
-              reasoningMode: runtimeSelection.reasoningMode,
-            }),
-        }
-      : {}),
-    ...(profileClient && collection.selectedSessionId ? { sendExistingMessage } : {}),
+    execution,
   });
   const sessionIdentities = useMemo(
     () =>
@@ -180,6 +128,11 @@ export function StandaloneAgentSessionScreen({
   const selectedIdentity = collection.selectedSessionId
     ? agentIdentityForSession?.(collection.selectedSessionId)
     : undefined;
+  const emptyState = {
+    heading: 'Start with a message',
+    guidance:
+      'Choose a default in Capability Profiles before your first session. Without a working folder, a new session gets its own empty workspace.',
+  };
   const focusedInvocationId =
     collection.selectedSessionId === returnOrigin?.sessionId ? focusInvocationId : undefined;
   const evidenceRange =
@@ -273,6 +226,12 @@ export function StandaloneAgentSessionScreen({
                 <span>{returnContextText(returnOrigin.location)}</span>
               </div>
             ) : null}
+            {session.error?.includes('Choose a default Capability Profile') &&
+              onConfigureCapabilities && (
+                <button type="button" onClick={onConfigureCapabilities}>
+                  Choose default Capability Profile
+                </button>
+              )}
             {collection.error && (
               <section className="agent-session-error" role="alert">
                 <AlertCircle size={17} aria-hidden="true" />
@@ -303,6 +262,7 @@ export function StandaloneAgentSessionScreen({
                     presentation={
                       selectedIdentity
                         ? {
+                            emptyState,
                             identityHeader: {
                               agentIdentity: selectedIdentity,
                               title: selectedIdentity.harnessRole
@@ -314,7 +274,7 @@ export function StandaloneAgentSessionScreen({
                                 .join(' '),
                             },
                           }
-                        : undefined
+                        : { emptyState }
                     }
                   />
                 </AgentSessionHeaderActionsProvider>
@@ -323,6 +283,7 @@ export function StandaloneAgentSessionScreen({
               <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
                 <AgentSessionWorkspace
                   controller={session}
+                  presentation={{ emptyState }}
                   sendUnavailableReason={sendUnavailableReason}
                   transcriptRange={evidenceRange}
                   inspection={
@@ -428,10 +389,6 @@ function evidenceTranscriptRange(
 
 function locationKey(location: AgentSessionProductLocation) {
   return JSON.stringify(location);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export const AgentSessionScreen = StandaloneAgentSessionScreen;

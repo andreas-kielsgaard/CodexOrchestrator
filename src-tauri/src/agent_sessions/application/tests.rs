@@ -1,4 +1,4 @@
-use super::lifecycle::{
+use super::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
     CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
@@ -7,9 +7,84 @@ use super::lifecycle::{
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 mod repair_tests;
-use super::session_profile::{
-    AgentSessionProfileApplication, AgentSessionProfileApplicationErrorKind,
+
+#[test]
+fn addressed_creation_retry_uses_its_original_native_evidence() {
+    struct OneReadSource(AtomicU64);
+    impl SelectedRuntimeProfileSource for OneReadSource {
+        fn selected_runtime_profile(
+            &self,
+        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Err(SelectedRuntimeProfileSourceError::unavailable(
+                    "native discovery changed",
+                ));
+            }
+            Ok(test_selected_runtime_profile())
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let repository = Arc::new(
+        SqliteAgentSessionRepository::new(
+            crate::storage::open_active_database(&directory.path().join("retry.sqlite")).unwrap(),
+        )
+        .unwrap(),
+    );
+    let providers = Arc::new(DeterministicProviders::default());
+    let source = Arc::new(OneReadSource(AtomicU64::new(0)));
+    let application = AgentSessionApplication::new(
+        repository.clone(),
+        Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding)),
+        Arc::new(RecordingNotifier::new(repository.clone())),
+        providers.clone(),
+        providers,
+        None,
+    )
+    .with_profile_source(source.clone());
+    let creation = test_session_creation_request();
+    let request = crate::session_events::SessionCreationSpec {
+        logical_address: SessionLogicalAddress::new(
+            reference("workflow_instance", "run"),
+            reference("workflow_node", "node"),
+        ),
+        event_group_id: reference("event_group", "create"),
+        created_by_event: reference("user_request", "create"),
+        created_by_session: None,
+        configuration: SessionCreationConfiguration {
+            contract: reference("session_creation_request", "v1"),
+            payload: serde_json::to_value(&creation).unwrap(),
+            assigned_identity: None,
+        },
+    };
+    let id = AgentSessionId::new("retry-session").unwrap();
+    let first = application
+        .create_addressed_profiled_session(
+            repository.as_ref(),
+            request.clone(),
+            id.clone(),
+            creation.clone(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let retry = application
+        .create_addressed_profiled_session(
+            repository.as_ref(),
+            request,
+            id,
+            creation,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(first, retry);
+    assert_eq!(source.0.load(Ordering::SeqCst), 1);
+}
+use super::configuration::{
     LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand,
+    SessionConfigurationErrorKind,
 };
 use crate::agent_sessions::{
     domain::{
@@ -78,22 +153,20 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     let assigned_definition = identities
         .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
         .expect("Identity definition");
-    let adapter = Arc::new(
-        AgentSessionEventAdapter::open(
-            &database_path,
-            application.clone(),
-            repository,
-            profile_source.clone(),
-            identities,
-        )
-        .expect("Session Event adapter"),
-    );
+    let adapter = Arc::new(AgentSessionEventAdapter::new(
+        application.clone(),
+        repository,
+        profile_source.clone(),
+        identities,
+    ));
     let event_store =
         Arc::new(SqliteSessionEventStore::open(&database_path).expect("Session Event store"));
     let event_queries = SessionEventQueryApplication::new(event_store.clone());
     let events = SessionEventApplication::new(adapter.clone(), adapter.clone(), event_store);
-    let profile_application =
-        AgentSessionProfileApplication::new(application.clone(), profile_source);
+    let profile_application = application
+        .as_ref()
+        .clone()
+        .with_profile_source(profile_source);
     let logical_address = SessionLogicalAddress::new(
         reference("workflow_instance", "run-1"),
         reference("workflow_node", "review"),
@@ -242,6 +315,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
             submitted_text: "User prompt".into(),
             model: Some("user-only".into()),
             reasoning_mode: Some("medium".into()),
+            sandbox_mode: None,
         })
         .expect("direct-user message");
     assert_eq!(
@@ -266,11 +340,12 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
             submitted_text: "Invalid selection must not launch".into(),
             model: Some("not-exposed".into()),
             reasoning_mode: None,
+            sandbox_mode: None,
         })
         .expect_err("unavailable direct-user model must fail");
     assert_eq!(
         invalid.kind,
-        AgentSessionProfileApplicationErrorKind::InvalidInvocationSelection
+        SessionConfigurationErrorKind::InvalidInvocationSelection
     );
 
     let calls = runtime.calls.lock().unwrap();
@@ -297,10 +372,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     assert!(launches[2]
         .launch_extension
         .as_ref()
-        .is_some_and(|extension| extension
-            .additional_args
-            .iter()
-            .any(|argument| { argument == "model_reasoning_effort=\"medium\"" })));
+        .is_some_and(|extension| extension.reasoning_mode.as_deref() == Some("medium")));
     drop(calls);
     let history = application.load_session(&session_id).unwrap();
     assert_eq!(
@@ -380,6 +452,7 @@ fn test_session_creation_request() -> SessionCreationRequest {
         contract_version: 1,
         capability_profile: CapabilityProfile {
             contract_version: 1,
+            defaults: Default::default(),
             capability_profile_id: "test-capabilities".into(),
             name: "Test capabilities".into(),
             revision: 1,
@@ -712,7 +785,7 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
             .launch_extension
             .as_ref()
             .is_some_and(|extension| extension
-                .additional_args
+                .config_overrides
                 .contains(&"mcp_servers={}".to_string()))));
 }
 
@@ -749,7 +822,11 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
         .send_message_with_launch_extension(
             message(&session.id, "fresh"),
             Some(RuntimeLaunchExtension {
-                additional_args: vec![],
+                managed_mcp_servers: Vec::new(),
+                skill_roots: Vec::new(),
+                ignore_user_rules: false,
+                reasoning_mode: None,
+                config_overrides: vec![],
                 environment: vec![("ROLE_CONFIG".into(), "present".into())],
                 initial_prompt_prefix: None,
             }),
@@ -1825,6 +1902,7 @@ enum RuntimeCall {
     Start(RuntimeInvocationRequest),
     Resume(RuntimeInvocationRequest, String),
     Cancel(AgentInvocationId),
+    Steer(AgentInvocationId, String),
 }
 
 #[derive(Default)]
@@ -1935,7 +2013,7 @@ impl SessionHarnessLaunchAuthority for RecordingSessionHarnessAuthority {
         self.invocations.lock().unwrap().push(invocation_id.clone());
         let mut extension = extension.unwrap_or_default();
         extension
-            .additional_args
+            .config_overrides
             .extend(["-c".to_string(), "mcp_servers={}".to_string()]);
         Ok(Some(extension))
     }
@@ -2062,6 +2140,37 @@ impl FakeRuntime {
 }
 
 impl AgentRuntime for FakeRuntime {
+    fn active_turn(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<crate::agent_sessions::ports::RuntimeTurnTarget, RuntimePortError> {
+        let active = self.active.lock().unwrap();
+        if !active.as_ref().is_some_and(|(id, _)| id == invocation_id) {
+            return Err(RuntimePortError::new(
+                RuntimePortErrorKind::NotActive,
+                "not active",
+            ));
+        }
+        Ok(crate::agent_sessions::ports::RuntimeTurnTarget {
+            thread_id: "test-thread".into(),
+            turn_id: "test-turn".into(),
+        })
+    }
+    fn steer(
+        &self,
+        invocation_id: &AgentInvocationId,
+        target: &crate::agent_sessions::ports::RuntimeTurnTarget,
+        input_id: &str,
+        _text: &str,
+    ) -> Result<(), RuntimePortError> {
+        assert_eq!(*target, self.active_turn(invocation_id)?);
+        self.calls
+            .lock()
+            .unwrap()
+            .push(RuntimeCall::Steer(invocation_id.clone(), input_id.into()));
+        Ok(())
+    }
+
     fn preflight_invocation(
         &self,
         mode: RuntimeInvocationMode,
@@ -2216,6 +2325,20 @@ impl RecordingNotifier {
 impl AgentSessionNotifier for RecordingNotifier {
     fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
         let persisted = match &notification {
+            AgentSessionNotification::SteeringAccepted {
+                invocation_id,
+                input_id,
+                ..
+            } => self
+                .repository
+                .list_events(invocation_id)
+                .is_ok_and(|events| {
+                    events.iter().any(|event| {
+                        event.raw_payload["kind"] == "session_steering_result"
+                            && event.raw_payload["id"] == *input_id
+                            && event.raw_payload["state"] == "accepted"
+                    })
+                }),
             AgentSessionNotification::EventPersisted { event, .. } => {
                 self.repository
                     .list_events(&event.invocation_id)

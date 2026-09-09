@@ -268,14 +268,14 @@ fn load_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness_engine::domain::{
-        binding_digest, HarnessMediationPlan, MEDIATION_PLAN_VERSION,
-    };
+    use crate::harness_engine::domain::binding_digest;
+
+    use crate::harness_engine::exposure::{HarnessExposurePolicy, EXPOSURE_POLICY_VERSION};
 
     fn prepared(id: &str, session_id: &str) -> HarnessBindingRecord {
         let harness_snapshot = "{\"harnessName\":\"Review\"}".to_string();
-        let mediation_plan = serde_json::to_string(&HarnessMediationPlan {
-            contract_version: MEDIATION_PLAN_VERSION.to_string(),
+        let mediation_plan = serde_json::to_string(&HarnessExposurePolicy {
+            contract_version: EXPOSURE_POLICY_VERSION.to_string(),
             exposures: Vec::new(),
         })
         .unwrap();

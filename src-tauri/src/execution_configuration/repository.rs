@@ -20,14 +20,47 @@ CREATE TABLE IF NOT EXISTS execution_capability_profiles (
 
 CREATE INDEX IF NOT EXISTS execution_capability_profiles_by_id
 ON execution_capability_profiles(capability_profile_id COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS execution_default_capability_profile (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    capability_profile_id TEXT NOT NULL REFERENCES execution_capability_profiles(capability_profile_id) ON DELETE RESTRICT
+);
 "#;
 
 #[derive(Default)]
 pub(crate) struct InMemoryCapabilityProfileRepository {
     profiles: Mutex<BTreeMap<String, CapabilityProfile>>,
+    default_profile: Mutex<Option<String>>,
 }
 
 impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
+    fn default_profile(
+        &self,
+    ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
+        let profiles = self.lock()?;
+        Ok(self
+            .default_profile_id()?
+            .and_then(|id| profiles.get(&id).cloned()))
+    }
+    fn default_profile_id(&self) -> Result<Option<String>, CapabilityProfileRepositoryError> {
+        Ok(self
+            .default_profile
+            .lock()
+            .map_err(|_| {
+                CapabilityProfileRepositoryError::Storage("Default profile lock unavailable".into())
+            })?
+            .clone())
+    }
+    fn set_default_profile(&self, id: &str) -> Result<(), CapabilityProfileRepositoryError> {
+        let profiles = self.lock()?;
+        if !profiles.contains_key(id) {
+            return Err(CapabilityProfileRepositoryError::NotFound(id.into()));
+        }
+        *self.default_profile.lock().map_err(|_| {
+            CapabilityProfileRepositoryError::Storage("Default profile lock unavailable".into())
+        })? = Some(id.into());
+        Ok(())
+    }
     fn list(&self) -> Result<Vec<CapabilityProfile>, CapabilityProfileRepositoryError> {
         Ok(self.lock()?.values().cloned().collect())
     }
@@ -83,7 +116,13 @@ impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
     }
 
     fn remove(&self, capability_profile_id: &str) -> Result<(), CapabilityProfileRepositoryError> {
-        if self.lock()?.remove(capability_profile_id).is_some() {
+        let mut profiles = self.lock()?;
+        if self.default_profile_id()?.as_deref() == Some(capability_profile_id) {
+            return Err(CapabilityProfileRepositoryError::Storage(
+                "Choose another default Capability Profile before deleting this one".into(),
+            ));
+        }
+        if profiles.remove(capability_profile_id).is_some() {
             Ok(())
         } else {
             Err(CapabilityProfileRepositoryError::NotFound(
@@ -147,6 +186,24 @@ impl SqliteCapabilityProfileRepository {
 }
 
 impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
+    fn default_profile(
+        &self,
+    ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
+        self.read("read default Capability Profile", |connection| connection.query_row("SELECT p.capability_profile_id,p.revision,p.profile_json FROM execution_capability_profiles p JOIN execution_default_capability_profile d ON d.capability_profile_id=p.capability_profile_id WHERE d.singleton=1", [], profile_row).optional().map_err(storage_error("read default Capability Profile"))?.map(decode_profile_row).transpose())
+    }
+    fn default_profile_id(&self) -> Result<Option<String>, CapabilityProfileRepositoryError> {
+        self.read("read default Capability Profile identity", |connection| connection.query_row("SELECT capability_profile_id FROM execution_default_capability_profile WHERE singleton=1", [], |row| row.get(0)).optional().map_err(storage_error("read default Capability Profile")))
+    }
+    fn set_default_profile(&self, id: &str) -> Result<(), CapabilityProfileRepositoryError> {
+        self.write("set default Capability Profile", |connection| {
+        let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_capability_profiles WHERE capability_profile_id=?1)", [id], |row| row.get(0)).map_err(storage_error("find default Capability Profile"))?;
+        if !exists {
+            return Err(CapabilityProfileRepositoryError::NotFound(id.into()));
+        }
+        connection.execute("INSERT INTO execution_default_capability_profile(singleton,capability_profile_id) VALUES(1,?1) ON CONFLICT(singleton) DO UPDATE SET capability_profile_id=excluded.capability_profile_id", [id]).map_err(storage_error("set default Capability Profile"))?;
+        Ok(())
+        })
+    }
     fn list(&self) -> Result<Vec<CapabilityProfile>, CapabilityProfileRepositoryError> {
         self.read("list Capability Profiles", |connection| {
             let mut statement = connection
@@ -361,6 +418,7 @@ mod tests {
     fn profile(id: &str, revision: u64) -> CapabilityProfile {
         CapabilityProfile {
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+            defaults: Default::default(),
             capability_profile_id: id.into(),
             name: format!("{id} profile"),
             revision,

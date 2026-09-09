@@ -504,10 +504,11 @@ impl ManagedPlanBuilderService {
                 },
                 _ => managed,
             };
-        let mut additional_args = harness.runtime_configuration_args();
-        additional_args.extend(managed.injection().configuration_args.clone());
+        let mut config_overrides = harness.runtime_config_overrides();
+        config_overrides.extend(managed.injection().config_overrides.clone());
         let extension = RuntimeLaunchExtension {
-            additional_args,
+            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+            config_overrides,
             environment: vec![managed.injection().environment.clone()],
             initial_prompt_prefix: None,
         };
@@ -1348,7 +1349,8 @@ mod tests {
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
         RuntimeLaunchExtension {
-            additional_args: Vec::new(),
+            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+            config_overrides: Vec::new(),
             environment: Vec::new(),
             initial_prompt_prefix: Some(crate::agent_sessions::ports::InitialPromptPrefix {
                 source: "epic_plan_builder_button_initiation".into(),
@@ -2110,7 +2112,7 @@ mod tests {
                 && request.options.model.is_none()
         }));
         assert!(requests.iter().all(|request| {
-            let args = &request.launch_extension.as_ref().unwrap().additional_args;
+            let args = &request.launch_extension.as_ref().unwrap().config_overrides;
             args.iter().any(|arg| arg == "approval_policy=\"never\"")
                 && args.iter().any(|arg| arg.ends_with(".required=true"))
                 && args
@@ -2231,7 +2233,7 @@ mod tests {
             .launch_extension
             .expect("production child extension");
         let endpoint = extension
-            .additional_args
+            .config_overrides
             .iter()
             .find_map(|value| {
                 value

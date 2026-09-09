@@ -184,6 +184,7 @@ pub(crate) struct AgentInvocationDetailsDto {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSessionDetailsDto {
+    pub(crate) interactions: Vec<crate::agent_sessions::application::SessionInteraction>,
     pub(crate) session: AgentSessionDto,
     pub(crate) invocations: Vec<AgentInvocationDetailsDto>,
 }
@@ -191,6 +192,7 @@ pub(crate) struct AgentSessionDetailsDto {
 impl AgentSessionDetailsDto {
     pub(crate) fn from_history(history: AgentSessionHistory) -> Self {
         Self {
+            interactions: crate::agent_sessions::application::project_interactions(&history),
             session: history.session,
             invocations: history
                 .invocations
@@ -208,6 +210,7 @@ impl AgentSessionDetailsDto {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSessionSummaryDto {
+    pub(crate) pending_request_count: usize,
     pub(crate) id: AgentSessionId,
     pub(crate) title: String,
     pub(crate) availability: AgentSessionAvailability,
@@ -221,6 +224,7 @@ pub(crate) struct AgentSessionSummaryDto {
 impl From<AgentSessionSummary> for AgentSessionSummaryDto {
     fn from(value: AgentSessionSummary) -> Self {
         Self {
+            pending_request_count: value.pending_request_count,
             id: value.session.id,
             title: value.session.title,
             availability: value.session.availability,
@@ -241,6 +245,11 @@ impl From<AgentSessionSummary> for AgentSessionSummaryDto {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum AgentSessionUpdateDto {
+    SteeringAccepted {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+        input_id: String,
+    },
     EventPersisted {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
@@ -261,6 +270,15 @@ pub(crate) enum AgentSessionUpdateDto {
 impl From<AgentSessionNotification> for AgentSessionUpdateDto {
     fn from(value: AgentSessionNotification) -> Self {
         match value {
+            AgentSessionNotification::SteeringAccepted {
+                session_id,
+                invocation_id,
+                input_id,
+            } => Self::SteeringAccepted {
+                session_id,
+                invocation_id,
+                input_id,
+            },
             AgentSessionNotification::EventPersisted { session_id, event } => {
                 Self::EventPersisted {
                     session_id,
@@ -331,6 +349,7 @@ mod tests {
         let invocation_id = AgentInvocationId::new("invocation").unwrap();
         let dto = AgentSessionDetailsDto::from_history(AgentSessionHistory {
             session: AgentSession {
+                workspace_origin: None,
                 id: session_id.clone(),
                 title: "Session".into(),
                 availability: AgentSessionAvailability::Available,

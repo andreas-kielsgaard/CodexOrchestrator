@@ -1,6 +1,9 @@
 #![allow(unused_imports)]
 
 mod capability_profile;
+mod defaults;
+mod inventory;
+pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
 mod creation_intent;
 mod native_codex;
 mod node_profile;
@@ -14,13 +17,11 @@ pub(crate) mod transport;
 
 pub(crate) use capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION};
 pub(crate) use creation_intent::SessionCreationIntent;
-pub(crate) use native_codex::{
-    NativeCodexCapabilityExposure, NativeCodexSelectedRuntimeProfileSource,
-};
+pub(crate) use native_codex::NativeCodexSelectedRuntimeProfileSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
     CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
-    SelectedRuntimeProfileSourceError,
+    SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,

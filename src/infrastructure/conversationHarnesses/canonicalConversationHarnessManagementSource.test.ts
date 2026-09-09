@@ -69,6 +69,7 @@ function session(id: string, harnessVersion: HarnessVersionRef | null): AgentSes
 
 function summary(value: AgentSessionDto): AgentSessionSummaryDto {
   return {
+    pendingRequestCount: 0,
     id: value.id,
     title: value.title,
     availability: value.availability,

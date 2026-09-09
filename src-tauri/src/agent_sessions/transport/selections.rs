@@ -1,26 +1,12 @@
 use crate::{
     agent_sessions::{
-        application::{
-            AgentSessionProfileApplication, LoadPinnedSessionProfileQuery,
-            SendDirectUserAgentSessionMessageCommand,
-        },
+        application::{LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand},
         domain::{AgentInvocationId, AgentSessionId},
     },
     execution_configuration::{DirectUserInvocationResolution, SessionCreationResolution},
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tauri::State;
-
-pub(crate) struct AgentSessionProfileTauriState {
-    application: Arc<AgentSessionProfileApplication>,
-}
-
-impl AgentSessionProfileTauriState {
-    pub(crate) fn new(application: Arc<AgentSessionProfileApplication>) -> Self {
-        Self { application }
-    }
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -35,6 +21,7 @@ pub(crate) struct SendDirectUserAgentSessionMessageInput {
     submitted_text: String,
     model: Option<String>,
     reasoning_mode: Option<String>,
+    sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
 }
 
 #[derive(Deserialize)]
@@ -45,11 +32,12 @@ pub(crate) struct StartDirectUserAgentSessionInput {
     working_directory: Option<String>,
     model: Option<String>,
     reasoning_mode: Option<String>,
+    sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
 }
 
 #[tauri::command]
 pub(crate) fn start_direct_user_agent_session(
-    state: State<'_, AgentSessionProfileTauriState>,
+    state: State<'_, super::AgentSessionTauriState>,
     input: StartDirectUserAgentSessionInput,
 ) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
     let result = state
@@ -60,6 +48,7 @@ pub(crate) fn start_direct_user_agent_session(
             input.working_directory,
             input.model,
             input.reasoning_mode,
+            input.sandbox_mode,
         )
         .map_err(|error| error.to_string())?;
     Ok(SendDirectUserAgentSessionMessageResultDto {
@@ -86,7 +75,7 @@ pub(crate) struct SendDirectUserAgentSessionMessageResultDto {
 
 #[tauri::command]
 pub(crate) fn load_pinned_agent_session_profile(
-    state: State<'_, AgentSessionProfileTauriState>,
+    state: State<'_, super::AgentSessionTauriState>,
     input: LoadPinnedSessionProfileInput,
 ) -> Result<PinnedAgentSessionProfileDto, String> {
     let pinned = state
@@ -103,7 +92,7 @@ pub(crate) fn load_pinned_agent_session_profile(
 
 #[tauri::command]
 pub(crate) fn send_direct_user_agent_session_message(
-    state: State<'_, AgentSessionProfileTauriState>,
+    state: State<'_, super::AgentSessionTauriState>,
     input: SendDirectUserAgentSessionMessageInput,
 ) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
     let result = state
@@ -113,6 +102,7 @@ pub(crate) fn send_direct_user_agent_session_message(
             submitted_text: input.submitted_text,
             model: input.model,
             reasoning_mode: input.reasoning_mode,
+            sandbox_mode: input.sandbox_mode,
         })
         .map_err(|error| error.to_string())?;
     Ok(SendDirectUserAgentSessionMessageResultDto {

@@ -290,6 +290,7 @@ impl CodexCliRuntime {
             .clone()
             .map_err(|message| RuntimePortError::new(RuntimePortErrorKind::Unavailable, message))?;
         let spec = ProcessLaunchSpec {
+            remove_environment: Vec::new(),
             program,
             args,
             working_directory: request.working_directory.as_deref().map(PathBuf::from),

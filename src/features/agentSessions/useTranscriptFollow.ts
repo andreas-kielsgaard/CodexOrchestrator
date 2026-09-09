@@ -15,16 +15,37 @@ export function isNearTranscriptBottom(
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold;
 }
 
-export function useTranscriptFollow(sessionId: string | null, revision: string) {
+export function useTranscriptFollow(
+  sessionId: string | null,
+  revision: string,
+  requestId?: string,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
   const previousSessionRef = useRef<string | null | undefined>(undefined);
 
+  const findRequest = useCallback(() => {
+    return Array.from(
+      containerRef.current?.querySelectorAll<HTMLElement>('[data-request-id]') ?? [],
+    ).find((element) => element.dataset.requestId === requestId);
+  }, [requestId]);
+
+  const reviewRequest = useCallback(() => {
+    const request = findRequest();
+    request?.scrollIntoView({ block: 'start' });
+    request?.focus({ preventScroll: true });
+  }, [findRequest]);
+
   const scrollToLatest = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
+    const request = findRequest();
+    if (request) {
+      request.scrollIntoView({ block: 'start' });
+      return;
+    }
     container.scrollTop = container.scrollHeight;
-  }, []);
+  }, [findRequest]);
 
   const requestFollow = useCallback(() => {
     shouldFollowRef.current = true;
@@ -44,5 +65,5 @@ export function useTranscriptFollow(sessionId: string | null, revision: string) 
     if (shouldFollowRef.current) scrollToLatest();
   }, [revision, scrollToLatest, sessionId]);
 
-  return { containerRef, handleScroll, requestFollow };
+  return { containerRef, handleScroll, requestFollow, reviewRequest };
 }

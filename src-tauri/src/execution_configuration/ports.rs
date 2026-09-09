@@ -42,6 +42,11 @@ impl Error for CapabilityProfileRepositoryError {}
 /// `replace` uses the revision read by the application service so concurrent writers cannot
 /// silently discard one another. Consumers should use `CapabilityProfileService`, not this port.
 pub(crate) trait CapabilityProfileRepository: Send + Sync {
+    fn default_profile(
+        &self,
+    ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError>;
+    fn default_profile_id(&self) -> Result<Option<String>, CapabilityProfileRepositoryError>;
+    fn set_default_profile(&self, id: &str) -> Result<(), CapabilityProfileRepositoryError>;
     fn list(&self) -> Result<Vec<CapabilityProfile>, CapabilityProfileRepositoryError>;
 
     fn find(
@@ -85,7 +90,32 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn native_inventory(
+        &self,
+    ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+        Err(SelectedRuntimeProfileSourceError::unavailable(
+            "Native inventory discovery is unavailable",
+        ))
+    }
+    fn selected_runtime_profile_at(
+        &self,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.selected_runtime_profile()
+    }
     fn selected_runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError>;
+}
+
+pub(crate) struct WorkingContextProfileSource<'a> {
+    pub(crate) source: &'a dyn SelectedRuntimeProfileSource,
+    pub(crate) cwd: Option<&'a str>,
+}
+impl SelectedRuntimeProfileSource for WorkingContextProfileSource<'_> {
+    fn selected_runtime_profile(
+        &self,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source.selected_runtime_profile_at(self.cwd)
+    }
 }

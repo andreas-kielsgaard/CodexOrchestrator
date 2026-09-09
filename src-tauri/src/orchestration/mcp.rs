@@ -40,7 +40,7 @@ const INITIATE_TOOL: &str = "request_epic_initiation";
 /// environment pair without learning any orchestration identity or endpoint semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CodexMcpInjection {
-    pub(crate) configuration_args: Vec<String>,
+    pub(crate) config_overrides: Vec<String>,
     pub(crate) environment: (String, String),
 }
 
@@ -76,9 +76,9 @@ impl CodexMcpInjection {
             format!("mcp_servers.{name}.tool_timeout_sec=300"),
         ];
         Self {
-            configuration_args: values
+            config_overrides: values
                 .into_iter()
-                .flat_map(|value| ["-c".into(), value])
+                .map(String::from)
                 .collect(),
             environment: (variable, bearer),
         }
@@ -98,25 +98,22 @@ impl CodexMcpInjection {
             &tools,
             true,
         );
-        injection.configuration_args.extend([
-            "-c".to_string(),
+        injection.config_overrides.extend([
             "sandbox_workspace_write.network_access=true".to_string(),
-            "-c".to_string(),
             "features.network_proxy=true".to_string(),
         ]);
         injection
     }
 
     pub(crate) fn is_exact_work_unit_implementer_reporting_transport(&self) -> bool {
-        if self.configuration_args.len() != 18
-            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+        if self.config_overrides.len() != 9
         {
             return false;
         }
         let values = self
-            .configuration_args
-            .chunks_exact(2)
-            .map(|pair| pair[1].as_str())
+            .config_overrides
+            .iter()
+            .map(String::as_str)
             .collect::<Vec<_>>();
         let Some(name) = values.iter().find_map(|value| {
             value
@@ -721,22 +718,20 @@ mod tests {
             CodexMcpInjection::new("http://127.0.0.1:5555/mcp", "secret".into(), &tools, true);
         assert_eq!(
             injection
-                .configuration_args
-                .iter()
-                .filter(|value| value.as_str() == "-c")
-                .count(),
+                .config_overrides
+                .len(),
             7
         );
         assert!(injection
-            .configuration_args
+            .config_overrides
             .iter()
             .any(|value| value.contains("bearer_token_env_var")));
         assert!(!injection
-            .configuration_args
+            .config_overrides
             .iter()
             .any(|value| value == "secret"));
         assert_eq!(injection.environment.1, "secret");
-        assert!(!injection.configuration_args.iter().any(|value| {
+        assert!(!injection.config_overrides.iter().any(|value| {
             value == "features.network_proxy=true"
                 || value == "sandbox_workspace_write.network_access=true"
         }));
@@ -751,33 +746,31 @@ mod tests {
         );
         assert_eq!(
             injection
-                .configuration_args
-                .iter()
-                .filter(|value| value.as_str() == "-c")
-                .count(),
+                .config_overrides
+                .len(),
             9
         );
-        assert!(injection.configuration_args.iter().any(|value| {
+        assert!(injection.config_overrides.iter().any(|value| {
             value == "sandbox_workspace_write.network_access=true"
         }));
         assert!(injection
-            .configuration_args
+            .config_overrides
             .iter()
             .any(|value| value == "features.network_proxy=true"));
         let tools = injection
-            .configuration_args
+            .config_overrides
             .iter()
             .find(|value| value.contains(".enabled_tools="))
             .expect("managed tool allow list");
         assert!(tools.ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
         assert!(injection
-            .configuration_args
+            .config_overrides
             .iter()
             .any(|value| value.contains("work_unit_implementer_reporting_")));
         assert!(injection.is_exact_work_unit_implementer_reporting_transport());
 
         let mut malformed = injection;
-        malformed.configuration_args.pop();
+        malformed.config_overrides.pop();
         assert!(!malformed.is_exact_work_unit_implementer_reporting_transport());
     }
 

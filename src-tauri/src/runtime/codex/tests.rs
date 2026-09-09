@@ -361,10 +361,12 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
     let extension = RuntimeLaunchExtension {
-        additional_args: vec![
-            "-c".into(),
+        managed_mcp_servers: Vec::new(),
+        skill_roots: Vec::new(),
+        ignore_user_rules: false,
+        reasoning_mode: None,
+        config_overrides: vec![
             "approval_policy=\"never\"".into(),
-            "-c".into(),
             "mcp_servers.role.required=true".into(),
         ],
         environment: vec![],
@@ -395,7 +397,11 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
 fn resume_places_child_configuration_before_the_session_id() {
     let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     let extension = RuntimeLaunchExtension {
-        additional_args: vec!["-c".into(), "mcp_servers.plan_builder.required=true".into()],
+        managed_mcp_servers: Vec::new(),
+        skill_roots: Vec::new(),
+        ignore_user_rules: false,
+        reasoning_mode: None,
+        config_overrides: vec!["mcp_servers.plan_builder.required=true".into()],
         environment: vec![],
         initial_prompt_prefix: None,
     };
@@ -416,6 +422,57 @@ fn resume_places_child_configuration_before_the_session_id() {
             "build",
         ]
     );
+}
+
+#[test]
+fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume() {
+    let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
+    let extension = RuntimeLaunchExtension {
+        managed_mcp_servers: Vec::new(),
+        skill_roots: Vec::new(),
+        ignore_user_rules: false,
+        reasoning_mode: Some("high".into()),
+        config_overrides: vec!["model_reasoning_effort=\"low\"".into()],
+        ..RuntimeLaunchExtension::default()
+    };
+    for (command, expected) in [
+        (
+            InvocationCommand::Start,
+            vec![
+                "exec",
+                "--json",
+                "-c",
+                "model_reasoning_effort=\"low\"",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "continue",
+            ],
+        ),
+        (
+            InvocationCommand::Resume(&context),
+            vec![
+                "exec",
+                "resume",
+                "--json",
+                "-c",
+                "model_reasoning_effort=\"low\"",
+                "-c",
+                "model_reasoning_effort=\"high\"",
+                "thread-resume",
+                "continue",
+            ],
+        ),
+    ] {
+        assert_eq!(
+            build_args_from_effective_options(
+                command,
+                "continue",
+                &AgentRuntimeOptions::default(),
+                Some(&extension),
+            ),
+            expected,
+        );
+    }
 }
 
 #[test]

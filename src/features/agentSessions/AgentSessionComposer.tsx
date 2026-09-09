@@ -8,6 +8,8 @@ export interface AgentSessionComposerProps {
   sending: boolean;
   sendUnavailableReason?: string;
   active: boolean;
+  steeringAvailable?: boolean;
+  needsWorkingDirectory?: boolean;
   canceling: boolean;
   messageLabel?: string;
   messagePlaceholder?: string;
@@ -22,7 +24,12 @@ export interface AgentSessionComposerProps {
 export function AgentSessionComposer(props: AgentSessionComposerProps) {
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (props.draft.trim() && !props.sending && !props.active && !props.sendUnavailableReason)
+    if (
+      props.draft.trim() &&
+      !props.sending &&
+      (!props.active || props.steeringAvailable) &&
+      !props.sendUnavailableReason
+    )
       props.onSend();
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -34,7 +41,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
 
   return (
     <form className="agent-session-composer" onSubmit={submit} aria-label="Send a message">
-      {props.isNewSession && props.showWorkingDirectory && (
+      {(props.isNewSession || props.needsWorkingDirectory) && props.showWorkingDirectory && (
         <label className="working-directory-field">
           <span>
             Working directory <small>optional</small>
@@ -54,45 +61,48 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           onKeyDown={handleKeyDown}
           placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
           aria-label={props.messageLabel ?? 'Message'}
-          disabled={props.active || props.sending}
+          disabled={(props.active && !props.steeringAvailable) || props.sending}
           rows={4}
         />
-        {props.active ? (
-          <button
-            className="cancel-agent-button"
-            type="button"
-            onClick={props.onCancel}
-            disabled={props.canceling}
-          >
-            <Square size={15} aria-hidden="true" />
-            {props.canceling ? 'Canceling…' : 'Cancel'}
-          </button>
-        ) : (
-          <span className="composer-send-action">
+        <div className="composer-actions">
+          {props.active && (
             <button
-              className="send-agent-button"
-              type="submit"
-              disabled={
-                !props.draft.trim() || props.sending || Boolean(props.sendUnavailableReason)
-              }
-              aria-describedby={
-                props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
-              }
+              className="cancel-agent-button"
+              type="button"
+              onClick={props.onCancel}
+              disabled={props.canceling}
             >
-              <Send size={16} aria-hidden="true" />
-              {props.sending ? 'Sending…' : 'Send'}
+              <Square size={15} aria-hidden="true" />
+              {props.canceling ? 'Canceling…' : 'Cancel'}
             </button>
-            {props.keyboardHint === 'tooltip' && (
-              <span
-                className="composer-keyboard-tooltip"
-                id="composer-keyboard-hint"
-                role="tooltip"
+          )}
+          {(!props.active || props.steeringAvailable) && (
+            <span className="composer-send-action">
+              <button
+                className="send-agent-button"
+                type="submit"
+                disabled={
+                  !props.draft.trim() || props.sending || Boolean(props.sendUnavailableReason)
+                }
+                aria-describedby={
+                  props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
+                }
               >
-                Enter to send. Shift+Enter adds a new line.
-              </span>
-            )}
-          </span>
-        )}
+                <Send size={16} aria-hidden="true" />
+                {props.sending ? 'Sending…' : props.active ? 'Steer' : 'Send'}
+              </button>
+              {props.keyboardHint === 'tooltip' && (
+                <span
+                  className="composer-keyboard-tooltip"
+                  id="composer-keyboard-hint"
+                  role="tooltip"
+                >
+                  Enter to send. Shift+Enter adds a new line.
+                </span>
+              )}
+            </span>
+          )}
+        </div>
       </div>
       <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}

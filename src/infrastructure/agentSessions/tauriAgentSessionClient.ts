@@ -1,3 +1,4 @@
+import type { AgentSessionProfileClient } from '../../application/agentSessions';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -36,7 +37,7 @@ export interface TauriAgentSessionClientDependencies {
 
 export function createTauriAgentSessionClient(
   dependencies: TauriAgentSessionClientDependencies = {},
-): AgentSessionClient {
+): AgentSessionClient & AgentSessionProfileClient {
   const invokeCommand = dependencies.invoke ?? invoke;
   const listenForEvent = dependencies.listen ?? listen;
   const listeners = new Set<AgentSessionUpdateListener>();
@@ -60,6 +61,22 @@ export function createTauriAgentSessionClient(
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
   return {
+    startDirectUserSession: async (input) => {
+      await ensureUpdateBridge();
+      return invokeCommand('start_direct_user_agent_session', { input });
+    },
+    loadPinnedProfile: (sessionId) =>
+      invokeCommand('load_pinned_agent_session_profile', { input: { sessionId } }),
+    sendDirectUserMessage: async (input) => {
+      await ensureUpdateBridge();
+      return invokeCommand('send_direct_user_agent_session_message', { input });
+    },
+    resolveWorkingDirectory: (sessionId, directory) =>
+      invokeCommand('resolve_agent_session_working_directory', { sessionId, directory }),
+    steerSession: (input) => invokeCommand('steer_agent_session', { input }),
+    respondToRuntimeRequest: (input) =>
+      invokeCommand('respond_to_agent_runtime_request', { input }),
+
     createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto> {
       return invokeCommand<AgentSessionDto>('create_agent_session', { input: command });
     },

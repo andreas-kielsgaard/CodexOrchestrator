@@ -506,7 +506,7 @@ impl ConversationHarnessProfile {
         }
     }
 
-    pub(crate) fn runtime_configuration_args(&self) -> Vec<String> {
+    pub(crate) fn runtime_config_overrides(&self) -> Vec<String> {
         let mut values = vec![match self.runtime.approval_policy {
             HarnessApprovalPolicy::Never => "approval_policy=\"never\"".to_string(),
         }];
@@ -515,7 +515,7 @@ impl ConversationHarnessProfile {
         }
         values
             .into_iter()
-            .flat_map(|value| ["-c".into(), value])
+            .map(String::from)
             .collect()
     }
 }
@@ -657,8 +657,8 @@ mod tests {
         assert_eq!(sprint_runner.mcp.enabled_tools, Vec::<String>::new());
         assert!(!sprint_runner.mcp.required);
         assert_eq!(
-            plan_builder.runtime_configuration_args(),
-            ["-c", "approval_policy=\"never\""]
+            plan_builder.runtime_config_overrides(),
+            ["approval_policy=\"never\""]
         );
         assert!(plan_builder.runtime_options().model.is_none());
         assert!(plan_builder.runtime.reasoning_effort.is_none());

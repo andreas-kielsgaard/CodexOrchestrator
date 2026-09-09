@@ -467,7 +467,7 @@ impl HarnessBindingRecord {
         }
     }
 
-    pub(crate) fn parsed_plan(&self) -> Result<HarnessMediationPlan, String> {
+    pub(crate) fn parsed_plan(&self) -> Result<super::exposure::HarnessExposurePolicy, String> {
         self.verify_digest()?;
         serde_json::from_str(&self.mediation_plan)
             .map_err(|error| format!("Harness binding mediation plan is invalid: {error}"))
@@ -501,16 +501,24 @@ pub(crate) struct SidecarBindingRegistration {
 }
 
 impl SidecarBindingRegistration {
-    pub(crate) fn from_record(record: &HarnessBindingRecord) -> Result<Self, String> {
+    pub(crate) fn from_record(
+        record: &HarnessBindingRecord,
+        resolved: &HarnessMediationPlan,
+    ) -> Result<Self, String> {
         record.verify_digest()?;
+        if record.parsed_plan()? != super::exposure::HarnessExposurePolicy::from_resolved(resolved)
+        {
+            return Err("Resolved Harness connection changed the recorded tool policy".into());
+        }
+        let mediation_plan = serde_json::to_string(resolved).map_err(|e| e.to_string())?;
         Ok(Self {
             binding_id: record.id.clone(),
             session_id: record.session_id.clone(),
             runtime_instance_id: record.runtime_instance_id.clone(),
             session_instance_token: record.session_instance_token.clone(),
             harness_snapshot: record.harness_snapshot.clone(),
-            mediation_plan: record.mediation_plan.clone(),
-            configuration_digest: record.configuration_digest.clone(),
+            configuration_digest: binding_digest(&record.harness_snapshot, &mediation_plan),
+            mediation_plan,
             source_workflow_instance_id: record.source_workflow_instance_id.clone(),
             source_node_id: record.source_node_id.clone(),
             harness_token: record.harness_token.clone(),

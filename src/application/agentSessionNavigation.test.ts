@@ -153,6 +153,7 @@ type Mutable<T> = {
 
 function summary(id: string): AgentSessionSummaryDto {
   return {
+    pendingRequestCount: 0,
     id,
     title: id,
     availability: 'available',

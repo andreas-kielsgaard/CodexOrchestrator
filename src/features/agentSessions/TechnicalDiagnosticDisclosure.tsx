@@ -1,31 +1,21 @@
-import { useState } from 'react';
 import type { AgentDiagnosticDto } from '../../application/agentSessions';
 import type { TranscriptActivity } from './transcriptProjector';
 
 interface TechnicalDiagnosticDisclosureProps {
   activity: TranscriptActivity[];
   diagnostics: AgentDiagnosticDto[];
-  running: boolean;
   safeOnly?: boolean;
 }
 
 export function TechnicalDiagnosticDisclosure({
   activity,
   diagnostics,
-  running,
   safeOnly = false,
 }: TechnicalDiagnosticDisclosureProps) {
-  const [expanded, setExpanded] = useState(false);
   if (activity.length === 0 && diagnostics.length === 0) return null;
 
   return (
-    <details
-      className="technical-disclosure"
-      open={running || expanded}
-      onToggle={(event) => {
-        if (!running) setExpanded(event.currentTarget.open);
-      }}
-    >
+    <details className="technical-disclosure">
       <summary>Technical details ({activity.length + diagnostics.length})</summary>
       <ul>
         {diagnostics.map((diagnostic, index) => (

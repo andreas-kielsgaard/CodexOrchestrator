@@ -261,10 +261,23 @@
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.agent-session-workspace--with-settings {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.agent-session-settings {
+  min-width: 0;
+  max-height: 35vh;
+  overflow: auto;
+  border-bottom: 1px solid #d8ddd5;
+}
+
 .agent-session-conversation {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
 }
 
 .agent-session-header {
@@ -893,6 +906,7 @@
 }
 
 .agent-session-composer {
+  flex-shrink: 0;
   padding: 12px clamp(18px, 7vw, 96px) 16px;
   border-top: 1px solid #d8ddd5;
   background: #f6f7f4;
@@ -943,6 +957,14 @@
   background: transparent;
   font-size: 0.9rem;
   resize: none;
+}
+
+.composer-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  align-items: end;
+  gap: 8px;
 }
 
 .send-agent-button,
@@ -1132,5 +1154,103 @@
   .agent-session-composer {
     padding-right: 14px;
     padding-left: 14px;
+  }
+}
+.session-interactions {
+  display: grid;
+  gap: 12px;
+  margin-block: 12px;
+}
+.session-steering-input,
+.session-runtime-request {
+  padding: 12px 16px;
+  border: 1px solid var(--border-color, #526070);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.session-steering-input {
+  border-inline-start-width: 3px;
+}
+.session-runtime-request {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: start;
+  scroll-margin-block: 12px;
+}
+
+.session-runtime-request:focus-visible {
+  outline: 2px solid #27664e;
+  outline-offset: 2px;
+}
+
+.session-request-notice {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #d7b96d;
+  background: #fff9e8;
+}
+
+.waiting-status {
+  padding: 5px 10px;
+  border-radius: 16px;
+  background: #fff2c8;
+  color: #66510f;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.session-request-choice {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.session-request-choice p {
+  margin: 5px 0;
+  font-size: 0.78rem;
+  color: #59655e;
+}
+
+.session-request-notice button,
+.session-runtime-request button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #9caea2;
+  border-radius: 6px;
+  background: #fffdf8;
+  color: #213e2c;
+  font: inherit;
+  cursor: pointer;
+}
+
+.session-runtime-request button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.session-runtime-request > strong,
+.session-runtime-request > pre,
+.session-runtime-request > label,
+.session-runtime-request > p {
+  flex-basis: 100%;
+}
+.session-runtime-request label {
+  display: grid;
+  gap: 6px;
+}
+.session-runtime-request pre {
+  max-height: 6em;
+  margin-block: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+@container (max-width: 700px) {
+  .session-runtime-request > pre {
+    max-height: 4em;
+    margin-block: 6px;
   }
 }

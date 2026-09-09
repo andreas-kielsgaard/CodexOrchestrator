@@ -1,5 +1,5 @@
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
-import type { AgentSessionProfileClient } from '../application/agentSessionProfiles';
+import type { AgentSessionProfileClient } from '../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
 import type { ExecutionConfigurationClient } from '../application/executionConfiguration';
 import type { IdentityManagementClient } from '../application/identities';

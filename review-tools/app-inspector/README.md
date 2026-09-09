@@ -32,7 +32,35 @@ generic browser control. The receipt redacts text and distinguishes pre-dispatch
 input commands, and unobserved product semantics. The debugger port is a development-only launch
 choice, never a production application transport.
 
+`select` supports a single-selection HTML control using `--selector` and `--value` (an observed
+option value). It focuses that control inside the WebView and sends Home/ArrowDown keys through
+enabled options without opening an OS dropdown. Retain a subsequent snapshot to verify selection;
+keyboard traversal may emit intermediate change events.
+
 ## First snapshot
+
+### Rendered WebView state
+
+For an isolated instance launched with a loopback debugging port, use the same owner-bound CLI
+to read the actual rendered page without moving desktop focus:
+
+```powershell
+node review-tools/app-inspector/webview-control.mjs snapshot --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --debug-url http://127.0.0.1:9231 --target-url http://127.0.0.1:1490/ --out "C:\review\state.json" --screenshot "C:\review\screen.png"
+```
+
+It returns rendered text, headings, control labels/values/states, unique CSS selectors, layout
+bounds, focus, scroll regions and the accessibility tree. Optional PNG capture reads the WebView
+compositor, so other desktop windows do not obscure it; native title bars and native dialogs are
+outside that image. Snapshot neither scrolls nor sends input. Password values are redacted;
+other visible app content is included. DOM, accessibility and image reads are sequential, not
+atomic, and do not establish durable or provider outcomes. Truncation is reported explicitly.
+
+Keep each review instance's PID, executable, debug port and app-data directory together. A
+debugging endpoint must be enabled at launch using
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9231`; snapshot cannot attach to
+an existing process that lacks it. Use an isolated copy when restarting could lose user state.
+
+The existing native `review-app.mjs inspect` remains available without a WebView debug endpoint:
 
 Run from any PowerShell directory:
 
@@ -113,9 +141,8 @@ storage inputs.
 - WebView ownership checks are point-in-time pre-dispatch observations. External launch provenance
   records the clean source checkpoint and executable hash; neither is race-free process identity
   proof or an MCP discovery inventory.
-- The already-running production WebView2 process has no debugging attachment endpoint. Windows UI
-  Automation exposes its shell but not the semantic DOM, so the current route/screen name is
-  unavailable. The PNG is real visual evidence for the reviewing agent or human.
+- Without a WebView debugging endpoint, native inspection exposes the window render but not its
+  semantic DOM. Deliberately launched review instances support the rendered snapshot above.
 - Port 41415 is a separate development status server. Its v1 response has no process or instance
   identity, so even a successful response does not prove ownership by the selected application.
 
@@ -133,8 +160,7 @@ paths because it sits outside application composition; it must not become the pr
 
 ## Limits and next seam
 
-The current release can be rendered but not semantically attached. A later review-owned launch or
-application-composed attachment/evidence port is required for a truthful route, DOM/accessibility
-snapshot, console/network evidence, and safe semantic controls. The accepted Agent Review branch
-proved those capabilities only for specially launched isolated debug/review builds, not for this
-already-running production release.
+Rendered DOM/accessibility snapshots and semantic controls require a deliberately launched review
+instance with a debugging endpoint. This does not attach to an already-running production process
+without one. Console/network evidence and an application-composed instance handle remain outside
+this companion's interface.

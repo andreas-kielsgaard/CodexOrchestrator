@@ -71,15 +71,23 @@ export function runtimeEvent(
   };
 }
 
-export function observation(status: AgentInvocationStatusDto | null): AgentInvocationObservationDto {
+export function observation(
+  status: AgentInvocationStatusDto | null,
+): AgentInvocationObservationDto {
   return {
     launchAcceptedAt: null,
     externalContext: null,
     providerActivity: null,
     providerTerminal: null,
-    processTerminal: status && !['pending', 'running'].includes(status)
-      ? { status, completedAt: fixtureTime, exitCode: status === 'completed' ? 0 : null, signal: null }
-      : null,
+    processTerminal:
+      status && !['pending', 'running'].includes(status)
+        ? {
+            status,
+            completedAt: fixtureTime,
+            exitCode: status === 'completed' ? 0 : null,
+            signal: null,
+          }
+        : null,
     mcpToolActivities: [],
     mcpToolActivityPartial: false,
   };
@@ -87,6 +95,7 @@ export function observation(status: AgentInvocationStatusDto | null): AgentInvoc
 
 export function sessionSummary(active = false): AgentSessionSummaryDto {
   return {
+    pendingRequestCount: 0,
     id: 'session-1',
     title: 'Durable session',
     availability: 'available',

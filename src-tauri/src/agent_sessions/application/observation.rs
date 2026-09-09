@@ -121,7 +121,35 @@ pub(crate) fn project_invocation_observation(
         external_context,
         provider_activity,
         provider_terminal: observed_provider_terminal,
-        process_terminal: process_terminal(&history.invocation),
+        process_terminal: if history.events.iter().any(|e| {
+            e.source == AgentRuntimeEventSource::Runtime
+                && e.raw_payload["kind"] == "runtime_transport"
+                && e.raw_payload["transport"] == "codex_app_server"
+        }) {
+            history
+                .events
+                .iter()
+                .rev()
+                .find(|e| {
+                    e.source == AgentRuntimeEventSource::Runtime
+                        && e.raw_payload["kind"] == "runtime_process_exit"
+                })
+                .map(|event| ProcessTerminalObservation {
+                    status: match event.raw_payload["status"].as_str() {
+                        Some("completed") => AgentInvocationStatus::Completed,
+                        Some("canceled") => AgentInvocationStatus::Canceled,
+                        Some("interrupted") => AgentInvocationStatus::Interrupted,
+                        _ => AgentInvocationStatus::Failed,
+                    },
+                    completed_at: event.recorded_at,
+                    exit_code: event.raw_payload["exitCode"]
+                        .as_i64()
+                        .and_then(|v| i32::try_from(v).ok()),
+                    signal: event.raw_payload["signal"].as_str().map(str::to_string),
+                })
+        } else {
+            process_terminal(&history.invocation)
+        },
         mcp_tool_activities,
         mcp_tool_activity_partial,
     }

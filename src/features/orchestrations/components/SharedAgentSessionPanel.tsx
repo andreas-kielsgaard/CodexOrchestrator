@@ -191,6 +191,9 @@ function ConnectedAgentSessionConversation({
       composerTarget={
         writable && ready
           ? {
+              steeringAvailable: controller.steeringAvailable,
+              interactions: controller.details?.interactions,
+              respondToRequest: controller.respondToRequest,
               sessionId: controller.selectedSessionId,
               draft: controller.draft,
               workingDirectory: controller.workingDirectory,

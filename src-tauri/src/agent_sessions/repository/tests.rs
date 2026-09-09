@@ -14,6 +14,85 @@ use std::{fs, path::PathBuf};
 use uuid::Uuid;
 
 #[test]
+fn pending_request_summary_matches_durable_history_and_clears_at_completion() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("attention", at(0)))
+        .unwrap();
+    let invocation = repository
+        .create_pending_invocation(test_invocation("turn", &session.id, at(1)))
+        .unwrap();
+    let append = |sequence, payload| {
+        let mut event = unknown_event(
+            &format!("event-{sequence}"),
+            &invocation.id,
+            sequence,
+            payload,
+            at(sequence as u32 + 2),
+        );
+        event.source = AgentRuntimeEventSource::Runtime;
+        repository.append_event(event).unwrap();
+    };
+    let count = || {
+        repository
+            .list_session_summaries(ListAgentSessionsQuery::default())
+            .unwrap()[0]
+            .pending_request_count
+    };
+    append(
+        0,
+        json!({"kind":"runtime_request_opened","request":{"id":"approval","kind":"approval"}}),
+    );
+    append(
+        1,
+        json!({"kind":"session_steering_pending","inputId":"steer","text":"Correction"}),
+    );
+    assert_eq!(count(), 1);
+    append(
+        2,
+        json!({"kind":"runtime_request_response","id":"approval","state":"responding"}),
+    );
+    assert_eq!(count(), 1);
+    append(
+        3,
+        json!({"kind":"runtime_request_response","id":"approval","state":"pending","message":"Invalid choice"}),
+    );
+    assert_eq!(count(), 1);
+    append(
+        4,
+        json!({"kind":"runtime_request_response","id":"approval","state":"answered"}),
+    );
+    assert_eq!(count(), 0);
+    append(
+        5,
+        json!({"kind":"runtime_request_opened","request":{"id":"question","kind":"questions"}}),
+    );
+    assert_eq!(count(), 1);
+    repository
+        .finish_invocation(
+            &invocation.id,
+            InvocationCompletion {
+                status: AgentInvocationTerminalStatus::Canceled,
+                completed_at: at(10),
+                exit_code: None,
+                signal: None,
+                runtime_error: None,
+            },
+            at(10),
+        )
+        .unwrap();
+    assert_eq!(count(), 0);
+    let history = repository
+        .load_session_history(&session.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        crate::agent_sessions::interactions::pending_request_count(&history.invocations),
+        0
+    );
+}
+
+#[test]
 fn model_override_persists_without_replacing_the_session_sandbox() {
     let path = temporary_database_path();
     let connection = initialized_file_database(&path);
@@ -530,6 +609,7 @@ fn temporary_database_path() -> PathBuf {
 
 fn test_session(id: &str, created_at: DateTime<Utc>) -> AgentSession {
     AgentSession {
+        workspace_origin: None,
         id: AgentSessionId::new(id).expect("session ID"),
         title: format!("Session {id}"),
         availability: AgentSessionAvailability::Available,

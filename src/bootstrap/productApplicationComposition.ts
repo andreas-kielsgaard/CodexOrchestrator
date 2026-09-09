@@ -23,7 +23,6 @@ import { tauriExecutionConfigurationClient } from '../infrastructure/executionCo
 import { tauriWorkflowAuthoringClient } from '../infrastructure/workflowAuthoring/tauriWorkflowAuthoringClient';
 import { tauriWorkflowInstanceClient } from '../infrastructure/workflowInstances/tauriWorkflowInstanceClient';
 import { tauriDraftCloseGuard } from '../infrastructure/tauriDraftCloseGuard';
-import { tauriAgentSessionProfileClient } from '../infrastructure/agentSessionProfiles/tauriAgentSessionProfileClient';
 import { tauriSessionEventQueryClient } from '../infrastructure/sessionEvents/tauriSessionEventQueryClient';
 import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
@@ -47,7 +46,7 @@ export function createProductApplicationComposition(): AppProps {
     draftCloseGuard: tauriDraftCloseGuard,
     executionConfigurationClient: tauriExecutionConfigurationClient,
     identityManagementClient: tauriIdentityManagementClient,
-    agentSessionProfileClient: tauriAgentSessionProfileClient,
+    agentSessionProfileClient: tauriAgentSessionClient,
     sessionEventQueryClient: tauriSessionEventQueryClient,
     workflowTargetSelector: RepositoryWorktreeTargetSelector,
     repositoryCatalogClient: tauriRepositoryCatalog,

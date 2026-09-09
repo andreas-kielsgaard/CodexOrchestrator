@@ -1,9 +1,8 @@
 //! Tauri state, commands, DTO mapping, and persisted update notifications.
 
 mod dto;
-pub(crate) mod profile;
-
-pub(crate) use profile::AgentSessionProfileTauriState;
+pub(crate) mod interactions;
+pub(crate) mod selections;
 
 use self::dto::{
     AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionSummaryDto,
@@ -69,97 +68,10 @@ impl AgentSessionNotifier for TauriAgentSessionNotifier {
     }
 }
 
-#[tauri::command]
-pub(crate) fn create_agent_session(
-    state: State<'_, AgentSessionTauriState>,
-    input: CreateAgentSessionCommandDto,
-) -> Result<AgentSessionDto, String> {
-    let ownership = input.ownership();
-    state
-        .application
-        .create_session_with_ownership(input.into(), ownership)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn update_agent_session_harness(
-    state: State<'_, AgentSessionTauriState>,
-    input: UpdateAgentSessionHarnessCommandDto,
-) -> Result<AgentSessionDto, String> {
-    state
-        .application
-        .update_session_harness(input.into())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn update_agent_session_identity(
-    state: State<'_, AgentSessionTauriState>,
-    input: UpdateAgentSessionIdentityCommandDto,
-) -> Result<AgentSessionDto, String> {
-    state
-        .application
-        .update_session_identity(input.into())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn update_agent_session_model_override(
-    state: State<'_, AgentSessionTauriState>,
-    input: UpdateAgentSessionModelOverrideCommandDto,
-) -> Result<AgentSessionDto, String> {
-    state
-        .application
-        .update_session_model_override(input.into())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn list_agent_sessions(
-    state: State<'_, AgentSessionTauriState>,
-    query: ListAgentSessionsQueryDto,
-) -> Result<Vec<AgentSessionSummaryDto>, String> {
-    state
-        .application
-        .list_sessions(query.into())
-        .map(|summaries| summaries.into_iter().map(Into::into).collect())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn load_agent_session(
-    state: State<'_, AgentSessionTauriState>,
-    query: LoadAgentSessionQueryDto,
-) -> Result<AgentSessionDetailsDto, String> {
-    state
-        .application
-        .load_session(&query.session_id)
-        .map(AgentSessionDetailsDto::from_history)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn send_agent_session_message(
-    state: State<'_, AgentSessionTauriState>,
-    input: SendAgentSessionMessageCommandDto,
-) -> Result<SendAgentSessionMessageResultDto, String> {
-    state
-        .application
-        .send_message(input.into())
-        .map(Into::into)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn cancel_agent_invocation(
-    state: State<'_, AgentSessionTauriState>,
-    input: CancelAgentInvocationCommandDto,
-) -> Result<AgentInvocationDto, String> {
-    state
-        .application
-        .cancel_invocation(input.into())
-        .map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests;
+
+mod commands;
+mod queries;
+pub(crate) use commands::*;
+pub(crate) use queries::*;

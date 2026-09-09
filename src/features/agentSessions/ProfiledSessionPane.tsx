@@ -1,15 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
 import type { AgentSessionClient } from '../../application/agentSessions';
-import type {
-  AgentSessionProfileClient,
-  PinnedAgentSessionProfileDto,
-} from '../../application/agentSessionProfiles';
+import type { AgentSessionProfileClient } from '../../application/agentSessions';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import { useSessionDeliveries } from '../sessionEvents/useSessionDeliveries';
 import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { useAgentSession } from './useAgentSessionController';
-import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import { useSessionExecutionSelection } from './useSessionExecutionSelection';
 
 /** A selected Session conversation, independent of how its enclosing feature found it. */
 export function ProfiledSessionPane({
@@ -23,40 +19,12 @@ export function ProfiledSessionPane({
   readonly profileClient: AgentSessionProfileClient;
   readonly queryClient?: SessionEventQueryClient;
 }) {
-  const [profile, setProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<PerMessageRuntimeSelection>({
-    model: null,
-    reasoningMode: null,
-  });
-  const deliveries = useSessionDeliveries(queryClient, sessionId);
-  useEffect(() => {
-    let active = true;
-    setProfile(null);
-    setError(null);
-    setSelection({ model: null, reasoningMode: null });
-    void profileClient.loadPinnedProfile(sessionId).then(
-      (value) => active && setProfile(value),
-      (cause) => active && setError(String(cause)),
-    );
-    return () => {
-      active = false;
-    };
-  }, [profileClient, sessionId]);
-  const send = useCallback(
-    async (input: { sessionId: string; submittedText: string }) => {
-      if (profile?.sessionId !== input.sessionId)
-        throw new Error('Session configuration is unavailable.');
-      const result = await profileClient.sendDirectUserMessage({ ...input, ...selection });
-      setSelection({ model: null, reasoningMode: null });
-      return result;
-    },
-    [profile, profileClient, selection],
+  const { profile, error, selection, setSelection, execution } = useSessionExecutionSelection(
+    profileClient,
+    sessionId,
   );
-  const session = useAgentSession(client, {
-    selectedSessionId: sessionId,
-    sendExistingMessage: send,
-  });
+  const deliveries = useSessionDeliveries(queryClient, sessionId);
+  const session = useAgentSession(client, { selectedSessionId: sessionId, execution });
   return (
     <AgentSessionHeaderActionsProvider
       actions={null}

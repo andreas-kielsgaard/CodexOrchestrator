@@ -48,6 +48,51 @@ pub(crate) struct ProcessSupervisor {
 }
 
 impl ProcessSupervisor {
+    pub(crate) fn write_input(
+        &self,
+        id: &AgentInvocationId,
+        bytes: &[u8],
+    ) -> Result<(), SupervisorError> {
+        let child = self.input_child(id)?;
+        child
+            .write_input(bytes)
+            .map_err(|error| SupervisorError::new(SupervisorErrorKind::Internal, error.to_string()))
+    }
+
+    pub(crate) fn close_input(&self, id: &AgentInvocationId) -> Result<(), SupervisorError> {
+        self.input_child(id)?
+            .close_input()
+            .map_err(|error| SupervisorError::new(SupervisorErrorKind::Internal, error.to_string()))
+    }
+
+    fn input_child(
+        &self,
+        id: &AgentInvocationId,
+    ) -> Result<Arc<dyn super::SupervisedChild>, SupervisorError> {
+        self.lock_registry()?
+            .active
+            .get(id)
+            .and_then(|entry| entry.process.as_ref())
+            .map(|process| process.child.clone())
+            .ok_or_else(|| {
+                SupervisorError::new(SupervisorErrorKind::NotActive, "Process is not active")
+            })
+    }
+
+    /// A finished provider turn no longer reserves its Session, while its process remains owned.
+    pub(crate) fn release_session(&self, id: &AgentInvocationId) -> Result<(), SupervisorError> {
+        let mut registry = self.lock_registry()?;
+        if let Some(session_id) = registry
+            .active
+            .get(id)
+            .map(|entry| entry.session_id.clone())
+        {
+            if registry.sessions.get(&session_id) == Some(id) {
+                registry.sessions.remove(&session_id);
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn system(sink: Arc<dyn ProcessEventSink>) -> Self {
         Self::new(Arc::new(SystemProcessFactory), sink)
     }

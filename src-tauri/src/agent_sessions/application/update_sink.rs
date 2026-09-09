@@ -1,4 +1,4 @@
-use super::lifecycle::{
+use super::{
     AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification, AgentSessionNotifier,
 };
 use crate::agent_sessions::{
@@ -113,7 +113,17 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
 
         match update {
             RuntimeUpdate::Event(draft) => {
-                if invocation.status.is_terminal() {
+                let durable_control_fact = draft.source
+                    == crate::agent_sessions::domain::AgentRuntimeEventSource::Runtime
+                    && matches!(
+                        draft.raw_payload["kind"].as_str(),
+                        Some(
+                            "session_steering_result"
+                                | "runtime_request_response"
+                                | "runtime_process_exit"
+                        )
+                    );
+                if invocation.status.is_terminal() && !durable_control_fact {
                     drop(state);
                     self.update_lanes.remove(invocation_id, &lane);
                     return Err(delivery_error(
@@ -146,6 +156,24 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
                     .map_err(repository_delivery_error("append runtime event"))?;
                 state.next_sequence = Some(sequence.saturating_add(1));
 
+                if event.source == crate::agent_sessions::domain::AgentRuntimeEventSource::Runtime
+                    && event.raw_payload["kind"] == "runtime_working_directory_resolved"
+                {
+                    let path = event.raw_payload["cwd"].as_str().ok_or_else(|| {
+                        delivery_error("Resolved working directory is missing", None)
+                    })?;
+                    self.repository
+                        .resolve_working_directory(
+                            &invocation.session_id,
+                            path,
+                            "native_metadata",
+                            recorded_at,
+                        )
+                        .map_err(repository_delivery_error(
+                            "persist recovered working context",
+                        ))?;
+                }
+
                 if let Some(external_context_id) = event
                     .normalized
                     .as_ref()
@@ -166,6 +194,7 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
                         .map_err(repository_delivery_error("persist runtime binding"))?;
                 }
 
+                drop(state);
                 self.notifier
                     .notify(AgentSessionNotification::EventPersisted {
                         session_id: invocation.session_id,

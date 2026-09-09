@@ -1,6 +1,8 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
+mod readiness;
+mod session_binding;
 mod discovery;
 
 use crate::persistence::ActiveDatabase;
@@ -2439,118 +2441,11 @@ impl NativeProfileService {
         })
     }
 
-    pub(crate) fn resolve_selected_home(&self) -> Result<ResolvedNativeCodexHome, String> {
-        let profile = self.read("resolve selected native profile", |connection| {
-            Ok(load_profiles(connection)?
-                .into_iter()
-                .find(|profile| profile.selected)
-                .ok_or("No native Codex home is selected")?)
-        })?;
-        self.reconcile_sandbox_adoption(&profile.id)?;
-        let profile = self.require_selected_active(&profile.id)?;
-        if profile.lifecycle != Lifecycle::Active {
-            return Err(
-                "The selected native Codex home lost continuity and must be registered again"
-                    .into(),
-            );
-        }
-        let lifecycle = validate_profile(&profile);
-        if lifecycle != Lifecycle::Active {
-            self.record_lifecycle(&profile.id, lifecycle)?;
-            return Err("The selected native Codex home no longer has validated continuity".into());
-        }
-        let readiness = &profile.readiness;
-        if readiness.authentication != "authenticated"
-            || readiness.sandbox_initialization != "initialized"
-            || readiness.workspace_write_canary != "passed"
-            || readiness.mcp_reporting != "ready"
-        {
-            return Err(
-                "The selected native Codex home is not ready for an application consumer".into(),
-            );
-        }
-        Ok(ResolvedNativeCodexHome {
-            profile_id: profile.id,
-            filesystem_identity: profile.identity,
-            home: profile.home,
-            execution_mode: profile.execution.selected_mode,
-            readiness: readiness.clone(),
-        })
-    }
 
-    fn prepare_managed_agent_session_launch(
-        &self,
-        session_id: &str,
-        invocation_id: &str,
-        resuming: bool,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        let mut extension = extension.unwrap_or_default();
-        if extension
-            .environment
-            .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case("CODEX_HOME"))
-        {
-            return Err(
-                "Only the application-selected native profile may supply CODEX_HOME".into(),
-            );
-        }
-        let resolved = self.resolve_selected_home()?;
-        self.write("bind managed Agent Session native profile", |transaction| {
-        let binding = transaction
-            .query_row(
-                "SELECT profile_id,filesystem_identity FROM agent_session_native_profile_bindings WHERE session_id=?1",
-                params![session_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(|error| format!("Unable to load managed Agent Session native profile binding: {error}"))?;
-        match binding {
-            Some((profile_id, identity)) => {
-                if profile_id != resolved.profile_id || identity != resolved.filesystem_identity {
-                    return Err("Managed Agent Session native profile continuity no longer matches the selected ready profile".into());
-                }
-            }
-            None => {
-                if resuming {
-                    return Err("Managed Agent Session resume requires a durable native profile binding".into(),);
-                }
-                transaction.execute(
-                    "INSERT INTO agent_session_native_profile_bindings (session_id,profile_id,filesystem_identity,bound_at) VALUES (?1,?2,?3,?4)",
-                    params![session_id, resolved.profile_id, resolved.filesystem_identity, Utc::now().to_rfc3339()],
-                ).map_err(|error| format!("Unable to persist managed Agent Session native profile binding: {error}"))?;
-            }
-        }
-        let mode = if resuming { "resume" } else { "start" };
-        let provenance = transaction
-            .query_row(
-                "SELECT session_id,profile_id,filesystem_identity,environment_key,invocation_mode FROM agent_session_native_profile_launch_provenance WHERE invocation_id=?1",
-                params![invocation_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
-            )
-            .optional()
-            .map_err(|error| format!("Unable to load managed Agent Session native launch provenance: {error}"))?;
-        match provenance {
-            Some((bound_session, profile_id, identity, key, bound_mode)) => {
-                if bound_session != session_id || profile_id != resolved.profile_id || identity != resolved.filesystem_identity || key != "CODEX_HOME" || bound_mode != mode {
-                    return Err("Managed Agent Session native launch provenance conflicts with its durable profile binding".into());
-                }
-            }
-            None => {
-                transaction.execute(
-                    "INSERT INTO agent_session_native_profile_launch_provenance (invocation_id,session_id,profile_id,filesystem_identity,environment_key,invocation_mode,prepared_at) VALUES (?1,?2,?3,?4,'CODEX_HOME',?5,?6)",
-                    params![invocation_id, session_id, resolved.profile_id, resolved.filesystem_identity, mode, Utc::now().to_rfc3339()],
-                ).map_err(|error| format!("Unable to persist managed Agent Session native launch provenance: {error}"))?;
-            }
-        }
-        Ok(())
-        })?;
-        extension.environment.push((
-            "CODEX_HOME".into(),
-            resolved.home.to_string_lossy().into_owned(),
-        ));
-        Ok(extension)
-    }
+
+
+
+
 
     /// Produces a command only after all mode-specific authority is independently valid. It does
     /// not start Codex and consequently cannot be mistaken for launch acceptance or activity.
@@ -5007,7 +4902,7 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet, NativeCodexCapabilityExposure,
+        CapabilitySet,
         NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
         SelectedRuntimeProfileSource,
     };
@@ -5287,33 +5182,32 @@ mod tests {
     }
 
     #[test]
-    fn selected_profile_adapter_exposes_only_opaque_identity_and_locked_execution_mode() {
+    fn selected_profile_adapter_uses_native_exposure_without_product_sandbox_locks() {
+        struct Environment;
+        impl crate::runtime::codex::app_server::environment::CodexEnvironmentSource for Environment {
+            fn read(&self, _: PathBuf, _: Option<PathBuf>) -> Result<crate::runtime::codex::app_server::environment::CodexEnvironment, crate::agent_sessions::ports::RuntimePortError> {
+                Ok(crate::runtime::codex::app_server::environment::CodexEnvironment { models: serde_json::json!([{"model":"native-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]), skills: serde_json::json!({"data":[]}), config: serde_json::json!({}), requirements: serde_json::json!({}) })
+            }
+        }
         let (_directory, service) = service();
         let profile = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &profile.id);
         let source = NativeCodexSelectedRuntimeProfileSource::new(
             Arc::new(service),
-            NativeCodexCapabilityExposure {
-                capabilities: CapabilitySet {
-                    sandbox_modes: [SandboxMode::ReadOnly, SandboxMode::DangerFullAccess]
-                        .into_iter()
-                        .collect(),
-                    ..CapabilitySet::default()
-                },
-                locked: RuntimeSelections::default(),
-            },
-        );
+            Default::default(),
+        ).with_reader(Arc::new(Environment));
 
         let snapshot = source.selected_runtime_profile().unwrap();
         assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
         assert_eq!(
             snapshot.exposure.sandbox_modes,
-            [SandboxMode::WorkspaceWrite].into_iter().collect()
+            [SandboxMode::ReadOnly, SandboxMode::WorkspaceWrite, SandboxMode::DangerFullAccess].into_iter().collect()
         );
         assert_eq!(
             snapshot.locked.sandbox_mode,
-            Some(SandboxMode::WorkspaceWrite)
+            None
         );
+        assert!(snapshot.exposure.models.contains("native-model"));
         let encoded = serde_json::to_value(snapshot).unwrap();
         assert!(encoded.get("home").is_none());
         assert!(encoded.get("filesystemIdentity").is_none());
@@ -5361,26 +5255,17 @@ mod tests {
         let first = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &first.id);
         let first_home = first.home_path.clone();
-        let prepared = service
-            .prepare_managed_agent_session_launch(
-                "session-1",
-                "invocation-1",
-                false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                    additional_args: vec!["--role-config".into()],
-                    environment: vec![("ROLE_ENV".into(), "preserved".into())],
-                    initial_prompt_prefix: None,
-                }),
-            )
-            .expect("fresh launch binding");
-        assert!(prepared
-            .environment
-            .iter()
-            .any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
-        assert!(prepared
-            .environment
-            .iter()
-            .any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
+        let prepared = service.prepare_managed_agent_session_launch(
+            "session-1", "invocation-1", false,
+            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                config_overrides: vec!["--role-config".into()],
+                environment: vec![("ROLE_ENV".into(), "preserved".into())],
+                initial_prompt_prefix: None,
+            }),
+        ).expect("fresh launch binding");
+        assert!(prepared.environment.iter().any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
+        assert!(prepared.environment.iter().any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
         let provenance: String = service.connection().unwrap().query_row(
             "SELECT printf('%s:%s:%s',profile_id,environment_key,invocation_mode) FROM agent_session_native_profile_launch_provenance WHERE invocation_id='invocation-1'",
             [], |row| row.get(0),
@@ -5407,21 +5292,16 @@ mod tests {
 
         let second = selected_profile_ready_except_mcp(&reopened);
         mark_mcp_ready(&reopened, &second.id);
-        assert!(reopened
-            .prepare_managed_agent_session_launch("session-1", "invocation-3", true, None)
-            .is_err());
-        assert!(reopened
-            .prepare_managed_agent_session_launch(
-                "session-2",
-                "invocation-4",
-                false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                    additional_args: vec![],
-                    environment: vec![("CODEX_HOME".into(), "foreign".into())],
-                    initial_prompt_prefix: None,
-                }),
-            )
-            .is_err());
+        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-3", true, None).is_err());
+        assert!(reopened.prepare_managed_agent_session_launch(
+            "session-2", "invocation-4", false,
+            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                config_overrides: vec![],
+                environment: vec![("CODEX_HOME".into(), "foreign".into())],
+                initial_prompt_prefix: None,
+            }),
+        ).is_err());
     }
 
     #[test]

@@ -46,12 +46,15 @@ impl ProxyBindings {
         if let Some(existing_token) = self.token_by_binding.get(&registration.binding_id) {
             let existing = self
                 .by_token
-                .get(existing_token)
+                .get_mut(existing_token)
                 .ok_or_else(|| "Harness proxy binding index is inconsistent.".to_string())?;
             if existing.registration == registration
                 || (registration.harness_token.as_deref() == Some(existing_token)
                     && registrations_match_without_token(&existing.registration, &registration))
             {
+                registration.harness_token = Some(existing_token.clone());
+                existing.registration = registration;
+                existing.plan = plan;
                 return Ok(existing_token.clone());
             }
             return Err(format!(
@@ -129,10 +132,18 @@ fn registrations_match_without_token(
         && left.runtime_instance_id == right.runtime_instance_id
         && left.session_instance_token == right.session_instance_token
         && left.harness_snapshot == right.harness_snapshot
-        && left.mediation_plan == right.mediation_plan
-        && left.configuration_digest == right.configuration_digest
+        && same_tool_policy(&left.mediation_plan, &right.mediation_plan)
         && left.source_workflow_instance_id == right.source_workflow_instance_id
         && left.source_node_id == right.source_node_id
+}
+
+fn same_tool_policy(left: &str, right: &str) -> bool {
+    let parse = |value: &str| {
+        serde_json::from_str::<HarnessMediationPlan>(value)
+            .ok()
+            .map(|p| super::exposure::HarnessExposurePolicy::from_resolved(&p))
+    };
+    matches!((parse(left), parse(right)), (Some(left), Some(right)) if left == right)
 }
 
 pub(crate) async fn run_proxy_listener(

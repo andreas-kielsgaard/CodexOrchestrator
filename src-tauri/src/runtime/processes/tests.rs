@@ -248,6 +248,7 @@ fn invocation_id(value: &str) -> AgentInvocationId {
 
 fn spec() -> ProcessLaunchSpec {
     ProcessLaunchSpec {
+        remove_environment: Vec::new(),
         program: "fake-runtime".to_string(),
         args: vec!["--json".to_string()],
         working_directory: None,

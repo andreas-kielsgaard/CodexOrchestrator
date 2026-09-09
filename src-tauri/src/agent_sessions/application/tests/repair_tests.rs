@@ -55,10 +55,75 @@ struct Fixture {
     notifier: Arc<WorkflowNotifier>,
     sessions: Arc<AgentSessionApplication>,
     profiles: Arc<CapabilityProfileService>,
-    direct: AgentSessionProfileApplication,
+    direct: AgentSessionApplication,
     authoring: Arc<WorkflowAuthoringService>,
     execution: Arc<WorkflowExecutionService>,
     engine: Option<Arc<HarnessEngineService>>,
+}
+
+#[test]
+fn steering_is_durable_and_does_not_create_a_workflow_delivery() {
+    let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, false);
+    let instance = fixture.instance(None);
+    fixture
+        .execution
+        .dispatch_user_request(&instance.recipe.recipe_id, &instance.id, "Plan".into())
+        .unwrap();
+    let launch = fixture.launches().remove(0);
+    let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
+    let command = super::super::SteerAgentSessionCommand {
+        session_id: launch.session_id.clone(),
+        invocation_id: launch.invocation_id.clone(),
+        input_id: "steering-input".into(),
+        text: "Use the revised requirements".into(),
+    };
+    let accepted = fixture.sessions.steer_session(command.clone()).unwrap();
+    assert_eq!(accepted.state, "accepted");
+    assert_eq!(
+        fixture.sessions.steer_session(command.clone()).unwrap(),
+        accepted
+    );
+    assert!(fixture
+        .sessions
+        .steer_session(super::super::SteerAgentSessionCommand {
+            text: "Different content with the same identity".into(),
+            ..command
+        })
+        .is_err());
+    assert_eq!(fixture.launches().len(), 1);
+    assert_eq!(fixture.runtime.calls.lock().unwrap().iter().filter(|call| matches!(call,
+        RuntimeCall::Steer(id, input) if *id == launch.invocation_id && input == "steering-input"
+    )).count(), 1);
+    assert_eq!(
+        fixture
+            .notifier
+            .recording
+            .notifications
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, AgentSessionNotification::SteeringAccepted { .. }))
+            .count(),
+        1
+    );
+    assert!(fixture
+        .notifier
+        .recording
+        .persisted_before_notify
+        .load(Ordering::SeqCst));
+    assert!(fixture.notifier.errors.lock().unwrap().is_empty());
+    assert_eq!(
+        serde_json::to_value(fixture.execution.instances.attempts(&instance.id).unwrap()).unwrap(),
+        serde_json::to_value(attempts).unwrap()
+    );
+    let reopened =
+        SqliteAgentSessionRepository::open(fixture.folder.path().join("repair.sqlite")).unwrap();
+    let history = reopened
+        .load_session_history(&launch.session_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(history.invocations.len(), 1);
+    assert_eq!(super::super::project_interactions(&history), vec![accepted]);
 }
 
 impl Fixture {
@@ -71,7 +136,9 @@ impl Fixture {
         let database_path = folder.path().join("repair.sqlite");
         let database = crate::product_database::open(&database_path).unwrap();
         let identities = IdentityService::from_database(database.clone());
-        let repository = Arc::new(SqliteAgentSessionRepository::from_database(database.clone()));
+        let repository = Arc::new(SqliteAgentSessionRepository::from_database(
+            database.clone(),
+        ));
         let runtime = Arc::new(FakeRuntime::new(behavior));
         let notifier = Arc::new(WorkflowNotifier {
             recording: RecordingNotifier::new(repository.clone()),
@@ -82,7 +149,9 @@ impl Fixture {
         let registry = Arc::new(ManagedMcpUpstreamRegistry::default());
         let engine = mediated.then(|| {
             HarnessEngineService::new(
-                Arc::new(SqliteHarnessBindingRepository::from_database(database.clone())),
+                Arc::new(SqliteHarnessBindingRepository::from_database(
+                    database.clone(),
+                )),
                 Arc::new(LocalProxy::new()),
                 registry.clone(),
             )
@@ -122,14 +191,23 @@ impl Fixture {
         let definition = test_session_creation_request().capability_profile;
         profiles
             .create(
-                definition.capability_profile_id,
+                definition.capability_profile_id.clone(),
                 definition.name,
                 snapshot.exposure,
             )
             .unwrap();
+        profiles
+            .set_default_profile(&definition.capability_profile_id)
+            .unwrap();
+        let sessions = Arc::new(
+            sessions
+                .as_ref()
+                .clone()
+                .with_profile_source(source.clone())
+                .with_capability_profiles(profiles.clone()),
+        );
         let adapter = Arc::new(
-            AgentSessionEventAdapter::from_database(
-                database.clone(),
+            AgentSessionEventAdapter::new(
                 sessions.clone(),
                 repository.clone(),
                 source.clone(),
@@ -163,7 +241,7 @@ impl Fixture {
             let registration = registry.register(descriptor).unwrap();
             assert!(registry.retain_owner(&registration, owner).is_ok());
         }
-        let direct = AgentSessionProfileApplication::new(sessions.clone(), source);
+        let direct = sessions.as_ref().clone();
         Self {
             folder,
             repository,
@@ -347,6 +425,7 @@ fn standalone_first_and_second_message_use_pinned_profile_without_pinning_first_
             Some(fixture.target().worktree.path.clone()),
             Some("user-only".into()),
             Some("medium".into()),
+            None,
         )
         .unwrap();
     let session_id = created.acknowledgement.session_id;
@@ -359,12 +438,15 @@ fn standalone_first_and_second_message_use_pinned_profile_without_pinning_first_
         .unwrap();
     assert_eq!(
         pinned.session_profile().capability_profile_id(),
-        "application:standalone"
+        test_session_creation_request()
+            .capability_profile
+            .capability_profile_id
     );
     assert_eq!(pinned.session_profile().pinned_defaults().model, None);
     fixture
         .direct
         .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            sandbox_mode: None,
             session_id: session_id.clone(),
             submitted_text: "Second".into(),
             model: None,
@@ -397,7 +479,14 @@ fn invalid_standalone_override_leaves_no_session_or_launch() {
     let fixture = Fixture::new();
     assert!(fixture
         .direct
-        .start_direct_user_session("First".into(), None, None, Some("not-exposed".into()), None)
+        .start_direct_user_session(
+            "First".into(),
+            None,
+            None,
+            Some("not-exposed".into()),
+            None,
+            None
+        )
         .is_err());
     assert!(fixture
         .repository
@@ -447,10 +536,23 @@ fn stored_instance_drives_normal_completion_and_existing_sessions_ignore_deleted
     );
     let before = b_history.session.session_profile.clone();
     let a_id = AgentSessionId::new(first.group.created_session.unwrap().id()).unwrap();
+    fixture
+        .profiles
+        .create(
+            "replacement-default".into(),
+            "Replacement".into(),
+            test_selected_runtime_profile().exposure,
+        )
+        .unwrap();
+    fixture
+        .profiles
+        .set_default_profile("replacement-default")
+        .unwrap();
     fixture.profiles.delete("test-capabilities").unwrap();
     fixture
         .direct
         .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            sandbox_mode: None,
             session_id: a_id.clone(),
             submitted_text: "User follow-up".into(),
             model: Some("user-only".into()),
@@ -721,14 +823,18 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
         .unwrap();
     assert_eq!(fixture.launches().len(), 1);
     let launch = fixture.launches().remove(0);
-    let args = &launch.launch_extension.as_ref().unwrap().additional_args;
-    assert!(args.contains(&"mcp_servers={}".to_string()));
-    let url: String = serde_json::from_str(
-        args.iter()
-            .find_map(|arg| arg.strip_prefix("mcp_servers.session_capability_1.url="))
-            .unwrap(),
-    )
-    .unwrap();
+    let extension = launch.launch_extension.as_ref().unwrap();
+    assert!(!extension
+        .config_overrides
+        .iter()
+        .any(|value| value.starts_with("mcp_servers=")));
+    let url = extension
+        .managed_mcp_servers
+        .iter()
+        .find(|server| server.name == "session_capability_1")
+        .unwrap()
+        .url
+        .clone();
     let rpc = |name: &str, arguments: serde_json::Value| {
         reqwest::Client::new().post(&url).json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}})).send()
     };

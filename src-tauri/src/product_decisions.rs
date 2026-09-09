@@ -1286,6 +1286,8 @@ mod tests {
     use crate::runtime::processes::ProcessLaunchSpec;
     #[cfg(feature = "live-tests")]
     use std::time::{Duration, Instant};
+    #[cfg(feature = "live-tests")]
+    use std::sync::Mutex;
     use tempfile::tempdir;
 
     struct NoopNotifier;

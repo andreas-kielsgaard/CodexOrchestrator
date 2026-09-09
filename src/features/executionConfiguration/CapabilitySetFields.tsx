@@ -40,10 +40,7 @@ export function CapabilitySetFields({
         catalog={catalogs.mcpTools}
         values={selectedMcpToolValues(value.mcpTools)}
         disabled={disabled}
-        hint={`${scopeLabel} may expose these MCP tools.`}
-        onChange={(mcpTools) =>
-          onChange({ ...value, mcpTools: mcpToolsFromSelectedValues(mcpTools) })
-        }
+        onChange={(values) => onChange({ ...value, mcpTools: mcpToolsFromSelectedValues(values) })}
       />
       <CatalogMultiSelect
         label="Skills"

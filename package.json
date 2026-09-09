@@ -24,6 +24,7 @@
     "test:worktree-review": "vitest run src/app/ApplicationRoot.test.tsx src/app/App.agentSessions.test.tsx src/bootstrap/productApplicationComposition.test.ts src/features/repositoryCatalog/RepositoryWorktreeTargetSelector.test.tsx src/features/worktreeReview/WorktreeReviewScreen.test.tsx src/infrastructure/repositoryCatalog/tauriRepositoryCatalog.test.ts src/infrastructure/tauriWorktreeReview.test.ts",
     "validate:product": "npm run build && npm run test:worktree-review && npm run test:rust:worktree-review && npm run check:rust",
     "validate:release": "npm run build && npm run check:rust:release && tauri build --no-bundle",
+    "test:codex-app-server": "node --test scripts/codex-app-server-contract.node-test.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

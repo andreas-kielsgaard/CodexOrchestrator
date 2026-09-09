@@ -1,3 +1,4 @@
+import { RuntimeDefaultsFields } from './RuntimeDefaultsFields';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ValidationSummary } from '../../components/ValidationSummary';
 import { CapabilitySetFields } from './CapabilitySetFields';
@@ -30,7 +31,10 @@ export function CapabilityProfileEditor({
         <div>
           <span>Execution configuration</span>
           <h1>{existing ? profile.name : 'New capability profile'}</h1>
-          <p>Choose the technical capabilities that workflow nodes may expose.</p>
+          <p>
+            Configure capabilities for workflow nodes, or choose this profile as the default for new
+            Agent Sessions. User messages can select other supported runtime options.
+          </p>
         </div>
         {existing ? (
           <span className="execution-configuration__badge">Revision {profile.revision}</span>
@@ -78,8 +82,21 @@ export function CapabilityProfileEditor({
         <CapabilitySetFields
           catalogs={runtime.catalogs}
           value={profile.allowedCapabilities}
-          scopeLabel="Nodes using this profile"
+          scopeLabel="Nodes and new Agent Sessions using this profile"
           onChange={(allowedCapabilities) => onChange({ ...profile, allowedCapabilities })}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Session defaults"
+        description="Leave a value unselected to inherit Codex defaults. Users can change the choices for their messages."
+      >
+        <RuntimeDefaultsFields
+          catalogs={runtime.catalogs}
+          allowed={profile.allowedCapabilities}
+          value={profile.defaults ?? { model: null, reasoningMode: null, sandboxMode: null }}
+          locked={runtime.lockedSelections}
+          onChange={(defaults) => onChange({ ...profile, defaults })}
         />
       </CollapsibleSection>
 

@@ -1,3 +1,4 @@
+import type { SessionInteractionDto } from '../../application/agentSessions';
 import type {
   AgentDiagnosticDto,
   AgentInvocationStatusDto,
@@ -74,6 +75,7 @@ export interface TranscriptAnchorRange {
 }
 
 export interface ProjectedInvocation {
+  interactions?: readonly SessionInteractionDto[];
   id: string;
   submittedText: string;
   inputProvenance: 'user' | 'application';
@@ -138,6 +140,7 @@ export function projectAgentSessionTranscript(
 
       return {
         id: invocation.id,
+        interactions: details.interactions?.filter((item) => item.invocationId === invocation.id),
         submittedText: invocation.submittedText,
         inputProvenance: invocation.inputProvenance,
         status: invocation.status,

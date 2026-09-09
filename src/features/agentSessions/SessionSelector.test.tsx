@@ -152,6 +152,7 @@ function session(
     kind: 'session',
     id: `session:${id}`,
     summary: {
+      pendingRequestCount: 0,
       id,
       title,
       availability: 'available',

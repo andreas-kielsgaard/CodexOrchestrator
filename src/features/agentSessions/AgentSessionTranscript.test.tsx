@@ -71,12 +71,14 @@ describe('AgentSessionTranscript', () => {
     expect(screen.getByText('malformed jsonl')).toBeVisible();
   });
 
-  it('shows technical output while work is live and collapses it at completion', () => {
+  it('keeps live diagnostics collapsed and preserves an explicit expansion across updates', () => {
     const unknown = runtimeEvent(1, 'unknown', 'Unclassified runtime output');
     const { rerender } = renderTranscript(
       projectAgentSessionTranscript(sessionDetails('running', [unknown])),
     );
 
+    expect(screen.getByText('Unclassified runtime output')).not.toBeVisible();
+    fireEvent.click(screen.getByText('Technical details (1)'));
     expect(screen.getByText('Unclassified runtime output')).toBeVisible();
 
     rerender(
@@ -88,7 +90,7 @@ describe('AgentSessionTranscript', () => {
       />,
     );
 
-    expect(screen.getByText('Unclassified runtime output')).not.toBeVisible();
+    expect(screen.getByText('Unclassified runtime output')).toBeVisible();
   });
 });
 

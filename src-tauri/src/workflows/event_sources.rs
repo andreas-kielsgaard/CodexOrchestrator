@@ -20,6 +20,13 @@ impl WorkflowExecutionService {
         &self,
         notification: &AgentSessionNotification,
     ) -> Result<(), String> {
+        // Steering is a distinct Session event; it does not create a Workflow delivery.
+        if matches!(
+            notification,
+            AgentSessionNotification::SteeringAccepted { .. }
+        ) {
+            return Ok(());
+        }
         let AgentSessionNotification::InvocationTerminal {
             session_id,
             invocation,

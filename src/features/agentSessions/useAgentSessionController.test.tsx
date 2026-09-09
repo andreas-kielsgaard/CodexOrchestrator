@@ -17,6 +17,64 @@ import {
 } from './useAgentSessionController';
 
 describe('useAgentSessionController', () => {
+  it('steers an active turn through the shared client without another domain delivery', async () => {
+    const steerSession = vi.fn().mockResolvedValue({ state: 'accepted' });
+    const client = Object.assign(new FakeAgentSessionClient({ running: true }), { steerSession });
+    const sendExistingMessage = vi.fn();
+    const { result } = renderHook(() => useAgentSessionController(client, { sendExistingMessage }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setDraft('Change direction'));
+    await act(() => result.current.send());
+    expect(steerSession).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      invocationId: 'invocation-1',
+      inputId: expect.any(String),
+      text: 'Change direction',
+    });
+    expect(sendExistingMessage).not.toHaveBeenCalled();
+    expect(client.sent).toEqual([]);
+    expect(result.current.draft).toBe('');
+  });
+
+  it('retains rejected steering text without sending a fallback turn', async () => {
+    const client = Object.assign(new FakeAgentSessionClient({ running: true }), {
+      steerSession: vi.fn().mockResolvedValue({ state: 'rejected', result: 'Turn completed' }),
+    });
+    const { result } = renderHook(() => useAgentSessionController(client));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setDraft('Keep this correction'));
+    await act(() => result.current.send());
+    expect(result.current.draft).toBe('Keep this correction');
+    expect(result.current.error).toBe('Turn completed');
+    expect(client.sent).toEqual([]);
+  });
+
+  it('does not replace a new draft or selection when an earlier send is acknowledged', async () => {
+    let acknowledge!: (result: { sessionId: string; invocationId: string }) => void;
+    const sendExistingMessage = () =>
+      new Promise<{ sessionId: string; invocationId: string }>((resolve) => {
+        acknowledge = resolve;
+      });
+    const client = new FakeAgentSessionClient();
+    const { result } = renderHook(() => useAgentSessionController(client, { sendExistingMessage }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setDraft('First message'));
+    let sending!: Promise<void>;
+    act(() => {
+      sending = result.current.send();
+    });
+    await waitFor(() => expect(acknowledge).toBeDefined());
+    act(() => {
+      result.current.startNewSession();
+      result.current.setDraft('New conversation draft');
+    });
+    await act(async () => {
+      acknowledge({ sessionId: 'session-1', invocationId: 'later' });
+      await sending;
+    });
+    expect(result.current.selectedSessionId).toBeNull();
+    expect(result.current.draft).toBe('New conversation draft');
+  });
   it('subscribes before opening and loads durable state to close notification gaps', async () => {
     const client = new FakeAgentSessionClient();
     const { result } = renderHook(() => useAgentSessionController(client));
@@ -102,11 +160,11 @@ describe('useAgentSessionController', () => {
 });
 
 describe('extracted Agent Session boundaries', () => {
-  it('loads collection state without subscribing or loading a session', async () => {
+  it('loads and subscribes to collection state without loading a session', async () => {
     const client = new FakeAgentSessionClient();
     const { result } = renderHook(() => useAgentSessionCollection(client));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(client.calls).toEqual(['list']);
+    expect(client.calls).toEqual(['list', 'subscribe']);
     expect(result.current.selectedSessionId).toBe('session-1');
   });
 
@@ -148,7 +206,7 @@ describe('extracted Agent Session boundaries', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe('Session list reload failed: list unavailable');
-    expect(client.calls).toEqual(['list']);
+    expect(client.calls).toEqual(['list', 'subscribe']);
   });
 
   it('responds to controlled selected-session changes without listing collection state', async () => {

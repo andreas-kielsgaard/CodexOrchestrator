@@ -1,4 +1,4 @@
-import type { PinnedAgentSessionProfileDto } from '../../application/agentSessionProfiles';
+import type { PinnedAgentSessionProfileDto } from '../../application/agentSessions';
 import { useState } from 'react';
 import type { AssignedAgentIdentity } from '../../application/identities';
 import { AgentIdentityBadge, IdentityPickerDialog } from '../identities';
@@ -72,11 +72,11 @@ export function AgentSessionExecutionSettings({
         />
       ) : null}
       {profile && resolved ? (
-        <CollapsibleSection
-          title="Message and Session configuration"
-          description="The Session Profile is pinned; model and reasoning may be selected for the next direct user message."
-          defaultExpanded={false}
-        >
+        <CollapsibleSection title="Message and Session configuration" defaultExpanded={false}>
+          <p>
+            Model and reasoning choices apply to your next message. Other settings come from the
+            Session Profile.
+          </p>
           <PerMessageRuntimeControls
             value={selection}
             models={resolved.attachedRuntimeCapabilities.models.map((model) => ({

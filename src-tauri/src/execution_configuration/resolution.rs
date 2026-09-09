@@ -67,6 +67,8 @@ pub(crate) struct DirectUserInvocationRequest {
     pub(crate) contract_version: u32,
     pub(crate) model: Option<String>,
     pub(crate) reasoning_mode: Option<String>,
+    #[serde(default)]
+    pub(crate) sandbox_mode: Option<super::SandboxMode>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -172,7 +174,10 @@ impl SessionProfileResolver {
         )?;
         let pinned_defaults = resolve_pinned_defaults(
             &runtime_profile.locked,
-            &request.node_profile.pinned_defaults,
+            &super::defaults::overlay(
+                &request.capability_profile.defaults,
+                &request.node_profile.pinned_defaults,
+            ),
             &request.node_profile.allowed_capabilities,
         )?;
         let session_profile = SessionProfile::resolved(
@@ -198,8 +203,16 @@ impl SessionProfileResolver {
         creation: &SessionCreationResolution,
         request: DirectUserInvocationRequest,
     ) -> Result<DirectUserInvocationResolution, ResolutionError> {
+        Self::resolve_direct_user_snapshot(source.selected_runtime_profile()?, creation, request)
+    }
+
+    pub(crate) fn resolve_direct_user_snapshot(
+        runtime: RuntimeProfileSnapshot,
+        creation: &SessionCreationResolution,
+        request: DirectUserInvocationRequest,
+    ) -> Result<DirectUserInvocationResolution, ResolutionError> {
         validate_direct_user_request(&request)?;
-        Self::validate_pinned_session(source, creation)?;
+        Self::validate_profile_identity(&runtime, creation)?;
         let session_profile = creation.session_profile();
         let requested = RuntimeSelections {
             model: request
@@ -208,15 +221,13 @@ impl SessionProfileResolver {
             reasoning_mode: request
                 .reasoning_mode
                 .or_else(|| session_profile.pinned_defaults().reasoning_mode.clone()),
-            sandbox_mode: session_profile.pinned_defaults().sandbox_mode,
+            sandbox_mode: request
+                .sandbox_mode
+                .or(session_profile.pinned_defaults().sandbox_mode),
         };
-        validate_selection_availability(
-            &requested,
-            session_profile.attached_runtime_capabilities(),
-        )
-        .map_err(ResolutionError::DirectUserSelectionUnavailable)?;
-        let selections =
-            resolve_locked_selections(session_profile.attached_runtime_locked(), &requested)?;
+        validate_selection_availability(&requested, &runtime.exposure)
+            .map_err(ResolutionError::DirectUserSelectionUnavailable)?;
+        let selections = resolve_locked_selections(&runtime.locked, &requested)?;
         Ok(DirectUserInvocationResolution {
             contract_version: DIRECT_USER_INVOCATION_RESOLUTION_CONTRACT_VERSION,
             session_profile_digest: creation.digest.clone(),
@@ -228,8 +239,15 @@ impl SessionProfileResolver {
         source: &dyn SelectedRuntimeProfileSource,
         creation: &SessionCreationResolution,
     ) -> Result<(), ResolutionError> {
-        creation.verify_digest()?;
         let runtime_profile = source.selected_runtime_profile()?;
+        Self::validate_profile_identity(&runtime_profile, creation)
+    }
+
+    fn validate_profile_identity(
+        runtime_profile: &RuntimeProfileSnapshot,
+        creation: &SessionCreationResolution,
+    ) -> Result<(), ResolutionError> {
+        creation.verify_digest()?;
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
@@ -237,7 +255,7 @@ impl SessionProfileResolver {
         if runtime_profile.profile_ref != session_profile.runtime_profile_ref() {
             return Err(ResolutionError::RuntimeProfileChanged {
                 expected: session_profile.runtime_profile_ref().to_owned(),
-                actual: runtime_profile.profile_ref,
+                actual: runtime_profile.profile_ref.clone(),
             });
         }
         Ok(())

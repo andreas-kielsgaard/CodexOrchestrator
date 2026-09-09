@@ -29,7 +29,34 @@ pub(super) fn build_args_from_effective_options(
         }
     };
     if let Some(extension) = launch_extension {
-        args.extend(extension.additional_args.iter().cloned());
+        // Historical exec fixtures share the managed connection projection with production.
+        for server in &extension.managed_mcp_servers {
+            let config = super::app_server::configuration::managed_server_config(server);
+            for (key, value) in config.as_object().expect("managed connection is an object") {
+                args.extend([
+                    "-c".into(),
+                    format!("mcp_servers.{}.{key}={value}", server.name),
+                ]);
+            }
+        }
+        args.extend(
+            extension
+                .config_overrides
+                .iter()
+                .flat_map(|value| ["-c".into(), value.clone()]),
+        );
+        if extension.ignore_user_rules {
+            args.push("--ignore-rules".into());
+        }
+        if let Some(reasoning_mode) = &extension.reasoning_mode {
+            args.extend([
+                "-c".to_string(),
+                format!(
+                    "model_reasoning_effort={}",
+                    serde_json::to_string(reasoning_mode).expect("reasoning mode serializes")
+                ),
+            ]);
+        }
     }
     if let Some(context_id) = resume_context {
         args.push(context_id.as_str().to_string());

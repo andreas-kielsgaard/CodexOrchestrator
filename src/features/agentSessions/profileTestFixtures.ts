@@ -3,7 +3,7 @@ import type {
   AgentSessionProfileClient,
   PinnedAgentSessionProfileDto,
   SendDirectUserAgentSessionMessageResultDto,
-} from '../../application/agentSessionProfiles';
+} from '../../application/agentSessions';
 import { repairRuntime, repairProfile } from '../workflowAuthoring/testFixtures';
 import { sessionDetails, sessionSummary } from './testFixtures';
 

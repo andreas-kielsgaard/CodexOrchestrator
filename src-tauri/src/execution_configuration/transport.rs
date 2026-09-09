@@ -25,6 +25,8 @@ pub(crate) struct CreateCapabilityProfileInput {
     capability_profile_id: String,
     name: String,
     allowed_capabilities: CapabilitySet,
+    #[serde(default)]
+    defaults: super::RuntimeSelections,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +35,15 @@ pub(crate) struct UpdateCapabilityProfileInput {
     capability_profile_id: String,
     name: String,
     allowed_capabilities: CapabilitySet,
+    #[serde(default)]
+    defaults: super::RuntimeSelections,
+}
+
+#[tauri::command]
+pub(crate) fn load_native_capability_inventory(
+    state: State<'_, CapabilityProfileTauriState>,
+) -> Result<super::NativeCapabilityInventory, String> {
+    state.service.native_inventory().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -53,6 +64,27 @@ pub(crate) fn list_capability_profiles(
 }
 
 #[tauri::command]
+pub(crate) fn load_default_capability_profile(
+    state: State<'_, CapabilityProfileTauriState>,
+) -> Result<Option<String>, String> {
+    state
+        .service
+        .default_profile_id()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn set_default_capability_profile(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: CapabilityProfileIdInput,
+) -> Result<(), String> {
+    state
+        .service
+        .set_default_profile(&input.capability_profile_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn load_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: CapabilityProfileIdInput,
@@ -70,10 +102,11 @@ pub(crate) fn create_capability_profile(
 ) -> Result<CapabilityProfile, String> {
     state
         .service
-        .create(
+        .create_with_defaults(
             input.capability_profile_id,
             input.name,
             input.allowed_capabilities,
+            input.defaults,
         )
         .map_err(|error| error.to_string())
 }
@@ -85,10 +118,11 @@ pub(crate) fn update_capability_profile(
 ) -> Result<CapabilityProfile, String> {
     state
         .service
-        .update(
+        .update_with_defaults(
             &input.capability_profile_id,
             input.name,
             input.allowed_capabilities,
+            input.defaults,
         )
         .map_err(|error| error.to_string())
 }

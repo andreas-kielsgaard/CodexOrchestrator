@@ -5,15 +5,14 @@
 //! or application lifecycle policy. Callbacks are invoked without holding supervisor registry or
 //! child locks.
 //!
-//! SystemProcessFactory terminates only the direct process returned by std::process::Command::spawn.
-//! Rust's portable process API does not guarantee descendant-tree termination. In particular,
-//! Windows process-tree ownership requires a Job Object (or another platform-specific launcher)
-//! supplied behind ChildProcessFactory; this implementation does not pretend that Child::kill
-//! provides that guarantee.
+//! On Windows, both system factories attach suspended children to a kill-on-close Job Object
+//! before execution begins. The supervisor retains ownership until the process and readers settle.
 
 mod monitoring;
 mod supervisor;
 mod system;
+#[cfg(windows)]
+pub(crate) mod windows_job;
 
 use crate::agent_sessions::domain::AgentInvocationId;
 use std::{
@@ -26,11 +25,13 @@ use std::{
 
 #[allow(unused_imports)]
 pub(crate) use supervisor::ProcessSupervisor;
+pub(crate) use system::DuplexProcessFactory;
 #[allow(unused_imports)]
 pub(crate) use system::SystemProcessFactory;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProcessLaunchSpec {
+    pub(crate) remove_environment: Vec<String>,
     pub(crate) program: String,
     pub(crate) args: Vec<String>,
     pub(crate) working_directory: Option<PathBuf>,
@@ -105,6 +106,17 @@ pub(crate) trait ProcessEventSink: Send + Sync {
 /// process unit: the system implementation owns one direct child, while a future platform-specific
 /// implementation may own a stronger unit such as a process tree without changing the supervisor.
 pub(crate) trait SupervisedChild: Send + Sync {
+    fn write_input(&self, _bytes: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Process has no interactive input",
+        ))
+    }
+
+    fn close_input(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     fn try_wait(&self) -> io::Result<Option<ProcessExit>>;
 
     fn terminate(&self) -> io::Result<()>;

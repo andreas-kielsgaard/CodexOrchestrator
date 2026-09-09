@@ -1,97 +1,18 @@
+mod execution_configuration;
+mod session_notifications;
+mod sessions;
+
+use session_notifications::SessionNotificationFanout;
+
 use std::{
     fs,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 
 use tauri::{Emitter, Manager};
 
 fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("worktree-review")
-}
-
-struct ManagedPlanBuilderNotifier {
-    inner: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier>,
-    registry: Arc<crate::orchestration::application::ManagedPlanBuilderRegistry>,
-    transition: Arc<
-        Mutex<
-            Option<
-                Weak<crate::orchestration::bootstrap_transition::PostConfirmationTransitionService>,
-            >,
-        >,
-    >,
-    sprint_transition: Arc<
-        Mutex<
-            Option<
-                Weak<crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService>,
-            >,
-        >,
-    >,
-    workflow_execution:
-        Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
-}
-impl crate::agent_sessions::application::AgentSessionNotifier for ManagedPlanBuilderNotifier {
-    fn notify(
-        &self,
-        notification: crate::agent_sessions::application::AgentSessionNotification,
-    ) -> Result<(), String> {
-        if let crate::agent_sessions::application::AgentSessionNotification::InvocationTerminal {
-            invocation,
-            ..
-        } = &notification
-        {
-            self.registry.on_terminal(invocation);
-        }
-        let execution = self
-            .workflow_execution
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())
-            .and_then(|service| service.upgrade());
-        if let Some(execution) = execution {
-            // Handoff failures have their own stored attempt; never relabel the sender's result.
-            let _ = execution.on_agent_notification(&notification);
-        }
-        // Runtime launch provenance is persisted synchronously before the process start returns.
-        // A Bootstrap-terminal transition can therefore launch the Runner and re-enter this
-        // notifier before the outer notification completes. Never retain a registry lock while
-        // dispatching that callback.
-        let transition = {
-            self.transition
-                .lock()
-                .map_err(|_| "post-confirmation notification registry is unavailable".to_string())?
-                .clone()
-        };
-        let transition_error = transition
-            .and_then(|service| service.upgrade())
-            .map(|service| service.on_agent_notification(&notification))
-            .transpose()
-            .err()
-            .map(|error| error.to_string());
-        let sprint_transition = {
-            self.sprint_transition
-                .lock()
-                .map_err(|_| "Sprint Runner notification registry is unavailable".to_string())?
-                .clone()
-        };
-        let sprint_transition_error = sprint_transition
-            .and_then(|service| service.upgrade())
-            .map(|service| service.on_agent_notification(&notification))
-            .transpose()
-            .err()
-            .map(|error| error.to_string());
-        let inner_error = self.inner.notify(notification).err();
-        match (transition_error, sprint_transition_error, inner_error) {
-            (None, None, None) => Ok(()),
-            (Some(error), None, None) | (None, Some(error), None) | (None, None, Some(error)) => {
-                Err(error)
-            }
-            (transition, sprint, inner) => Err([transition, sprint, inner]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join("; ")),
-        }
-    }
 }
 
 pub(crate) fn run() {
@@ -155,17 +76,13 @@ pub(crate) fn run() {
             .map_err(|error| error.to_string())?;
             let execution_support_service = execution_support.service();
             app.manage(execution_support);
-            // Startup never probes the provider. Capability failures are handled per invocation.
-            let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
-                "codex", None,
-            ));
             let registry =
                 Arc::new(crate::orchestration::application::ManagedPlanBuilderRegistry::default());
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
             let workflow_execution_notification = Arc::new(Mutex::new(None));
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
-                Arc::new(ManagedPlanBuilderNotifier {
+                Arc::new(SessionNotificationFanout {
                     inner: Arc::new(
                         crate::agent_sessions::transport::TauriAgentSessionNotifier::new(
                             app.handle().clone(),
@@ -176,65 +93,11 @@ pub(crate) fn run() {
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
-            let providers =
-                Arc::new(crate::agent_sessions::application::SystemAgentSessionProviders);
-            let application = Arc::new(
-                crate::agent_sessions::application::AgentSessionApplication::new(
-                    repository.clone(),
-                    runtime,
-                    notifier,
-                    providers.clone(),
-                    providers,
-                    None,
-                )
-                .with_native_profile_launch_authority(native_profiles.clone())
-                .with_session_harness_version_resolver(Arc::new(harness_catalog.clone()))
-                .with_session_harness_launch_authority(Arc::new(crate::harness_engine::session_binding::SessionProfileHarnessAuthority {
-                    engine: harness_engine.clone(), sessions: repository.clone(),
-                })),
-            );
-            application
-                .reconcile_startup()
-                .map_err(|error| error.to_string())?;
-            let selected_runtime_profile = Arc::new(
-                crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
-                    native_profiles.clone(),
-                    crate::execution_configuration::NativeCodexCapabilityExposure {
-                        capabilities: crate::execution_configuration::CapabilitySet {
-                            // This tool is supplied by the application, not discovered in Codex.
-                            mcp_tools: [(crate::workflows::mcp::SERVER_NAME.to_string(), [crate::workflows::mcp::TOOL_NAME.to_string()].into_iter().collect())].into_iter().collect(),
-                            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
-                                .into_iter()
-                                .collect(),
-                            reasoning_modes: [
-                                "low".to_string(),
-                                "medium".to_string(),
-                                "high".to_string(),
-                                "xhigh".to_string(),
-                                "max".to_string(),
-                                "ultra".to_string(),
-                            ]
-                            .into_iter()
-                            .collect(),
-                            ..crate::execution_configuration::CapabilitySet::default()
-                        },
-                        locked: crate::execution_configuration::RuntimeSelections::default(),
-                    },
-                ),
-            );
-            let capability_profiles = Arc::new(
-                crate::execution_configuration::CapabilityProfileService::new(
-                    Arc::new(
-                        crate::execution_configuration::SqliteCapabilityProfileRepository::from_database(
-                            database.clone(),
-                        ),
-                    ),
-                    selected_runtime_profile.clone(),
-                ),
-            );
+            let sessions::SessionServices { application, selected_runtime_profile, capability_profiles } = sessions::compose(
+                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier,
+            )?;
             let session_event_adapter = Arc::new(
-                crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::from_database(
-                    database.clone(),
+                crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
                     application.clone(),
                     repository.clone(),
                     selected_runtime_profile.clone(),
@@ -263,14 +126,6 @@ pub(crate) fn run() {
                 crate::execution_configuration::transport::CapabilityProfileTauriState::new(
                     capability_profiles.clone(),
                 ),
-            );
-            app.manage(
-                crate::agent_sessions::transport::AgentSessionProfileTauriState::new(Arc::new(
-                    crate::agent_sessions::application::AgentSessionProfileApplication::new(
-                        application.clone(),
-                        selected_runtime_profile,
-                    ),
-                )),
             );
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
@@ -388,6 +243,8 @@ pub(crate) fn run() {
                 .set_persisted_observer(transition.persisted_initiation_observer())?;
             initiation_confirmations
                 .set_button_context_scheduler(orchestration.clone())?;
+            // All terminal observers and managed MCP upstreams are ready before recovery can notify.
+            application.reconcile_startup().map_err(|error| error.to_string())?;
             transition
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
@@ -449,20 +306,27 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
-            crate::agent_sessions::transport::profile::load_pinned_agent_session_profile,
-            crate::agent_sessions::transport::profile::send_direct_user_agent_session_message,
+            crate::execution_configuration::transport::load_default_capability_profile,
+            crate::execution_configuration::transport::set_default_capability_profile,
+            crate::agent_sessions::transport::interactions::steer_agent_session,
+            crate::agent_sessions::transport::interactions::respond_to_agent_runtime_request,
+            crate::agent_sessions::transport::interactions::list_agent_session_interactions,
+            crate::agent_sessions::transport::interactions::resolve_agent_session_working_directory,
+            crate::agent_sessions::transport::selections::load_pinned_agent_session_profile,
+            crate::agent_sessions::transport::selections::send_direct_user_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::load_native_capability_inventory,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_configuration::transport::load_capability_profile,
             crate::execution_configuration::transport::create_capability_profile,
             crate::execution_configuration::transport::update_capability_profile,
             crate::execution_configuration::transport::delete_capability_profile,
             crate::session_events::transport::load_session_event_group,
-            crate::agent_sessions::transport::profile::start_direct_user_agent_session,
+            crate::agent_sessions::transport::selections::start_direct_user_agent_session,
             crate::workflows::execution_transport::create_workflow_recipe_instance,
             crate::workflows::execution_transport::list_workflow_recipe_instances,
             crate::workflows::execution_transport::load_workflow_recipe_instance,

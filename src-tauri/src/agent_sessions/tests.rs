@@ -481,6 +481,22 @@ impl AgentSessionRepository for FakeRepository {
                         .then_with(|| right.id.cmp(&left.id))
                 });
                 AgentSessionSummary {
+                    pending_request_count: super::interactions::pending_request_count(
+                        &invocations
+                            .iter()
+                            .map(|invocation| {
+                                crate::agent_sessions::ports::AgentInvocationHistory {
+                                    invocation: (*invocation).clone(),
+                                    launch_accepted_at: None,
+                                    events: state
+                                        .events
+                                        .get(&invocation.id)
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
                     session,
                     invocation_count: invocations.len() as u64,
                     latest_invocation_status: invocations.first().map(|value| value.status),
@@ -874,6 +890,7 @@ impl AgentRuntimeUpdateSink for CollectingUpdateSink {
 
 fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
     AgentSession {
+        workspace_origin: None,
         id: session_id(id),
         title: "Agent session".to_string(),
         availability: AgentSessionAvailability::Available,

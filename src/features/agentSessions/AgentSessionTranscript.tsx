@@ -1,3 +1,4 @@
+import { SessionInteractions } from './SessionInteractions';
 import {
   projectedTranscriptContent,
   type ProjectedTranscript,
@@ -11,6 +12,7 @@ import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
 
 interface AgentSessionTranscriptProps {
+  onRespondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
   transcript: ProjectedTranscript | null;
   content?: readonly ProjectedTranscriptContent[];
   loading: boolean;
@@ -34,6 +36,7 @@ export function AgentSessionTranscript({
   safeActivityDetails = false,
   showTechnicalDetails = true,
   processingHeading,
+  onRespondToRequest,
 }: AgentSessionTranscriptProps) {
   if (loading && !transcript) {
     return (
@@ -90,6 +93,12 @@ export function AgentSessionTranscript({
               safeOnly={safeActivityDetails}
               heading={processingHeading}
             />
+            {invocation.interactions?.length ? (
+              <SessionInteractions
+                interactions={invocation.interactions}
+                onRespond={onRespondToRequest}
+              />
+            ) : null}
             {invocation.finalResponse && (
               <article className="transcript-message agent-final-message">
                 <header>
@@ -121,7 +130,6 @@ export function AgentSessionTranscript({
               <TechnicalDiagnosticDisclosure
                 activity={invocation.technical}
                 diagnostics={invocation.diagnostics}
-                running={invocation.isActive}
                 safeOnly={safeActivityDetails}
               />
             )}

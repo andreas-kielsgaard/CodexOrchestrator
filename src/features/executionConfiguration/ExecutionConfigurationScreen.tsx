@@ -8,6 +8,7 @@ import type {
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
 import { CapabilityProfileEditor } from './CapabilityProfileEditor';
+import { NativeCapabilityInventory } from './NativeCapabilityInventory';
 import { runtimeProfileViewModel } from './presentation';
 import type { CapabilityProfileDraft } from './types';
 import './mountedExecutionConfiguration.css';
@@ -36,6 +37,7 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     name: profile.name,
     revision: profile.revision,
     allowedCapabilities: profile.allowedCapabilities,
+    defaults: profile.defaults,
   };
 }
 
@@ -54,6 +56,7 @@ export function ExecutionConfigurationScreen({
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
   const workspace = providedWorkspace ?? localWorkspace;
+  const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
@@ -72,11 +75,13 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles] = await Promise.all([
+      const [nextRuntime, nextProfiles, nextDefault] = await Promise.all([
         client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
+        client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
       ]);
       setRuntime(nextRuntime);
+      setDefaultProfileId(nextDefault);
       setProfiles(nextProfiles);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
@@ -105,7 +110,14 @@ export function ExecutionConfigurationScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
 
-  const runtimeView = useMemo(() => runtimeProfileViewModel(runtime), [runtime]);
+  const runtimeView = useMemo(
+    () =>
+      (() => {
+        const view = runtimeProfileViewModel(runtime);
+        return view;
+      })(),
+    [runtime],
+  );
 
   const selectProfile = (profile: CapabilityProfileDto) => {
     selectedRef.current = profile.capabilityProfileId;
@@ -127,11 +139,13 @@ export function ExecutionConfigurationScreen({
               capabilityProfileId: next.capabilityProfileId.trim(),
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
+              defaults: next.defaults,
             })
           : await client.updateCapabilityProfile({
               capabilityProfileId: next.capabilityProfileId,
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
+              defaults: next.defaults,
             });
       const working = workspace.acceptSave(
         key,
@@ -214,6 +228,37 @@ export function ExecutionConfigurationScreen({
           <Plus size={16} aria-hidden="true" />
           New profile
         </button>
+        {client.setDefaultCapabilityProfile && (
+          <label className="default-capability-profile">
+            <span>Default for new Agent Sessions</span>
+            <select
+              aria-label="Default Capability Profile"
+              value={defaultProfileId ?? ''}
+              disabled={loading || saving}
+              onChange={(event) => {
+                const id = event.target.value;
+                if (!id) return;
+                setSaving(true);
+                void client.setDefaultCapabilityProfile!(id)
+                  .then(() => setDefaultProfileId(id))
+                  .catch((cause) => setError(errorMessage(cause)))
+                  .finally(() => setSaving(false));
+              }}
+            >
+              <option value="" disabled>
+                Choose a required default
+              </option>
+              {profiles.map((profile) => (
+                <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+            {!defaultProfileId && (
+              <p>A default is required before starting a standalone session.</p>
+            )}
+          </label>
+        )}
         <nav aria-label="Saved Capability Profiles">
           {profiles.map((profile) => (
             <button
@@ -231,6 +276,10 @@ export function ExecutionConfigurationScreen({
         </nav>
       </aside>
       <section className="execution-configuration-screen__workspace">
+        <NativeCapabilityInventory client={client} />
+        {selectedId && selectedId === defaultProfileId && (
+          <p>Choose another default before deleting this profile.</p>
+        )}
         {error ? (
           <div className="execution-configuration-screen__error" role="alert">
             {error}
@@ -250,7 +299,7 @@ export function ExecutionConfigurationScreen({
               <button
                 className="execution-configuration-screen__delete"
                 type="button"
-                disabled={saving}
+                disabled={saving || selectedId === defaultProfileId}
                 onClick={() => void remove()}
               >
                 <Trash2 size={15} aria-hidden="true" />

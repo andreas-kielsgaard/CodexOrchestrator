@@ -6,3 +6,5 @@
  * Tauri, SQLite, process, or provider-protocol types.
  */
 export * from './contracts';
+
+export * from './selections';

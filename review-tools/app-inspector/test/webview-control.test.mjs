@@ -4,6 +4,8 @@ import test from 'node:test';
 
 import {
   boundedSelector,
+  assertClickable,
+  dispatchSelect,
   debuggerPort,
   loopbackUrl,
   parseOwnershipOutput,
@@ -13,6 +15,43 @@ import {
 } from '../webview-control.mjs';
 
 const ownershipPrefix = 'REVIEW_APP_WEBVIEW_OWNER_V1:';
+test('select uses the chosen control and rejects missing options before input', async () => {
+  const calls = [];
+  const protocol = {
+    async request(method, params = {}) {
+      calls.push({ method, params });
+      if (method === 'DOM.resolveNode') return { object: { objectId: 'select-7' } };
+      if (method === 'Runtime.callFunctionOn')
+        return {
+          result: {
+            value: params.functionDeclaration.includes('this.options')
+              ? ['first', 'second']
+              : usableGeometry(),
+          },
+        };
+      return {};
+    },
+  };
+  const target = { nodeId: 7, node: { nodeName: 'SELECT', attributes: [] } };
+  await dispatchSelect(protocol, target, 'second');
+  assert.deepEqual(calls.find((c) => c.method === 'DOM.focus').params, { nodeId: 7 });
+  assert.deepEqual(
+    calls.filter((c) => c.method === 'Input.dispatchKeyEvent').map((c) => c.params.key),
+    ['Home', 'Home', 'ArrowDown', 'ArrowDown'],
+  );
+  calls.length = 0;
+  await assert.rejects(dispatchSelect(protocol, target, 'missing'), /enabled option/);
+  assert.equal(
+    calls.some((c) => c.method === 'DOM.focus' || c.method.startsWith('Input.')),
+    false,
+  );
+});
+
+test('accepts semantic graph buttons and tabs, but rejects arbitrary elements', () => {
+  assert.doesNotThrow(() => assertClickable({ localName: 'g', attributes: ['role', 'button'] }));
+  assert.doesNotThrow(() => assertClickable({ localName: 'div', attributes: ['role', 'tab'] }));
+  assert.throws(() => assertClickable({ localName: 'div', attributes: [] }), /not a supported/);
+});
 const ownershipFrame = (value) =>
   `${ownershipPrefix}${Buffer.from(JSON.stringify(value), 'utf8').toString('base64')}`;
 

@@ -378,7 +378,7 @@ impl TransitionClock for SystemTransitionClock {
     }
 }
 
-fn initialize_bootstrap_transition_schema(connection: &Connection) -> Result<(), String> {
+pub(crate) fn initialize_bootstrap_transition_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(POST_CONFIRMATION_SCHEMA)
         .map_err(|error| format!("initialize transition schema: {error}"))?;
@@ -1407,10 +1407,11 @@ impl PostConfirmationTransitionService {
                             bootstrap_harness.mcp.required,
                         )
                         .map_err(TransitionError::Unavailable)?;
-                    let mut additional_args = bootstrap_harness.runtime_configuration_args();
-                    additional_args.extend(managed.injection().configuration_args.clone());
+                    let mut config_overrides = bootstrap_harness.runtime_config_overrides();
+                    config_overrides.extend(managed.injection().config_overrides.clone());
                     let extension = RuntimeLaunchExtension {
-                        additional_args,
+                        managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                        config_overrides,
                         environment: vec![managed.injection().environment.clone()],
                         initial_prompt_prefix: Some(bootstrap_harness.initial_prompt_prefix()),
                     };
@@ -1567,10 +1568,11 @@ impl PostConfirmationTransitionService {
                     }
                     self.repository
                         .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
-                    let mut additional_args = harness.runtime_configuration_args();
-                    additional_args.extend(injection.configuration_args);
+                    let mut config_overrides = harness.runtime_config_overrides();
+                    config_overrides.extend(injection.config_overrides);
                     let extension = RuntimeLaunchExtension {
-                        additional_args,
+                        managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                        config_overrides,
                         environment: vec![injection.environment],
                         initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
                     };
@@ -1666,8 +1668,8 @@ impl PostConfirmationTransitionService {
                         harness.mcp.required,
                     )
                     .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
-                let mut additional_args = harness.runtime_configuration_args();
-                additional_args.extend(injection.configuration_args);
+                let mut config_overrides = harness.runtime_config_overrides();
+                config_overrides.extend(injection.config_overrides);
                 let launch = self
                     .sessions
                     .send_idempotent_application_message_with_launch_observation(
@@ -1691,7 +1693,8 @@ impl PostConfirmationTransitionService {
                             },
                         },
                         Some(RuntimeLaunchExtension {
-                            additional_args,
+                            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                            config_overrides,
                             environment: vec![injection.environment],
                             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
                         }),
@@ -3221,7 +3224,7 @@ mod tests {
         let runner_extension = runner_request.launch_extension.as_ref().unwrap();
         assert_eq!(runner_extension.environment.len(), 1);
         assert!(runner_extension
-            .additional_args
+            .config_overrides
             .iter()
             .any(|value| value.contains("request_next_sprint_runner")));
 
@@ -4034,7 +4037,7 @@ mod tests {
             .launch_extension
             .as_ref()
             .unwrap()
-            .additional_args
+            .config_overrides
             .iter()
             .any(|argument| argument == "approval_policy=\"never\""));
 
@@ -5776,8 +5779,8 @@ mod tests {
         assert!(launch.submitted_text.contains("create Work Units, Handler or Implementer Sessions"));
         assert!(launch.submitted_text.contains("settle the Sprint, or advance to a later planning point"));
         let extension = launch.launch_extension.as_ref().unwrap();
-        assert_eq!(&extension.additional_args[..2], &["-c", "approval_policy=\"never\""]);
-        assert!(extension.additional_args.iter().any(|value| value.contains("mcp_servers.work_slice_planner_")));
+        assert_eq!(&extension.config_overrides[..1], &["approval_policy=\"never\""]);
+        assert!(extension.config_overrides.iter().any(|value| value.contains("mcp_servers.work_slice_planner_")));
         assert_eq!(extension.environment.len(), 1);
         assert!(extension.environment[0].0.starts_with("CODEX_ORCHESTRATOR_MCP_"));
 
@@ -6434,7 +6437,7 @@ mod tests {
         );
         fixture.runtime.stage_candidate_change(&expected_implementer_invocation);
         let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
-        let endpoint = injection.configuration_args.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
+        let endpoint = injection.config_overrides.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
         let bearer = injection.environment.1.clone();
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
             let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
@@ -6534,8 +6537,8 @@ mod tests {
         for handler_launch in [original_handler_launch, action_handler_launch] {
             let extension = handler_launch.launch_extension.as_ref().unwrap();
             assert_eq!(
-                &extension.additional_args[..2],
-                &["-c", "approval_policy=\"never\""]
+                &extension.config_overrides[..1],
+                &["approval_policy=\"never\""]
             );
             assert_eq!(
                 extension.initial_prompt_prefix.as_ref().unwrap().source,
@@ -6544,14 +6547,12 @@ mod tests {
         }
         let implementer_extension = implementer_launch.launch_extension.as_ref().unwrap();
         assert_eq!(
-            &implementer_extension.additional_args[..2],
-            &["-c", "approval_policy=\"never\""]
+            &implementer_extension.config_overrides[..1],
+            &["approval_policy=\"never\""]
         );
-        assert!(implementer_extension.additional_args.contains(&"--ignore-rules".into()));
-        assert!(implementer_extension.additional_args.windows(2).any(|arguments| {
-            arguments == ["-c", "mcp_servers={}"]
-        }));
-        assert!(implementer_extension.additional_args.iter().any(|argument| {
+        assert!(implementer_extension.ignore_user_rules);
+        assert!(implementer_extension.config_overrides.iter().any(|value| value == "mcp_servers={}"));
+        assert!(implementer_extension.config_overrides.iter().any(|argument| {
             argument.starts_with("projects.'") && argument.ends_with(".trust_level=\"trusted\"")
         }));
         assert!(implementer_extension.environment.is_empty());
@@ -9651,7 +9652,7 @@ mod tests {
         assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some());
         let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
         assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
-        assert!(pinned.profile.runtime_configuration_args().iter().any(|value| value == "approval_policy=\"never\""));
+        assert!(pinned.profile.runtime_config_overrides().iter().any(|value| value == "approval_policy=\"never\""));
         assert_eq!(pinned.profile.mcp.enabled_tools, ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"]);
         let evidence: serde_json::Value = serde_json::from_str(&accepted.transition.handler_review_evidence_for_test(&review).unwrap()).unwrap();
         assert_eq!(evidence["summary"], "Implemented the reporting boundary.");

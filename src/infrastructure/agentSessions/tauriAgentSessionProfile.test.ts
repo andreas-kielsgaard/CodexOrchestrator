@@ -1,10 +1,10 @@
 import { vi } from 'vitest';
-import { createTauriAgentSessionProfileClient } from './tauriAgentSessionProfileClient';
+import { createTauriAgentSessionClient } from '../agentSessions/tauriAgentSessionClient';
 
 describe('Tauri Agent Session Profile client', () => {
   it('keeps pinned-profile reads separate from message-local runtime choices', async () => {
     const invoke = vi.fn().mockResolvedValue(null);
-    const client = createTauriAgentSessionProfileClient(invoke);
+    const client = createTauriAgentSessionClient({ invoke, listen: async () => () => undefined });
 
     await client.loadPinnedProfile('session-1');
     await client.sendDirectUserMessage({

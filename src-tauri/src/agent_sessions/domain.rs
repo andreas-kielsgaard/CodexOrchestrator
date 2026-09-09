@@ -82,6 +82,8 @@ pub(crate) struct AgentRuntimeBinding {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSession {
+    #[serde(default)]
+    pub(crate) workspace_origin: Option<String>,
     pub(crate) id: AgentSessionId,
     pub(crate) title: String,
     pub(crate) availability: AgentSessionAvailability,

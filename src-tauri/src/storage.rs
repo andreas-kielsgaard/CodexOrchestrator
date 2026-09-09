@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 47;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 48;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
+
+#[cfg(test)]
+mod session_migration_tests;
 
 pub(crate) fn active_database_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(ACTIVE_DATABASE_FILE_NAME)
@@ -34,7 +37,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         let transaction =
             rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
-                .map_err(|error| format!("Unable to begin active v47 schema evolution: {error}"))?;
+                .map_err(|error| format!("Unable to begin active v48 schema evolution: {error}"))?;
         crate::orchestration::accepted_integration::initialize_accepted_integration_schema(
             &transaction,
         )
@@ -59,12 +62,13 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to commit active v47 schema evolution: {error}"))?;
+            .map_err(|error| format!("Unable to commit active v48 schema evolution: {error}"))?;
         return Ok(());
     }
-    if (1..=46).contains(&current_version) {
+    if (1..=47).contains(&current_version) {
         let transaction =
             rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
                 .map_err(|error| format!("Unable to begin active schema migration: {error}"))?;
@@ -337,6 +341,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version == 14 {
             transaction
                 .execute_batch(
@@ -438,6 +443,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
     initialize_replacement_workflow_schema(&transaction)?;
+    crate::harness_engine::migrations::migrate_bindings(&transaction)?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
         .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -462,7 +468,7 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
         )
         .map_err(|error| format!("Unable to retire Workflow V1 storage: {error}"))?;
     crate::agent_sessions::repository::ensure_agent_session_ownership_schema(connection)?;
-    crate::agent_sessions::session_event_adapter::initialize_session_address_storage(connection)?;
+    crate::agent_sessions::repository::initialize_session_address_storage(connection)?;
     crate::execution_configuration::initialize_capability_profile_storage(connection)?;
     crate::harness_engine::catalog_repository::initialize_harness_catalog_storage(connection)?;
     crate::identities::repository::initialize_identity_storage(connection)?;
@@ -498,11 +504,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 8)
+        .map(|table_count| table_count == 9)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let workflow_v1_schema_is_absent = connection
         .query_row(
@@ -514,11 +520,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect retired Workflow V1 schema: {error}"))?;
     let session_profile_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json')",
+            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json','workspace_origin')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|column_count| column_count == 3)
+        .map(|column_count| column_count == 4)
         .map_err(|error| format!("Unable to inspect Agent Session profile schema: {error}"))?;
     let harness_binding_schema_is_present = connection
         .query_row(
@@ -681,6 +687,7 @@ mod tests {
                 "epic_settlement_unresolved",
                 "epic_settlements",
                 "execution_capability_profiles",
+                "execution_default_capability_profile",
                 "execution_support_attempt_authorizations",
                 "execution_support_grants",
                 "file_review_changed_files",

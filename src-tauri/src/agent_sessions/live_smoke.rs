@@ -1153,6 +1153,7 @@ mod tests {
     #[test]
     fn resume_target_is_read_from_the_target_position_not_argument_membership() {
         let spec = ProcessLaunchSpec {
+            remove_environment: Vec::new(),
             program: "codex".into(),
             args: vec![
                 "exec".into(),
