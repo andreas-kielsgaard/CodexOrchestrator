@@ -1,4 +1,5 @@
 mod prompt_agent;
+mod stop_session;
 #[cfg(test)]
 mod tests;
 mod tools;
@@ -36,14 +37,21 @@ impl OtpPackage for WorkflowPackage {
                     outputs:vec![data_output("completed","Completed",json!({"output":{"type":"string"},"sourceNode":source}))],configuration:vec![]},
                 ToolDescriptor {id:"prompt_agent".into(),name:"Prompt agent".into(),
                     description:"Choose destination-node sessions and request delivery of the configured prompt.".into(),
-                    entrypoint:Entrypoint::Action,
+                    entrypoint:Entrypoint::Action { uses_prompt: true },
                     outputs:vec![OutputDescriptor{id:"session".into(),name:"Agent session".into(),kind:OutputKind::SessionRequest,schema:json!({"type":"object"})}],
                     configuration:prompt_agent::fields()},
+                ToolDescriptor {id:"stop_session".into(), name:"Stop session".into(),
+                    description:"Request cancellation of one running session of the destination node. The session remains available for later prompts.".into(),
+                    entrypoint:Entrypoint::Action { uses_prompt: false },
+                    outputs:vec![OutputDescriptor{id:"stop".into(),name:"Session cancellation".into(),kind:OutputKind::SessionStopRequest,schema:json!({"type":"object"})}],
+                    configuration:stop_session::fields()},
             ] }
     }
 
     fn validate_configuration(&self, tool: &str, configuration: &Value) -> Result<(), String> {
-        if tool == "prompt_agent" {
+        if tool == "stop_session" {
+            stop_session::validate(configuration)
+        } else if tool == "prompt_agent" {
             prompt_agent::validate(configuration)
         } else if self.descriptor().tools.iter().any(|item| item.id == tool)
             && configuration == &json!({})
@@ -63,6 +71,7 @@ impl OtpPackage for WorkflowPackage {
         host: &dyn OtpHost,
     ) -> Result<ToolResult, String> {
         match context.capability.tool.as_str() {
+            "stop_session" => stop_session::invoke(context, input, host),
             "prompt_agent" => prompt_agent::invoke(context, input, host),
             _ => tools::invoke(context, input, host),
         }

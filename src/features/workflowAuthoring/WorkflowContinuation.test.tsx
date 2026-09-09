@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkflowAuthoringScreen } from './WorkflowAuthoringScreen';
 import { repairClients } from './testFixtures';
@@ -36,10 +36,9 @@ it('discovers continuation fields and saves ordered file selections for multiple
   );
   const mounted = render(element);
   await user.click(await screen.findByRole('button', { name: 'Edit Review changes' }));
-  await user.selectOptions(
-    screen.getByLabelText('Trigger output'),
-    JSON.stringify(['workflow', 'trigger_workflow_continuation', 'continuation']),
-  );
+  await user.click(screen.getByRole('button', { name: 'Set trigger' }));
+  await user.click(screen.getByRole('button', { name: 'Workflow continuation · Continuation' }));
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set trigger' }));
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));
   expect(screen.getByLabelText('Output field')).toHaveValue('outputFiles');
   await user.selectOptions(screen.getByLabelText('Output field'), 'sourceNode');
@@ -52,8 +51,17 @@ it('discovers continuation fields and saves ordered file selections for multiple
   await user.selectOptions(screen.getAllByLabelText('Include files from node')[1], 'reviewer');
   await user.selectOptions(screen.getAllByLabelText('File association')[1], 'edited');
   await user.click(screen.getByRole('button', { name: 'Move prompt source 3 up' }));
-  await user.selectOptions(screen.getByLabelText('Session mode'), 'new');
-  expect(screen.queryByLabelText('Sessions to select')).not.toBeInTheDocument();
+  await user.selectOptions(
+    within(screen.getByRole('region', { name: 'Selected flow element' })).getByLabelText(
+      'Session mode',
+    ),
+    'new',
+  );
+  expect(
+    within(screen.getByRole('region', { name: 'Selected flow element' })).queryByLabelText(
+      'Sessions to select',
+    ),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Close editor' }));
   await user.click(screen.getByRole('button', { name: 'Save draft' }));
   await waitFor(() => expect(fixture.states[0].draft.revision).toBe(2));
@@ -72,10 +80,12 @@ it('discovers continuation fields and saves ordered file selections for multiple
   mounted.unmount();
   render(element);
   await user.click(await screen.findByRole('button', { name: 'Edit Review changes' }));
-  expect(screen.getByLabelText('Trigger output')).toHaveValue(
-    JSON.stringify(['workflow', 'trigger_workflow_continuation', 'continuation']),
-  );
-  expect(screen.getByLabelText('Session mode')).toHaveValue('new');
+  expect(screen.getByText('Workflow continuation · Continuation')).toBeVisible();
+  expect(
+    within(screen.getByRole('region', { name: 'Selected flow element' })).getByLabelText(
+      'Session mode',
+    ),
+  ).toHaveValue('new');
   expect(screen.getAllByLabelText('Include files from node')[0]).toHaveValue('reviewer');
   expect(screen.getAllByLabelText('File association')[1]).toHaveValue('created');
 });

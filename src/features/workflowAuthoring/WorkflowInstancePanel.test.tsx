@@ -8,7 +8,42 @@ import type {
   WorkflowInstanceDetails,
 } from '../../application/workflowInstances';
 import { repairRecipe } from './testFixtures';
+import { otpCatalogue } from './testFixtures';
 import { WorkflowInstancePanel } from './WorkflowInstancePanel';
+
+it('runs a Stop destination without prompt text and displays its no-op result', async () => {
+  const value = details('stop');
+  const stopped = {
+    ...value,
+    instance: {
+      ...value.instance,
+      recipe: {
+        ...value.instance.recipe,
+        entryAction: { package: 'workflow', tool: 'stop_session' },
+      },
+    },
+  };
+  const messageNode = vi.fn(async () => ({
+    attemptId: 'stop',
+    eventGroups: [],
+    stopOutcomes: [],
+    message: 'No running destination session; nothing to stop.',
+  }));
+  const client: WorkflowInstanceClient = {
+    load: async () => stopped,
+    list: async () => [],
+    create: async () => stopped.instance,
+    messageNode,
+  };
+  render(<WorkflowInstancePanel instanceId="stop" client={client} packages={otpCatalogue} />);
+  await screen.findByRole('button', { name: 'Run action' });
+  expect(screen.queryByRole('textbox', { name: 'Request' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Run action' }));
+  await waitFor(() =>
+    expect(messageNode).toHaveBeenCalledWith(expect.objectContaining({ text: '' })),
+  );
+  expect(await screen.findByRole('status')).toHaveTextContent('nothing to stop');
+});
 
 function details(id: string): WorkflowInstanceDetails {
   return {
@@ -81,7 +116,7 @@ it('ignores results from an old instance and refreshes errors after an attempt i
   };
   vi.mocked(client.load).mockResolvedValue(updated);
   act(() => changed('b'));
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Workflow deliveries' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Workflow actions' }));
   await waitFor(() => expect(screen.getByText('Cannot read prompt file plan.md')).toBeVisible());
 });
 
@@ -140,7 +175,12 @@ it('opens each recorded group in the main delivery inspector and can return to t
     load: async () => loaded,
     list: async () => [],
     create: async () => value.instance,
-    messageNode: async () => recorded,
+    messageNode: async () => ({
+      attemptId: 'test',
+      eventGroups: [recorded],
+      stopOutcomes: [],
+      message: '',
+    }),
   };
   const queryClient: SessionEventQueryClient = {
     loadRecordedEvent: vi.fn(async () => recorded),
@@ -149,7 +189,7 @@ it('opens each recorded group in the main delivery inspector and can return to t
     listDeliveriesForSession: async () => [],
   };
   render(<WorkflowInstancePanel instanceId="inspect" client={client} queryClient={queryClient} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Expand Workflow deliveries' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Expand Workflow actions' }));
   fireEvent.click(screen.getByRole('button', { name: 'Show delivery 2' }));
   const inspector = await screen.findByRole('region', { name: 'Workflow delivery details' });
   expect(queryClient.loadRecordedEvent).toHaveBeenCalledWith(eventGroupId);

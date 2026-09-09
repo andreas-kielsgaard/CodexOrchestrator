@@ -1,0 +1,60 @@
+.technical-settings {
+  padding: 24px;
+  min-width: 0;
+  overflow: auto;
+}
+.technical-settings > h1 {
+  margin-top: 0;
+}
+.technical-settings [role='tablist'] {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #ccd7d0;
+  margin-bottom: 18px;
+}
+.technical-settings [role='tab'] {
+  font: inherit;
+  padding: 12px 18px;
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+}
+.technical-settings [role='tab'][aria-selected='true'] {
+  border-bottom-color: #205943;
+  font-weight: 700;
+}
+.technical-settings [role='tabpanel'][hidden] {
+  display: none;
+}
+.technical-settings .native-profile-settings {
+  padding: 0;
+}
+.otp-configuration {
+  max-width: 850px;
+}
+.otp-configuration header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.otp-configuration article {
+  margin-top: 16px;
+  padding: 18px 22px;
+  border: 1px solid #ccd7d0;
+  border-radius: 12px;
+  background: #fffdfa;
+}
+.otp-configuration h3 {
+  margin: 0;
+}
+.otp-configuration article header span {
+  color: #205943;
+  background: #e3eee4;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.otp-configuration li {
+  margin: 9px 0;
+}

@@ -4,7 +4,9 @@ use crate::{
     workflows::{
         compiled_plan::WorkflowSessionCreation,
         execution::{node_address, WorkflowExecutionService},
-        instances::{RecipeInstance, WorkflowEventAttempt},
+        instances::{
+            RecipeInstance, SessionStopOutcome, WorkflowActionResult, WorkflowEventAttempt,
+        },
     },
 };
 use serde_json::{json, Value};
@@ -115,7 +117,7 @@ impl WorkflowExecutionService {
         payload: Value,
         configuration: Value,
         inputs: Result<Vec<ResolvedInput>, String>,
-    ) -> Result<Vec<SessionEventResult>, String> {
+    ) -> Result<WorkflowActionResult, String> {
         let identity = serde_json::to_vec(&(
             context.instance_id.as_str(),
             &context.source,
@@ -147,11 +149,17 @@ impl WorkflowExecutionService {
             payload,
             created_at: chrono::Utc::now().to_rfc3339(),
             session_requests: vec![],
+            stop_outcomes: vec![],
+            message: String::new(),
             event_groups: vec![],
             error: None,
         };
         if !self.instances.begin_attempt(&attempt)? {
-            return Ok(vec![]);
+            return Ok(WorkflowActionResult {
+                attempt_id: attempt.id.clone(),
+                message: "Already processed".into(),
+                ..WorkflowActionResult::default()
+            });
         }
         let mut results = Vec::new();
         let run = (|| -> Result<(), String> {
@@ -160,11 +168,16 @@ impl WorkflowExecutionService {
                 instance,
                 context,
             };
+            let descriptor = self.registry.tool(&context.capability)?;
+            let uses_prompt = matches!(
+                descriptor.entrypoint,
+                Entrypoint::Action { uses_prompt: true }
+            );
             let result = self.registry.invoke(
                 context,
                 ToolInput::Action {
                     configuration,
-                    inputs: inputs?,
+                    inputs: if uses_prompt { inputs? } else { vec![] },
                 },
                 &host,
             )?;
@@ -177,6 +190,15 @@ impl WorkflowExecutionService {
             {
                 return Err("Tool did not declare a Session Request output".into());
             }
+            if !result.stop_requests.is_empty()
+                && !descriptor
+                    .outputs
+                    .iter()
+                    .any(|o| o.kind == OutputKind::SessionStopRequest)
+            {
+                return Err("Tool did not declare a Session Stop Request output".into());
+            }
+            attempt.message = result.text;
             attempt.session_requests = result.session_requests;
             // Store the selected requests before any external invocation is launched.
             self.instances.update_attempt(&attempt)?;
@@ -189,6 +211,9 @@ impl WorkflowExecutionService {
                 self.instances.update_attempt(&attempt)?;
                 results.push(dispatched);
             }
+            for request in result.stop_requests {
+                self.execute_stop_request(instance, context, &mut attempt, &request)?;
+            }
             Ok(())
         })();
         attempt.error = run.as_ref().err().cloned();
@@ -197,7 +222,80 @@ impl WorkflowExecutionService {
             observer(&instance.id)
         }
         run?;
-        Ok(results)
+        Ok(WorkflowActionResult {
+            attempt_id: attempt.id,
+            event_groups: results,
+            stop_outcomes: attempt.stop_outcomes,
+            message: attempt.message,
+        })
+    }
+
+    fn execute_stop_request(
+        &self,
+        instance: &RecipeInstance,
+        context: &InvocationContext,
+        attempt: &mut WorkflowEventAttempt,
+        request: &SessionStopRequest,
+    ) -> Result<(), String> {
+        let index = attempt.stop_outcomes.len();
+        attempt.stop_outcomes.push(SessionStopOutcome {
+            node_id: request.node_id.clone(),
+            session_id: request.session_id.clone(),
+            invocation_id: None,
+            status: "pending".into(),
+            error: None,
+        });
+        self.instances.update_attempt(attempt)?;
+        let execute = (|| -> Result<(), String> {
+            if context.output_node_id.as_deref() != Some(request.node_id.as_str()) {
+                return Err("Stop request targets an unbound node".into());
+            }
+            let address = node_address(&instance.id, &request.node_id)?;
+            let entry = self
+                .directory
+                .find_exact(&reference(
+                    "orchestrator.agent_sessions",
+                    "session",
+                    &request.session_id,
+                )?)
+                .map_err(|e| e.to_string())?
+                .ok_or("Stop Session is missing")?;
+            if entry.logical_address.as_ref() != Some(&address) {
+                return Err("Stop Session belongs to another Workflow node".into());
+            }
+            let history = self
+                .sessions
+                .load_session_history(
+                    &crate::agent_sessions::domain::AgentSessionId::new(&request.session_id)
+                        .map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?
+                .ok_or("Stop Session is missing")?;
+            let active = history
+                .invocations
+                .iter()
+                .find(|i| i.invocation.status.is_active())
+                .map(|i| i.invocation.id.to_string());
+            attempt.stop_outcomes[index].invocation_id = active.clone();
+            self.instances.update_attempt(attempt)?;
+            let requested = match active {
+                Some(id) => self
+                    .session_control
+                    .as_ref()
+                    .ok_or("Session cancellation is unavailable")?
+                    .cancel(&id)?,
+                None => false,
+            };
+            attempt.stop_outcomes[index].status =
+                if requested { "requested" } else { "no_op" }.into();
+            Ok(())
+        })();
+        if let Err(error) = &execute {
+            attempt.stop_outcomes[index].status = "failed".into();
+            attempt.stop_outcomes[index].error = Some(error.clone());
+        }
+        self.instances.update_attempt(attempt)?;
+        execute
     }
 
     fn execute_session_request(
@@ -468,6 +566,7 @@ impl WorkflowExecutionService {
         };
         let plan = self.compile_instance(&instance.id, None)?;
         let mut deliveries = 0;
+        let mut stops = 0;
         let mut failures = vec![];
         for connection in plan
             .connections
@@ -481,12 +580,20 @@ impl WorkflowExecutionService {
                 ..context.clone()
             };
             let result = (|| {
-                let inputs = crate::workflows::prompt_content::resolve_inputs(
-                    instance,
-                    connection,
-                    &payload,
-                    self.sessions.as_ref(),
-                );
+                let action_tool = self.registry.tool(&connection.action)?;
+                let inputs = if matches!(
+                    action_tool.entrypoint,
+                    Entrypoint::Action { uses_prompt: true }
+                ) {
+                    crate::workflows::prompt_content::resolve_inputs(
+                        instance,
+                        connection,
+                        &payload,
+                        self.sessions.as_ref(),
+                    )
+                } else {
+                    Ok(vec![])
+                };
                 self.dispatch_otp_action(
                     instance,
                     &action,
@@ -498,7 +605,12 @@ impl WorkflowExecutionService {
             })();
             match result {
                 Ok(results) => {
-                    for result in results {
+                    stops += results
+                        .stop_outcomes
+                        .iter()
+                        .filter(|s| s.status == "requested")
+                        .count();
+                    for result in results.event_groups {
                         for delivery in result.deliveries {
                             match delivery.outcome {
                                 DeliveryOutcome::Dispatched { .. } => deliveries += 1,
@@ -511,7 +623,7 @@ impl WorkflowExecutionService {
             }
         }
         if failures.is_empty() {
-            Ok(RoutingReceipt { deliveries })
+            Ok(RoutingReceipt { deliveries, stops })
         } else {
             Err(failures.join("; "))
         }

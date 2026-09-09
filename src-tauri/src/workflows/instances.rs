@@ -39,9 +39,32 @@ pub(crate) struct WorkflowEventAttempt {
     pub(crate) output: Option<OutputRef>,
     pub(crate) payload: serde_json::Value,
     pub(crate) session_requests: Vec<SessionRequest>,
+    #[serde(default)]
+    pub(crate) stop_outcomes: Vec<SessionStopOutcome>,
+    #[serde(default)]
+    pub(crate) message: String,
     pub(crate) created_at: String,
     pub(crate) event_groups: Vec<ReferenceIdentity>,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionStopOutcome {
+    pub node_id: String,
+    pub session_id: String,
+    pub invocation_id: Option<String>,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowActionResult {
+    pub attempt_id: String,
+    pub event_groups: Vec<crate::session_events::SessionEventResult>,
+    pub stop_outcomes: Vec<SessionStopOutcome>,
+    pub message: String,
 }
 
 pub(crate) struct WorkflowInstanceStore {

@@ -1,3 +1,5 @@
+import { WorkflowDestinationActionPicker } from './WorkflowDestinationActionPicker';
+import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { GitBranch, Plus, RefreshCw, Save } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
@@ -350,6 +352,7 @@ export function WorkflowAuthoringScreen({
             sessionClient={sessionClient}
             profileClient={profileClient}
             queryClient={queryClient}
+            packages={packages}
           />
         ) : !draft ? (
           <div className="workflow-authoring-screen__empty">
@@ -387,6 +390,36 @@ export function WorkflowAuthoringScreen({
               </div>
             </header>
 
+            <CollapsibleSection
+              title="User request destination"
+              className="workflow-entry-destination"
+              defaultExpanded={false}
+            >
+              <label>
+                Initial destination node
+                <select
+                  value={draft.startingNodeId ?? ''}
+                  onChange={(event) =>
+                    editDraft({ ...draft, startingNodeId: event.target.value || null })
+                  }
+                >
+                  <option value="">Choose a node</option>
+                  {draft.nodes.map((node) => (
+                    <option key={node.nodeId} value={node.nodeId}>
+                      {node.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <WorkflowDestinationActionPicker
+                packages={packages}
+                action={draft.entryAction}
+                configuration={draft.entryConfiguration ?? {}}
+                onChange={(entryAction, entryConfiguration) =>
+                  editDraft({ ...draft, entryAction, entryConfiguration })
+                }
+              />
+            </CollapsibleSection>
             <div className="workflow-authoring-screen__body">
               <WorkflowCanvas
                 key={draft.recipeId}
@@ -540,7 +573,10 @@ export function WorkflowAuthoringScreen({
                     <WorkflowNodeEditor
                       node={selectedNode}
                       draft={draft}
-                      runtime={runtime}
+                      runtime={{
+                        ...runtime,
+                        catalogs: { ...runtime.catalogs, otpPackages: packages },
+                      }}
                       profiles={profiles}
                       profileValues={profileValues}
                       identities={identities}

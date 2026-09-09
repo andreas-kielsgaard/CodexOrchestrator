@@ -27,6 +27,8 @@ pub(crate) struct WorkflowRecipeDraft {
     pub(crate) revision: u64,
     pub(crate) starting_node_id: Option<String>,
     pub(crate) entry_action: CapabilityRef,
+    #[serde(default = "empty_configuration")]
+    pub(crate) entry_configuration: serde_json::Value,
     pub(crate) nodes: Vec<WorkflowAuthoringNode>,
     pub(crate) connections: Vec<WorkflowAuthoringConnection>,
 }
@@ -254,6 +256,7 @@ impl WorkflowRecipeDraft {
 
         Ok(WorkflowCompiledPlan {
             entry_action: self.entry_action.clone(),
+            entry_configuration: self.entry_configuration.clone(),
             instance: WorkflowInstanceReference::new(instance_id.to_string())
                 .map_err(|error| error.to_string())?,
             recipe: WorkflowRecipeReference::new(self.recipe_id.clone())
@@ -420,6 +423,7 @@ mod tests {
             name: "Review".into(),
             revision: 1,
             starting_node_id: Some("planner".into()),
+            entry_configuration: serde_json::json!({}),
             entry_action: crate::otp_api::CapabilityRef {
                 package: "workflow".into(),
                 tool: "prompt_agent".into(),
@@ -500,4 +504,8 @@ mod tests {
 
         assert!(draft.compilation_input("instance-1", &profiles).is_err());
     }
+}
+
+fn empty_configuration() -> serde_json::Value {
+    serde_json::json!({})
 }

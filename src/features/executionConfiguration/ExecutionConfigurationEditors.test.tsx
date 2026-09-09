@@ -98,7 +98,10 @@ describe('Execution Configuration editors', () => {
     await user.type(screen.getByRole('textbox', { name: 'Capability profile ID' }), 'reviewer');
     await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Reviewer');
     await user.click(screen.getByRole('checkbox', { name: 'GPT 5.6' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Message Session' }));
+    await user.click(screen.getByRole('button', { name: 'Set MCP tools' }));
+    await user.click(screen.getByRole('button', { name: /MCP server: orchestrator/ }));
+    await user.click(screen.getByRole('checkbox', { name: 'Include Message Session' }));
+    await user.click(screen.getByRole('button', { name: 'Apply selection' }));
     await user.click(screen.getByRole('button', { name: 'Create profile' }));
 
     expect(onSave).toHaveBeenCalledWith(

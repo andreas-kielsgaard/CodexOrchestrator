@@ -193,7 +193,7 @@ async fn continuation_mcp_routes_only_this_node_and_call_without_closing_the_sou
     assert!(no_connections["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
-        .contains("0 delivery"));
+        .contains("0 prompt delivery"));
     assert_eq!(fixture.launches().len(), 3);
 }
 

@@ -47,6 +47,8 @@ export interface WorkflowEventAttempt {
       { readonly kind: 'new' } | { readonly kind: 'exact'; readonly sessionId: string };
     readonly prompt: readonly { readonly reference: string; readonly text: string }[];
   }[];
+  readonly stopOutcomes?: readonly SessionStopOutcome[];
+  readonly message?: string;
   readonly createdAt: string;
   readonly eventGroups: readonly ReferenceIdentityDto[];
   readonly error: string | null;
@@ -55,6 +57,19 @@ export interface WorkflowInstanceDetails {
   readonly instance: WorkflowRecipeInstance;
   readonly sessions: readonly WorkflowInstanceSession[];
   readonly attempts: readonly WorkflowEventAttempt[];
+}
+export interface SessionStopOutcome {
+  readonly nodeId: string;
+  readonly sessionId: string;
+  readonly invocationId: string | null;
+  readonly status: 'pending' | 'requested' | 'no_op' | 'failed';
+  readonly error: string | null;
+}
+export interface WorkflowActionResult {
+  readonly attemptId: string;
+  readonly eventGroups: readonly SessionEventResultDto[];
+  readonly stopOutcomes: readonly SessionStopOutcome[];
+  readonly message: string;
 }
 /** Runtime instances are separate from editable recipes. Creation does not launch a Session. */
 export interface WorkflowInstanceClient {
@@ -72,5 +87,5 @@ export interface WorkflowInstanceClient {
     readonly instanceId: string;
     readonly nodeId: string | null;
     readonly text: string;
-  }): Promise<SessionEventResultDto>;
+  }): Promise<WorkflowActionResult>;
 }

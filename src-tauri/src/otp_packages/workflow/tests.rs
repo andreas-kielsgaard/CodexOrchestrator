@@ -27,7 +27,10 @@ impl OtpHost for Host {
         payload: Value,
     ) -> Result<RoutingReceipt, String> {
         self.emitted.lock().unwrap().push((output.into(), payload));
-        Ok(RoutingReceipt { deliveries: 2 })
+        Ok(RoutingReceipt {
+            deliveries: 2,
+            stops: 0,
+        })
     }
 }
 fn context(tool: &str) -> InvocationContext {
@@ -60,7 +63,7 @@ fn package_emits_declared_data_without_consuming_the_source_session() {
         )
         .unwrap();
     assert!(result.session_requests.is_empty());
-    assert!(result.text.contains("2 delivery"));
+    assert!(result.text.contains("2 prompt delivery"));
     assert_eq!(
         host.emitted.lock().unwrap()[0],
         (
@@ -211,4 +214,48 @@ fn catalogue_serialization_supplies_the_designer_fixture() {
         .join("../src/features/workflowAuthoring/otpCatalogue.fixture.json");
     let fixture: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(fixture, value);
+}
+
+#[test]
+fn stop_selects_one_running_session_with_configured_ordering() {
+    let make = |id: &str, running, created, addressed| NodeSession {
+        id: id.into(),
+        running,
+        created_sequence: created,
+        last_addressed_sequence: Some(addressed),
+        created_by_event: None,
+        created_by_session: None,
+    };
+    let host = Host {
+        sessions: vec![
+            make("idle", false, 9, 99),
+            make("newest", true, 3, 4),
+            make("addressed", true, 1, 8),
+        ],
+        ..Host::default()
+    };
+    let run = |value| {
+        WorkflowPackage
+            .invoke(
+                &context("stop_session"),
+                ToolInput::Action {
+                    configuration: value,
+                    inputs: vec![],
+                },
+                &host,
+            )
+            .unwrap()
+    };
+    let newest = run(json!({}));
+    assert_eq!(newest.stop_requests.len(), 1);
+    assert_eq!(newest.stop_requests[0].session_id, "newest");
+    assert_eq!(
+        run(json!({"ordering":"last_addressed"})).stop_requests[0].session_id,
+        "addressed"
+    );
+    assert!(newest.session_requests.is_empty());
+    assert!(host.emitted.lock().unwrap().is_empty());
+    assert!(WorkflowPackage
+        .validate_configuration("stop_session", &json!({"mode":"new"}))
+        .is_err());
 }

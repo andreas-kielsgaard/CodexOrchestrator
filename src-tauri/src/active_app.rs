@@ -290,7 +290,7 @@ pub(crate) fn run() {
                 workflow_authoring, session_events,
                 Arc::new(crate::workflows::instances::WorkflowInstanceStore::open(&database_path)?),
                 session_event_adapter, repository.clone(),
-            ).with_record_observer(Arc::new(move |instance_id| {
+            ).with_session_control(Arc::new(crate::otp_host::session_control::AgentSessionControl { application: application.clone(), repository: repository.clone() })).with_record_observer(Arc::new(move |instance_id| {
                 let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));

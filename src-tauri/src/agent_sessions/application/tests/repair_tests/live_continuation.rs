@@ -121,13 +121,21 @@ impl LiveRun {
             profiles,
             crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         ));
-        let execution = Arc::new(WorkflowExecutionService::new(
-            authoring.clone(),
-            events,
-            Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
-            adapter,
-            repository.clone(),
-        ));
+        let execution = Arc::new(
+            WorkflowExecutionService::new(
+                authoring.clone(),
+                events,
+                Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
+                adapter,
+                repository.clone(),
+            )
+            .with_session_control(Arc::new(
+                crate::otp_host::session_control::AgentSessionControl {
+                    application: sessions.clone(),
+                    repository: repository.clone(),
+                },
+            )),
+        );
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
         let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
             execution.registry.clone(),
@@ -264,10 +272,14 @@ impl LiveRun {
             )
             .unwrap();
         assert!(
-            result.deliveries.iter().all(|d| matches!(
-                d.outcome,
-                crate::session_events::DeliveryOutcome::Dispatched { .. }
-            )),
+            result
+                .event_groups
+                .iter()
+                .flat_map(|g| g.deliveries.iter())
+                .all(|d| matches!(
+                    d.outcome,
+                    crate::session_events::DeliveryOutcome::Dispatched { .. }
+                )),
             "{result:?}"
         );
     }
@@ -401,6 +413,141 @@ impl Drop for LiveRun {
 }
 
 #[test]
+#[ignore = "launches and cancels a disposable real Codex invocation; requires WORKFLOW_LIVE_EXERCISE_ROOT"]
+fn real_codex_stop_session_exercise() {
+    use crate::otp_api::*;
+    let root = PathBuf::from(
+        std::env::var("WORKFLOW_LIVE_EXERCISE_ROOT").expect("Explicit exercise directory required"),
+    );
+    let mut live = LiveRun::open(root);
+    let mut draft = live
+        .execution
+        .authoring
+        .load(&live.instance.recipe.recipe_id)
+        .unwrap()
+        .draft;
+    draft.connections.clear();
+    for node in &mut draft.nodes {
+        node.initial_prompt = Some("This is a disposable runtime cancellation check. Follow the user's test instructions. Do not write files, call workflow tools, or spawn agents.".into());
+    }
+    let saved = live.execution.authoring.save_draft(draft).unwrap();
+    live.execution
+        .authoring
+        .activate(&saved.draft.recipe_id)
+        .unwrap();
+    live.instance = live
+        .execution
+        .create_instance(
+            &saved.draft.recipe_id,
+            saved.draft.revision,
+            "Cancellation check".into(),
+            live.instance.target.clone(),
+        )
+        .unwrap();
+    live.send("overview", "Reply CONTROL_READY only.");
+    live.wait(1);
+    let control_id = live.histories()[0].session.id.clone();
+    live.send("discussion", "Run powershell -NoProfile -Command \"Start-Sleep -Seconds 90\" using your command execution tool now. Wait for it to complete.");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let (session_id, invocation_id) = loop {
+        let histories = live.histories();
+        let target = histories.iter().find(|h| h.session.id != control_id);
+        if let Some(history) = target {
+            let invocation = history.invocations.last().unwrap();
+            let observed = invocation.events.iter().any(|event| {
+                let raw = serde_json::to_string(&event.raw_payload).unwrap();
+                raw.contains("command_execution") && raw.contains("Start-Sleep")
+            });
+            if observed && invocation.invocation.status.is_active() {
+                break (history.session.id.clone(), invocation.invocation.id.clone());
+            }
+        }
+        assert!(Instant::now() < deadline, "No running command observed");
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    let context = InvocationContext {
+        instance_id: live.instance.id.clone(),
+        occurrence_id: "live-stop".into(),
+        capability: CapabilityRef {
+            package: "workflow".into(),
+            tool: "stop_session".into(),
+        },
+        source: None,
+        connection_id: None,
+        output_node_id: Some("discussion".into()),
+    };
+    let stopped = live
+        .execution
+        .dispatch_otp_action(
+            &live.instance,
+            &context,
+            None,
+            json!({}),
+            json!({}),
+            Ok(vec![]),
+        )
+        .unwrap();
+    assert_eq!(
+        stopped.stop_outcomes[0].invocation_id.as_deref(),
+        Some(invocation_id.as_str())
+    );
+    assert_eq!(stopped.stop_outcomes[0].status, "requested");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = live
+            .repository
+            .get_invocation(&invocation_id)
+            .unwrap()
+            .unwrap();
+        if state.status == AgentInvocationStatus::Canceled {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Cancellation was not observed");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    live.send("discussion", "Reply RESUMED only. Do not run commands.");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let histories = live.histories();
+        if histories.len() == 2
+            && histories.iter().all(|h| {
+                h.invocations.last().unwrap().invocation.status == AgentInvocationStatus::Completed
+            })
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Resumed turn did not complete");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let histories = live.histories();
+    assert_eq!(
+        histories
+            .iter()
+            .find(|h| h.session.id == session_id)
+            .unwrap()
+            .invocations
+            .len(),
+        2
+    );
+    assert_eq!(
+        histories
+            .iter()
+            .find(|h| h.session.id == control_id)
+            .unwrap()
+            .invocations
+            .len(),
+        1
+    );
+    live.capture("cancellation-verified");
+    std::fs::write(
+        live.root.join("stop-result.json"),
+        serde_json::to_string_pretty(&stopped).unwrap(),
+    )
+    .unwrap();
+    println!("LIVE_STOP_VERIFIED {}", live.root.display());
+}
+
+#[test]
 #[ignore = "launches real Codex agents; requires WORKFLOW_LIVE_EXERCISE_ROOT"]
 fn real_codex_continuation_exercise() {
     let root = PathBuf::from(
@@ -476,13 +623,16 @@ fn real_codex_continuation_exercise() {
         live.execution.dispatch_otp_action(&live.instance,context,None,json!({}),configuration,Ok(vec![ResolvedInput{reference:context.occurrence_id.clone(),value:json!("Discuss this additional session briefly. Reply READY_FOR_APPROVAL. Do not create files or call a workflow tool.")}])).unwrap()
     };
     let fresh = run(&context, json!({"mode":"new"}));
-    let created = fresh[0].group.created_session.clone().unwrap();
+    let created = fresh.event_groups[0].group.created_session.clone().unwrap();
     live.wait(5);
     context.occurrence_id = "live-exact-session".into();
     let selected = run(&context, json!({}));
-    assert_eq!(selected[0].deliveries[0].target_session, created);
-    assert!(selected[0].group.created_session.is_none());
-    assert!(selected[0].deliveries[0]
+    assert_eq!(
+        selected.event_groups[0].deliveries[0].target_session,
+        created
+    );
+    assert!(selected.event_groups[0].group.created_session.is_none());
+    assert!(selected.event_groups[0].deliveries[0]
         .included_created_session_contributions
         .is_empty());
     live.wait(5);

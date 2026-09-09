@@ -16,7 +16,9 @@ export function offeredOutputs(packages: readonly OtpPackageDto[]) {
           .filter((output) => output.kind === 'data')
           .map((output) => ({
             ref: { capability: { package: pkg.id, tool: tool.id }, output: output.id },
-            label: tool.name,
+            label: `${tool.name} · ${output.name}`,
+            tool,
+            packageId: pkg.id,
             output,
           })),
       ),
@@ -28,7 +30,9 @@ export function offeredActions(packages: readonly OtpPackageDto[]) {
       .filter(
         (tool) =>
           tool.entrypoint.kind === 'action' &&
-          tool.outputs.some((output) => output.kind === 'session_request'),
+          tool.outputs.some(
+            (output) => output.kind === 'session_request' || output.kind === 'session_stop_request',
+          ),
       )
       .map((tool) => ({
         ref: { package: pkg.id, tool: tool.id },

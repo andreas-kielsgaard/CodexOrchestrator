@@ -1,3 +1,4 @@
+import { OtpMcpToolsPicker } from './OtpMcpToolsPicker';
 import { CatalogMultiSelect } from '../../components/CatalogSelect';
 import type { CapabilitySetViewModel, RuntimeCapabilityCatalogs } from './types';
 import { mcpToolsFromSelectedValues, selectedMcpToolValues } from './types';
@@ -35,15 +36,12 @@ export function CapabilitySetFields({
         hint={`${scopeLabel} may use these reasoning modes.`}
         onChange={(reasoningModes) => onChange({ ...value, reasoningModes })}
       />
-      <CatalogMultiSelect
-        label="MCP tools"
+      <OtpMcpToolsPicker
+        packages={catalogs.otpPackages ?? []}
         catalog={catalogs.mcpTools}
         values={selectedMcpToolValues(value.mcpTools)}
         disabled={disabled}
-        hint={`${scopeLabel} may expose these MCP tools.`}
-        onChange={(mcpTools) =>
-          onChange({ ...value, mcpTools: mcpToolsFromSelectedValues(mcpTools) })
-        }
+        onChange={(values) => onChange({ ...value, mcpTools: mcpToolsFromSelectedValues(values) })}
       />
       <CatalogMultiSelect
         label="Skills"

@@ -69,7 +69,7 @@ import type {
 import { FileReviewScreen } from '../features/fileReview';
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
 import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
-import { NativeProfileSettings } from '../features/nativeProfiles/NativeProfileSettings';
+import { TechnicalSettingsScreen } from '../features/technicalSettings/TechnicalSettingsScreen';
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 import { ProductCommandBar } from './ProductCommandBar';
@@ -1103,6 +1103,7 @@ export function App({
       ) : surface === 'capability-profiles' && executionConfigurationClient ? (
         <ExecutionConfigurationScreen
           client={executionConfigurationClient}
+          readOtpCatalogue={workflowAuthoringClient?.listCapabilities}
           workspace={capabilityDrafts}
         />
       ) : surface === 'workflows' &&
@@ -1194,7 +1195,10 @@ export function App({
           onNavigateToProduct={navigateToProductLocation}
         />
       ) : surface === 'native-settings' && nativeProfileClient ? (
-        <NativeProfileSettings client={nativeProfileClient} />
+        <TechnicalSettingsScreen
+          client={nativeProfileClient}
+          readOtpCatalogue={workflowAuthoringClient?.listCapabilities}
+        />
       ) : (
         harnessManagementPreviewSurface
       )}

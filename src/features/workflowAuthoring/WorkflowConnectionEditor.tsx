@@ -5,7 +5,8 @@ import type {
 } from '../../application/workflowAuthoring';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { WorkflowPromptInputsEditor } from './WorkflowPromptInputsEditor';
-import { OtpConfigurationEditor } from './OtpConfigurationEditor';
+import { WorkflowTriggerPicker } from './WorkflowTriggerPicker';
+import { WorkflowDestinationActionPicker } from './WorkflowDestinationActionPicker';
 import { offeredActions, offeredOutputs, capabilityKey, outputKey } from './otpPresentation';
 
 export function WorkflowConnectionEditor({
@@ -83,36 +84,7 @@ export function WorkflowConnectionEditor({
         description="An output from the selected source node starts this connection."
         className="execution-configuration__section"
       >
-        <label>
-          Trigger output
-          <select
-            value={outputKey(connection.trigger)}
-            onChange={(event) => {
-              const selected = outputs.find(
-                (item) => outputKey(item.ref) === event.currentTarget.value,
-              );
-              if (selected)
-                onChange({
-                  ...connection,
-                  trigger: selected.ref,
-                  promptInputs: connection.promptInputs.filter(
-                    (input) =>
-                      input.kind !== 'output_field' ||
-                      Object.hasOwn(selected.output.schema.properties ?? {}, input.field),
-                  ),
-                });
-            }}
-          >
-            {!selectedOutput && (
-              <option value={outputKey(connection.trigger)}>Unavailable output</option>
-            )}
-            {outputs.map((item) => (
-              <option key={outputKey(item.ref)} value={outputKey(item.ref)}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <WorkflowTriggerPicker connection={connection} packages={packages} onChange={onChange} />
         {selectedOutput && (
           <p>
             Offered fields:{' '}
@@ -122,59 +94,42 @@ export function WorkflowConnectionEditor({
           </p>
         )}
       </CollapsibleSection>
-      <CollapsibleSection
-        title="Prompt logic"
-        description="Include these inputs in order, followed by the fixed prompt."
-        className="execution-configuration__section"
-      >
-        <WorkflowPromptInputsEditor
-          value={connection.promptInputs}
-          nodes={nodes}
-          output={selectedOutput?.output}
-          onChange={(promptInputs) => onChange({ ...connection, promptInputs })}
-        />
-        <label className="workflow-connection-editor__prompt">
-          <span>Fixed connection prompt</span>
-          <textarea
-            rows={5}
-            value={connection.promptText}
-            onChange={(event) => onChange({ ...connection, promptText: event.currentTarget.value })}
-          />
-        </label>
-      </CollapsibleSection>
+      {selectedAction?.tool.entrypoint.kind === 'action' &&
+        selectedAction.tool.entrypoint.usesPrompt !== false && (
+          <CollapsibleSection
+            title="Prompt logic"
+            description="Include these inputs in order, followed by the fixed prompt."
+            className="execution-configuration__section"
+          >
+            <WorkflowPromptInputsEditor
+              value={connection.promptInputs}
+              nodes={nodes}
+              output={selectedOutput?.output}
+              onChange={(promptInputs) => onChange({ ...connection, promptInputs })}
+            />
+            <label className="workflow-connection-editor__prompt">
+              <span>Fixed connection prompt</span>
+              <textarea
+                rows={5}
+                value={connection.promptText}
+                onChange={(event) =>
+                  onChange({ ...connection, promptText: event.currentTarget.value })
+                }
+              />
+            </label>
+          </CollapsibleSection>
+        )}
       <CollapsibleSection
         title="Destination action"
-        description="Choose how to deliver to Sessions of the output node."
+        description="Choose what to do with Sessions of the output node."
         className="execution-configuration__section"
       >
-        <label>
-          Action
-          <select
-            value={capabilityKey(connection.action)}
-            onChange={(event) => {
-              const selected = actions.find(
-                (item) => capabilityKey(item.ref) === event.currentTarget.value,
-              );
-              if (selected) onChange({ ...connection, action: selected.ref, configuration: {} });
-            }}
-          >
-            {!selectedAction && (
-              <option value={capabilityKey(connection.action)}>Unavailable action</option>
-            )}
-            {actions.map((item) => (
-              <option key={capabilityKey(item.ref)} value={capabilityKey(item.ref)}>
-                {item.tool.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {selectedAction && (
-          <OtpConfigurationEditor
-            fields={selectedAction.tool.configuration}
-            value={connection.configuration}
-            onChange={(configuration) => onChange({ ...connection, configuration })}
-          />
-        )}
+        <WorkflowDestinationActionPicker
+          action={connection.action}
+          configuration={connection.configuration}
+          packages={packages}
+          onChange={(action, configuration) => onChange({ ...connection, action, configuration })}
+        />
       </CollapsibleSection>
     </div>
   );

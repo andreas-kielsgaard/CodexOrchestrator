@@ -140,8 +140,8 @@
 }
 
 .workflow-authoring-screen__main {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
@@ -170,6 +170,7 @@
 }
 
 .workflow-authoring-screen__body {
+  flex: 1;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -386,8 +387,9 @@
   grid-template-rows: minmax(0, 1fr);
 }
 .recipe-instance-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
@@ -406,6 +408,7 @@
   overflow-wrap: anywhere;
 }
 .recipe-instance-panel__body {
+  flex: 1;
   display: grid;
   grid-template-columns: minmax(200px, 270px) minmax(0, 1fr);
   min-height: 0;
@@ -477,4 +480,31 @@
   .recipe-instance-panel__conversation {
     min-height: 420px;
   }
+}
+
+.workflow-entry-destination {
+  flex-shrink: 0;
+  padding: 10px 18px;
+  background: #fffdf9;
+  border-bottom: 1px solid #d5ddd6;
+  max-height: 42vh;
+  overflow: auto;
+}
+.workflow-entry-destination label {
+  display: grid;
+  gap: 6px;
+}
+.workflow-entry-destination select,
+.otp-selection > button {
+  padding: 8px 12px;
+  border: 1px solid #c9d2ca;
+  border-radius: 8px;
+  background: white;
+  color: #24362c;
+  font: inherit;
+}
+.recipe-instance-panel > [role='status'],
+.recipe-instance-panel > [role='alert'] {
+  margin: 0;
+  padding: 10px 14px;
 }

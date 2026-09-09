@@ -53,6 +53,7 @@ export function WorkflowNodeEditor({
     options: catalog.options.filter((option) => allowed.includes(option.value)),
   });
   const catalogs = {
+    otpPackages: runtime.catalogs.otpPackages,
     models: restrict(runtime.catalogs.models, ceiling?.models ?? []),
     reasoningModes: restrict(runtime.catalogs.reasoningModes, ceiling?.reasoningModes ?? []),
     sandboxModes: restrict(runtime.catalogs.sandboxModes, ceiling?.sandboxModes ?? []),

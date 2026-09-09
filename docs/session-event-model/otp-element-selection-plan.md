@@ -1,14 +1,16 @@
 # OTP element selection and Stop session
 
-Revision 1, 2026-09-08. Planning only; implementation has not started.
+Revision 3, 2026-09-08. P1–P5 are implemented and validated locally on `codex/workflow-continuation-files` at HEAD `9502879`; implementation changes remain uncommitted. Revision 1 is preserved in that commit. Revision 2 added the Technical Settings tabs while implementation was paused; the user then authorized execution.
 
 ## Objective and baseline
 
-Provide one reusable OTP selection modal with trigger-output, destination-action and profile-MCP adapters. Add Stop session to the Base Workflow OTP. Workflow entry uses the same destination-action adapter, catalogue and execution rules as a connection destination.
+Provide one reusable OTP selection modal with trigger-output, destination-action and profile-MCP adapters. Add Stop session to the Base Workflow OTP. Workflow entry uses the same destination-action adapter, catalogue and execution rules as a connection destination. Split Technical Settings into Codex home profiles and OTP configuration tabs; the latter shows packages imported by this product instance.
 
 Inspected `codex/workflow-continuation-files` at `532e559` in `C:/Users/user/.codex/worktrees/workflow-continuation-files`. The checkout was clean before creating this plan. Prior OTP validation is recorded in `otp-exploration-validation.md`; this planning pass ran no tests or provider sessions.
 
-Completion: all three selectors work through the shared modal; entry and connections can configure either destination action; Stop session reaches the existing cancellation service with a recorded outcome; existing continuation, prompting and profile constraints still work. Deliver focused automated checks and a visible walkthrough. No implementation or commit is authorized by this planning request.
+Completion: all three selectors work through the shared modal; entry and connections can configure either destination action; Stop session reaches the existing cancellation service with a recorded outcome; existing continuation, prompting and profile constraints still work; Technical Settings visibly reports the Base Workflow OTP from the live product catalogue. Focused automated checks, a real cancellation/resume exercise and the native UI walkthrough are recorded in [otp-element-selection-validation.md](otp-element-selection-validation.md).
+
+Revision 2 evidence: HEAD `9502879`, clean checkout before this update. Technical Settings currently mounts `NativeProfileSettings` directly from `App.tsx`. `list_workflow_capabilities` returns the product's imported OTP registry, so this view needs no discovery service or new backend endpoint.
 
 ## Decisions, assumptions and concerns
 
@@ -24,6 +26,7 @@ Proposed minimum stop behavior: select one running session of the bound destinat
 | Entry parity | Entry currently supplies `{}` configuration and demands exactly one delivery. Merely reusing a selector would not make Stop work. | P4: shared action/configuration semantics, aggregate action result, allow no prompt/no delivery. |
 | Profile constraints | Runtime exposure and profile restrictions determine available tools independently of package discovery. | P2: intersect eligibility, retain unavailable stored choices visibly, preserve non-OTP MCP tools. |
 | Small catalogues and modal usability | Only one real package is installed; outputs can share tool names. | P1: zero/one states, synthetic two-package fixture, keyboard/focus and screenshot verification. No new production package for demo purposes. |
+| Technical Settings discovery visibility | The current settings surface is the Codex home form. The imported registry already provides authoritative package data. Low-risk UI/composition change. | P5: two tabs, reuse the form, read the existing catalogue; preserve setup state when switching tabs. |
 
 Scope is bounded to these selectors, cancellation and entry parity. The main coupling is the shared OTP descriptor/result contract across Rust, TypeScript, the compiler and instance UI. Source and test seams are available locally. Live cancellation is a validation gate; setup must use existing product services/CLI handles where available, reserving computer use for UI evidence. Stop only a disposable test invocation.
 
@@ -75,16 +78,28 @@ Outcome: selecting an action works the same for initial entry and connection des
 - Acceptance: save/reload/activate initial and connection destinations using the same action; initial Stop with no session gives a visible no-op; Stop with an active session requests cancellation; Prompt agent still opens delivered sessions. Verify existing multi-session prompting no longer fails solely because entry returned more than one delivery.
 - Dependencies: P2/P3 contract convergence. No new graph node type, special entry tool, approval behavior or revision coordination.
 
+### P5 — Technical Settings tabs and imported OTP visibility
+
+Outcome: the user can see that this product instance has imported the Base Workflow OTP without entering Workflow authoring.
+
+- Create `src/features/technicalSettings/TechnicalSettingsScreen.tsx`, `OtpConfigurationPanel.tsx`, a small stylesheet and focused integration tests. Provide accessible tabs named **Codex home profiles** and **OTP configuration**; default to Codex home profiles so existing runtime-setup navigation retains its destination.
+- Reuse `NativeProfileSettings.tsx` in the first tab. Move the shared Technical Settings heading to the wrapper and adjust the child landmark/heading to avoid nested main elements. Keep the home panel mounted while hidden so switching tabs does not discard typed paths or in-progress setup state.
+- The OTP tab reads the same injected catalogue reader as P2, backed by `list_workflow_capabilities`. Show returned package IDs, an **Imported** status, and their declared tool names in a simple list with Refresh. The expected live result is `workflow` (the Base Workflow OTP). Do not hardcode an apparently discovered package, interpret the contract version as an installed package version, or infer agent readiness from package import.
+- Show distinct loading, empty and error states. A refresh reads the catalogue; it does not import, enable or reconfigure packages. No install/remove/toggle controls or new discovery backend.
+- Update `src/app/App.tsx` to mount the wrapper and supply the native-profile client and catalogue reader. Reuse existing product composition in `src/bootstrap/productApplicationComposition.ts`; only extend its wiring if the shared reader needs a named prop. Avoid a second catalogue or settings-specific package DTO.
+- Acceptance: mounted tabs preserve Codex home state; injected package data and failures are displayed accurately; the running native app shows `workflow` from the actual imported registry. Include the settings tabs in the visible walkthrough. No provider inference is needed to validate this package.
+- Dependencies: P1 shared DTO extraction and P2's shared catalogue reader. It does not depend on Stop session; once the reader is available it can be completed before P3/P4. App composition is shared with P2, so integrate those edits sequentially.
+
 ## Sequence and validation
 
-Preferred sequence: agree the P1/P3 descriptor and action-result shapes, implement P1, P2, P3, then P4; finish with integrated checks. P1's modal and P3's cancellation adapter can be developed independently after the contract is fixed. P2 shares authoring/profile surfaces with P4, so those edits should be sequential. This identifies overlap, not a request to spawn agents.
+Preferred sequence when resumed: agree the P1/P3 descriptor and action-result shapes, implement P1 and P2, then P5, P3 and P4; finish with integrated checks. P1's modal and P3's cancellation adapter can be developed independently after the contract is fixed. P5 needs only the shared catalogue reader and can overlap with cancellation work, but shares App wiring with P2. P2 shares authoring/profile surfaces with P4, so those edits should be sequential. This identifies overlap, not a request to spawn agents.
 
 Validation placement:
 
 1. Each package supplies the focused tests described above before integration. Use existing Vitest component/client tests and Rust recording-runtime/SQLite seams.
 2. Run focused OTP, Workflow, Agent Session integration and affected frontend suites; TypeScript/frontend build, Rust check, and `git diff --check`. Existing full-suite results are not claimed as current evidence.
 3. Run a disposable native cancellation exercise: activate a test destination, start a controlled invocation, execute Stop through Workflow, observe terminal cancellation, then prompt the same session again. Confirm other nodes/sessions are unaffected. A fake-runtime pass alone is not live cancellation evidence.
-4. Inspect actual rendered picker flows for trigger, destination and both profile contexts. Exercise expansion, details, confirmation, cancellation, keyboard/focus, and narrow layout. Use a synthetic second package only for UI tests; do not import invented production capabilities.
+4. Inspect actual rendered picker flows for trigger, destination and both profile contexts, plus Technical Settings tab switching and live imported-package visibility. Exercise expansion, details, confirmation, cancellation, keyboard/focus, and narrow layout. Use a synthetic second package only for UI tests; do not import invented production capabilities.
 5. Record commands, results and limitations in a slice validation note. No commit, push or integration is implied by the plan.
 
 ## Deferrals, risks and current status
@@ -93,4 +108,18 @@ No package installation screen, package discovery changes, permission redesign, 
 
 Largest risk is cancellation targeting a later invocation; the pinned-invocation test is required. Other risks are action results being mistaken for prompt deliveries, accidental profile capability expansion, and silently dropping unavailable selections. The specified adapter/integration tests cover those boundaries.
 
-Status: plan complete, implementation not started. Remaining behavioral assumption is the bounded Stop selection policy above. After implementation is requested, use the proposed defaults unless the user revises them; live cancellation and visible UI evidence remain completion gates.
+Status: P1–P5 are complete locally. Stop uses the proposed newest/last-addressed selection policy. The live cancellation and visible UI gates passed. No publication or integration was requested.
+
+## Implementation evidence and deviations
+
+| Package | Result |
+| --- | --- |
+| P1 | Shared native-dialog picker and OTP DTOs; synthetic multiple-package, missing-selection and zero/one-option tests. Keyboard expansion, Escape, focus return and desktop minimum-width layout observed in the native app. |
+| P2 | Trigger, destination and MCP adapters mounted; profile restrictions and external-server tools retained. Trigger field-removal notice precedes the details so it is visible before scrolling. |
+| P3 | Package-owned Stop action, typed stop output, product cancellation port and persisted invocation-specific outcomes. Fake-runtime race/failure/deduplication tests and real Codex cancellation/resume passed. |
+| P4 | Default-empty entry configuration and shared aggregate action result. Initial Stop accepts empty prompt text and records a no-op when no session is running. |
+| P5 | Two settings tabs, preserved home form state and catalogue-backed Imported status. Running native app shows the Workflow package and all five tools. |
+
+The shared detail renderer is `src/features/otp/otpElements.tsx` because it renders JSX. Existing inferred client types required no edit to `tauriWorkflowInstanceClient.ts`; existing presentation/composition functions also needed no separate catalogue implementation. Native inspection exposed a fixed-grid overlap after inserting entry settings; the authoring and instance bodies now use flex sizing. No broader layout rewrite was needed.
+
+Validation: 38 frontend tests, 88 focused Rust tests, one additional real-provider Stop exercise, frontend/native builds, changed-file ESLint and whitespace checks passed. Details and remaining coverage limits are in the validation note. The unrelated untracked `docs/agent-session/codex-defaults-and-steering-plan.md` was left untouched. Implementation is ready for review; no remaining implementation gate or parallel lane is needed for this slice.

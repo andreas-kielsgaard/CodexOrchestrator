@@ -207,7 +207,8 @@
         ],
         "description": "Choose destination-node sessions and request delivery of the configured prompt.",
         "entrypoint": {
-          "kind": "action"
+          "kind": "action",
+          "usesPrompt": true
         },
         "id": "prompt_agent",
         "name": "Prompt agent",
@@ -216,6 +217,34 @@
             "id": "session",
             "kind": "session_request",
             "name": "Agent session",
+            "schema": {
+              "type": "object"
+            }
+          }
+        ]
+      },
+      {
+        "configuration": [
+          {
+            "choices": ["newest", "last_addressed"],
+            "defaultValue": "newest",
+            "key": "ordering",
+            "label": "Order running sessions",
+            "when": null
+          }
+        ],
+        "description": "Request cancellation of one running session of the destination node. The session remains available for later prompts.",
+        "entrypoint": {
+          "kind": "action",
+          "usesPrompt": false
+        },
+        "id": "stop_session",
+        "name": "Stop session",
+        "outputs": [
+          {
+            "id": "stop",
+            "kind": "session_stop_request",
+            "name": "Session cancellation",
             "schema": {
               "type": "object"
             }

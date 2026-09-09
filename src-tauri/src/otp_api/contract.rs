@@ -50,7 +50,7 @@ pub(crate) struct ToolDescriptor {
 pub(crate) enum Entrypoint {
     Mcp { input_schema: Value },
     SessionEvent { event: SessionEventKind },
-    Action,
+    Action { uses_prompt: bool },
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +70,7 @@ pub(crate) struct OutputDescriptor {
 pub(crate) enum OutputKind {
     Data,
     SessionRequest,
+    SessionStopRequest,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -144,13 +145,22 @@ pub(crate) struct SessionRequest {
     pub target: SessionRequestTarget,
     pub prompt: Vec<PromptPart>,
 }
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionStopRequest {
+    pub node_id: String,
+    pub session_id: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ToolResult {
+    pub stop_requests: Vec<SessionStopRequest>,
     pub text: String,
     pub session_requests: Vec<SessionRequest>,
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RoutingReceipt {
+    pub stops: usize,
     pub deliveries: usize,
 }
 

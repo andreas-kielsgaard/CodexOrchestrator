@@ -1,5 +1,6 @@
 use super::*;
 mod continuation_tests;
+mod stop_tests;
 #[cfg(feature = "live-tests")]
 mod live_continuation;
 use crate::harness_engine::{
@@ -157,7 +158,7 @@ impl Fixture {
             Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
             adapter,
             repository.clone(),
-        ));
+        ).with_session_control(Arc::new(crate::otp_host::session_control::AgentSessionControl { application: sessions.clone(), repository: repository.clone() })));
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
         if mediated {
             let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
@@ -455,7 +456,7 @@ fn stored_instance_drives_normal_completion_and_existing_sessions_ignore_deleted
         Some(instance.target.worktree.path.as_str())
     );
     let before = b_history.session.session_profile.clone();
-    let a_id = AgentSessionId::new(first.group.created_session.unwrap().id()).unwrap();
+    let a_id = AgentSessionId::new(first.event_groups[0].group.created_session.clone().unwrap().id()).unwrap();
     fixture.profiles.delete("test-capabilities").unwrap();
     fixture
         .direct
@@ -540,7 +541,7 @@ fn missing_prompt_file_records_handoff_failure_without_changing_sender_completio
         )
         .unwrap();
     assert_eq!(fixture.launches().len(), 1);
-    let id = AgentSessionId::new(first.group.created_session.unwrap().id()).unwrap();
+    let id = AgentSessionId::new(first.event_groups[0].group.created_session.clone().unwrap().id()).unwrap();
     assert_eq!(
         fixture.sessions.load_session(&id).unwrap().invocations[0]
             .invocation
@@ -763,7 +764,7 @@ async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected
     assert!(response["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
-        .contains("1 delivery"));
+        .contains("1 prompt delivery"));
     assert_eq!(fixture.launches().len(), 2);
     let receiver = fixture.launches()[1].session_id.clone();
     assert_eq!(
@@ -852,16 +853,16 @@ fn otp_node_handles_and_new_exact_requests_use_one_dispatcher() {
     context.occurrence_id = "fresh-two".into();
     let second = run(&context, json!({"mode":"new"}));
     assert_ne!(
-        first[0].group.created_session,
-        second[0].group.created_session
+        first.event_groups[0].group.created_session,
+        second.event_groups[0].group.created_session
     );
     context.occurrence_id = "select-one".into();
     let exact = run(&context, json!({}));
     assert_eq!(
-        exact[0].deliveries[0].target_session,
-        second[0].deliveries[0].target_session
+        exact.event_groups[0].deliveries[0].target_session,
+        second.event_groups[0].deliveries[0].target_session
     );
-    assert!(exact[0].group.created_session.is_none());
+    assert!(exact.event_groups[0].group.created_session.is_none());
     context.occurrence_id = "fresh-three".into();
     run(&context, json!({"mode":"new"}));
     assert_eq!(
@@ -891,7 +892,7 @@ fn otp_node_handles_and_new_exact_requests_use_one_dispatcher() {
         .launch_extension
         .as_ref()
         .is_none_or(|e| e.initial_prompt_prefix.is_none()));
-    assert!(run(&context, json!({"mode":"new"})).is_empty());
+    assert!(run(&context, json!({"mode":"new"})).event_groups.is_empty());
     assert_eq!(
         fixture.launches().len(),
         4,
@@ -946,7 +947,7 @@ fn otp_selection_keeps_busy_session_failure_visible_without_relaunch() {
     context.occurrence_id = "busy".into();
     let failed = run(&context);
     assert!(matches!(
-        failed[0].deliveries[0].outcome,
+        failed.event_groups[0].deliveries[0].outcome,
         crate::session_events::DeliveryOutcome::Failed { .. }
     ));
     assert_eq!(fixture.launches().len(), 1);

@@ -1,3 +1,4 @@
+import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
@@ -14,6 +15,7 @@ import './mountedExecutionConfiguration.css';
 
 export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
+  readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
 }
 
@@ -50,10 +52,12 @@ function newDraft(runtime: RuntimeProfileSnapshotDto): CapabilityProfileDraft {
 
 export function ExecutionConfigurationScreen({
   client,
+  readOtpCatalogue,
   workspace: providedWorkspace,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
   const workspace = providedWorkspace ?? localWorkspace;
+  const [packages, setPackages] = useState<readonly OtpPackageDto[]>([]);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
@@ -72,11 +76,13 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles] = await Promise.all([
+      const [nextRuntime, nextProfiles, nextPackages] = await Promise.all([
         client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
+        readOtpCatalogue?.() ?? Promise.resolve([]),
       ]);
       setRuntime(nextRuntime);
+      setPackages(nextPackages);
       setProfiles(nextProfiles);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
@@ -97,7 +103,7 @@ export function ExecutionConfigurationScreen({
     } finally {
       setLoading(false);
     }
-  }, [client, workspace]);
+  }, [client, workspace, readOtpCatalogue]);
 
   useEffect(() => {
     void load();
@@ -105,7 +111,14 @@ export function ExecutionConfigurationScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
 
-  const runtimeView = useMemo(() => runtimeProfileViewModel(runtime), [runtime]);
+  const runtimeView = useMemo(
+    () =>
+      (() => {
+        const view = runtimeProfileViewModel(runtime);
+        return { ...view, catalogs: { ...view.catalogs, otpPackages: packages } };
+      })(),
+    [runtime, packages],
+  );
 
   const selectProfile = (profile: CapabilityProfileDto) => {
     selectedRef.current = profile.capabilityProfileId;

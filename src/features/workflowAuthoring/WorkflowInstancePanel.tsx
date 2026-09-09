@@ -1,3 +1,4 @@
+import type { OtpPackageDto } from '../../application/otp';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   WorkflowInstanceClient,
@@ -15,12 +16,14 @@ import { CollapsibleSection } from '../../components/CollapsibleSection';
 
 export function WorkflowInstancePanel({
   instanceId,
+  packages = [],
   client,
   sessionClient,
   profileClient,
   queryClient,
 }: {
   readonly instanceId: string;
+  readonly packages?: readonly OtpPackageDto[];
   readonly client: WorkflowInstanceClient;
   readonly sessionClient?: AgentSessionClient;
   readonly profileClient?: AgentSessionProfileClient;
@@ -32,6 +35,7 @@ export function WorkflowInstancePanel({
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
   const [result, setResult] = useState<SessionEventResultDto | null>(null);
   const mounted = useRef(true);
   const request = useRef(0);
@@ -78,6 +82,10 @@ export function WorkflowInstancePanel({
       </section>
     );
   const { instance } = details;
+  const action = packages
+    .find((pkg) => pkg.id === instance.recipe.entryAction.package)
+    ?.tools.find((tool) => tool.id === instance.recipe.entryAction.tool);
+  const usesPrompt = action?.entrypoint.kind !== 'action' || action.entrypoint.usesPrompt !== false;
   return (
     <section className="recipe-instance-panel">
       <header>
@@ -99,6 +107,7 @@ export function WorkflowInstancePanel({
         </button>
       </header>
       {error ? <p role="alert">{error}</p> : null}
+      {actionMessage && <p role="status">{actionMessage}</p>}
       <div className="recipe-instance-panel__body">
         <aside>
           <h2>Sessions</h2>
@@ -125,8 +134,9 @@ export function WorkflowInstancePanel({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (busy || !text.trim()) return;
+              if (busy || (usesPrompt && !text.trim())) return;
               setBusy(true);
+              setActionMessage('');
               setError(null);
               void client
                 .messageNode({
@@ -137,9 +147,26 @@ export function WorkflowInstancePanel({
                 })
                 .then(async (value) => {
                   if (!mounted.current) return;
+                  setActionMessage(
+                    value.message ||
+                      (value.stopOutcomes.length
+                        ? value.stopOutcomes
+                            .map((stop) =>
+                              stop.status === 'requested'
+                                ? 'Cancellation requested'
+                                : stop.status === 'no_op'
+                                  ? 'No active invocation to stop'
+                                  : stop.status,
+                            )
+                            .join(', ')
+                        : 'Action recorded'),
+                  );
                   setResult(null);
                   setText('');
-                  setSelected(value.deliveries[0]?.targetSession.id ?? null);
+                  setSelected(
+                    value.eventGroups.flatMap((group) => group.deliveries)[0]?.targetSession.id ??
+                      null,
+                  );
                   await load();
                 })
                 .catch((cause) => mounted.current && setError(String(cause)))
@@ -157,18 +184,25 @@ export function WorkflowInstancePanel({
                 ))}
               </select>
             </label>
-            <label>
-              Request
-              <textarea
-                value={text}
-                rows={4}
-                onChange={(event) => setText(event.currentTarget.value)}
-              />
-            </label>
-            <button disabled={busy || !text.trim()}>{busy ? 'Sending…' : 'Send request'}</button>
-            <small>Uses this instance's Workflow. Creates a Session if needed.</small>
+            {usesPrompt && (
+              <label>
+                Request
+                <textarea
+                  value={text}
+                  rows={4}
+                  onChange={(event) => setText(event.currentTarget.value)}
+                />
+              </label>
+            )}
+            <button disabled={busy || (usesPrompt && !text.trim())}>
+              {busy ? 'Running…' : usesPrompt ? 'Send request' : 'Run action'}
+            </button>
+            <small>
+              Uses this instance's configured destination action:{' '}
+              {action?.name ?? instance.recipe.entryAction.tool}.
+            </small>
           </form>
-          <CollapsibleSection title="Workflow deliveries" defaultExpanded={false}>
+          <CollapsibleSection title="Workflow actions" defaultExpanded={false}>
             {details.attempts.map((attempt) => (
               <div key={attempt.id}>
                 <strong>
@@ -184,8 +218,24 @@ export function WorkflowInstancePanel({
                 </p>
                 <p>
                   {attempt.error ??
-                    (attempt.eventGroups.length ? 'Delivery recorded' : 'No delivery recorded')}
+                    (attempt.message ||
+                      (attempt.eventGroups.length
+                        ? 'Delivery recorded'
+                        : attempt.stopOutcomes?.length
+                          ? 'Cancellation action recorded'
+                          : 'No delivery recorded'))}
                 </p>
+                {attempt.stopOutcomes?.map((stop, index) => (
+                  <p key={index}>
+                    {stop.sessionId}:{' '}
+                    {stop.status === 'requested'
+                      ? 'Cancellation requested'
+                      : stop.status === 'no_op'
+                        ? 'No active invocation to stop'
+                        : stop.status}
+                    {stop.error ? ` — ${stop.error}` : ''}
+                  </p>
+                ))}
                 {queryClient
                   ? attempt.eventGroups.map((group, index) => (
                       <button

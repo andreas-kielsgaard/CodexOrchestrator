@@ -18,6 +18,7 @@ pub(crate) struct WorkflowExecutionService {
     pub(crate) instances: Arc<WorkflowInstanceStore>,
     pub(crate) directory: Arc<dyn SessionDirectory>,
     pub(crate) sessions: Arc<dyn AgentSessionRepository>,
+    pub(crate) session_control: Option<Arc<dyn crate::otp_host::session_control::SessionControl>>,
     pub(crate) record_observer: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 impl WorkflowExecutionService {
@@ -36,7 +37,15 @@ impl WorkflowExecutionService {
             directory,
             sessions,
             record_observer: None,
+            session_control: None,
         }
+    }
+    pub(crate) fn with_session_control(
+        mut self,
+        control: Arc<dyn crate::otp_host::session_control::SessionControl>,
+    ) -> Self {
+        self.session_control = Some(control);
+        self
     }
     pub(crate) fn with_record_observer(
         mut self,
@@ -97,7 +106,7 @@ impl WorkflowExecutionService {
         recipe_id: &str,
         instance_id: &str,
         text: String,
-    ) -> Result<SessionEventResult, String> {
+    ) -> Result<super::instances::WorkflowActionResult, String> {
         self.dispatch_node_user_request(recipe_id, instance_id, None, text)
     }
     pub(crate) fn dispatch_node_user_request(
@@ -106,10 +115,7 @@ impl WorkflowExecutionService {
         instance_id: &str,
         node_id: Option<&str>,
         text: String,
-    ) -> Result<SessionEventResult, String> {
-        if text.trim().is_empty() {
-            return Err("Workflow user request must contain text".into());
-        }
+    ) -> Result<super::instances::WorkflowActionResult, String> {
         let instance = self.instances.load(instance_id)?;
         if instance.recipe.recipe_id != recipe_id {
             return Err("Instance belongs to another Workflow".into());
@@ -124,21 +130,17 @@ impl WorkflowExecutionService {
             connection_id: None,
             output_node_id: Some(plan.starting_node.identity().id().into()),
         };
-        let mut results = self.dispatch_otp_action(
+        self.dispatch_otp_action(
             &instance,
             &context,
             None,
             serde_json::json!({"text":text}),
-            serde_json::json!({}),
+            plan.entry_configuration.clone(),
             Ok(vec![ResolvedInput {
                 reference: occurrence_id,
                 value: serde_json::Value::String(text),
             }]),
-        )?;
-        if results.len() != 1 {
-            return Err("The user-entry action must deliver to one Session".into());
-        }
-        Ok(results.remove(0))
+        )
     }
 }
 pub(crate) fn node_address(instance: &str, node: &str) -> Result<SessionLogicalAddress, String> {

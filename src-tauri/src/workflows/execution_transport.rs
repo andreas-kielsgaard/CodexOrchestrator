@@ -1,5 +1,5 @@
 use super::execution::WorkflowExecutionService;
-use crate::session_events::SessionEventResult;
+use super::instances::WorkflowActionResult;
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
@@ -27,7 +27,7 @@ pub(crate) struct DispatchWorkflowUserRequestInput {
 pub(crate) fn dispatch_workflow_user_request(
     state: State<'_, WorkflowExecutionTauriState>,
     input: DispatchWorkflowUserRequestInput,
-) -> Result<SessionEventResult, String> {
+) -> Result<WorkflowActionResult, String> {
     state.service.dispatch_node_user_request(
         &input.recipe_id,
         &input.instance_id,

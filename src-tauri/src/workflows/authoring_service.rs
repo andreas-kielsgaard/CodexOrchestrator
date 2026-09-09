@@ -42,7 +42,7 @@ impl WorkflowAuthoringService {
                 package
                     .tools
                     .into_iter()
-                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action))
+                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action { .. }))
                     .map(|tool| CapabilityRef {
                         package: package.id,
                         tool: tool.id,
@@ -63,6 +63,7 @@ impl WorkflowAuthoringService {
 
     pub(crate) fn create(&self, name: String) -> Result<WorkflowRecipeState, String> {
         let draft = WorkflowRecipeDraft {
+            entry_configuration: serde_json::json!({}),
             contract_version: WORKFLOW_RECIPE_CONTRACT_VERSION,
             recipe_id: format!("workflow-recipe-{}", Uuid::new_v4()),
             name,

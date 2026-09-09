@@ -6,7 +6,7 @@ import type {
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
-import type { SessionEventResultDto } from '../../application/sessionEvents';
+import type { WorkflowActionResult } from '../../application/workflowInstances';
 
 export type WorkflowAuthoringInvoke = <T>(
   command: string,
@@ -42,7 +42,7 @@ export function createTauriWorkflowAuthoringClient(
         input: { recipeId, instanceId },
       }),
     dispatchUserRequest: (input) =>
-      invokeCommand<SessionEventResultDto>('dispatch_workflow_user_request', { input }),
+      invokeCommand<WorkflowActionResult>('dispatch_workflow_user_request', { input }),
   };
 }
 

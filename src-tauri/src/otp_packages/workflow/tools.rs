@@ -56,9 +56,10 @@ pub(super) fn invoke(
     let receipt = host.emit(context, output, payload)?;
     Ok(ToolResult {
         text: format!(
-            "Workflow output dispatched {} delivery(s).",
-            receipt.deliveries
+            "Workflow output dispatched {} prompt delivery(s) and requested {} cancellation(s).",
+            receipt.deliveries, receipt.stops
         ),
         session_requests: vec![],
+        stop_requests: vec![],
     })
 }

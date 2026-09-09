@@ -62,7 +62,7 @@ impl OtpRegistry {
                     Entrypoint::SessionEvent { .. },
                     ToolInput::SessionEvent { .. }
                 )
-                | (Entrypoint::Action, ToolInput::Action { .. })
+                | (Entrypoint::Action { .. }, ToolInput::Action { .. })
         );
         if !matches {
             return Err("OTP entrypoint does not accept this input".into());
@@ -86,3 +86,5 @@ impl OtpRegistry {
 }
 pub(crate) mod mcp;
 pub(crate) mod workflow;
+
+pub(crate) mod session_control;

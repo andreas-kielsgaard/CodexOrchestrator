@@ -1,47 +1,10 @@
+import type { WorkflowActionResult } from '../workflowInstances';
 import type { NodeProfileDto } from '../executionConfiguration';
-import type { ReferenceIdentityDto, SessionEventResultDto } from '../sessionEvents';
+import type { ReferenceIdentityDto } from '../sessionEvents';
 
-export interface OtpCapabilityRefDto {
-  readonly package: string;
-  readonly tool: string;
-}
-export interface OtpOutputRefDto {
-  readonly capability: OtpCapabilityRefDto;
-  readonly output: string;
-}
-export interface OtpOutputDto {
-  readonly id: string;
-  readonly name: string;
-  readonly kind: 'data' | 'session_request';
-  readonly schema: {
-    readonly type: string;
-    readonly properties?: Readonly<Record<string, { readonly type: string }>>;
-  };
-}
-export interface OtpConfigurationFieldDto {
-  readonly key: string;
-  readonly label: string;
-  readonly choices: readonly string[];
-  readonly defaultValue: string;
-  readonly when: readonly [string, string] | null;
-}
-export interface OtpToolDto {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly entrypoint:
-    | { readonly kind: 'mcp'; readonly inputSchema: Readonly<Record<string, unknown>> }
-    | { readonly kind: 'session_event'; readonly event: 'invocation_terminal' }
-    | { readonly kind: 'action' };
-  readonly outputs: readonly OtpOutputDto[];
-  readonly configuration: readonly OtpConfigurationFieldDto[];
-}
-export interface OtpPackageDto {
-  readonly id: string;
-  readonly contractVersion: number;
-  readonly requestedHandles: readonly ('definitions' | 'node_sessions' | 'emit_output')[];
-  readonly tools: readonly OtpToolDto[];
-}
+import type { OtpCapabilityRefDto, OtpOutputRefDto, OtpPackageDto } from '../otp';
+export type * from '../otp';
+
 export type WorkflowConnectionPromptInputDto =
   | { readonly kind: 'output_field'; readonly field: string }
   | {
@@ -56,6 +19,7 @@ export interface WorkflowCompiledPlanDto {
   readonly recipe: ReferenceIdentityDto;
   readonly startingNode: ReferenceIdentityDto;
   readonly entryAction: OtpCapabilityRefDto;
+  readonly entryConfiguration?: Readonly<Record<string, unknown>>;
   readonly nodes: readonly {
     readonly reference: ReferenceIdentityDto;
     readonly initialPrompt: string | null;
@@ -104,6 +68,7 @@ export interface WorkflowRecipeDraftDto {
   readonly revision: number;
   readonly startingNodeId: string | null;
   readonly entryAction: OtpCapabilityRefDto;
+  readonly entryConfiguration?: Readonly<Record<string, unknown>>;
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
   readonly connections: readonly WorkflowAuthoringConnectionDto[];
 }
@@ -145,5 +110,5 @@ export interface WorkflowAuthoringClient {
   copyNodeConfiguration(input: CopyWorkflowNodeConfigurationInput): Promise<WorkflowRecipeStateDto>;
   activateRecipe(recipeId: string, expectedRevision: number): Promise<WorkflowRecipeStateDto>;
   compileRecipeInstance(recipeId: string, instanceId: string): Promise<WorkflowCompiledPlanDto>;
-  dispatchUserRequest(input: DispatchWorkflowUserRequestInput): Promise<SessionEventResultDto>;
+  dispatchUserRequest(input: DispatchWorkflowUserRequestInput): Promise<WorkflowActionResult>;
 }

@@ -19,7 +19,7 @@ impl WorkflowCompiler {
         if nodes.len() != plan.nodes.len() || !nodes.contains(plan.starting_node.identity().id()) {
             return Err("Invalid Workflow node bindings".into());
         }
-        validate_action(registry, &plan.entry_action, &serde_json::json!({}))?;
+        validate_action(registry, &plan.entry_action, &plan.entry_configuration)?;
         for edge in &plan.connections {
             if !nodes.contains(edge.source_node.identity().id())
                 || !nodes.contains(edge.destination_node.identity().id())
@@ -27,8 +27,10 @@ impl WorkflowCompiler {
                 return Err("Connection references a missing node".into());
             }
             let producer = registry.tool(&edge.trigger.capability)?;
-            if matches!(producer.entrypoint, Entrypoint::Action) {
-                return Err("A connection trigger requires an MCP or Session Event producer".into());
+            if matches!(producer.entrypoint, Entrypoint::Action { .. }) {
+                return Err(
+                    "A connection trigger requires an MCP or Session Event producer".into(),
+                );
             }
             let output = producer
                 .outputs
@@ -70,11 +72,13 @@ fn validate_action(
     configuration: &serde_json::Value,
 ) -> Result<(), String> {
     let action = registry.tool(reference)?;
-    if !matches!(action.entrypoint, Entrypoint::Action)
-        || !action
-            .outputs
-            .iter()
-            .any(|o| o.kind == OutputKind::SessionRequest)
+    if !matches!(action.entrypoint, Entrypoint::Action { .. })
+        || !action.outputs.iter().any(|o| {
+            matches!(
+                o.kind,
+                OutputKind::SessionRequest | OutputKind::SessionStopRequest
+            )
+        })
     {
         return Err("Node delivery requires a declared Session Request action".into());
     }

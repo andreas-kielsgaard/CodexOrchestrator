@@ -252,6 +252,7 @@ mod tests {
             name: "Review".into(),
             revision,
             starting_node_id: None,
+            entry_configuration: serde_json::json!({}),
             entry_action: crate::otp_api::CapabilityRef {
                 package: "workflow".into(),
                 tool: "prompt_agent".into(),

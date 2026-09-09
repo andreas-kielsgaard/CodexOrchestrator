@@ -183,6 +183,7 @@ pub(super) fn invoke(
     };
     Ok(ToolResult {
         text: String::new(),
+        stop_requests: vec![],
         session_requests: targets
             .into_iter()
             .map(|target| SessionRequest {

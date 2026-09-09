@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { captureRenderedState } from './src/rendered-state.mjs';
 
 const execFileAsync = promisify(execFile);
 const toolRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -21,9 +22,12 @@ async function main() {
   const executablePath = requiredPath(options.exe, '--exe');
   const pid = positiveInteger(options.pid, '--pid');
   const targetUrl = required(options['target-url'], '--target-url');
-  const selector = boundedSelector(required(options.selector, '--selector'));
+  const selector =
+    action === 'snapshot' ? null : boundedSelector(required(options.selector, '--selector'));
   const text = action === 'type' ? await resolveText(options) : null;
-  if (action === 'click' && (options.text || options['text-file'])) {
+  const value = action === 'select' ? required(options.value, '--value') : null;
+  if (action !== 'select' && options.value) throw new Error('--value applies only to select.');
+  if (action !== 'type' && (options.text || options['text-file'])) {
     throw new Error('--text and --text-file apply only to type.');
   }
   const ownership = await assertOwnedDebugger({
@@ -32,7 +36,38 @@ async function main() {
     debugPort: debuggerPort(debugUrl),
   });
   const target = await resolveTarget(debugUrl, targetUrl);
-  const dispatch = await dispatchInput(target.webSocketDebuggerUrl, { action, selector, text });
+  if (action === 'snapshot') {
+    if (options.selector)
+      throw new Error('snapshot captures the rendered page, without a selector.');
+    const snapshot = await withProtocol(target.webSocketDebuggerUrl, (protocol) =>
+      captureRenderedState(protocol, options.screenshot ? path.resolve(options.screenshot) : null),
+    );
+    const receipt = {
+      schemaVersion: 'review-app-rendered-state/v1',
+      observedAt: new Date().toISOString(),
+      request: { executablePath, pid, debugUrl, targetUrl },
+      target: { id: target.id, title: target.title, url: target.url },
+      ownership,
+      ...snapshot,
+      boundaries: {
+        readOnly: true,
+        foregrounded: false,
+        inputDispatched: false,
+        observation:
+          'DOM, accessibility and screenshot are sequential point-in-time reads; no durable or provider outcome is inferred.',
+      },
+    };
+    if (options.out) await writeReceipt(path.resolve(options.out), receipt);
+    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+    return;
+  }
+  if (options.screenshot) throw new Error('--screenshot applies only to snapshot.');
+  const dispatch = await dispatchInput(target.webSocketDebuggerUrl, {
+    action,
+    selector,
+    text,
+    value,
+  });
   const receipt = {
     schemaVersion: 'review-app-webview-control/v2',
     observedAt: new Date().toISOString(),
@@ -43,6 +78,7 @@ async function main() {
       targetUrl,
       action,
       selector,
+      value,
       text: text ? { characters: text.length, sha256: sha256(text) } : null,
     },
     target: { id: target.id, title: target.title, url: target.url },
@@ -146,19 +182,26 @@ export function validateWebSocketDebuggerUrl(value, debugUrl) {
   return endpoint.toString();
 }
 
-async function dispatchInput(webSocketUrl, { action, selector, text }) {
-  const socket = new WebSocket(webSocketUrl);
-  await once(socket, 'open');
-  try {
-    const protocol = protocolClient(socket);
+async function dispatchInput(webSocketUrl, { action, selector, text, value }) {
+  return withProtocol(webSocketUrl, async (protocol) => {
     await protocol.request('DOM.enable');
     const node = await resolveSelector(protocol, selector);
     const dispatch =
-      action === 'click'
-        ? await dispatchClick(protocol, node)
-        : await dispatchType(protocol, node, text);
+      action === 'select'
+        ? await dispatchSelect(protocol, node, value)
+        : action === 'click'
+          ? await dispatchClick(protocol, node)
+          : await dispatchType(protocol, node, text);
     await new Promise((resolve) => setTimeout(resolve, 100));
     return dispatch;
+  });
+}
+
+async function withProtocol(webSocketUrl, run) {
+  const socket = new WebSocket(webSocketUrl);
+  await once(socket, 'open');
+  try {
+    return await run(protocolClient(socket));
   } finally {
     socket.close();
   }
@@ -245,6 +288,50 @@ async function dispatchClick(protocol, target) {
   return dispatchedReceipt(target.node, ['mouseMoved', 'mousePressed', 'mouseReleased']);
 }
 
+export async function dispatchSelect(protocol, target, value) {
+  if (
+    String(target.node.nodeName).toLowerCase() !== 'select' ||
+    attributesFor(target.node).has('multiple')
+  )
+    throw new Error('select requires a single-selection select control.');
+  await scrollAndMeasureActionablePoint(protocol, target.nodeId);
+  const resolved = await protocol.request('DOM.resolveNode', { nodeId: target.nodeId });
+  const objectId = resolved.object?.objectId;
+  if (!objectId) throw new Error('Select control could not be resolved.');
+  let index;
+  try {
+    const result = await protocol.request('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: `function() { return Array.from(this.options).filter(o => !o.disabled && !o.closest('optgroup[disabled]') && !o.hidden).map(o => o.value); }`,
+      returnByValue: true,
+      silent: true,
+    });
+    const values = result.result?.value;
+    if (!Array.isArray(values) || values.filter((v) => v === value).length !== 1)
+      throw new Error('Expected one enabled option with the requested value.');
+    index = values.indexOf(value);
+  } finally {
+    await protocol.request('Runtime.releaseObject', { objectId }).catch(() => {});
+  }
+  await protocol.request('DOM.focus', { nodeId: target.nodeId });
+  for (const key of ['Home', ...Array(index).fill('ArrowDown')]) {
+    const code = key === 'Home' ? 36 : 40;
+    await protocol.request('Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      key,
+      code: key,
+      windowsVirtualKeyCode: code,
+    });
+    await protocol.request('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key,
+      code: key,
+      windowsVirtualKeyCode: code,
+    });
+  }
+  return dispatchedReceipt(target.node, ['focus selected control', 'Home', `${index} ArrowDown`]);
+}
+
 async function dispatchType(protocol, target, text) {
   assertTextEntry(target.node);
   const point = await scrollAndMeasureActionablePoint(protocol, target.nodeId, true);
@@ -322,8 +409,22 @@ export async function scrollAndMeasureActionablePoint(protocol, nodeId, textEntr
   try {
     const measured = await protocol.request('Runtime.callFunctionOn', {
       objectId,
-      functionDeclaration:
-        'function() { const rect = this.getBoundingClientRect(); const style = getComputedStyle(this); const left = Math.max(0, rect.left); const right = Math.min(window.innerWidth, rect.right); const top = Math.max(0, rect.top); const bottom = Math.min(window.innerHeight, rect.bottom); const x = (left + right) / 2; const y = (top + bottom) / 2; const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null; return { connected: this.isConnected, disabled: Boolean(this.disabled), readOnly: Boolean(this.readOnly), display: style.display, visibility: style.visibility, opacity: style.opacity, pointerEvents: style.pointerEvents, clientRects: this.getClientRects().length, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, x, y, covered: !(hit === this || this.contains(hit)) }; }',
+      functionDeclaration: `function() {
+        const rect = this.getBoundingClientRect(); const style = getComputedStyle(this);
+        const candidates = [this, ...Array.from(this.querySelectorAll('line,path,rect')).slice(0, 100)];
+        let x = -1, y = -1, covered = true;
+        for (const candidate of candidates) {
+          const box = candidate.getBoundingClientRect();
+          const px = (Math.max(0, box.left) + Math.min(innerWidth, box.right)) / 2;
+          const py = (Math.max(0, box.top) + Math.min(innerHeight, box.bottom)) / 2;
+          const hit = document.elementFromPoint(px, py);
+          if (hit === this || this.contains(hit)) { x = px; y = py; covered = false; break; }
+        }
+        return { connected: this.isConnected, disabled: Boolean(this.disabled) || this.getAttribute('aria-disabled') === 'true',
+          readOnly: Boolean(this.readOnly), display: style.display, visibility: style.visibility, opacity: style.opacity,
+          clientRects: this.getClientRects().length, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+          viewportWidth: innerWidth, viewportHeight: innerHeight, x, y, covered };
+      }`,
       returnByValue: true,
       silent: true,
     });
@@ -350,7 +451,6 @@ export async function scrollAndMeasureActionablePoint(protocol, nodeId, textEntr
       rect.display === 'none' ||
       rect.visibility === 'hidden' ||
       rect.visibility === 'collapse' ||
-      rect.pointerEvents === 'none' ||
       Number(rect.opacity) <= 0 ||
       rect.clientRects < 1 ||
       rect.right <= rect.left ||
@@ -371,7 +471,7 @@ export async function scrollAndMeasureActionablePoint(protocol, nodeId, textEntr
   }
 }
 
-function assertClickable(node) {
+export function assertClickable(node) {
   const name = String(node.localName ?? node.nodeName ?? '').toLowerCase();
   const attributes = attributesFor(node);
   if (attributes.has('disabled')) throw new Error('Selected control is disabled.');
@@ -379,6 +479,7 @@ function assertClickable(node) {
   const supported =
     name === 'button' ||
     name === 'a' ||
+    ['button', 'tab'].includes(attributes.get('role')) ||
     (name === 'input' && ['button', 'checkbox', 'radio', 'reset', 'submit'].includes(inputType));
   if (!supported)
     throw new Error(`Selected element ${name || 'unknown'} is not a supported click control.`);
@@ -430,7 +531,7 @@ function once(socket, eventName) {
 function parseArguments(args) {
   const [action = 'help', ...rest] = args;
   if (action === '--help' || action === '-h') return { action: 'help', options: {} };
-  if (!['type', 'click'].includes(action))
+  if (!['type', 'click', 'select', 'snapshot'].includes(action))
     throw new Error(`Unknown action: ${action}. Run with --help for usage.`);
   const options = {};
   for (let index = 0; index < rest.length; index += 1) {
@@ -508,7 +609,20 @@ async function writeReceipt(filePath, receipt) {
   await rename(temporary, filePath);
 }
 function helpText() {
-  return `Codex Orchestrator owned loopback WebView control companion\n\nUse only against an isolated development instance launched with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>:\n  node review-tools/app-inspector/webview-control.mjs type --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'textarea' --text-file <utf8-file> --out <receipt.json>\n  node review-tools/app-inspector/webview-control.mjs click --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/ --selector 'button[type="submit"]' --out <receipt.json>\n\nThe tool permits only HTTP loopback debugger endpoints with an explicit port. Before dispatch it verifies that the selected owner EXE and PID are live, exactly one loopback listener endpoint belongs to a descendant process and declares the requested port. It requires exactly one page target URL and one bounded selector, derives a point from that selected control with a fixed internal geometry query, and dispatches only CDP Input events. It exposes no coordinate or arbitrary-script interface. Text is redacted by length/hash. Pre-dispatch ownership, input dispatch, and product semantics are separate receipt facts; the receipt proves no semantic outcome.\n`;
+  return `Codex Orchestrator owned loopback WebView review companion
+
+Use an isolated development instance launched with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>.
+All commands require --exe <absolute-owner-exe> --pid <owner-pid> --debug-url http://127.0.0.1:<port> --target-url http://127.0.0.1:1420/.
+
+  snapshot [owner options] --out <state.json> [--screenshot <screen.png>]
+  click [owner options] --selector 'button[type="submit"]' --out <receipt.json>
+  type [owner options] --selector 'textarea' --text-file <utf8-file> --out <receipt.json>
+  select [owner options] --selector 'select' --value <option-value> --out <receipt.json>
+
+Snapshot reads rendered text, controls/selectors/geometry, focus, scroll regions and accessibility state without scrolling, input or foreground changes. Optional PNG capture reads the WebView compositor, excluding native window chrome. Password values are redacted; other visible page content is included. These sequential reads do not prove durable or provider outcomes.
+
+The tool verifies the selected EXE and PID, the loopback listener's process ownership, and exactly one matching page URL before each operation. Click/type/select resolve one bounded selector and send CDP Input events to that control. Select focuses a single-selection control and uses Home/ArrowDown keys through its enabled options. No coordinate or arbitrary-script interface is exposed. Input receipts redact text by length/hash and distinguish ownership checks, sent commands and unobserved product semantics.
+`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
