@@ -14,9 +14,15 @@ describe('tauri Worktree Review client', () => {
 
     await client.overview();
     await client.selectRepository('repository-one');
-    await client.branchDetail('repository-one', 'refs/heads/codex/review');
-    await client.branchHistory('repository-one', 'refs/heads/codex/review');
-    await client.branchHistory('repository-one', 'refs/heads/codex/review', 'history-page-2');
+    const target = {
+      kind: 'branch' as const,
+      repositoryId: 'repository-one',
+      branchRef: 'refs/heads/codex/review',
+    };
+    const query = { target, scope: { kind: 'ancestry' as const, tipObjectId: 'a'.repeat(40) } };
+    await client.targetDetail(target);
+    await client.commitHistory(query);
+    await client.commitHistory(query, 'history-page-2');
     await client.associateWorktree({
       repositoryId: 'repository-one',
       branchRef: 'refs/heads/codex/review',
@@ -49,22 +55,13 @@ describe('tauri Worktree Review client', () => {
         args: { input: { repositoryId: 'repository-one' } },
       },
       {
-        command: 'worktree_review_branch_detail',
-        args: { input: { repositoryId: 'repository-one', branchRef: 'refs/heads/codex/review' } },
+        command: 'worktree_review_target_detail',
+        args: { input: target },
       },
+      { command: 'worktree_review_commit_history', args: { input: { query } } },
       {
-        command: 'worktree_review_branch_history',
-        args: { input: { repositoryId: 'repository-one', branchRef: 'refs/heads/codex/review' } },
-      },
-      {
-        command: 'worktree_review_branch_history',
-        args: {
-          input: {
-            repositoryId: 'repository-one',
-            branchRef: 'refs/heads/codex/review',
-            cursor: 'history-page-2',
-          },
-        },
+        command: 'worktree_review_commit_history',
+        args: { input: { query, cursor: 'history-page-2' } },
       },
       {
         command: 'associate_worktree_review_worktree',

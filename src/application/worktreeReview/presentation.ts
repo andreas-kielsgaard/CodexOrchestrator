@@ -6,6 +6,10 @@ import type {
   ReviewBuildSource,
   ReviewOperationAttempt,
   WorktreeChanges,
+  ReviewBranch,
+  ReviewTarget,
+  GitCommit,
+  CommitSourceContext,
 } from './contracts';
 
 export function shortObjectId(objectId: string): string {
@@ -48,6 +52,10 @@ export function hasWorkSinceBaseline(changes: WorktreeChanges): boolean {
 
 export function sourceLabel(source: ReviewBuildSource): string {
   switch (source.kind) {
+    case 'physical_worktree':
+      return `${source.snapshot ? 'Snapshot' : 'Live checkout'} at ${shortObjectId(source.headObjectId)} � captured ${shortObjectId(source.capturedObjectId)}`;
+    case 'exact_commit':
+      return `Commit ${shortObjectId(source.objectId)}`;
     case 'existing_worktree':
       return source.triggerVirtualCommitId
         ? `Live checkout triggered at ${shortObjectId(source.triggerHeadObjectId)} · virtual commit ${shortObjectId(source.triggerVirtualCommitId)}`
@@ -63,6 +71,7 @@ export function sourceLabel(source: ReviewBuildSource): string {
 
 export function workspacePlanDisclosure(plan: BuildWorkspacePlan): string {
   switch (plan.kind) {
+    case 'borrow_physical_worktree':
     case 'borrow_selected_worktree':
       return 'This build will compile the live Worktree checkout using its existing dependencies. Worktree Review will neither install dependencies in nor remove that checkout.';
     case 'create_managed_branch_worktree':
@@ -125,4 +134,58 @@ function plural(count: number, noun: string): string {
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+export function targetKey(target: ReviewTarget): string {
+  const source =
+    target.kind === 'branch'
+      ? target.branchRef
+      : target.kind === 'worktree'
+        ? target.worktreeId
+        : `${target.objectId}:${JSON.stringify(target.context)}`;
+  return `${target.repositoryId}:${target.kind}:${source}`;
+}
+
+export function orderReviewTargets(targets: readonly ReviewBranch[]): ReviewBranch[] {
+  const timestamp = (target: ReviewBranch) =>
+    Date.parse(target.activity?.changedAt ?? target.tip.committedAt) || 0;
+  return [...targets].sort(
+    (left, right) =>
+      Number(right.availableWorktreeCount > 0) - Number(left.availableWorktreeCount > 0) ||
+      timestamp(right) - timestamp(left) ||
+      left.displayName.localeCompare(right.displayName) ||
+      targetKey(left.target).localeCompare(targetKey(right.target)),
+  );
+}
+
+export function commitSourceContext(branch: ReviewBranch): CommitSourceContext {
+  const target = branch.target;
+  if (target.kind === 'commit') return target.context;
+  return target.kind === 'branch'
+    ? { kind: 'branch', branchRef: target.branchRef, tipObjectId: branch.tip.objectId }
+    : { kind: 'worktree', worktreeId: target.worktreeId, tipObjectId: branch.tip.objectId };
+}
+
+export function commitTarget(branch: ReviewBranch, objectId: string): ReviewTarget {
+  return {
+    kind: 'commit',
+    repositoryId: branch.repositoryId,
+    objectId,
+    context: commitSourceContext(branch),
+  };
+}
+
+export function uniqueCommits(commits: readonly GitCommit[]): GitCommit[] {
+  return [...new Map(commits.map((commit) => [commit.objectId, commit])).values()];
+}
+
+export function sourceTarget(target: ReviewTarget): ReviewTarget {
+  if (target.kind !== 'commit') return target;
+  return target.context.kind === 'branch'
+    ? { kind: 'branch', repositoryId: target.repositoryId, branchRef: target.context.branchRef }
+    : {
+        kind: 'worktree',
+        repositoryId: target.repositoryId,
+        worktreeId: target.context.worktreeId,
+      };
 }

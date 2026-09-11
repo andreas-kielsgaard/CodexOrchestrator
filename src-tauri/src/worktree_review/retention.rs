@@ -107,7 +107,7 @@ mod tests {
             source: SourceBinding {
                 repository_id: crate::worktree_review::domain::RepositoryId::new("repository")
                     .unwrap(),
-                branch_ref: BranchRef::new("refs/heads/main").unwrap(),
+                branch_ref: Some(BranchRef::new("refs/heads/main").unwrap()),
                 selection: ReviewSourceSelection::BranchCommit {
                     selected_object: GitObjectId::new("a".repeat(40)).unwrap(),
                 },

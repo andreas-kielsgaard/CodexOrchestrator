@@ -2,8 +2,12 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AssociateWorktreeRequest,
   AssociatedWorktree,
-  BranchRef,
-  BranchHistoryPage,
+  ReviewTarget,
+  CommitHistoryQuery,
+  CommitHistoryPage,
+  BranchGraphData,
+  WorktreeId,
+  WorktreeActivity,
   BranchReviewDetail,
   CreateBuildRequest,
   CreateWorktreeRequest,
@@ -29,13 +33,19 @@ export function createTauriWorktreeReviewClient(
       invokeCommand<WorktreeReviewOverview>('select_worktree_review_repository', {
         input: { repositoryId },
       }),
-    branchDetail: (repositoryId: RepositoryId, branchRef: BranchRef) =>
-      invokeCommand<BranchReviewDetail>('worktree_review_branch_detail', {
-        input: { repositoryId, branchRef },
+    targetDetail: (input: ReviewTarget) =>
+      invokeCommand<BranchReviewDetail>('worktree_review_target_detail', { input }),
+    commitHistory: (query: CommitHistoryQuery, cursor?: string) =>
+      invokeCommand<CommitHistoryPage>('worktree_review_commit_history', {
+        input: { query, ...(cursor ? { cursor } : {}) },
       }),
-    branchHistory: (repositoryId: RepositoryId, branchRef: BranchRef, cursor?: string) =>
-      invokeCommand<BranchHistoryPage>('worktree_review_branch_history', {
-        input: { repositoryId, branchRef, ...(cursor ? { cursor } : {}) },
+    branchGraph: (repositoryId: RepositoryId, limit = 1200, snapshotId?: string) =>
+      invokeCommand<BranchGraphData>('worktree_review_branch_graph', {
+        input: { repositoryId, limit, snapshotId },
+      }),
+    worktreeActivity: (repositoryId: RepositoryId, worktreeIds: readonly WorktreeId[]) =>
+      invokeCommand<readonly WorktreeActivity[]>('worktree_review_worktree_activity', {
+        input: { repositoryId, worktreeIds },
       }),
     associateWorktree: (input: AssociateWorktreeRequest) =>
       invokeCommand<AssociatedWorktree>('associate_worktree_review_worktree', { input }),

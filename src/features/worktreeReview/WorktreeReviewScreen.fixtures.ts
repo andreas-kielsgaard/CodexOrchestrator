@@ -136,6 +136,14 @@ export const overviewFixture: WorktreeReviewOverview = {
   branches: [
     {
       repositoryId: 'repository-one',
+      target: {
+        kind: 'branch',
+        repositoryId: 'repository-one',
+        branchRef: 'refs/heads/codex/durable-review',
+      },
+      availableWorktreeCount: 2,
+      worktreeIds: [worktreeOne.worktreeId, worktreeTwo.worktreeId],
+      activity: null,
       branchRef: 'refs/heads/codex/durable-review',
       displayName: 'codex/durable-review',
       tip: tipCommit,
@@ -145,6 +153,10 @@ export const overviewFixture: WorktreeReviewOverview = {
     },
     {
       repositoryId: 'repository-one',
+      target: { kind: 'branch', repositoryId: 'repository-one', branchRef: 'refs/heads/main' },
+      availableWorktreeCount: 1,
+      worktreeIds: ['worktree-main'],
+      activity: null,
       branchRef: 'refs/heads/main',
       displayName: 'main',
       tip: baseCommit,

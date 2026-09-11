@@ -113,8 +113,10 @@ describe('shared Epic initiation confirmation modal', () => {
     });
     expect(screen.getByText('1 other confirmation request waiting.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(await screen.findByRole('dialog', { name: 'Initiate this Epic?' })).toHaveTextContent(
-      'Agent Epic',
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { name: 'Initiate this Epic?' })).toHaveTextContent(
+        'Agent Epic',
+      ),
     );
     expect(f.resolve).toHaveBeenCalledWith('button-request', 'rejected');
   });
@@ -155,8 +157,10 @@ describe('shared Epic initiation confirmation modal', () => {
     const f = fixture();
     render(<Harness client={f.client} />);
     await act(async () => f.emit(agentRequest));
-    expect(await screen.findByRole('dialog', { name: 'Initiate this Epic?' })).toHaveTextContent(
-      'Agent Epic',
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { name: 'Initiate this Epic?' })).toHaveTextContent(
+        'Agent Epic',
+      ),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Confirm initiation' }));
     await waitFor(() => expect(f.resolve).toHaveBeenCalledWith('agent-request', 'confirmed'));

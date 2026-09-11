@@ -116,7 +116,8 @@ fn dependency_policy(
     cache_root: &Path,
 ) -> PhysicalWorktreeDependencyPolicy {
     match ownership {
-        WorkspaceOwnership::BorrowedExternal { .. } => {
+        WorkspaceOwnership::BorrowedExternal { .. }
+        | WorkspaceOwnership::BorrowedPhysicalWorktree => {
             PhysicalWorktreeDependencyPolicy::UseExisting
         }
         WorkspaceOwnership::ManagedBranchWorktree { .. }

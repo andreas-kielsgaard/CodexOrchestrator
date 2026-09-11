@@ -80,13 +80,13 @@ CREATE TABLE IF NOT EXISTS review_workspaces (
 CREATE TABLE IF NOT EXISTS review_builds (
   build_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  repository_id TEXT NOT NULL,
-  full_branch_ref TEXT NOT NULL,
+  repository_id TEXT NOT NULL REFERENCES review_repositories(repository_id) ON DELETE RESTRICT,
+  full_branch_ref TEXT,
   workspace_id TEXT NOT NULL REFERENCES review_workspaces(workspace_id) ON DELETE RESTRICT,
   source_binding_json TEXT NOT NULL,
   retention_key TEXT NOT NULL,
   current_output_id TEXT,
-  data_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (data_contract_version = 2),
+  data_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (data_contract_version IN (1, 2)),
   lifecycle TEXT NOT NULL CHECK (lifecycle IN (
     'active', 'superseded', 'cleanup_pending', 'cleaned', 'unverified_legacy'
   )),
@@ -201,13 +201,33 @@ CREATE TABLE IF NOT EXISTS worktree_review_product_settings (
 "#;
 
 pub(super) fn initialize(connection: &mut Connection) -> StorageResult<()> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(sql_error("serialize durable worktree review migrations"))?;
-    initialize_locked(&transaction)?;
-    transaction
-        .commit()
-        .map_err(sql_error("commit durable worktree review migrations"))
+    // SQLite requires foreign keys disabled outside the transaction for a table rebuild.
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .map_err(sql_error("prepare review migration"))?;
+    let result = (|| {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_error("serialize durable worktree review migrations"))?;
+        initialize_locked(&transaction)?;
+        let violations: i64 = transaction
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .map_err(sql_error("verify review migration references"))?;
+        if violations != 0 {
+            return Err(super::StorageError::corrupt(
+                "review migration violates foreign keys",
+            ));
+        }
+        transaction
+            .commit()
+            .map_err(sql_error("commit durable worktree review migrations"))
+    })();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(sql_error("restore review foreign keys"))?;
+    result
 }
 
 fn initialize_locked(connection: &Connection) -> StorageResult<()> {
@@ -367,6 +387,41 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
             [],
         )
         .map_err(sql_error("record review repository evidence schema"))?;
+    let branch_required: bool = connection.query_row(
+        "SELECT [notnull] FROM pragma_table_info('review_builds') WHERE name = 'full_branch_ref'", [], |row| row.get(0))
+        .map_err(sql_error("inspect build provenance constraint"))?;
+    if branch_required {
+        // Rebuild from the existing declaration so quarantined legacy columns and constraints survive.
+        let declaration: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'review_builds'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sql_error("read durable build declaration"))?;
+        let (_, body) = declaration
+            .split_once('(')
+            .ok_or_else(|| super::StorageError::corrupt("invalid build table declaration"))?;
+        let relaxed = body.replace("full_branch_ref TEXT NOT NULL", "full_branch_ref TEXT");
+        if relaxed == body {
+            return Err(super::StorageError::corrupt(
+                "unrecognized build branch constraint",
+            ));
+        }
+        let columns = table_columns(connection, "review_builds")?
+            .iter()
+            .map(|column| format!("\"{}\"", column.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        connection.execute_batch(&format!("CREATE TABLE review_builds_v7 ({relaxed};
+            INSERT INTO review_builds_v7({columns}) SELECT {columns} FROM review_builds;
+            DROP TABLE review_builds;
+            ALTER TABLE review_builds_v7 RENAME TO review_builds;
+            CREATE INDEX idx_review_builds_logical_source ON review_builds(repository_id, full_branch_ref, retention_key, created_at DESC);"))
+            .map_err(sql_error("allow branch-independent build sources"))?;
+    }
+    connection.execute("INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at) VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", [])
+        .map_err(sql_error("record branch-independent build sources"))?;
     Ok(())
 }
 

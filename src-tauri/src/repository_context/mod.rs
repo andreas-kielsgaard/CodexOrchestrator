@@ -1,4 +1,5 @@
 mod command;
+mod commits;
 mod identity;
 mod refs;
 mod remotes;
@@ -9,12 +10,11 @@ use command::HardenedGitRunner;
 use std::{path::Path, sync::Arc};
 
 pub(crate) use crate::git_process::GitExecutable;
+pub(crate) use commits::{CommitFacts, CommitParents, CommitReader};
 pub(crate) use identity::{
     CanonicalDirectory, PathIdentity, RepositoryId, RepositoryIdentity, RepositoryIdentityReader,
 };
-pub(crate) use refs::{
-    BranchRef, BranchSummary, CommitFacts, CommitReader, FullRefName, ObjectId, ReferenceReader,
-};
+pub(crate) use refs::{BranchRef, BranchSummary, FullRefName, ObjectId, ReferenceReader};
 pub(crate) use remotes::{RemoteObservation, RepositoryRemoteReader};
 pub(crate) use status::RepositoryStatusReader;
 pub(crate) use worktrees::{

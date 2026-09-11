@@ -10,6 +10,10 @@ use rusqlite::{params, OptionalExtension};
 pub(crate) trait WorktreeAssociationRepository {
     fn save(&self, association: &WorktreeAssociation) -> StorageResult<()>;
     fn find(&self, id: &WorktreeAssociationId) -> StorageResult<Option<WorktreeAssociation>>;
+    fn list_for_repository(
+        &self,
+        repository_id: &RepositoryId,
+    ) -> StorageResult<Vec<WorktreeAssociation>>;
     fn list_for_branch(
         &self,
         repository_id: &RepositoryId,
@@ -35,6 +39,15 @@ impl<'owner, Owner> SqliteWorktreeAssociationRepository<'owner, Owner> {
 impl<Owner: ConnectionProvider> WorktreeAssociationRepository
     for SqliteWorktreeAssociationRepository<'_, Owner>
 {
+    fn list_for_repository(
+        &self,
+        repository_id: &RepositoryId,
+    ) -> StorageResult<Vec<WorktreeAssociation>> {
+        self.owner.with_connection(|connection| query_many(connection,
+            &format!("{SELECT_ASSOCIATION} WHERE repository_id = ?1 ORDER BY associated_at, association_id"),
+            [repository_id.as_str()]))
+    }
+
     fn save(&self, association: &WorktreeAssociation) -> StorageResult<()> {
         self.owner.with_connection(|connection| {
             connection

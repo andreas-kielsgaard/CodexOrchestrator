@@ -1,20 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type {
   RegisteredRepository,
   RepositoryCatalogClient,
 } from '../../application/repositoryCatalog';
-import type {
-  AssociateWorktreeRequest,
-  BranchRef,
-  BranchReviewDetail,
-  BuildId,
-  CreateBuildRequest,
-  GitCommit,
-  RepositoryId,
-  WorktreeAssociationCandidate,
-  WorktreeAssociationId,
-  WorktreeReviewClient,
-  WorktreeReviewOverview,
+import {
+  commitTarget,
+  commitSourceContext,
+  type AssociateWorktreeRequest,
+  type BranchReviewDetail,
+  type BuildId,
+  type CreateBuildRequest,
+  type ReviewTarget,
+  type WorktreeAssociationCandidate,
+  type WorktreeReviewClient,
 } from '../../application/worktreeReview';
 import { ProductViewHeader } from '../shared/ProductViewHeader';
 import { BranchNavigator } from './BranchNavigator';
@@ -23,6 +21,11 @@ import { BuildHistory } from './BuildHistory';
 import { ReadinessNotice } from './ReadinessNotice';
 import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
+import { useReviewSelection } from './useReviewSelection';
+import { useCommitHistory } from './useCommitHistory';
+import { initialBuildDraft, requiresCheckout, type BuildDraft } from './buildDraft';
+import { BuildCheckoutDialog } from './BuildCheckoutDialog';
+import { BranchGraphDialog } from './branchSelection/BranchGraphDialog';
 import './worktreeReview.css';
 
 export function WorktreeReviewScreen({
@@ -32,269 +35,155 @@ export function WorktreeReviewScreen({
   readonly client: WorktreeReviewClient;
   readonly repositoryCatalog: RepositoryCatalogClient;
 }) {
-  const [overview, setOverview] = useState<WorktreeReviewOverview>({
-    repositories: [],
-    branches: [],
-  });
-  const [repositoryId, setRepositoryId] = useState<RepositoryId | ''>('');
-  const [branchRef, setBranchRef] = useState<BranchRef | ''>('');
-  const [detail, setDetail] = useState<BranchReviewDetail | null>(null);
-  const [associationId, setAssociationId] = useState<WorktreeAssociationId | ''>('');
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const [busy, setBusy] = useState<string | null>('loading');
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [history, setHistory] = useState<{
-    readonly branchRef: BranchRef;
-    readonly commits: readonly GitCommit[];
-    readonly nextCursor?: string;
-  } | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [openingBuildId, setOpeningBuildId] = useState<BuildId | undefined>();
-  const branchRequest = useRef(0);
-  const historyRequest = useRef(0);
-
-  const loadBranch = useCallback(
-    async (nextRepositoryId: RepositoryId, nextBranchRef: BranchRef) => {
-      const request = ++branchRequest.current;
-      setBusy('branch');
-      setError(null);
-      setNotice(null);
-      setDetail(null);
-      setHistory(null);
-      historyRequest.current += 1;
-      try {
-        const value = await client.branchDetail(nextRepositoryId, nextBranchRef);
-        if (request !== branchRequest.current) return;
-        setDetail(value);
-        setOverview((current) => withBranchSummary(current, value.branch));
-        setAssociationId((current) => preferredAssociation(value, current));
-      } catch (cause) {
-        if (request === branchRequest.current) setError(message(cause));
-      } finally {
-        if (request === branchRequest.current) setBusy(null);
-      }
-    },
-    [client],
-  );
-
-  useEffect(() => {
-    let active = true;
-    async function initialize() {
-      setBusy('loading');
-      try {
-        const initial = await client.overview();
-        if (!active) return;
-        const selected =
-          initial.repositories.find(
-            (repository) => repository.repositoryId === initial.selectedRepositoryId,
-          )?.repositoryId ??
-          initial.repositories[0]?.repositoryId ??
-          '';
-        const resolved =
-          selected && initial.selectedRepositoryId !== selected
-            ? await client.selectRepository(selected)
-            : initial;
-        if (!active) return;
-        setOverview(resolved);
-        setRepositoryId(selected);
-        const firstBranch = resolved.branches[0]?.branchRef ?? '';
-        setBranchRef(firstBranch);
-        if (selected && firstBranch) await loadBranch(selected, firstBranch);
-        else setBusy(null);
-      } catch (cause) {
-        if (active) {
-          setError(message(cause));
-          setBusy(null);
-        }
-      }
-    }
-    void initialize();
-    return () => {
-      active = false;
-      branchRequest.current += 1;
-    };
-  }, [client, loadBranch]);
-
+  const [draft, setDraft] = useState<BuildDraft | null>(null);
+  const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
+  const onSelected = useCallback((detail: BranchReviewDetail, activeWorktreeId?: string) => {
+    setDraft(initialBuildDraft(detail, activeWorktreeId));
+    setSelectedWorktreeId(
+      detail.worktrees.find(
+        (worktree) =>
+          worktree.availability.state === 'available' && worktree.worktreeId !== activeWorktreeId,
+      )?.worktreeId ??
+        detail.worktrees[0]?.worktreeId ??
+        '',
+    );
+  }, []);
+  const selection = useReviewSelection(client, onSelected);
+  const { overview, branches, target, detail, loading } = selection;
+  const repositoryId = overview.selectedRepositoryId ?? '';
   const selectedRepository = overview.repositories.find(
     (repository) => repository.repositoryId === repositoryId,
   );
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const refreshTrigger = useRef<HTMLButtonElement>(null);
+  const graphTrigger = useRef<HTMLButtonElement>(null);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [checkoutRequest, setCheckoutRequest] = useState<CreateBuildRequest | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [openingBuildId, setOpeningBuildId] = useState<BuildId>();
+  const disabled = loading || busy !== null;
   const selectedWorktree = detail?.worktrees.find(
     (worktree) =>
-      worktree.associationId === associationId && worktree.availability.state === 'available',
+      worktree.worktreeId === selectedWorktreeId && worktree.availability.state === 'available',
   );
-  const canCreateWorktree = selectedRepository?.readiness.createWorktree.state === 'available';
-  const canBuild = selectedRepository?.readiness.build.state === 'available';
-  const activeMutation = busy !== null && busy !== 'branch' && busy !== 'loading';
+  const canCreateWorktree =
+    selectedRepository?.readiness.createWorktree.state === 'available' && target?.kind === 'branch';
+  const canBuild =
+    selectedRepository?.readiness.build.state === 'available' &&
+    selectedRepository?.readiness.buildOutputStorage.state === 'available';
+  const query = useMemo(
+    () =>
+      detail
+        ? {
+            target: detail.branch.target,
+            scope: {
+              kind: 'ancestry' as const,
+              tipObjectId: commitSourceContext(detail.branch).tipObjectId,
+            },
+          }
+        : null,
+    [detail],
+  );
+  const history = useCommitHistory(client, query);
 
-  async function changeRepository(nextRepositoryId: RepositoryId) {
-    branchRequest.current += 1;
-    setBusy('repository');
+  async function selectTarget(target: ReviewTarget) {
     setError(null);
     setNotice(null);
-    setDetail(null);
-    setAssociationId('');
-    try {
-      const value = await client.selectRepository(nextRepositoryId);
-      setOverview(value);
-      setRepositoryId(nextRepositoryId);
-      const nextBranch = value.branches[0]?.branchRef ?? '';
-      setBranchRef(nextBranch);
-      if (nextBranch) await loadBranch(nextRepositoryId, nextBranch);
-      else setBusy(null);
-    } catch (cause) {
-      setError(message(cause));
-      setBusy(null);
-    }
+    await selection.selectTarget(target);
   }
-
+  async function changeRepository(id: string) {
+    setError(null);
+    setNotice(null);
+    await selection.selectRepository(id);
+  }
   async function registeredRepository(repository: RegisteredRepository) {
     setRegistrationOpen(false);
-    setBusy('repository');
+    await changeRepository(repository.repositoryId);
+  }
+  async function refresh() {
     setError(null);
-    setNotice(null);
-    setDetail(null);
-    setAssociationId('');
+    const button = refreshTrigger.current;
+    let restore = document.activeElement === button;
+    const moved = (event: Event) => {
+      if (event.target !== button && event.target !== document.body) restore = false;
+    };
+    document.addEventListener('focusin', moved);
+    document.addEventListener('pointerdown', moved);
     try {
-      const value = await client.selectRepository(repository.repositoryId);
-      const nextBranch = value.branches[0]?.branchRef ?? '';
-      setOverview(value);
-      setRepositoryId(repository.repositoryId);
-      setBranchRef(nextBranch);
-      if (nextBranch) await loadBranch(repository.repositoryId, nextBranch);
-      else setBusy(null);
-      setNotice('Repository registered and selected.');
-    } catch (cause) {
-      setError(message(cause));
-      setBusy(null);
+      await selection.refresh();
+    } finally {
+      requestAnimationFrame(() => {
+        document.removeEventListener('focusin', moved);
+        document.removeEventListener('pointerdown', moved);
+        if (
+          restore &&
+          button?.isConnected &&
+          !button.disabled &&
+          document.activeElement === document.body
+        )
+          button.focus();
+      });
     }
   }
-
-  function changeBranch(nextBranchRef: BranchRef) {
-    if (!repositoryId || nextBranchRef === branchRef) return;
-    setBranchRef(nextBranchRef);
-    setAssociationId('');
-    void loadBranch(repositoryId, nextBranchRef);
-  }
-
-  async function createWorktree() {
-    if (!repositoryId || !branchRef || !detail) return;
-    setBusy('create-worktree');
+  async function mutate(label: string, action: () => Promise<unknown>, success: string) {
+    setBusy(label);
     setError(null);
+    setNotice(null);
     try {
-      const worktree = await client.createWorktree({ repositoryId, branchRef });
-      const branch = {
-        ...detail.branch,
-        associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
-      };
-      setDetail({
-        ...detail,
-        branch,
-        worktrees: [...detail.worktrees, worktree],
-      });
-      setOverview((current) => withBranchSummary(current, branch));
-      setAssociationId(worktree.associationId);
-      setNotice(`Created and selected ${worktree.name}.`);
+      await action();
+      await selection.refresh();
+      setNotice(success);
     } catch (cause) {
       setError(message(cause));
     } finally {
       setBusy(null);
     }
   }
-
+  async function createWorktree() {
+    if (target?.kind !== 'branch') return;
+    await mutate(
+      'create-worktree',
+      () => client.createWorktree({ repositoryId, branchRef: target.branchRef }),
+      'Worktree created.',
+    );
+  }
   async function associateWorktree(
     candidate: WorktreeAssociationCandidate,
     baseline: AssociateWorktreeRequest['baseline'],
   ) {
-    if (!repositoryId || !branchRef || !detail) return;
-    setBusy(`associate:${candidate.worktreeId}`);
-    setError(null);
-    try {
-      const worktree = await client.associateWorktree({
-        repositoryId,
-        branchRef,
-        worktreeId: candidate.worktreeId,
-        baseline,
-      });
-      const branch = {
-        ...detail.branch,
-        associatedWorktreeCount: detail.branch.associatedWorktreeCount + 1,
-      };
-      setDetail({
-        ...detail,
-        branch,
-        worktrees: [...detail.worktrees, worktree],
-        associationCandidates: detail.associationCandidates.filter(
-          (item) => item.worktreeId !== candidate.worktreeId,
-        ),
-      });
-      setOverview((current) => withBranchSummary(current, branch));
-      setAssociationId(worktree.associationId);
-      setNotice(`Associated and selected ${worktree.name}.`);
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setBusy(null);
-    }
+    if (target?.kind !== 'branch') return;
+    await mutate(
+      'associate-worktree',
+      () =>
+        client.associateWorktree({
+          repositoryId,
+          branchRef: target.branchRef,
+          worktreeId: candidate.worktreeId,
+          baseline,
+        }),
+      'Worktree associated.',
+    );
   }
-
+  function requestBuild(request: CreateBuildRequest) {
+    if (requiresCheckout(request)) setCheckoutRequest(request);
+    else void createBuild(request);
+  }
   async function createBuild(request: CreateBuildRequest) {
-    if (!detail) return;
-    setBusy('create-build');
-    setError(null);
-    try {
-      const build = await client.createBuild(request);
-      setDetail({ ...detail, builds: [build, ...detail.builds] });
-      setNotice(
-        `Created ${build.name}. Its attempt and retained output are tracked independently.`,
-      );
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setBusy(null);
-    }
+    await mutate('create-build', () => client.createBuild(request), 'Build result recorded.');
   }
-
-  async function loadHistory(cursor?: string) {
-    if (!repositoryId || !branchRef || historyLoading) return;
-    if (!cursor && history?.branchRef === branchRef && history.commits.length > 0) return;
-    const request = ++historyRequest.current;
-    setHistoryLoading(true);
-    setError(null);
-    try {
-      const page = await client.branchHistory(repositoryId, branchRef, cursor);
-      if (request !== historyRequest.current) return;
-      setHistory((current) => ({
-        branchRef,
-        commits: uniqueCommits([
-          ...(cursor && current?.branchRef === branchRef ? current.commits : []),
-          ...page.commits,
-        ]),
-        nextCursor: page.nextCursor,
-      }));
-    } catch (cause) {
-      if (request === historyRequest.current) setError(message(cause));
-    } finally {
-      if (request === historyRequest.current) setHistoryLoading(false);
-    }
-  }
-
   async function openBuild(buildId: BuildId) {
     setOpeningBuildId(buildId);
     setError(null);
     try {
       await client.openBuild({ buildId });
-      setNotice(`Opened build ${buildId}.`);
+      setNotice('Opened build.');
     } catch (cause) {
       setError(message(cause));
     } finally {
       setOpeningBuildId(undefined);
     }
-  }
-
-  async function refresh() {
-    if (!repositoryId || !branchRef) return;
-    await loadBranch(repositoryId, branchRef);
   }
 
   return (
@@ -306,7 +195,8 @@ export function WorktreeReviewScreen({
           <button
             type="button"
             className="worktree-review__secondary"
-            disabled={!repositoryId || !branchRef || busy !== null}
+            disabled={!repositoryId || !target || disabled}
+            ref={refreshTrigger}
             onClick={() => void refresh()}
           >
             Refresh facts
@@ -317,19 +207,18 @@ export function WorktreeReviewScreen({
         <BranchNavigator
           repositories={overview.repositories}
           selectedRepositoryId={repositoryId}
-          branches={overview.branches}
-          selectedBranchRef={branchRef}
-          disabled={busy !== null}
+          branches={branches}
+          selectedTarget={target}
+          onSelectBranch={() => setGraphOpen(true)}
+          graphTriggerRef={graphTrigger}
+          disabled={disabled}
           onRepositoryChange={(value) => void changeRepository(value)}
           onRegisterRepository={() => setRegistrationOpen(true)}
-          onBranchChange={changeBranch}
+          onBranchChange={(target) => void selectTarget(target)}
         />
 
-        <div
-          className="worktree-review__content"
-          aria-busy={busy === 'branch' || busy === 'loading'}
-        >
-          {overview.repositories.length === 0 && busy === null && (
+        <div className="worktree-review__content" aria-busy={loading}>
+          {overview.repositories.length === 0 && !disabled && (
             <section className="worktree-review__connect" aria-labelledby="no-repositories-title">
               <div>
                 <h2 id="no-repositories-title">No repositories registered</h2>
@@ -360,10 +249,10 @@ export function WorktreeReviewScreen({
               </dl>
             </section>
           )}
-          {error && (
+          {(error || selection.error || history.error) && (
             <div className="worktree-review__alert" role="alert">
               <strong>Worktree Review could not complete the action.</strong>
-              <span>{error}</span>
+              <span>{error || selection.error || history.error}</span>
             </div>
           )}
           {notice && (
@@ -372,13 +261,15 @@ export function WorktreeReviewScreen({
             </p>
           )}
 
-          {(busy === 'loading' || busy === 'branch') && !detail && (
+          {loading && !detail && (
             <p className="worktree-review__loading" role="status">
-              Loading branch facts…
+              Loading review facts…
             </p>
           )}
-          {!branchRef && busy === null && (
-            <p className="worktree-review__empty">Select a repository with at least one branch.</p>
+          {!target && !disabled && (
+            <p className="worktree-review__empty">
+              Select a repository with at least one branch or instantiated worktree.
+            </p>
           )}
           {detail && (
             <>
@@ -386,34 +277,42 @@ export function WorktreeReviewScreen({
               <WorktreeSelector
                 worktrees={detail.worktrees}
                 candidates={detail.associationCandidates}
-                selectedAssociationId={associationId}
+                selectedWorktreeId={selectedWorktreeId}
                 activeWorktreeId={overview.activeBuildContext?.worktreeId}
-                historyCommits={history?.branchRef === branchRef ? history.commits : []}
-                historyLoading={historyLoading}
-                hasMoreHistory={Boolean(history?.branchRef === branchRef && history.nextCursor)}
+                historyCommits={history.commits}
+                historyLoading={history.loading}
+                hasMoreHistory={history.hasMore}
                 createAvailable={canCreateWorktree}
-                busy={activeMutation}
-                onSelect={setAssociationId}
+                busy={disabled}
+                onSelect={(worktreeId) =>
+                  void selectTarget({ kind: 'worktree', repositoryId, worktreeId })
+                }
                 onCreate={() => void createWorktree()}
                 onAssociate={(candidate, baseline) => void associateWorktree(candidate, baseline)}
-                onRequestHistory={() => void loadHistory()}
-                onLoadMoreHistory={() => void loadHistory(history?.nextCursor)}
+                onRequestHistory={() => void history.load()}
+                onLoadMoreHistory={() => void history.loadMore()}
               />
-              <BuildComposer
-                key={detail.branch.branchRef}
-                detail={detail}
-                selectedWorktree={selectedWorktree}
-                activeWorktreeId={overview.activeBuildContext?.worktreeId}
-                commits={history?.branchRef === branchRef ? history.commits : []}
-                historyLoading={historyLoading}
-                hasMoreHistory={Boolean(history?.branchRef === branchRef && history.nextCursor)}
-                buildAvailable={canBuild}
-                disabled={activeMutation}
-                creating={busy === 'create-build'}
-                onCreate={(request) => void createBuild(request)}
-                onRequestHistory={() => void loadHistory()}
-                onLoadMoreHistory={() => void loadHistory(history?.nextCursor)}
-              />
+              {draft && (
+                <BuildComposer
+                  draft={draft!}
+                  onDraftChange={setDraft}
+                  onSelectCommit={(commit) =>
+                    void selectTarget(commitTarget(detail.branch, commit.objectId))
+                  }
+                  detail={detail}
+                  selectedWorktree={selectedWorktree}
+                  activeWorktreeId={overview.activeBuildContext?.worktreeId}
+                  commits={history.commits}
+                  historyLoading={history.loading}
+                  hasMoreHistory={history.hasMore}
+                  buildAvailable={canBuild}
+                  disabled={disabled}
+                  creating={busy === 'create-build'}
+                  onCreate={requestBuild}
+                  onRequestHistory={() => void history.load()}
+                  onLoadMoreHistory={() => void history.loadMore()}
+                />
+              )}
               <BuildHistory
                 builds={detail.builds}
                 openingBuildId={openingBuildId}
@@ -423,6 +322,31 @@ export function WorktreeReviewScreen({
           )}
         </div>
       </div>
+      {graphOpen && (
+        <BranchGraphDialog
+          client={client}
+          repositoryId={repositoryId}
+          selectedTarget={target}
+          onClose={() => setGraphOpen(false)}
+          onSelect={(target) => {
+            setGraphOpen(false);
+            void selectTarget(target).then(() => {
+              requestAnimationFrame(() => graphTrigger.current?.focus());
+            });
+          }}
+        />
+      )}
+      {checkoutRequest && (
+        <BuildCheckoutDialog
+          request={checkoutRequest}
+          onClose={() => setCheckoutRequest(null)}
+          onConfirm={() => {
+            const request = checkoutRequest;
+            setCheckoutRequest(null);
+            void createBuild(request);
+          }}
+        />
+      )}
       {registrationOpen && (
         <RepositoryRegistrationModal
           catalog={repositoryCatalog}
@@ -440,7 +364,7 @@ function BranchSummary({ detail }: { readonly detail: BranchReviewDetail }) {
       className="worktree-review__branch-summary"
       aria-labelledby="worktree-review-selected-branch"
     >
-      <p className="worktree-review__step">1 · Selected branch</p>
+      <p className="worktree-review__step">1 · Selected source</p>
       <div className="worktree-review__branch-title">
         <div>
           <h2 id="worktree-review-selected-branch">{detail.branch.displayName}</h2>
@@ -448,52 +372,16 @@ function BranchSummary({ detail }: { readonly detail: BranchReviewDetail }) {
             <code>{detail.branch.tip.abbreviatedObjectId}</code> · {detail.branch.tip.subject}
           </p>
         </div>
-        <span>
-          {detail.branch.aheadOfDefault} ahead · {detail.branch.behindDefault} behind default
-        </span>
+        {detail.branch.target.kind === 'branch' && (
+          <span>
+            {detail.branch.aheadOfDefault} ahead · {detail.branch.behindDefault} behind default
+          </span>
+        )}
       </div>
     </section>
   );
 }
 
-function preferredAssociation(
-  detail: BranchReviewDetail,
-  current: WorktreeAssociationId | '',
-): WorktreeAssociationId | '' {
-  if (
-    current &&
-    detail.worktrees.some(
-      (worktree) =>
-        worktree.associationId === current && worktree.availability.state === 'available',
-    )
-  ) {
-    return current;
-  }
-  return (
-    detail.worktrees.find((worktree) => worktree.availability.state === 'available')
-      ?.associationId ?? ''
-  );
-}
-
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
-}
-
-function uniqueCommits(commits: readonly GitCommit[]): readonly GitCommit[] {
-  return commits.filter(
-    (commit, index) =>
-      commits.findIndex((candidate) => candidate.objectId === commit.objectId) === index,
-  );
-}
-
-function withBranchSummary(
-  overview: WorktreeReviewOverview,
-  branch: BranchReviewDetail['branch'],
-): WorktreeReviewOverview {
-  return {
-    ...overview,
-    branches: overview.branches.map((candidate) =>
-      candidate.branchRef === branch.branchRef ? branch : candidate,
-    ),
-  };
 }

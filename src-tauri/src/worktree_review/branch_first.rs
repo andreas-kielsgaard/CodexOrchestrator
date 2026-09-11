@@ -2,29 +2,26 @@ use super::{
     association_observer::{observe_association, stable_association_id},
     branch_presentation::{
         associated_worktree_view, association_candidate_view, available_repository_readiness,
-        baseline_view, branch_view, commit_view as present_commit, registered_repository_view,
-        repository_name, repository_readiness, repository_view_with_readiness,
-        AssociateBaselineInput, AssociationCandidateView, BranchView, CommitView,
-        WorkspaceOwnershipView, WorktreeAvailabilityView,
+        baseline_view, commit_view as present_commit, registered_repository_view, repository_name,
+        repository_readiness, repository_view_with_readiness, AssociateBaselineInput,
+        AssociationCandidateView, BranchView, CommitView, WorkspaceOwnershipView,
+        WorktreeAvailabilityView,
     },
     build_service::{CreateBuildInput, ReviewBuildCoordinator, ReviewBuildView},
     domain::{
-        AssociationBaselineKind, BranchRef as DomainBranchRef, GitObjectId,
-        RepositoryId as DomainRepositoryId, ReviewBranch as StoredBranch,
-        ReviewRepository as StoredRepository, WorkspaceId, WorkspaceOwnership, WorktreeAssociation,
-        WorktreeAssociationId, WorktreeAssociationLifecycle, WorktreeAssociationProvenance,
+        AssociationBaselineKind, BranchRef as DomainBranchRef, RepositoryId as DomainRepositoryId,
+        WorkspaceId, WorkspaceOwnership, WorktreeAssociation, WorktreeAssociationId,
+        WorktreeAssociationProvenance,
     },
     source_materialization::SourceMaterializationService,
     state::{CapabilityReadinessStatus, WorktreeReviewApplication},
-    storage::{
-        ReviewRepositoryRepository, WorkspaceRepository, WorktreeAssociationRepository,
-        WorktreeReviewDatabase,
-    },
+    storage::{WorkspaceRepository, WorktreeAssociationRepository, WorktreeReviewDatabase},
 };
 use crate::repository_context::{
     BranchRef as ObservedBranch, BranchSummary, FullRefName, ObjectId, RepositoryContext,
     RepositoryIdentity, WorktreeLocation, WorktreeObservation,
 };
+#[cfg(test)]
 use chrono::Utc;
 use std::{
     collections::{HashMap, HashSet},
@@ -33,8 +30,7 @@ use std::{
 };
 
 pub(crate) use super::branch_presentation::{
-    AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, BranchHistoryPageView,
-    ProductOverviewView,
+    AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, ProductOverviewView,
 };
 
 pub(crate) struct BranchFirstReviewService {
@@ -42,6 +38,8 @@ pub(crate) struct BranchFirstReviewService {
     database: Arc<WorktreeReviewDatabase>,
     builds: ReviewBuildCoordinator,
     sources: SourceMaterializationService,
+    activity: super::worktree_activity::WorktreeActivityService,
+    history: super::branch_history::BranchHistoryService,
 }
 
 impl BranchFirstReviewService {
@@ -57,6 +55,8 @@ impl BranchFirstReviewService {
             database,
             builds,
             sources,
+            activity: Default::default(),
+            history: Default::default(),
         })
     }
 
@@ -150,9 +150,9 @@ impl BranchFirstReviewService {
             .worktrees()
             .list(&repository.id, repository.top_level.path())
             .map_err(|error| error.to_string())?;
-        let branch_view = self.branch_summary_view(&repository, &summary, &observations)?;
         let (worktrees, association_candidates) =
             self.worktrees_for_branch(&context, &repository, &branch, &observations)?;
+        let branch_view = self.branch_summary_view(&repository, &summary, &observations)?;
         Ok(BranchDetailView {
             branch: branch_view,
             worktrees,
@@ -163,42 +163,182 @@ impl BranchFirstReviewService {
         })
     }
 
-    pub(crate) fn branch_history(
+    pub(crate) fn target_detail(
         &self,
-        repository_id: &str,
-        branch_ref: &str,
+        target: super::domain::ReviewTarget,
+    ) -> Result<BranchDetailView, String> {
+        use super::domain::{CommitSourceContext, ReviewTarget};
+        if let ReviewTarget::Branch {
+            repository_id,
+            branch_ref,
+        } = &target
+        {
+            return self.branch_detail(repository_id, branch_ref);
+        }
+        let repository = self.repository(target.repository_id())?;
+        let context = self.context()?;
+        let inventory = self.branches(&context, &repository)?;
+        let observations = context
+            .worktrees()
+            .list(&repository.id, repository.top_level.path())
+            .map_err(|error| error.to_string())?;
+        let (object, display_name, worktree_id) = match &target {
+            ReviewTarget::Worktree { worktree_id, .. } => {
+                let observation = observations
+                    .iter()
+                    .find(|item| item.id.as_str() == worktree_id)
+                    .ok_or("The selected worktree is no longer available")?;
+                let label = inventory
+                    .iter()
+                    .find(|item| item.target == target)
+                    .map(|item| item.display_name.clone())
+                    .unwrap_or_else(|| "Worktree".into());
+                (observation.head.clone(), label, Some(worktree_id.as_str()))
+            }
+            ReviewTarget::Commit {
+                object_id,
+                context: source_context,
+                ..
+            } => {
+                let tip = match source_context {
+                    CommitSourceContext::Branch { tip_object_id, .. }
+                    | CommitSourceContext::Worktree { tip_object_id, .. } => tip_object_id,
+                };
+                let object = ObjectId::parse(object_id).map_err(|error| error.to_string())?;
+                if !context
+                    .commits()
+                    .is_ancestor(
+                        repository.top_level.path(),
+                        &object,
+                        &ObjectId::parse(tip).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("The selected commit is outside its pinned source history.".into());
+                }
+                (object, format!("Commit {}", &object_id[..8]), None)
+            }
+            ReviewTarget::Branch { .. } => unreachable!(),
+        };
+        let tip = load_commit_view(&context, repository.top_level.path(), &object)?;
+        let worktrees = observations
+            .iter()
+            .filter(|item| matches!(item.location, WorktreeLocation::Available(_)))
+            .filter(|item| {
+                worktree_id
+                    .map(|id| item.id.as_str() == id)
+                    .unwrap_or(item.head == object)
+            })
+            .map(|item| self.physical_worktree_view(&context, &repository, item))
+            .collect::<Result<Vec<_>, _>>()?;
+        let branch = BranchView {
+            target: target.clone(),
+            repository_id: repository.id.as_str().into(),
+            branch_ref: None,
+            display_name,
+            tip,
+            ahead_of_default: 0,
+            behind_default: 0,
+            associated_worktree_count: worktrees.len(),
+            available_worktree_count: worktrees.len(),
+            worktree_ids: worktrees
+                .iter()
+                .map(|item| item.worktree_id.clone())
+                .collect(),
+            activity: None,
+        };
+        Ok(BranchDetailView {
+            branch,
+            worktrees,
+            association_candidates: Vec::new(),
+            builds: self.builds.list_for_target(&target)?,
+        })
+    }
+
+    fn physical_worktree_view(
+        &self,
+        context: &RepositoryContext,
+        repository: &RepositoryIdentity,
+        observation: &WorktreeObservation,
+    ) -> Result<AssociatedWorktreeView, String> {
+        use super::branch_presentation::{BaselineView, WorktreeChangesView};
+        let path = available_path(observation)?;
+        let head = load_commit_view(context, repository.top_level.path(), &observation.head)?;
+        let status = context
+            .status()
+            .status(path)
+            .map_err(|error| error.to_string())?;
+        let id = super::domain::WorktreeId::new(observation.id.as_str())
+            .map_err(|error| error.to_string())?;
+        let workspaces = self
+            .database
+            .workspaces()
+            .list_for_worktree(&id)
+            .map_err(|error| error.to_string())?;
+        let ownership = workspace_ownership_view(
+            WorktreeAssociationProvenance::GitAttachedBranch,
+            workspaces.iter().map(|workspace| &workspace.ownership),
+        )?;
+        Ok(AssociatedWorktreeView {
+            association_id: None,
+            worktree_id: id.as_str().into(),
+            branch_ref: observation
+                .head_ref
+                .as_ref()
+                .map(|reference| reference.as_str().into()),
+            name: repository_name(path),
+            location_label: path.to_string_lossy().into_owned(),
+            provenance: "physical_worktree".into(),
+            ownership,
+            baseline: BaselineView::ObservedAtAssociation {
+                commit: head.clone(),
+            },
+            current_head: head,
+            changes: WorktreeChangesView {
+                commits_ahead_of_baseline: 0,
+                commits_behind_baseline: 0,
+                staged_files: status.staged_paths as u32,
+                unstaged_files: status.unstaged_paths as u32,
+                untracked_files: status.untracked_paths as u32,
+            },
+            detached_head: observation.head_ref.is_none(),
+            branch_reachability: "unassociated".into(),
+            availability: WorktreeAvailabilityView::Available,
+        })
+    }
+
+    pub(crate) fn commit_history(
+        &self,
+        query: super::branch_history::CommitHistoryQuery,
         cursor: Option<&str>,
         page_size: usize,
-    ) -> Result<BranchHistoryPageView, String> {
+    ) -> Result<super::branch_history::CommitHistoryPageView, String> {
+        let repository = self.repository(query.target.repository_id())?;
+        self.history
+            .history(&self.context()?, &repository, query, cursor, page_size)
+    }
+
+    pub(crate) fn branch_graph(
+        &self,
+        repository_id: &str,
+        limit: usize,
+        snapshot_id: Option<&str>,
+    ) -> Result<super::branch_graph::BranchGraphView, String> {
         let repository = self.repository(repository_id)?;
         let context = self.context()?;
-        let branch = find_branch(&context, &repository, branch_ref)?;
-        let cursor = cursor
-            .map(ObjectId::parse)
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        if let Some(cursor) = cursor.as_ref() {
-            if !context
-                .commits()
-                .is_ancestor(repository.top_level.path(), cursor, &branch.object_id)
-                .map_err(|error| error.to_string())?
-            {
-                return Err("The history cursor does not belong to the selected branch.".into());
-            }
-        }
-        let (commits, next_cursor) = context
-            .commits()
-            .first_parent_history_page(
-                repository.top_level.path(),
-                &branch.full_name,
-                cursor.as_ref(),
-                page_size,
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(BranchHistoryPageView {
-            commits: commits.into_iter().map(present_commit).collect(),
-            next_cursor: next_cursor.map(|object| object.as_str().to_owned()),
-        })
+        self.history
+            .graph(&context, &repository, limit, snapshot_id, || {
+                self.branches(&context, &repository)
+            })
+    }
+
+    pub(crate) fn worktree_activity(
+        &self,
+        repository_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<super::worktree_activity::WorktreeActivityView>, String> {
+        self.activity
+            .discover(&self.context()?, &self.repository(repository_id)?, ids)
     }
 
     pub(crate) fn create_build(&self, input: CreateBuildInput) -> Result<ReviewBuildView, String> {
@@ -359,70 +499,19 @@ impl BranchFirstReviewService {
         context: &RepositoryContext,
         repository: &RepositoryIdentity,
     ) -> Result<Vec<BranchView>, String> {
-        let now = Utc::now();
-        let domain_repository_id = domain_repository_id(repository)?;
-        self.database
-            .repositories()
-            .save_repository(&StoredRepository {
-                id: domain_repository_id.clone(),
-                label: repository_name(repository.top_level.path()),
-                anchor_root: repository.top_level.path().to_path_buf(),
-                common_directory: repository.common_directory.path().to_path_buf(),
-                first_seen_at: now,
-                last_seen_at: now,
-            })
-            .map_err(|error| error.to_string())?;
-        let default = context
-            .references()
-            .remote_default_branch(repository.top_level.path())
-            .map_err(|error| error.to_string())?;
-        let observations = context
-            .worktrees()
-            .list(&repository.id, repository.top_level.path())
-            .map_err(|error| error.to_string())?;
-        context
-            .references()
-            .local_branch_summaries(repository.top_level.path(), default.as_ref())
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|summary| {
-                self.database
-                    .repositories()
-                    .save_branch(&StoredBranch {
-                        repository_id: domain_repository_id.clone(),
-                        branch_ref: domain_branch_ref(&summary.branch.full_name)?,
-                        observed_tip: domain_object_id(&summary.branch.object_id)?,
-                        observed_at: now,
-                    })
-                    .map_err(|error| error.to_string())?;
-                self.branch_summary_view(repository, &summary, &observations)
-            })
-            .collect()
+        super::branch_inventory::inventory(context, repository, &self.database, &self.activity)
     }
 
     fn branch_summary_view(
         &self,
         repository: &RepositoryIdentity,
         summary: &BranchSummary,
-        observations: &[WorktreeObservation],
+        _observations: &[WorktreeObservation],
     ) -> Result<BranchView, String> {
-        let repository_id = domain_repository_id(repository)?;
-        let branch_ref = domain_branch_ref(&summary.branch.full_name)?;
-        let associations = self
-            .database
-            .associations()
-            .list_for_branch(&repository_id, &branch_ref)
-            .map_err(|error| error.to_string())?;
-        let associated_worktree_count =
-            visible_worktree_count(&summary.branch.full_name, &associations, observations);
-        Ok(branch_view(
-            repository,
-            &summary.branch,
-            present_commit(summary.tip.clone()),
-            summary.ahead,
-            summary.behind,
-            associated_worktree_count,
-        ))
+        self.branches(&self.context()?, repository)?
+            .into_iter()
+            .find(|view| view.branch_ref.as_deref() == Some(summary.branch.full_name.as_str()))
+            .ok_or_else(|| "The selected branch is no longer available.".into())
     }
 
     fn worktrees_for_branch(
@@ -449,6 +538,7 @@ impl BranchFirstReviewService {
             .collect::<HashSet<_>>();
         let attached_observations = observations
             .iter()
+            .filter(|worktree| matches!(worktree.location, WorktreeLocation::Available(_)))
             .filter(|worktree| worktree.head_ref.as_ref() == Some(&branch.full_name))
             .filter(|worktree| !existing_ids.contains(worktree.id.as_str()))
             .collect::<Vec<_>>();
@@ -491,6 +581,7 @@ impl BranchFirstReviewService {
             .collect::<HashSet<_>>();
         let candidates = observations
             .iter()
+            .filter(|worktree| matches!(worktree.location, WorktreeLocation::Available(_)))
             .filter(|worktree| worktree.head_ref.is_none())
             .filter(|worktree| !associated.contains(worktree.id.as_str()))
             .filter(|worktree| {
@@ -529,29 +620,15 @@ impl BranchFirstReviewService {
             &ObjectId::parse(baseline_object.as_str()).map_err(|error| error.to_string())?,
         )?;
         let baseline = baseline_view(association.baseline.kind, baseline)?;
-        let (name, location_label, availability) = match observation {
-            Some(observation) => {
-                let path = available_path(observation)?;
-                (
-                    repository_name(path),
-                    path.to_string_lossy().into_owned(),
-                    if association.lifecycle == WorktreeAssociationLifecycle::BranchMismatch {
-                        WorktreeAvailabilityView::BranchMismatch {
-                            detail: "The checkout no longer matches its associated branch.".into(),
-                        }
-                    } else {
-                        WorktreeAvailabilityView::Available
-                    },
-                )
-            }
-            None => (
-                "Missing worktree".into(),
-                association.location.as_str().into(),
-                WorktreeAvailabilityView::Missing {
-                    detail: "Git no longer reports this exact worktree checkout.".into(),
-                },
-            ),
-        };
+        let location_label = observation
+            .map(|item| match &item.location {
+                WorktreeLocation::Available(directory) => {
+                    directory.path().to_string_lossy().into_owned()
+                }
+                WorktreeLocation::Unavailable(path) => path.to_string_lossy().into_owned(),
+            })
+            .unwrap_or_else(|| association.location.as_str().into());
+        let name = repository_name(Path::new(&location_label));
         let workspace_ownership = self
             .database
             .workspaces()
@@ -563,8 +640,37 @@ impl BranchFirstReviewService {
                 .iter()
                 .map(|workspace| &workspace.ownership),
         )?;
+        let refreshed = observation
+            .filter(|item| matches!(item.location, WorktreeLocation::Available(_)))
+            .and_then(|item| {
+                find_branch(context, repository, association.branch_ref.as_str())
+                    .ok()
+                    .map(|branch| (item, branch))
+            })
+            .map(|(item, branch)| {
+                observe_association(
+                    context,
+                    repository,
+                    &branch,
+                    item,
+                    association.id.clone(),
+                    association.provenance,
+                    ObjectId::parse(baseline_object.as_str()).map_err(|error| error.to_string())?,
+                    association.baseline.kind,
+                )
+            })
+            .transpose()?;
+        if let Some(refreshed) = &refreshed {
+            self.database
+                .associations()
+                .save(refreshed)
+                .map_err(|error| error.to_string())?;
+        }
+        let current_association = refreshed.as_ref().unwrap_or(association);
+        let availability =
+            super::branch_presentation::worktree_availability(current_association, observation);
         Ok(associated_worktree_view(
-            association,
+            current_association,
             observation,
             name,
             location_label,
@@ -574,32 +680,6 @@ impl BranchFirstReviewService {
             load_commit_view(context, repository.top_level.path(), &current)?,
         ))
     }
-}
-
-fn visible_worktree_count(
-    branch_ref: &FullRefName,
-    associations: &[WorktreeAssociation],
-    observations: &[WorktreeObservation],
-) -> usize {
-    distinct_worktree_count(
-        associations
-            .iter()
-            .filter(|association| association.lifecycle == WorktreeAssociationLifecycle::Active)
-            .map(|association| association.worktree_id.as_str()),
-        observations
-            .iter()
-            .filter(|worktree| worktree.head_ref.as_ref() == Some(branch_ref))
-            .map(|worktree| worktree.id.as_str()),
-    )
-}
-
-fn distinct_worktree_count<'a>(
-    associated_ids: impl IntoIterator<Item = &'a str>,
-    attached_ids: impl IntoIterator<Item = &'a str>,
-) -> usize {
-    let mut worktree_ids = associated_ids.into_iter().collect::<HashSet<_>>();
-    worktree_ids.extend(attached_ids);
-    worktree_ids.len()
 }
 
 fn workspace_ownership_view<'a>(
@@ -703,10 +783,6 @@ fn domain_branch_ref(reference: &FullRefName) -> Result<DomainBranchRef, String>
     DomainBranchRef::new(reference.as_str()).map_err(|error| error.to_string())
 }
 
-fn domain_object_id(object: &ObjectId) -> Result<GitObjectId, String> {
-    GitObjectId::new(object.as_str()).map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,13 +865,5 @@ mod tests {
             std::iter::empty()
         )
         .is_err());
-    }
-
-    #[test]
-    fn branch_count_unifies_durable_associations_and_git_attached_worktrees() {
-        assert_eq!(
-            distinct_worktree_count(["persisted"], ["persisted", "git-attached"]),
-            2
-        );
     }
 }

@@ -55,6 +55,16 @@ pub(crate) struct ReviewBuild {
 
 impl ReviewBuild {
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
+        if self.source.branch_ref.is_none()
+            && matches!(
+                self.source.selection,
+                super::ReviewSourceSelection::BranchCommit { .. }
+            )
+        {
+            return Err(DomainError::new(
+                "branch commit source requires branch provenance",
+            ));
+        }
         if self.workspace_id != self.source.workspace_id {
             return Err(DomainError::new(
                 "build workspace must match its recorded source binding",

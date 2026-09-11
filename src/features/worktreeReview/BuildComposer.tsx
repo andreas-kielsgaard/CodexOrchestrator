@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   workspacePlanDisclosure,
+  uniqueCommits,
   type AssociatedWorktree,
   type BranchReviewDetail,
   type CreateBuildRequest,
   type GitCommit,
-  type GitObjectId,
 } from '../../application/worktreeReview';
 
-type SourceMode = 'direct' | 'snapshot' | 'commit';
+import { buildRequest, type BuildDraft, type SourceMode } from './buildDraft';
 
 export function BuildComposer({
   detail,
+  draft,
+  onDraftChange,
+  onSelectCommit,
   selectedWorktree,
   activeWorktreeId,
   commits,
@@ -25,6 +28,9 @@ export function BuildComposer({
   onLoadMoreHistory,
 }: {
   readonly detail: BranchReviewDetail;
+  readonly draft: BuildDraft;
+  readonly onDraftChange: (draft: BuildDraft) => void;
+  readonly onSelectCommit: (commit: GitCommit) => void;
   readonly selectedWorktree?: AssociatedWorktree;
   readonly activeWorktreeId?: string;
   readonly commits: readonly GitCommit[];
@@ -37,30 +43,22 @@ export function BuildComposer({
   readonly onRequestHistory: () => void;
   readonly onLoadMoreHistory: () => void;
 }) {
-  const [sourceMode, setSourceMode] = useState<SourceMode>(
-    selectedWorktree && selectedWorktree.worktreeId !== activeWorktreeId ? 'direct' : 'commit',
-  );
-  const [commitId, setCommitId] = useState<GitObjectId>(detail.branch.tip.objectId);
-  const [name, setName] = useState(`Review ${detail.branch.displayName}`);
+  const { sourceMode, commit, name } = draft;
+  const commitId = commit.objectId;
+  const setSourceMode = (sourceMode: SourceMode) => onDraftChange({ ...draft, sourceMode });
+  const setName = (name: string) => onDraftChange({ ...draft, name });
   const [historyOpen, setHistoryOpen] = useState(false);
-  const selectedWorktreeIsActive = selectedWorktree?.worktreeId === activeWorktreeId;
+  const selectedWorktreeIsActive = Boolean(
+    selectedWorktree && selectedWorktree.worktreeId === activeWorktreeId,
+  );
   const selectedWorktreeIsDirty = selectedWorktree ? hasUncommittedWork(selectedWorktree) : false;
 
-  useEffect(() => {
-    if ((!selectedWorktree || selectedWorktreeIsActive) && sourceMode !== 'commit') {
-      setSourceMode('commit');
-    }
-  }, [selectedWorktree, selectedWorktreeIsActive, sourceMode]);
-
   const commitOptions = useMemo(
-    () => uniqueCommits([detail.branch.tip, ...commits]),
-    [commits, detail.branch.tip],
+    () => uniqueCommits([draft.commit, detail.branch.tip, ...commits]),
+    [commits, detail.branch.tip, draft.commit],
   );
 
-  const request = useMemo(
-    () => createRequest(detail, selectedWorktree, sourceMode, commitId, name.trim()),
-    [commitId, detail, name, selectedWorktree, sourceMode],
-  );
+  const request = buildRequest(detail, selectedWorktree, draft);
 
   return (
     <section className="worktree-review__section" aria-labelledby="worktree-review-build-source">
@@ -111,8 +109,8 @@ export function BuildComposer({
           value="commit"
           checked={sourceMode === 'commit'}
           disabled={disabled}
-          title="Specific branch commit"
-          description="Build one exact commit belonging to the selected branch in a retained checkout."
+          title="Specific commit"
+          description="Build the selected exact commit in a retained checkout."
           onChange={setSourceMode}
         />
       </fieldset>
@@ -122,8 +120,7 @@ export function BuildComposer({
           {!historyOpen ? (
             <>
               <p className="worktree-review__supporting">
-                Current selection: {detail.branch.tip.abbreviatedObjectId} ·{' '}
-                {detail.branch.tip.subject}
+                Current selection: {draft.commit.abbreviatedObjectId} · {draft.commit.subject}
               </p>
               <button
                 type="button"
@@ -145,7 +142,12 @@ export function BuildComposer({
                   aria-label="Branch commit"
                   value={commitId}
                   disabled={disabled || historyLoading}
-                  onChange={(event) => setCommitId(event.target.value as GitObjectId)}
+                  onChange={(event) => {
+                    const commit = commitOptions.find(
+                      (item) => item.objectId === event.target.value,
+                    );
+                    if (commit) onSelectCommit(commit);
+                  }}
                 >
                   {commitOptions.map((commit) => (
                     <option key={commit.objectId} value={commit.objectId}>
@@ -210,7 +212,7 @@ export function BuildComposer({
           disabled={!request || !buildAvailable || disabled || name.trim().length === 0}
           onClick={() => request && onCreate(request)}
         >
-          {creating ? 'Creating build…' : 'Create build'}
+          {creating ? 'Building…' : 'Build'}
         </button>
       </div>
     </section>
@@ -255,74 +257,6 @@ function SourceOption({
       </span>
     </label>
   );
-}
-
-function uniqueCommits(commits: readonly GitCommit[]): readonly GitCommit[] {
-  return commits.filter(
-    (commit, index) =>
-      commits.findIndex((candidate) => candidate.objectId === commit.objectId) === index,
-  );
-}
-
-function createRequest(
-  detail: BranchReviewDetail,
-  worktree: AssociatedWorktree | undefined,
-  sourceMode: SourceMode,
-  commitId: GitObjectId,
-  name: string,
-): CreateBuildRequest | null {
-  const common = {
-    repositoryId: detail.branch.repositoryId,
-    branchRef: detail.branch.branchRef,
-    name,
-  } as const;
-
-  if (sourceMode === 'direct') {
-    if (!worktree) return null;
-    return {
-      ...common,
-      source: {
-        kind: 'existing_worktree',
-        associationId: worktree.associationId,
-      },
-      workspacePlan: {
-        kind: 'borrow_selected_worktree',
-        associationId: worktree.associationId,
-      },
-    };
-  }
-
-  if (sourceMode === 'snapshot') {
-    if (!worktree) return null;
-    return {
-      ...common,
-      source: {
-        kind: 'worktree_snapshot',
-        associationId: worktree.associationId,
-      },
-      workspacePlan: {
-        kind: 'create_owned_build_worktree',
-        originatingAssociationId: worktree.associationId,
-      },
-    };
-  }
-
-  return {
-    ...common,
-    source: {
-      kind: 'branch_commit',
-      branchRef: detail.branch.branchRef,
-      objectId: commitId,
-    },
-    workspacePlan: worktree
-      ? {
-          kind: 'create_owned_build_worktree',
-        }
-      : {
-          kind: 'create_managed_branch_worktree',
-          branchRef: detail.branch.branchRef,
-        },
-  };
 }
 
 function hasUncommittedWork(worktree: AssociatedWorktree): boolean {
