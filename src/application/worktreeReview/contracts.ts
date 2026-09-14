@@ -40,9 +40,49 @@ export interface ReviewRepository {
   readonly readiness: RepositoryReadiness;
 }
 
+export type CommitSourceContext =
+  | { readonly kind: 'branch'; readonly branchRef: BranchRef; readonly tipObjectId: GitObjectId }
+  | {
+      readonly kind: 'worktree';
+      readonly worktreeId: WorktreeId;
+      readonly tipObjectId: GitObjectId;
+    };
+
+export type ReviewTarget =
+  | { readonly kind: 'branch'; readonly repositoryId: RepositoryId; readonly branchRef: BranchRef }
+  | {
+      readonly kind: 'worktree';
+      readonly repositoryId: RepositoryId;
+      readonly worktreeId: WorktreeId;
+    }
+  | {
+      readonly kind: 'commit';
+      readonly repositoryId: RepositoryId;
+      readonly objectId: GitObjectId;
+      readonly context: CommitSourceContext;
+    };
+
+export interface ActivityEstimate {
+  readonly changedAt: string;
+  readonly observedAt: string;
+  readonly basis: 'commit_fallback' | 'changed_file_estimate' | 'changed_file_and_index_estimate';
+  readonly stagedFiles: number;
+  readonly unstagedFiles: number;
+  readonly untrackedFiles: number;
+}
+export interface WorktreeActivity {
+  readonly worktreeId: WorktreeId;
+  readonly headObjectId: GitObjectId;
+  readonly estimate: ActivityEstimate;
+}
+
 export interface ReviewBranch {
+  readonly target: ReviewTarget;
+  readonly availableWorktreeCount: number;
+  readonly worktreeIds: readonly WorktreeId[];
+  readonly activity: ActivityEstimate | null;
   readonly repositoryId: RepositoryId;
-  readonly branchRef: BranchRef;
+  readonly branchRef: BranchRef | null;
   readonly displayName: string;
   readonly tip: GitCommit;
   readonly aheadOfDefault: number;
@@ -69,20 +109,23 @@ export type WorktreeAvailability =
   | { readonly state: 'branch_mismatch'; readonly detail: string };
 
 export interface AssociatedWorktree {
-  readonly associationId: WorktreeAssociationId;
+  readonly associationId: WorktreeAssociationId | null;
   readonly worktreeId: WorktreeId;
-  readonly branchRef: BranchRef;
+  readonly branchRef: BranchRef | null;
   readonly name: string;
   /** Presentation-only. Durable operations use worktreeId and associationId. */
   readonly locationLabel: string;
   readonly provenance:
-    'git_branch_checkout' | 'user_associated_detached_checkout' | 'worktree_review_created';
+    | 'git_branch_checkout'
+    | 'user_associated_detached_checkout'
+    | 'worktree_review_created'
+    | 'physical_worktree';
   readonly ownership: 'borrowed_external' | 'managed_branch_worktree' | 'owned_build_worktree';
   readonly baseline: AssociationBaseline;
   readonly currentHead: GitCommit;
   readonly changes: WorktreeChanges;
   readonly detachedHead: boolean;
-  readonly branchReachability: 'reachable' | 'not_reachable' | 'unknown';
+  readonly branchReachability: 'reachable' | 'not_reachable' | 'unknown' | 'unassociated';
   readonly availability: WorktreeAvailability;
 }
 
@@ -102,12 +145,65 @@ export interface BranchReviewDetail {
   readonly builds: readonly ReviewBuild[];
 }
 
-export interface BranchHistoryPage {
+export type HistoryScope =
+  | {
+      readonly kind: 'ancestry';
+      readonly tipObjectId: GitObjectId;
+      readonly excludedBaseObjectId?: GitObjectId | null;
+    }
+  | {
+      readonly kind: 'graph_range';
+      readonly snapshotId: string;
+      readonly rangeId: string;
+    };
+export interface CommitHistoryQuery {
+  readonly target: ReviewTarget;
+  readonly scope: HistoryScope;
+}
+export interface CommitHistoryPage {
+  readonly scope: HistoryScope;
+  readonly totalCount: number;
   readonly commits: readonly GitCommit[];
-  readonly nextCursor?: string;
+  readonly nextCursor: string | null;
+}
+export interface GraphAnchor {
+  readonly objectId: GitObjectId;
+  readonly parentIds: readonly GitObjectId[];
+  readonly boundary: boolean;
+  readonly merge: boolean;
+}
+export interface GraphConnection {
+  readonly id: string;
+  readonly from: GitObjectId;
+  readonly to: GitObjectId;
+  readonly commitCount: number;
+  readonly collapsed: boolean;
+  readonly incomplete: boolean;
+  readonly eligibleSources: readonly ReviewTarget[];
+  readonly scope: Extract<HistoryScope, { kind: 'graph_range' }>;
+}
+export interface BranchGraphData {
+  readonly snapshotId: string;
+  readonly referenceTarget: ReviewTarget | null;
+  readonly targets: readonly ReviewBranch[];
+  readonly anchors: readonly GraphAnchor[];
+  readonly connections: readonly GraphConnection[];
+  readonly hasMore: boolean;
+  readonly loadedCommitCount: number;
 }
 
 export type CreateBuildSource =
+  | {
+      readonly kind: 'physical_worktree';
+      readonly worktreeId: WorktreeId;
+      readonly headObjectId: GitObjectId;
+      readonly snapshot: boolean;
+    }
+  | {
+      readonly kind: 'exact_commit';
+      readonly objectId: GitObjectId;
+      readonly context: CommitSourceContext;
+    }
   | {
       readonly kind: 'existing_worktree';
       readonly associationId: WorktreeAssociationId;
@@ -123,6 +219,14 @@ export type CreateBuildSource =
     };
 
 export type ReviewBuildSource =
+  | {
+      readonly kind: 'physical_worktree';
+      readonly worktreeId: WorktreeId;
+      readonly headObjectId: GitObjectId;
+      readonly capturedObjectId: GitObjectId;
+      readonly snapshot: boolean;
+    }
+  | { readonly kind: 'exact_commit'; readonly objectId: GitObjectId }
   | {
       readonly kind: 'existing_worktree';
       readonly associationId: WorktreeAssociationId;
@@ -143,6 +247,7 @@ export type ReviewBuildSource =
     };
 
 export type BuildWorkspacePlan =
+  | { readonly kind: 'borrow_physical_worktree'; readonly worktreeId: WorktreeId }
   | { readonly kind: 'borrow_selected_worktree'; readonly associationId: WorktreeAssociationId }
   | { readonly kind: 'create_managed_branch_worktree'; readonly branchRef: BranchRef }
   | {
@@ -152,7 +257,7 @@ export type BuildWorkspacePlan =
 
 export interface CreateBuildRequest {
   readonly repositoryId: RepositoryId;
-  readonly branchRef: BranchRef;
+  readonly branchRef: BranchRef | null;
   readonly name: string;
   readonly source: CreateBuildSource;
   readonly workspacePlan: BuildWorkspacePlan;
@@ -214,7 +319,7 @@ export type CleanupState =
 export interface ReviewBuild {
   readonly buildId: BuildId;
   readonly name: string;
-  readonly branchRef: BranchRef;
+  readonly branchRef: BranchRef | null;
   readonly source: ReviewBuildSource;
   readonly workspace: {
     readonly worktreeId: WorktreeId;

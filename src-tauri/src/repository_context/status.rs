@@ -26,6 +26,39 @@ impl RepositoryStatusReader {
         parse_status(&output)
     }
 
+    pub(crate) fn changed_files(
+        &self,
+        root: &Path,
+    ) -> Result<(RepositoryStatus, Vec<std::path::PathBuf>), RepositoryContextError> {
+        let output = self.status_output(root)?;
+        let status = parse_status(&output)?;
+        let mut fields = output.split(|byte| *byte == 0);
+        let mut paths = Vec::new();
+        while let Some(field) = fields.next() {
+            let columns = match field.first() {
+                Some(b'1') => 9,
+                Some(b'2') => 10,
+                Some(b'u') => 11,
+                Some(b'?') => 2,
+                _ => continue,
+            };
+            let name = field
+                .splitn(columns, |byte| *byte == b' ')
+                .last()
+                .ok_or_else(invalid_output)?;
+            if let Ok(name) = std::str::from_utf8(name) {
+                paths.push(std::path::PathBuf::from(name));
+            }
+            if field.first() == Some(&b'2') {
+                fields.next();
+            }
+            if paths.len() >= 512 {
+                break;
+            }
+        }
+        Ok((status, paths))
+    }
+
     fn status_output(&self, root: &Path) -> Result<Vec<u8>, RepositoryContextError> {
         self.runner.required(
             root,

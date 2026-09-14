@@ -7,11 +7,11 @@ use super::{
     build_storage::attempt_storage_key,
     cleanup_service::{CleanupRequest, WorktreeReviewCleanupService},
     domain::{
-        BranchRef, BuildAttention, BuildAttentionCategory, BuildAttentionId, BuildLifecycle,
-        CleanupJobState, CleanupResource, CleanupResourceId, OperationAttemptId,
-        OperationExecutionState, OperationFailure, OperationFailureCategory, OperationStage,
-        OperationVerdict, RepositoryId, RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName,
-        ReviewOperationAttempt, ReviewOperationKind, WorkspaceId,
+        BuildAttention, BuildAttentionCategory, BuildAttentionId, BuildLifecycle, CleanupJobState,
+        CleanupResource, CleanupResourceId, OperationAttemptId, OperationExecutionState,
+        OperationFailure, OperationFailureCategory, OperationStage, OperationVerdict, RepositoryId,
+        RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName, ReviewOperationAttempt,
+        ReviewOperationKind, WorkspaceId,
     },
     source_materialization::SourceMaterializationService,
     state::{
@@ -76,15 +76,20 @@ impl ReviewBuildCoordinator {
         if repository.id.as_str() != input.repository_id {
             return Err("The repository selection changed; refresh Worktree Review.".into());
         }
-        let branch =
-            self.materialization
-                .selected_branch(&context, &repository, &input.branch_ref)?;
+        let branch = input
+            .branch_ref
+            .as_ref()
+            .map(|reference| {
+                self.materialization
+                    .selected_branch(&context, &repository, reference)
+            })
+            .transpose()?;
         let build_id = ReviewBuildId::random();
         let workspace_id = WorkspaceId::random();
         let prepared = self.materialization.prepare(
             &context,
             &repository,
-            &branch,
+            branch.as_ref(),
             &build_id,
             workspace_id,
             &input.source,
@@ -96,7 +101,7 @@ impl ReviewBuildCoordinator {
             name: ReviewBuildName::new(input.name).map_err(|error| error.to_string())?,
             source: prepared.source().clone(),
             workspace_id: prepared.workspace().id.clone(),
-            retention_key: retention_key(&repository, &branch, &input.source)?,
+            retention_key: retention_key(&repository, branch.as_ref(), &input.source)?,
             current_output_id: None,
             lifecycle: BuildLifecycle::Active,
             created_at: now,
@@ -132,7 +137,7 @@ impl ReviewBuildCoordinator {
         let materialized =
             match self
                 .materialization
-                .materialize(&context, &repository, &branch, prepared)
+                .materialize(&context, &repository, branch.as_ref(), prepared)
             {
                 Ok(materialized) => materialized,
                 Err(message) => {
@@ -259,15 +264,78 @@ impl ReviewBuildCoordinator {
         repository_id: &str,
         branch_ref: &str,
     ) -> Result<Vec<ReviewBuildView>, String> {
-        let repository_id = RepositoryId::new(repository_id).map_err(|error| error.to_string())?;
-        let branch_ref = BranchRef::new(branch_ref).map_err(|error| error.to_string())?;
-        self.database
+        self.list_for_target(&super::domain::ReviewTarget::Branch {
+            repository_id: repository_id.into(),
+            branch_ref: branch_ref.into(),
+        })
+    }
+
+    pub(crate) fn list_for_target(
+        &self,
+        target: &super::domain::ReviewTarget,
+    ) -> Result<Vec<ReviewBuildView>, String> {
+        use super::domain::{CommitSourceContext, ReviewSourceSelection, ReviewTarget};
+        let id = RepositoryId::new(target.repository_id()).map_err(|error| error.to_string())?;
+        let associations = self
+            .database
+            .associations()
+            .list_for_repository(&id)
+            .map_err(|error| error.to_string())?;
+        let mut result = Vec::new();
+        for build in self
+            .database
             .builds()
-            .list_for_branch(&repository_id, &branch_ref)
+            .list_for_repository(&id)
             .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|build| self.view_build(build))
-            .collect()
+        {
+            let origin_worktree = match &build.source.selection {
+                ReviewSourceSelection::PhysicalWorktree { worktree_id, .. } => {
+                    Some(worktree_id.as_str())
+                }
+                ReviewSourceSelection::LiveWorktree { association_id, .. }
+                | ReviewSourceSelection::WorktreeSnapshot { association_id, .. } => associations
+                    .iter()
+                    .find(|item| &item.id == association_id)
+                    .map(|item| item.worktree_id.as_str()),
+                _ => None,
+            };
+            let matches = match target {
+                ReviewTarget::Branch { branch_ref, .. } => {
+                    build
+                        .source
+                        .branch_ref
+                        .as_ref()
+                        .is_some_and(|reference| reference.as_str() == branch_ref)
+                        || matches!(&build.source.selection, ReviewSourceSelection::ExactCommit { context: CommitSourceContext::Branch { branch_ref: source, .. }, .. } if source == branch_ref)
+                        || origin_worktree.is_some_and(|worktree| {
+                            associations.iter().any(|item| {
+                                item.worktree_id.as_str() == worktree
+                                    && item.branch_ref.as_str() == branch_ref
+                            })
+                        })
+                }
+                ReviewTarget::Worktree { worktree_id, .. } => {
+                    origin_worktree == Some(worktree_id.as_str())
+                        || self
+                            .database
+                            .workspaces()
+                            .find(&build.workspace_id)
+                            .map_err(|error| error.to_string())?
+                            .is_some_and(|workspace| workspace.worktree_id.as_str() == worktree_id)
+                }
+                ReviewTarget::Commit { object_id, .. } => match &build.source.selection {
+                    ReviewSourceSelection::BranchCommit { selected_object }
+                    | ReviewSourceSelection::ExactCommit {
+                        selected_object, ..
+                    } => selected_object.as_str() == object_id,
+                    _ => false,
+                },
+            };
+            if matches {
+                result.push(self.view_build(build)?);
+            }
+        }
+        Ok(result)
     }
 
     pub(crate) fn view(&self, build_id: &ReviewBuildId) -> Result<ReviewBuildView, String> {
@@ -499,10 +567,19 @@ impl ReviewBuildCoordinator {
 
 fn retention_key(
     repository: &RepositoryIdentity,
-    branch: &ObservedBranch,
+    branch: Option<&ObservedBranch>,
     source: &CreateBuildSourceInput,
 ) -> Result<RetentionKey, String> {
     let semantic_source = match source {
+        CreateBuildSourceInput::PhysicalWorktree {
+            worktree_id,
+            snapshot,
+            ..
+        } => format!("physical:{worktree_id}:{snapshot}"),
+        CreateBuildSourceInput::ExactCommit { context, .. } => format!(
+            "exact:{}",
+            serde_json::to_string(context).map_err(|error| error.to_string())?
+        ),
         CreateBuildSourceInput::LiveWorktree { association_id, .. } => {
             format!("existing:{association_id}")
         }
@@ -514,7 +591,7 @@ fn retention_key(
     let mut digest = Sha256::new();
     for value in [
         repository.id.as_str(),
-        branch.full_name.as_str(),
+        branch.map(|branch| branch.full_name.as_str()).unwrap_or(""),
         semantic_source.as_str(),
     ] {
         digest.update((value.len() as u64).to_be_bytes());

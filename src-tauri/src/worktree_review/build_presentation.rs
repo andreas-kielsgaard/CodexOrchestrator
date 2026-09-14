@@ -8,9 +8,10 @@ use super::{
     cleanup_service::CleanupPresentation,
     domain::{
         BranchRef, BuildAttention, BuildLifecycle, CleanupDisposition, CleanupEffect,
-        CleanupEligibility, CleanupJob, CleanupJobState, CleanupResource, OperationExecutionState,
-        OperationFailureCategory, OperationStage, OperationVerdict, RetainedBuildOutput,
-        ReviewBuild, ReviewOperationAttempt, ReviewSourceSelection, ReviewWorkspace,
+        CleanupEligibility, CleanupJob, CleanupJobState, CleanupResource, CommitSourceContext,
+        OperationExecutionState, OperationFailureCategory, OperationStage, OperationVerdict,
+        RetainedBuildOutput, ReviewBuild, ReviewOperationAttempt, ReviewSourceSelection,
+        ReviewWorkspace,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateBuildInput {
     pub(crate) repository_id: String,
-    pub(crate) branch_ref: String,
+    pub(crate) branch_ref: Option<String>,
     pub(crate) name: String,
     pub(crate) source: CreateBuildSourceInput,
     pub(crate) workspace_plan: BuildWorkspacePlanInput,
@@ -33,6 +34,15 @@ pub(crate) struct CreateBuildInput {
     deny_unknown_fields
 )]
 pub(crate) enum CreateBuildSourceInput {
+    PhysicalWorktree {
+        worktree_id: String,
+        head_object_id: String,
+        snapshot: bool,
+    },
+    ExactCommit {
+        object_id: String,
+        context: CommitSourceContext,
+    },
     #[serde(rename = "existing_worktree")]
     LiveWorktree {
         association_id: String,
@@ -54,6 +64,9 @@ pub(crate) enum CreateBuildSourceInput {
     deny_unknown_fields
 )]
 pub(crate) enum BuildWorkspacePlanInput {
+    BorrowPhysicalWorktree {
+        worktree_id: String,
+    },
     BorrowSelectedWorktree {
         association_id: String,
     },
@@ -72,6 +85,15 @@ pub(crate) enum BuildWorkspacePlanInput {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum ReviewBuildSourceView {
+    PhysicalWorktree {
+        worktree_id: String,
+        head_object_id: String,
+        captured_object_id: String,
+        snapshot: bool,
+    },
+    ExactCommit {
+        object_id: String,
+    },
     #[serde(rename = "existing_worktree")]
     LiveWorktree {
         association_id: String,
@@ -97,7 +119,7 @@ pub(crate) enum ReviewBuildSourceView {
 pub(crate) struct ReviewBuildView {
     pub(crate) build_id: String,
     pub(crate) name: String,
-    pub(crate) branch_ref: String,
+    pub(crate) branch_ref: Option<String>,
     pub(crate) source: ReviewBuildSourceView,
     pub(crate) workspace: BuildWorkspaceView,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,7 +235,11 @@ pub(super) fn review_build_view(
     ReviewBuildView {
         build_id: build.id.as_str().to_owned(),
         name: build.name.as_str().to_owned(),
-        branch_ref: build.source.branch_ref.as_str().to_owned(),
+        branch_ref: build
+            .source
+            .branch_ref
+            .as_ref()
+            .map(|reference| reference.as_str().to_owned()),
         source: source_view(&build.source.branch_ref, &build.source.selection),
         workspace: BuildWorkspaceView {
             worktree_id: workspace.worktree_id.as_str().to_owned(),
@@ -374,8 +400,27 @@ pub(super) fn cleanup_view(
     }
 }
 
-fn source_view(branch_ref: &BranchRef, selection: &ReviewSourceSelection) -> ReviewBuildSourceView {
+fn source_view(
+    branch_ref: &Option<BranchRef>,
+    selection: &ReviewSourceSelection,
+) -> ReviewBuildSourceView {
     match selection {
+        ReviewSourceSelection::PhysicalWorktree {
+            worktree_id,
+            head_object_id,
+            captured_object_id,
+            snapshot,
+        } => ReviewBuildSourceView::PhysicalWorktree {
+            worktree_id: worktree_id.as_str().into(),
+            head_object_id: head_object_id.as_str().into(),
+            captured_object_id: captured_object_id.as_str().into(),
+            snapshot: *snapshot,
+        },
+        ReviewSourceSelection::ExactCommit {
+            selected_object, ..
+        } => ReviewBuildSourceView::ExactCommit {
+            object_id: selected_object.as_str().into(),
+        },
         ReviewSourceSelection::LiveWorktree {
             association_id,
             trigger_head_object_id,
@@ -402,7 +447,11 @@ fn source_view(branch_ref: &BranchRef, selection: &ReviewSourceSelection) -> Rev
         },
         ReviewSourceSelection::BranchCommit { selected_object } => {
             ReviewBuildSourceView::BranchCommit {
-                branch_ref: branch_ref.as_str().to_owned(),
+                branch_ref: branch_ref
+                    .as_ref()
+                    .expect("legacy branch commit has provenance")
+                    .as_str()
+                    .to_owned(),
                 object_id: selected_object.as_str().to_owned(),
             }
         }

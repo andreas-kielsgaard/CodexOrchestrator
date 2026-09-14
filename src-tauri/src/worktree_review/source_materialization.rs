@@ -2,11 +2,11 @@ use super::{
     association_observer::observe_association,
     build_presentation::{BuildWorkspacePlanInput, CreateBuildSourceInput},
     domain::{
-        AssociationBaselineKind, BranchRef, GitObjectId, OperationStage, RepositoryId,
-        ReviewBuildId, ReviewSourceSelection, ReviewWorkspace, SourceBinding, WorkspaceId,
-        WorkspaceLifecycle, WorkspaceOwnership, WorktreeAssociation, WorktreeAssociationId,
-        WorktreeAssociationLifecycle, WorktreeAssociationProvenance, WorktreeId,
-        WorktreeLocation as StoredLocation,
+        AssociationBaselineKind, BranchRef, CommitSourceContext, GitObjectId, OperationStage,
+        RepositoryId, ReviewBuildId, ReviewSourceSelection, ReviewWorkspace, SourceBinding,
+        WorkspaceId, WorkspaceLifecycle, WorkspaceOwnership, WorktreeAssociation,
+        WorktreeAssociationId, WorktreeAssociationLifecycle, WorktreeAssociationProvenance,
+        WorktreeId, WorktreeLocation as StoredLocation,
     },
     storage::{WorktreeAssociationRepository, WorktreeReviewDatabase},
 };
@@ -65,12 +65,21 @@ impl SourceMaterializationService {
         &self,
         context: &RepositoryContext,
         repository: &RepositoryIdentity,
-        branch: &ObservedBranch,
+        branch: Option<&ObservedBranch>,
         build_id: &ReviewBuildId,
         workspace_id: WorkspaceId,
         source: &CreateBuildSourceInput,
         plan: &BuildWorkspacePlanInput,
     ) -> Result<PreparedMaterialization, String> {
+        if matches!(
+            source,
+            CreateBuildSourceInput::PhysicalWorktree { .. }
+                | CreateBuildSourceInput::ExactCommit { .. }
+        ) {
+            return self.prepare_target(context, repository, build_id, workspace_id, source, plan);
+        }
+        let branch =
+            branch.ok_or_else(|| "This build source requires its branch identity.".to_string())?;
         match (source, plan) {
             (
                 CreateBuildSourceInput::LiveWorktree { association_id },
@@ -189,11 +198,197 @@ impl SourceMaterializationService {
         }
     }
 
+    fn prepare_target(
+        &self,
+        context: &RepositoryContext,
+        repository: &RepositoryIdentity,
+        build_id: &ReviewBuildId,
+        workspace_id: WorkspaceId,
+        source: &CreateBuildSourceInput,
+        plan: &BuildWorkspacePlanInput,
+    ) -> Result<PreparedMaterialization, String> {
+        let repository_id =
+            RepositoryId::new(repository.id.as_str()).map_err(|error| error.to_string())?;
+        let owned = || {
+            self.plan_workspace(
+                repository,
+                workspace_id.clone(),
+                WorkspaceOwnership::OwnedBuildWorktree {
+                    build_id: build_id.clone(),
+                },
+            )
+        };
+        let (workspace, selection, action) = match (source, plan) {
+            (
+                CreateBuildSourceInput::ExactCommit {
+                    object_id,
+                    context: source_context,
+                },
+                BuildWorkspacePlanInput::CreateOwnedBuildWorktree {
+                    originating_association_id: None,
+                },
+            ) => {
+                let object = ObjectId::parse(object_id).map_err(|error| error.to_string())?;
+                let tip = match source_context {
+                    CommitSourceContext::Branch {
+                        branch_ref,
+                        tip_object_id,
+                    } => {
+                        BranchRef::new(branch_ref).map_err(|error| error.to_string())?;
+                        tip_object_id
+                    }
+                    CommitSourceContext::Worktree {
+                        worktree_id,
+                        tip_object_id,
+                    } => {
+                        self.find_physical_worktree(context, repository, worktree_id)?;
+                        tip_object_id
+                    }
+                };
+                let tip = ObjectId::parse(tip).map_err(|error| error.to_string())?;
+                if !context
+                    .commits()
+                    .is_ancestor(repository.top_level.path(), &object, &tip)
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("The selected commit is outside its pinned source history.".into());
+                }
+                (
+                    owned()?,
+                    ReviewSourceSelection::ExactCommit {
+                        selected_object: git_object(&object)?,
+                        context: source_context.clone(),
+                    },
+                    MaterializationAction::Checkout {
+                        object,
+                        managed_association_id: None,
+                    },
+                )
+            }
+            (
+                CreateBuildSourceInput::PhysicalWorktree {
+                    worktree_id,
+                    head_object_id,
+                    snapshot,
+                },
+                plan,
+            ) => {
+                let valid = match plan {
+                    BuildWorkspacePlanInput::BorrowPhysicalWorktree {
+                        worktree_id: planned,
+                    } => !snapshot && planned == worktree_id,
+                    BuildWorkspacePlanInput::CreateOwnedBuildWorktree {
+                        originating_association_id: None,
+                    } => *snapshot,
+                    _ => false,
+                };
+                if !valid {
+                    return Err(
+                        "The workspace plan does not match the selected physical worktree.".into(),
+                    );
+                }
+                let observation = self.find_physical_worktree(context, repository, worktree_id)?;
+                if observation.head.as_str() != head_object_id {
+                    return Err(
+                        "The selected worktree HEAD changed; refresh before building.".into(),
+                    );
+                }
+                let path = available_path_owned(&observation)?;
+                let capture = self
+                    .physical_worktrees
+                    .capture_virtual_commit(
+                        context.git_executable(),
+                        &VirtualCommitCaptureRequest::new(
+                            path.clone(),
+                            physical_object(&observation.head)?,
+                        )
+                        .map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                if capture.worktree_root != path
+                    || capture.baseline_commit.as_str() != head_object_id
+                {
+                    return Err(
+                        "The captured worktree no longer matches the selected source.".into(),
+                    );
+                }
+                let object = ObjectId::parse(
+                    capture
+                        .virtual_commit
+                        .as_ref()
+                        .unwrap_or(&capture.baseline_commit)
+                        .as_str(),
+                )
+                .map_err(|error| error.to_string())?;
+                let now = Utc::now();
+                let workspace = if *snapshot {
+                    owned()?
+                } else {
+                    ReviewWorkspace {
+                        id: workspace_id.clone(),
+                        repository_id: repository_id.clone(),
+                        worktree_id: WorktreeId::new(worktree_id)
+                            .map_err(|error| error.to_string())?,
+                        location: StoredLocation::new(path.to_string_lossy().into_owned())
+                            .map_err(|error| error.to_string())?,
+                        ownership: WorkspaceOwnership::BorrowedPhysicalWorktree,
+                        lifecycle: WorkspaceLifecycle::Ready,
+                        created_at: now,
+                        updated_at: now,
+                    }
+                };
+                let selection = ReviewSourceSelection::PhysicalWorktree {
+                    worktree_id: WorktreeId::new(worktree_id).map_err(|error| error.to_string())?,
+                    head_object_id: git_object(&observation.head)?,
+                    captured_object_id: git_object(&object)?,
+                    snapshot: *snapshot,
+                };
+                let action = if *snapshot {
+                    MaterializationAction::Checkout {
+                        object,
+                        managed_association_id: None,
+                    }
+                } else {
+                    MaterializationAction::AlreadyMaterialized
+                };
+                (workspace, selection, action)
+            }
+            _ => {
+                return Err("The source and workspace plan do not describe the same target.".into())
+            }
+        };
+        Ok(PreparedMaterialization {
+            workspace,
+            source: SourceBinding {
+                repository_id,
+                branch_ref: None,
+                selection,
+                workspace_id,
+            },
+            action,
+        })
+    }
+
+    fn find_physical_worktree(
+        &self,
+        context: &RepositoryContext,
+        repository: &RepositoryIdentity,
+        worktree_id: &str,
+    ) -> Result<WorktreeObservation, String> {
+        context
+            .worktrees()
+            .list(&repository.id, repository.top_level.path())
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|worktree| worktree.id.as_str() == worktree_id)
+            .ok_or_else(|| "The selected physical worktree is no longer available.".into())
+    }
+
     pub(super) fn materialize(
         &self,
         context: &RepositoryContext,
         repository: &RepositoryIdentity,
-        branch: &ObservedBranch,
+        branch: Option<&ObservedBranch>,
         prepared: PreparedMaterialization,
     ) -> Result<MaterializedSource, String> {
         let PreparedMaterialization {
@@ -222,7 +417,9 @@ impl SourceMaterializationService {
                         observe_association(
                             context,
                             repository,
-                            branch,
+                            branch.ok_or_else(|| {
+                                "A managed branch worktree requires branch provenance.".to_string()
+                            })?,
                             &checked_out.observation,
                             association_id,
                             WorktreeAssociationProvenance::ProductCreated,
@@ -576,7 +773,9 @@ fn source_binding(
     Ok(SourceBinding {
         repository_id: RepositoryId::new(repository.id.as_str())
             .map_err(|error| error.to_string())?,
-        branch_ref: BranchRef::new(branch.full_name.as_str()).map_err(|error| error.to_string())?,
+        branch_ref: Some(
+            BranchRef::new(branch.full_name.as_str()).map_err(|error| error.to_string())?,
+        ),
         selection,
         workspace_id,
     })

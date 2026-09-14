@@ -177,9 +177,69 @@ pub(crate) struct WorktreeAssociation {
     pub(crate) updated_at: DateTime<Utc>,
 }
 
+/// Selection identity is independent of a surviving local ref.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum ReviewTarget {
+    Branch {
+        repository_id: String,
+        branch_ref: String,
+    },
+    Worktree {
+        repository_id: String,
+        worktree_id: String,
+    },
+    Commit {
+        repository_id: String,
+        object_id: String,
+        context: CommitSourceContext,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum CommitSourceContext {
+    Branch {
+        branch_ref: String,
+        tip_object_id: String,
+    },
+    Worktree {
+        worktree_id: String,
+        tip_object_id: String,
+    },
+}
+
+impl ReviewTarget {
+    pub(crate) fn repository_id(&self) -> &str {
+        match self {
+            Self::Branch { repository_id, .. }
+            | Self::Worktree { repository_id, .. }
+            | Self::Commit { repository_id, .. } => repository_id,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ReviewSourceSelection {
+    PhysicalWorktree {
+        worktree_id: WorktreeId,
+        head_object_id: GitObjectId,
+        captured_object_id: GitObjectId,
+        snapshot: bool,
+    },
+    ExactCommit {
+        selected_object: GitObjectId,
+        context: CommitSourceContext,
+    },
     #[serde(rename = "existing_worktree")]
     LiveWorktree {
         association_id: WorktreeAssociationId,
@@ -206,7 +266,7 @@ pub(crate) enum ReviewSourceSelection {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourceBinding {
     pub(crate) repository_id: RepositoryId,
-    pub(crate) branch_ref: BranchRef,
+    pub(crate) branch_ref: Option<BranchRef>,
     pub(crate) selection: ReviewSourceSelection,
     pub(crate) workspace_id: WorkspaceId,
 }
@@ -214,6 +274,7 @@ pub(crate) struct SourceBinding {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum WorkspaceOwnership {
+    BorrowedPhysicalWorktree,
     BorrowedExternal {
         association_id: WorktreeAssociationId,
     },
@@ -228,7 +289,7 @@ pub(crate) enum WorkspaceOwnership {
 impl WorkspaceOwnership {
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
-            Self::BorrowedExternal { .. } => "borrowed_external",
+            Self::BorrowedExternal { .. } | Self::BorrowedPhysicalWorktree => "borrowed_external",
             Self::ManagedBranchWorktree { .. } => "managed_branch_worktree",
             Self::OwnedBuildWorktree { .. } => "owned_build_worktree",
         }

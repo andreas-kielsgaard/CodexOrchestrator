@@ -818,7 +818,7 @@ mod tests {
             name: ReviewBuildName::new(format!("Build {suffix}")).unwrap(),
             source: SourceBinding {
                 repository_id: repository.id.clone(),
-                branch_ref: branch.branch_ref.clone(),
+                branch_ref: Some(branch.branch_ref.clone()),
                 selection: ReviewSourceSelection::BranchCommit {
                     selected_object: selected,
                 },

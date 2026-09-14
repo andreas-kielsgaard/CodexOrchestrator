@@ -8,13 +8,13 @@ import {
   type GitCommit,
   type GitObjectId,
   type WorktreeAssociationCandidate,
-  type WorktreeAssociationId,
+  type WorktreeId,
 } from '../../application/worktreeReview';
 
 export function WorktreeSelector({
   worktrees,
   candidates,
-  selectedAssociationId,
+  selectedWorktreeId,
   activeWorktreeId,
   historyCommits,
   historyLoading,
@@ -29,14 +29,14 @@ export function WorktreeSelector({
 }: {
   readonly worktrees: readonly AssociatedWorktree[];
   readonly candidates: readonly WorktreeAssociationCandidate[];
-  readonly selectedAssociationId: WorktreeAssociationId | '';
+  readonly selectedWorktreeId: WorktreeId | '';
   readonly activeWorktreeId?: string;
   readonly historyCommits: readonly GitCommit[];
   readonly historyLoading: boolean;
   readonly hasMoreHistory: boolean;
   readonly createAvailable: boolean;
   readonly busy: boolean;
-  readonly onSelect: (associationId: WorktreeAssociationId) => void;
+  readonly onSelect: (worktreeId: WorktreeId) => void;
   readonly onCreate: () => void;
   readonly onAssociate: (
     candidate: WorktreeAssociationCandidate,
@@ -71,8 +71,7 @@ export function WorktreeSelector({
 
       {worktrees.length === 0 ? (
         <p className="worktree-review__empty">
-          No associated worktree exists. You can create one now, or Create Build can create and
-          retain one after disclosing the change.
+          No matching worktree exists. Build will offer to create one for the selected source.
         </p>
       ) : (
         <div
@@ -82,20 +81,20 @@ export function WorktreeSelector({
         >
           {worktrees.map((worktree) => {
             const available = worktree.availability.state === 'available';
-            const selected = worktree.associationId === selectedAssociationId;
+            const selected = worktree.worktreeId === selectedWorktreeId;
             const active = worktree.worktreeId === activeWorktreeId;
             return (
               <label
                 className={`worktree-review__worktree${selected ? ' worktree-review__worktree--selected' : ''}${active ? ' worktree-review__worktree--active' : ''}${!available ? ' worktree-review__worktree--unavailable' : ''}`}
-                key={worktree.associationId}
+                key={worktree.worktreeId}
               >
                 <input
                   type="radio"
                   name="worktree"
-                  value={worktree.associationId}
+                  value={worktree.worktreeId}
                   checked={selected}
                   disabled={!available || busy}
-                  onChange={() => onSelect(worktree.associationId)}
+                  onChange={() => onSelect(worktree.worktreeId)}
                 />
                 <span className="worktree-review__worktree-content">
                   <span className="worktree-review__worktree-title">

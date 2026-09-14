@@ -1,5 +1,6 @@
 use super::{
     command::{HardenedGitRunner, LARGE_OUTPUT_LIMIT, SMALL_OUTPUT_LIMIT},
+    commits::CommitFacts,
     invalid_output, RepositoryContextError,
 };
 use std::{path::Path, sync::Arc};
@@ -73,22 +74,6 @@ pub(crate) struct BranchSummary {
     pub(crate) behind: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CommitFacts {
-    pub(crate) object_id: ObjectId,
-    pub(crate) abbreviated_id: String,
-    pub(crate) subject: String,
-    pub(crate) author: String,
-    pub(crate) committed_at: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CommitDivergence {
-    pub(crate) behind: usize,
-    pub(crate) ahead: usize,
-    pub(crate) merge_base: Option<ObjectId>,
-}
-
 #[derive(Clone)]
 pub(crate) struct ReferenceReader {
     runner: Arc<HardenedGitRunner>,
@@ -126,7 +111,7 @@ impl ReferenceReader {
             .map(|reference| format!("%(ahead-behind:{})", reference.as_str()))
             .unwrap_or_else(|| "0 0".into());
         let format = format!(
-            "--format=%(refname)%00%(objectname)%00%(objectname:short)%00%(authorname)%00%(authordate:iso-strict)%00%(subject)%00{direction}"
+            "--format=%(refname)%00%(objectname)%00%(objectname:short)%00%(authorname)%00%(committerdate:iso-strict)%00%(subject)%00{direction}"
         );
         let output = self.runner.required(
             root,
@@ -191,163 +176,6 @@ impl ReferenceReader {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct CommitReader {
-    runner: Arc<HardenedGitRunner>,
-}
-
-impl CommitReader {
-    pub(super) fn new(runner: Arc<HardenedGitRunner>) -> Self {
-        Self { runner }
-    }
-
-    pub(crate) fn facts(
-        &self,
-        root: &Path,
-        object: &ObjectId,
-    ) -> Result<CommitFacts, RepositoryContextError> {
-        let output = self.runner.required(
-            root,
-            [
-                "show",
-                "-s",
-                "--format=%H%x00%h%x00%an%x00%aI%x00%s",
-                object.as_str(),
-            ],
-            SMALL_OUTPUT_LIMIT,
-        )?;
-        let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
-        if fields.len() != 5 {
-            return Err(invalid_output());
-        }
-        Ok(CommitFacts {
-            object_id: ObjectId::parse(utf8(fields[0])?)?,
-            abbreviated_id: nonempty(fields[1])?,
-            author: nonempty(fields[2])?,
-            committed_at: nonempty(fields[3])?,
-            subject: utf8(fields[4])?.trim_end().to_owned(),
-        })
-    }
-
-    /// Returns one bounded page of first-parent commit presentation in one Git process.
-    pub(crate) fn first_parent_history_page(
-        &self,
-        root: &Path,
-        branch: &FullRefName,
-        after: Option<&ObjectId>,
-        page_size: usize,
-    ) -> Result<(Vec<CommitFacts>, Option<ObjectId>), RepositoryContextError> {
-        if !(1..=200).contains(&page_size) {
-            return Err(invalid_output());
-        }
-        let requested = page_size + usize::from(after.is_some()) + 1;
-        let limit = format!("--max-count={requested}");
-        let revision = after
-            .map(ObjectId::as_str)
-            .unwrap_or_else(|| branch.as_str());
-        let output = self.runner.required(
-            root,
-            [
-                "log",
-                "--first-parent",
-                limit.as_str(),
-                "--format=%H%x00%h%x00%an%x00%aI%x00%s%x00",
-                revision,
-            ],
-            LARGE_OUTPUT_LIMIT,
-        )?;
-        let mut facts = parse_commit_facts(&output)?;
-        if let Some(after) = after {
-            if facts.first().map(|facts| &facts.object_id) != Some(after) {
-                return Err(invalid_output());
-            }
-            facts.remove(0);
-        }
-        let next_cursor = (facts.len() > page_size).then(|| facts[page_size - 1].object_id.clone());
-        facts.truncate(page_size);
-        Ok((facts, next_cursor))
-    }
-
-    pub(crate) fn divergence(
-        &self,
-        root: &Path,
-        baseline: &ObjectId,
-        selected: &ObjectId,
-    ) -> Result<CommitDivergence, RepositoryContextError> {
-        let range = format!("{}...{}", baseline.as_str(), selected.as_str());
-        let counts = text(self.runner.required(
-            root,
-            ["rev-list", "--left-right", "--count", range.as_str()],
-            SMALL_OUTPUT_LIMIT,
-        )?)?;
-        let mut counts = counts.split_whitespace();
-        let behind = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .ok_or_else(invalid_output)?;
-        let ahead = counts
-            .next()
-            .and_then(|value| value.parse().ok())
-            .ok_or_else(invalid_output)?;
-        if counts.next().is_some() {
-            return Err(invalid_output());
-        }
-        let merge_base = self
-            .runner
-            .optional(
-                root,
-                ["merge-base", baseline.as_str(), selected.as_str()],
-                SMALL_OUTPUT_LIMIT,
-            )?
-            .map(text)
-            .transpose()?
-            .map(ObjectId::parse)
-            .transpose()?;
-        Ok(CommitDivergence {
-            behind,
-            ahead,
-            merge_base,
-        })
-    }
-
-    pub(crate) fn is_ancestor(
-        &self,
-        root: &Path,
-        ancestor: &ObjectId,
-        descendant: &ObjectId,
-    ) -> Result<bool, RepositoryContextError> {
-        Ok(self
-            .runner
-            .optional(
-                root,
-                [
-                    "merge-base",
-                    "--is-ancestor",
-                    ancestor.as_str(),
-                    descendant.as_str(),
-                ],
-                SMALL_OUTPUT_LIMIT,
-            )?
-            .is_some())
-    }
-
-    pub(crate) fn commit_count(
-        &self,
-        root: &Path,
-        ancestor: &ObjectId,
-        descendant: &ObjectId,
-    ) -> Result<usize, RepositoryContextError> {
-        let range = format!("{}..{}", ancestor.as_str(), descendant.as_str());
-        text(self.runner.required(
-            root,
-            ["rev-list", "--count", range.as_str()],
-            SMALL_OUTPUT_LIMIT,
-        )?)?
-        .parse()
-        .map_err(|_| invalid_output())
-    }
-}
-
 fn parse_branches(output: &[u8]) -> Result<Vec<BranchRef>, RepositoryContextError> {
     std::str::from_utf8(output)
         .map_err(|_| invalid_output())?
@@ -405,36 +233,6 @@ fn parse_branch_summaries(output: &[u8]) -> Result<Vec<BranchSummary>, Repositor
         .collect()
 }
 
-fn parse_commit_facts(output: &[u8]) -> Result<Vec<CommitFacts>, RepositoryContextError> {
-    let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
-    let mut commits = Vec::new();
-    let mut index = 0;
-    while index + 4 < fields.len() {
-        let object = utf8(fields[index])?.trim_start_matches(['\r', '\n']);
-        if object.is_empty() {
-            index += 1;
-            continue;
-        }
-        commits.push(CommitFacts {
-            object_id: ObjectId::parse(object)?,
-            abbreviated_id: nonempty(fields[index + 1])?,
-            author: nonempty(fields[index + 2])?,
-            committed_at: nonempty(fields[index + 3])?,
-            subject: utf8(fields[index + 4])?
-                .trim_end_matches(['\r', '\n'])
-                .to_owned(),
-        });
-        index += 5;
-    }
-    if fields[index..]
-        .iter()
-        .any(|field| !utf8(field).unwrap_or_default().trim().is_empty())
-    {
-        return Err(invalid_output());
-    }
-    Ok(commits)
-}
-
 fn text(bytes: Vec<u8>) -> Result<String, RepositoryContextError> {
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| invalid_output())?
@@ -482,19 +280,5 @@ mod tests {
         assert_eq!(summaries[0].tip.object_id.as_str(), object);
         assert_eq!(summaries[0].tip.subject, "Batch branch reads");
         assert_eq!((summaries[0].ahead, summaries[0].behind), (3, 2));
-    }
-
-    #[test]
-    fn parses_a_commit_page_without_per_commit_processes() {
-        let first = "a".repeat(40);
-        let second = "b".repeat(40);
-        let output = format!(
-            "{first}\0aaaaaaa\0Ada\02026-08-26T10:00:00+02:00\0First\0\n{second}\0bbbbbbb\0Grace\02026-08-25T10:00:00+02:00\0Second\0\n"
-        );
-        let commits = parse_commit_facts(output.as_bytes()).unwrap();
-
-        assert_eq!(commits.len(), 2);
-        assert_eq!(commits[0].object_id.as_str(), first);
-        assert_eq!(commits[1].subject, "Second");
     }
 }

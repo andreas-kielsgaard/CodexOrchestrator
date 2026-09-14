@@ -3,8 +3,8 @@
 use super::{
     build_service::ReviewBuildView,
     domain::{
-        AssociationBaselineKind, ReviewRepository, WorktreeAssociation,
-        WorktreeAssociationProvenance,
+        AssociationBaselineKind, ReviewRepository, ReviewTarget, WorktreeAssociation,
+        WorktreeAssociationLifecycle, WorktreeAssociationProvenance,
     },
     state::{
         ActiveBuildContextView, CapabilityReadinessStatus, CapabilityReadinessView,
@@ -12,7 +12,8 @@ use super::{
     },
 };
 use crate::repository_context::{
-    BranchRef as ObservedBranch, CommitFacts, RepositoryIdentity, WorktreeObservation,
+    BranchRef as ObservedBranch, CommitFacts, RepositoryIdentity, WorktreeLocation,
+    WorktreeObservation,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -57,8 +58,12 @@ pub(crate) enum CapabilityAvailabilityView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BranchView {
+    pub(crate) target: ReviewTarget,
+    pub(crate) available_worktree_count: usize,
+    pub(crate) worktree_ids: Vec<String>,
+    pub(crate) activity: Option<super::worktree_activity::ActivityEstimate>,
     pub(crate) repository_id: String,
-    pub(crate) branch_ref: String,
+    pub(crate) branch_ref: Option<String>,
     pub(crate) display_name: String,
     pub(crate) tip: CommitView,
     pub(crate) ahead_of_default: usize,
@@ -87,18 +92,10 @@ pub(crate) struct BranchDetailView {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BranchHistoryPageView {
-    pub(crate) commits: Vec<CommitView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct AssociatedWorktreeView {
-    pub(crate) association_id: String,
+    pub(crate) association_id: Option<String>,
     pub(crate) worktree_id: String,
-    pub(crate) branch_ref: String,
+    pub(crate) branch_ref: Option<String>,
     pub(crate) name: String,
     pub(crate) location_label: String,
     pub(crate) provenance: String,
@@ -255,7 +252,14 @@ pub(super) fn branch_view(
 ) -> BranchView {
     BranchView {
         repository_id: repository.id.as_str().to_owned(),
-        branch_ref: branch.full_name.as_str().to_owned(),
+        target: ReviewTarget::Branch {
+            repository_id: repository.id.as_str().into(),
+            branch_ref: branch.full_name.as_str().into(),
+        },
+        available_worktree_count: 0,
+        worktree_ids: Vec::new(),
+        activity: None,
+        branch_ref: Some(branch.full_name.as_str().to_owned()),
         display_name: branch.full_name.display_name().to_owned(),
         tip,
         ahead_of_default,
@@ -291,9 +295,9 @@ pub(super) fn associated_worktree_view(
     current_head: CommitView,
 ) -> AssociatedWorktreeView {
     AssociatedWorktreeView {
-        association_id: association.id.as_str().to_owned(),
+        association_id: Some(association.id.as_str().to_owned()),
         worktree_id: association.worktree_id.as_str().to_owned(),
-        branch_ref: association.branch_ref.as_str().to_owned(),
+        branch_ref: Some(association.branch_ref.as_str().to_owned()),
         name,
         location_label,
         provenance: match association.provenance {
@@ -358,5 +362,31 @@ fn capability_availability(readiness: &CapabilityReadinessView) -> CapabilityAva
         _ => CapabilityAvailabilityView::Unavailable {
             reason: readiness.message.clone(),
         },
+    }
+}
+
+/// Shared by inventory and details: retained records are not proof of an available checkout.
+pub(super) fn worktree_availability(
+    association: &WorktreeAssociation,
+    observation: Option<&WorktreeObservation>,
+) -> WorktreeAvailabilityView {
+    let Some(observation) =
+        observation.filter(|item| matches!(item.location, WorktreeLocation::Available(_)))
+    else {
+        return WorktreeAvailabilityView::Missing {
+            detail: "Git no longer reports an available checkout at this location.".into(),
+        };
+    };
+    if association.lifecycle == WorktreeAssociationLifecycle::BranchMismatch
+        || observation
+            .head_ref
+            .as_ref()
+            .is_some_and(|reference| reference.as_str() != association.branch_ref.as_str())
+    {
+        WorktreeAvailabilityView::BranchMismatch {
+            detail: "The checkout no longer matches its associated branch.".into(),
+        }
+    } else {
+        WorktreeAvailabilityView::Available
     }
 }

@@ -406,7 +406,7 @@ mod tests {
         transaction.workspaces().save(&workspace)?;
         let source = SourceBinding {
             repository_id: repository.id,
-            branch_ref: branch.branch_ref,
+            branch_ref: Some(branch.branch_ref),
             selection: ReviewSourceSelection::WorktreeSnapshot {
                 association_id: association.id,
                 head_object_id: object('a'),

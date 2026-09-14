@@ -813,3 +813,61 @@
     width: 100%;
   }
 }
+
+.worktree-review__select-branch {
+  width: 100%;
+  margin-top: 20px;
+}
+.worktree-review__dialog {
+  position: fixed;
+  margin: auto;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid #bdc9b8;
+  border-radius: 14px;
+  background: #fcfdf9;
+  color: #17211b;
+  box-shadow: 0 25px 100px #152c2540;
+  max-width: 96vw;
+  max-height: 94vh;
+  overflow: auto;
+}
+.worktree-review__dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.worktree-review__dialog::backdrop {
+  background: #12231b70;
+  backdrop-filter: blur(2px);
+}
+.worktree-review__dialog button,
+.worktree-review__dialog input,
+.worktree-review__dialog select {
+  font: inherit;
+}
+.worktree-review__dialog button:focus-visible,
+.worktree-review__dialog input:focus-visible,
+.worktree-review__dialog select:focus-visible,
+.branch-graph__viewport:focus-visible {
+  outline: 3px solid #236b4b;
+  outline-offset: 2px;
+}
+.worktree-review__checkout-dialog {
+  width: min(570px, 92vw);
+}
+.worktree-review__checkout-dialog h2 {
+  margin: 0;
+}
+.worktree-review__checkout-dialog p {
+  margin: 6px 0;
+}
+.worktree-review__registration-dialog {
+  width: min(950px, 92vw);
+}
+
+.worktree-review__dialog .worktree-review__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

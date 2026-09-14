@@ -1,10 +1,14 @@
 use super::{
     branch_first::{
         AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, BranchFirstReviewService,
-        BranchHistoryPageView, ProductOverviewView,
+        ProductOverviewView,
     },
+    branch_graph::BranchGraphView,
+    branch_history::{CommitHistoryPageView, CommitHistoryQuery},
     build_service::{CreateBuildInput, ReviewBuildView},
+    domain::ReviewTarget,
     state::WorktreeReviewApplication,
+    worktree_activity::WorktreeActivityView,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -33,18 +37,23 @@ pub(crate) struct RepositorySelectionInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BranchSelectionInput {
-    repository_id: String,
-    branch_ref: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct BranchHistoryInput {
-    repository_id: String,
-    branch_ref: String,
+pub(crate) struct CommitHistoryInput {
+    query: CommitHistoryQuery,
     cursor: Option<String>,
     page_size: Option<usize>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchGraphInput {
+    snapshot_id: Option<String>,
+    repository_id: String,
+    limit: Option<usize>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorktreeActivityInput {
+    repository_id: String,
+    worktree_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,34 +90,54 @@ pub(crate) async fn select_worktree_review_repository(
 }
 
 #[tauri::command]
-pub(crate) async fn worktree_review_branch_detail(
+pub(crate) async fn worktree_review_target_detail(
     state: State<'_, WorktreeReviewTauriState>,
-    input: BranchSelectionInput,
+    input: ReviewTarget,
 ) -> Result<BranchDetailView, String> {
     let product = state.product_arc()?;
-    blocking("branch detail", move || {
-        product.branch_detail(&input.repository_id, &input.branch_ref)
+    blocking("target detail", move || product.target_detail(input)).await
+}
+
+#[tauri::command]
+pub(crate) async fn worktree_review_commit_history(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: CommitHistoryInput,
+) -> Result<CommitHistoryPageView, String> {
+    let product = state.product_arc()?;
+    blocking("commit history", move || {
+        product.commit_history(
+            input.query,
+            input.cursor.as_deref(),
+            input.page_size.unwrap_or(50),
+        )
     })
     .await
 }
 
 #[tauri::command]
-pub(crate) async fn worktree_review_branch_history(
+pub(crate) async fn worktree_review_branch_graph(
     state: State<'_, WorktreeReviewTauriState>,
-    input: BranchHistoryInput,
-) -> Result<BranchHistoryPageView, String> {
-    let page_size = input.page_size.unwrap_or(50);
-    if !(1..=100).contains(&page_size) {
-        return Err("Branch history pages must contain between 1 and 100 commits.".into());
-    }
+    input: BranchGraphInput,
+) -> Result<BranchGraphView, String> {
     let product = state.product_arc()?;
-    blocking("branch history", move || {
-        product.branch_history(
+    blocking("branch graph", move || {
+        product.branch_graph(
             &input.repository_id,
-            &input.branch_ref,
-            input.cursor.as_deref(),
-            page_size,
+            input.limit.unwrap_or(1200),
+            input.snapshot_id.as_deref(),
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn worktree_review_worktree_activity(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: WorktreeActivityInput,
+) -> Result<Vec<WorktreeActivityView>, String> {
+    let product = state.product_arc()?;
+    blocking("worktree activity", move || {
+        product.worktree_activity(&input.repository_id, &input.worktree_ids)
     })
     .await
 }

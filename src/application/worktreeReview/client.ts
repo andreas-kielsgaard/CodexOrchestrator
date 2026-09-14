@@ -1,8 +1,12 @@
 import type {
   AssociateWorktreeRequest,
   AssociatedWorktree,
-  BranchRef,
-  BranchHistoryPage,
+  ReviewTarget,
+  CommitHistoryQuery,
+  CommitHistoryPage,
+  BranchGraphData,
+  WorktreeId,
+  WorktreeActivity,
   BranchReviewDetail,
   CreateBuildRequest,
   CreateWorktreeRequest,
@@ -16,12 +20,17 @@ import type {
 export interface WorktreeReviewClient {
   overview(): Promise<WorktreeReviewOverview>;
   selectRepository(repositoryId: RepositoryId): Promise<WorktreeReviewOverview>;
-  branchDetail(repositoryId: RepositoryId, branchRef: BranchRef): Promise<BranchReviewDetail>;
-  branchHistory(
+  targetDetail(target: ReviewTarget): Promise<BranchReviewDetail>;
+  commitHistory(query: CommitHistoryQuery, cursor?: string): Promise<CommitHistoryPage>;
+  branchGraph(
     repositoryId: RepositoryId,
-    branchRef: BranchRef,
-    cursor?: string,
-  ): Promise<BranchHistoryPage>;
+    limit?: number,
+    snapshotId?: string,
+  ): Promise<BranchGraphData>;
+  worktreeActivity(
+    repositoryId: RepositoryId,
+    worktreeIds: readonly WorktreeId[],
+  ): Promise<readonly WorktreeActivity[]>;
   associateWorktree(input: AssociateWorktreeRequest): Promise<AssociatedWorktree>;
   createWorktree(input: CreateWorktreeRequest): Promise<AssociatedWorktree>;
   createBuild(input: CreateBuildRequest): Promise<ReviewBuild>;

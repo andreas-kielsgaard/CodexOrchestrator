@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   RegisteredRepository,
@@ -8,8 +8,10 @@ import type {
 import type {
   AssociateWorktreeRequest,
   AssociatedWorktree,
-  BranchRef,
-  BranchHistoryPage,
+  ReviewTarget,
+  CommitHistoryQuery,
+  CommitHistoryPage,
+  BranchGraphData,
   BranchReviewDetail,
   BuildId,
   CreateBuildRequest,
@@ -30,6 +32,15 @@ import {
   worktreeOne,
   worktreeTwo,
 } from './WorktreeReviewScreen.fixtures';
+
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute('open');
+  };
+});
 
 describe('WorktreeReviewScreen', () => {
   it('registers a directory in the separate repository modal before presenting branches', async () => {
@@ -85,7 +96,8 @@ describe('WorktreeReviewScreen', () => {
     ).toBeVisible();
 
     await user.click(second);
-    expect(second).toBeChecked();
+    expect(await screen.findByRole('heading', { name: 'Agent checkout B' })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Agent checkout B/ })).toBeChecked();
     expect(screen.getByText('Detached HEAD')).toBeVisible();
 
     const branchButton = screen.getByRole('button', { name: /main/ });
@@ -129,21 +141,23 @@ describe('WorktreeReviewScreen', () => {
     const name = screen.getByRole('textbox', { name: 'Build name' });
     await user.clear(name);
     await user.type(name, 'Snapshot B');
-    await user.click(screen.getByRole('button', { name: 'Create build' }));
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    expect(client.createBuildCalls).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
 
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       name: 'Snapshot B',
       source: {
-        kind: 'worktree_snapshot',
-        associationId: worktreeTwo.associationId,
+        kind: 'physical_worktree',
+        worktreeId: worktreeTwo.worktreeId,
+        snapshot: true,
       },
       workspacePlan: {
         kind: 'create_owned_build_worktree',
-        originatingAssociationId: worktreeTwo.associationId,
       },
     });
-    expect(await screen.findByText(/Created Snapshot B/)).toHaveAttribute('role', 'status');
+    expect(await screen.findByText(/Build result recorded/)).toHaveAttribute('role', 'status');
   });
 
   it('allows Create Build without a pre-existing worktree and makes automatic creation explicit', async () => {
@@ -153,12 +167,14 @@ describe('WorktreeReviewScreen', () => {
     );
     renderScreen(client);
 
-    expect(await screen.findByText(/No associated worktree exists/)).toBeVisible();
-    expect(screen.getByRole('radio', { name: /Specific branch commit/ })).toBeChecked();
+    expect(await screen.findByText(/No matching worktree exists/)).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Specific commit/ })).toBeChecked();
     expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
       'first create and retain a Worktree checkout for this branch',
     );
-    await user.click(screen.getByRole('button', { name: 'Create build' }));
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    expect(client.createBuildCalls).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       source: {
@@ -183,9 +199,9 @@ describe('WorktreeReviewScreen', () => {
     expect(
       screen.getByText('Detached investigation').closest('.worktree-review__candidate'),
     ).toHaveTextContent('Detached HEAD');
-    expect(client.branchHistoryCalls).toHaveLength(0);
+    expect(client.commitHistoryCalls).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Choose a specific baseline' }));
-    await waitFor(() => expect(client.branchHistoryCalls).toHaveLength(1));
+    await waitFor(() => expect(client.commitHistoryCalls).toHaveLength(1));
     await user.selectOptions(
       screen.getByRole('combobox', { name: 'Association baseline for Detached investigation' }),
       earlierCommit.objectId,
@@ -240,10 +256,14 @@ describe('WorktreeReviewScreen', () => {
       .getByText('Agent checkout A')
       .closest('.worktree-review__worktree')!;
     expect(activeCheckout).toHaveTextContent('Active build checkout');
+    await user.click(screen.getByRole('radio', { name: /Agent checkout A/ }));
+    expect(await screen.findByRole('heading', { name: 'Agent checkout A' })).toBeVisible();
     expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeDisabled();
-    expect(screen.getByRole('radio', { name: /Specific branch commit/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /Specific commit/ })).toBeChecked();
 
+    await user.click(screen.getByRole('button', { name: /codex\/durable-review/ }));
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
     expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeEnabled();
@@ -255,14 +275,158 @@ describe('WorktreeReviewScreen', () => {
     renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
-    expect(client.branchHistoryCalls).toHaveLength(0);
-    await user.click(screen.getByRole('radio', { name: /Specific branch commit/ }));
-    expect(client.branchHistoryCalls).toHaveLength(0);
+    expect(client.commitHistoryCalls).toHaveLength(0);
+    await user.click(screen.getByRole('radio', { name: /Specific commit/ }));
+    expect(client.commitHistoryCalls).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Choose another commit' }));
-    await waitFor(() => expect(client.branchHistoryCalls).toEqual([{ cursor: undefined }]));
+    await waitFor(() => expect(client.commitHistoryCalls).toEqual([{ cursor: undefined }]));
     expect(screen.getByRole('combobox', { name: 'Branch commit' })).toHaveTextContent(
       earlierCommit.subject,
     );
+  });
+
+  it('selects a graph commit on the normal surface and provisions only after Build confirmation', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    renderScreen(client);
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    await user.click(screen.getByRole('button', { name: 'Select branch…' }));
+    const graph = await screen.findByRole('dialog', { name: 'Select branch' });
+    await user.click(await within(graph).findByRole('button', { name: /^2 commits from/ }));
+    const range = screen.getByRole('dialog', { name: 'Select a commit' });
+    await user.click(
+      await within(range).findByRole('radio', { name: new RegExp(earlierCommit.subject) }),
+    );
+    await user.click(within(range).getByRole('button', { name: 'Use this commit' }));
+    expect(
+      await screen.findByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(new RegExp(`Current selection: ${earlierCommit.abbreviatedObjectId}`)),
+    ).toHaveTextContent(earlierCommit.subject);
+    expect(client.createBuildCalls).toHaveLength(0);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    expect(
+      screen.getByRole('dialog', { name: 'Create a worktree for this build?' }),
+    ).toHaveTextContent(earlierCommit.abbreviatedObjectId);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(client.createBuildCalls).toHaveLength(0);
+    expect(
+      screen.getByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
+    ).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
+    await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
+    expect(client.createBuildCalls[0]).toMatchObject({
+      branchRef: null,
+      source: {
+        kind: 'exact_commit',
+        objectId: earlierCommit.objectId,
+        context: { kind: 'branch', tipObjectId: tipCommit.objectId },
+      },
+    });
+  });
+
+  it('uses one graph Tab stop, previews with arrows, and restores nested modal focus', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    renderScreen(client);
+    const trigger = await screen.findByRole('button', { name: 'Select branch…' });
+    await user.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'Select branch' });
+    const graph = await within(dialog).findByRole('group', { name: 'Repository branch graph' });
+    const cards = graph.querySelectorAll<HTMLButtonElement>('.branch-graph__target');
+    expect([...graph.querySelectorAll('button')].filter((b) => b.tabIndex === 0)).toHaveLength(1);
+    act(() => cards[0].focus());
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(cards[1]);
+    expect(cards[0]).toHaveAttribute('aria-pressed', 'true');
+    expect(client.commitHistoryCalls).toHaveLength(0);
+    await user.tab();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Use branch' }));
+    await user.tab();
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close' }));
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Use branch' }));
+    const count = within(graph).getByRole('button', { name: /^2 commits from/ });
+    await user.click(count);
+    const nested = await screen.findByRole('dialog', { name: 'Select a commit' });
+    const back = within(nested).getByRole('button', { name: 'Back to graph' });
+    act(() => back.focus());
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(within(nested).getByRole('button', { name: 'Cancel' }));
+    fireEvent(nested, new Event('cancel', { bubbles: false, cancelable: true }));
+    await waitFor(() => expect(nested).not.toBeInTheDocument());
+    expect(count).toHaveFocus();
+    expect(dialog).toBeInTheDocument();
+    expect(client.createBuildCalls).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('keeps labels compact and reveals worktree details on hover and keyboard focus without changing selection', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    const fetchGraph = vi.spyOn(client, 'branchGraph');
+    renderScreen(client);
+    await user.click(await screen.findByRole('button', { name: 'Select branch…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Select branch' });
+    const graph = await within(dialog).findByRole('group', { name: 'Repository branch graph' });
+    const labels = [...graph.querySelectorAll<HTMLButtonElement>('.branch-graph__target')];
+    const geometry = labels.map((label) => label.getAttribute('style'));
+    expect(labels[0]).toHaveTextContent(/^codex\/durable-review$/);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    await user.hover(labels[1]);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/worktree instance/);
+    expect(labels[0]).toHaveAttribute('aria-pressed', 'true');
+    await user.unhover(labels[1]);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    act(() => labels[0].focus());
+    expect(labels[0]).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('codex/durable-review');
+    expect(labels.map((label) => label.getAttribute('style'))).toEqual(geometry);
+    expect(fetchGraph).toHaveBeenCalledTimes(1);
+    expect(client.commitHistoryCalls).toHaveLength(0);
+    expect(client.createBuildCalls).toHaveLength(0);
+  });
+
+  it('identifies incomplete range counts and loaded history in the commit picker', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    const original = client.branchGraph;
+    client.branchGraph = async () => {
+      const graph = await original();
+      return {
+        ...graph,
+        hasMore: true,
+        connections: graph.connections.map((edge) => ({ ...edge, incomplete: true })),
+      };
+    };
+    renderScreen(client);
+    await user.click(await screen.findByRole('button', { name: 'Select branch…' }));
+    await user.click(await screen.findByRole('button', { name: /^2\+ commits from/ }));
+    const picker = await screen.findByRole('dialog', { name: 'Select a commit' });
+    expect(picker).toHaveTextContent('Showing loaded history');
+    expect(picker).toHaveTextContent('load earlier relationships');
+  });
+
+  it('retains the source when a graph range has expired', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    client.commitHistory = async () => {
+      throw new Error('This graph snapshot expired; reopen the branch selector.');
+    };
+    renderScreen(client);
+    await user.click(await screen.findByRole('button', { name: 'Select branch…' }));
+    const graph = await screen.findByRole('dialog', { name: 'Select branch' });
+    await user.click(await within(graph).findByRole('button', { name: /^2 commits from/ }));
+    const nested = await screen.findByRole('dialog', { name: 'Select a commit' });
+    expect(await within(nested).findByRole('alert')).toHaveTextContent('expired');
+    expect(within(nested).getByRole('button', { name: 'Use this commit' })).toBeDisabled();
+    await user.click(within(nested).getByRole('button', { name: 'Cancel' }));
+    expect(within(graph).getByRole('button', { name: 'Use branch' })).toBeEnabled();
+    expect(client.createBuildCalls).toHaveLength(0);
   });
 
   it('opens a completed build through the unconditional Worktree Review client', async () => {
@@ -279,7 +443,7 @@ class FixtureClient implements WorktreeReviewClient {
   readonly createBuildCalls: CreateBuildRequest[] = [];
   readonly associateCalls: AssociateWorktreeRequest[] = [];
   readonly selectRepositoryCalls: RepositoryId[] = [];
-  readonly branchHistoryCalls: { cursor?: string }[] = [];
+  readonly commitHistoryCalls: { cursor?: string }[] = [];
   readonly openBuildCalls: BuildId[] = [];
 
   constructor(
@@ -292,28 +456,98 @@ class FixtureClient implements WorktreeReviewClient {
     this.selectRepositoryCalls.push(repositoryId);
     return overviewFixture;
   };
-  branchDetail = async (
-    repositoryId: RepositoryId,
-    branchRef: BranchRef,
-  ): Promise<BranchReviewDetail> => {
-    if (repositoryId !== 'repository-one') throw new Error('Unknown fixture repository.');
-    return branchRef === 'refs/heads/main'
+  targetDetail = async (target: ReviewTarget): Promise<BranchReviewDetail> => {
+    if (target.repositoryId !== 'repository-one') throw new Error('Unknown fixture repository.');
+    if (target.kind === 'worktree') {
+      const worktree = [worktreeOne, worktreeTwo].find(
+        (item) => item.worktreeId === target.worktreeId,
+      )!;
+      return branchDetailFixture({
+        branch: {
+          ...this.detail.branch,
+          target,
+          branchRef: null,
+          displayName: worktree.name,
+          tip: worktree.currentHead,
+        },
+        worktrees: [{ ...worktree, associationId: null }],
+        associationCandidates: [],
+        builds: [],
+      });
+    }
+    if (target.kind === 'commit') {
+      const commit = [tipCommit, earlierCommit, baseCommit].find(
+        (item) => item.objectId === target.objectId,
+      )!;
+      return branchDetailFixture({
+        branch: {
+          ...this.detail.branch,
+          target,
+          branchRef: null,
+          displayName: `Commit ${commit.abbreviatedObjectId}`,
+          tip: commit,
+        },
+        worktrees: [],
+        associationCandidates: [],
+        builds: [],
+      });
+    }
+    return target.branchRef === 'refs/heads/main'
       ? branchDetailFixture({
           branch: overviewFixture.branches[1],
-          worktrees: [{ ...worktreeOne, branchRef, associationId: 'association-main' }],
+          worktrees: [
+            { ...worktreeOne, branchRef: target.branchRef, associationId: 'association-main' },
+          ],
           associationCandidates: [],
           builds: [],
         })
       : this.detail;
   };
-  branchHistory = async (
-    _repositoryId: RepositoryId,
-    _branchRef: BranchRef,
+  commitHistory = async (
+    query: CommitHistoryQuery,
     cursor?: string,
-  ): Promise<BranchHistoryPage> => {
-    this.branchHistoryCalls.push({ cursor });
-    return { commits: [tipCommit, earlierCommit, baseCommit] };
+  ): Promise<CommitHistoryPage> => {
+    this.commitHistoryCalls.push({ cursor });
+    return {
+      scope: query.scope,
+      totalCount: 3,
+      commits: [tipCommit, earlierCommit, baseCommit],
+      nextCursor: null,
+    };
   };
+  worktreeActivity = async () => [];
+  branchGraph = async (): Promise<BranchGraphData> => ({
+    snapshotId: 'snapshot',
+    referenceTarget: overviewFixture.branches[0].target,
+    targets: overviewFixture.branches,
+    anchors: [
+      {
+        objectId: tipCommit.objectId,
+        parentIds: [baseCommit.objectId],
+        boundary: false,
+        merge: false,
+      },
+      { objectId: baseCommit.objectId, parentIds: [], boundary: false, merge: false },
+    ],
+    connections: [
+      {
+        id: 'base-to-tip',
+        from: baseCommit.objectId,
+        to: tipCommit.objectId,
+        commitCount: 2,
+        collapsed: false,
+        incomplete: false,
+        eligibleSources: [overviewFixture.branches[0].target],
+        scope: {
+          kind: 'graph_range',
+          snapshotId: 'snapshot',
+          rangeId: 'base-to-tip',
+        },
+      },
+    ],
+    hasMore: false,
+    loadedCommitCount: 3,
+  });
   associateWorktree = async (input: AssociateWorktreeRequest): Promise<AssociatedWorktree> => {
     this.associateCalls.push(input);
     return {
@@ -428,7 +662,10 @@ function sourceReceipt(input: CreateBuildRequest): ReviewBuildSource {
         capturedObjectId: '3333333333333333333333333333333333333333',
         virtualCommitId: '3333333333333333333333333333333333333333',
       };
+    case 'exact_commit':
     case 'branch_commit':
       return input.source;
+    case 'physical_worktree':
+      return { ...input.source, capturedObjectId: input.source.headObjectId };
   }
 }

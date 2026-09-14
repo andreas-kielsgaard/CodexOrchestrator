@@ -18,12 +18,13 @@ pub(crate) trait WorkspaceRepository {
 }
 
 pub(crate) trait ReviewBuildRepository {
+    fn list_for_repository(&self, id: &RepositoryId) -> StorageResult<Vec<ReviewBuild>>;
     fn save(&self, build: &ReviewBuild) -> StorageResult<()>;
     fn find(&self, id: &ReviewBuildId) -> StorageResult<Option<ReviewBuild>>;
     fn list_for_branch(
         &self,
         repository_id: &RepositoryId,
-        branch_ref: &crate::worktree_review::domain::BranchRef,
+        branch_ref: &Option<crate::worktree_review::domain::BranchRef>,
     ) -> StorageResult<Vec<ReviewBuild>>;
     fn set_current_output(
         &self,
@@ -148,6 +149,16 @@ impl<Owner: ConnectionProvider> WorkspaceRepository for SqliteWorkspaceRepositor
 }
 
 impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepository<'_, Owner> {
+    fn list_for_repository(&self, id: &RepositoryId) -> StorageResult<Vec<ReviewBuild>> {
+        self.owner.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT build_id, workspace_id, source_binding_json, retention_key, name, current_output_id, lifecycle, created_at, updated_at FROM review_builds WHERE repository_id = ?1 AND data_contract_version = 2 ORDER BY created_at DESC, build_id")
+                .map_err(sql_error("prepare repository build query"))?;
+            let rows = statement.query_map([id.as_str()], decode_build_row).map_err(sql_error("query repository builds"))?
+                .collect::<Result<Vec<_>, _>>().map_err(sql_error("read repository builds"))?;
+            rows.into_iter().map(decode_build).collect()
+        })
+    }
+
     fn save(&self, build: &ReviewBuild) -> StorageResult<()> {
         build
             .validate()
@@ -169,7 +180,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                      WHERE name = excluded.name
                        AND data_contract_version = 2
                        AND repository_id = excluded.repository_id
-                       AND full_branch_ref = excluded.full_branch_ref
+                       AND full_branch_ref IS excluded.full_branch_ref
                        AND workspace_id = excluded.workspace_id
                        AND source_binding_json = excluded.source_binding_json
                        AND retention_key = excluded.retention_key",
@@ -177,7 +188,11 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                         build.id.as_str(),
                         build.name.as_str(),
                         build.source.repository_id.as_str(),
-                        build.source.branch_ref.as_str(),
+                        build
+                            .source
+                            .branch_ref
+                            .as_ref()
+                            .map(|reference| reference.as_str()),
                         build.workspace_id.as_str(),
                         source,
                         build.retention_key.as_str(),
@@ -217,7 +232,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
     fn list_for_branch(
         &self,
         repository_id: &RepositoryId,
-        branch_ref: &crate::worktree_review::domain::BranchRef,
+        branch_ref: &Option<crate::worktree_review::domain::BranchRef>,
     ) -> StorageResult<Vec<ReviewBuild>> {
         self.owner.with_connection(|connection| {
             let mut statement = connection
@@ -225,14 +240,17 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                     "SELECT build_id, workspace_id, source_binding_json, retention_key,
                             name, current_output_id, lifecycle, created_at, updated_at
                      FROM review_builds
-                     WHERE repository_id = ?1 AND full_branch_ref = ?2
+                     WHERE repository_id = ?1 AND full_branch_ref IS ?2
                        AND data_contract_version = 2
                      ORDER BY created_at DESC, build_id",
                 )
                 .map_err(sql_error("prepare review build query"))?;
             let rows = statement
                 .query_map(
-                    params![repository_id.as_str(), branch_ref.as_str()],
+                    params![
+                        repository_id.as_str(),
+                        branch_ref.as_ref().map(|reference| reference.as_str())
+                    ],
                     decode_build_row,
                 )
                 .map_err(sql_error("query review builds"))?
