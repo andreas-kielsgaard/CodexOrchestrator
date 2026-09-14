@@ -90,6 +90,14 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn quick_features_at(
+        &self,
+        _cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        Err(SelectedRuntimeProfileSourceError::unavailable(
+            "This provider does not expose quick features.",
+        ))
+    }
     fn native_inventory(
         &self,
     ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {

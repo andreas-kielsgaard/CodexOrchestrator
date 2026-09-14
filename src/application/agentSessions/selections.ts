@@ -25,6 +25,9 @@ export interface SendDirectUserAgentSessionMessageResultDto {
 }
 
 export interface AgentSessionProfileClient {
+  loadQuickFeatures?(
+    input: import('./quickFeatures').LoadAgentSessionQuickFeaturesInput,
+  ): Promise<import('./quickFeatures').AgentSessionQuickFeatures>;
   startDirectUserSession(
     input: Omit<SendDirectUserAgentSessionMessageInput, 'sessionId'> & {
       readonly title: string | null;

@@ -9,8 +9,10 @@ import type {
   AgentSessionProfileClient,
 } from '../../application/agentSessions';
 import { projectAgentSessionTranscript } from './transcriptProjector';
+import type { ComposerQuickFeatures } from './composerQuickActions';
 
 export interface AgentSessionController {
+  quickFeatures?: ComposerQuickFeatures;
   summaries: AgentSessionSummaryDto[];
   selectedSessionId: string | null;
   details: AgentSessionDetailsDto | null;
@@ -57,6 +59,7 @@ export interface UseAgentSessionOptions {
   execution?: {
     readonly client: AgentSessionProfileClient;
     readonly selection: { readonly model: string | null; readonly reasoningMode: string | null };
+    readonly setSelection?: ComposerQuickFeatures['setSelection'];
     afterAccepted(): void;
   };
   startSession?(input: {
@@ -434,7 +437,28 @@ export function useAgentSessionController(
     return () => window.clearInterval(interval);
   }, [loadSelected, refreshSummaries, selectedSessionId, transcript?.activeInvocationId]);
 
+  const quickFeaturesClient = options.execution?.client;
+  const quickContext =
+    details?.session.id === selectedSessionId ? details.session.workingDirectory : workingDirectory;
+  const loadQuickFeatures = useCallback(() => {
+    if (!quickFeaturesClient?.loadQuickFeatures)
+      return Promise.reject(new Error('Quick features are unavailable.'));
+    return quickFeaturesClient.loadQuickFeatures({
+      sessionId: selectedSessionId,
+      workingDirectory: quickContext || null,
+    });
+  }, [quickFeaturesClient, selectedSessionId, quickContext]);
+
   return {
+    quickFeatures:
+      options.execution?.setSelection && quickFeaturesClient?.loadQuickFeatures
+        ? {
+            contextKey: JSON.stringify([selectedSessionId, quickContext]),
+            load: loadQuickFeatures,
+            selection: options.execution.selection,
+            setSelection: options.execution.setSelection,
+          }
+        : undefined,
     respondToRequest,
     steeringAvailable: Boolean(client.steerSession),
     summaries,

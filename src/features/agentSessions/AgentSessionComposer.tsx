@@ -1,7 +1,11 @@
 import { Send, Square } from 'lucide-react';
-import type { FormEvent, KeyboardEvent } from 'react';
+import { useId, type FormEvent, type KeyboardEvent } from 'react';
+import type { ComposerQuickFeatures } from './composerQuickActions';
+import { useComposerQuickMenu } from './useComposerQuickMenu';
+import { ComposerQuickMenu } from './ComposerQuickMenu';
 
 export interface AgentSessionComposerProps {
+  quickFeatures?: ComposerQuickFeatures;
   draft: string;
   workingDirectory: string;
   isNewSession: boolean;
@@ -22,8 +26,26 @@ export interface AgentSessionComposerProps {
 }
 
 export function AgentSessionComposer(props: AgentSessionComposerProps) {
+  const menuId = useId();
+  const selectedOptions = props.quickFeatures
+    ? [props.quickFeatures.selection.model, props.quickFeatures.selection.reasoningMode]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+  const inputDisabled = (props.active && !props.steeringAvailable) || props.sending;
+  const menu = useComposerQuickMenu(
+    props.draft,
+    props.onDraftChange,
+    props.quickFeatures,
+    props.active,
+    inputDisabled,
+  );
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
+    if (menu.open) {
+      menu.accept();
+      return;
+    }
     if (
       props.draft.trim() &&
       !props.sending &&
@@ -33,6 +55,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       props.onSend();
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (menu.keyDown(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submit();
@@ -55,13 +79,21 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         </label>
       )}
       <div className="composer-input-row">
+        <ComposerQuickMenu menu={menu} id={menuId} />
         <textarea
+          ref={menu.textarea}
+          aria-controls={menu.open ? menuId : undefined}
+          aria-haspopup={props.quickFeatures ? 'listbox' : undefined}
+          aria-autocomplete={props.quickFeatures ? 'list' : undefined}
+          aria-activedescendant={
+            menu.open && menu.items.length ? `${menuId}-${menu.selectedIndex}` : undefined
+          }
           value={props.draft}
           onChange={(event) => props.onDraftChange(event.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
           aria-label={props.messageLabel ?? 'Message'}
-          disabled={(props.active && !props.steeringAvailable) || props.sending}
+          disabled={inputDisabled}
           rows={4}
         />
         <div className="composer-actions">
@@ -97,7 +129,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                   id="composer-keyboard-hint"
                   role="tooltip"
                 >
-                  Enter to send. Shift+Enter adds a new line.
+                  {props.quickFeatures ? '/ for quick features. ' : ''}Enter to send. Shift+Enter
+                  adds a new line.
                 </span>
               )}
             </span>
@@ -105,6 +138,12 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         </div>
       </div>
       <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
+      {props.quickFeatures && (
+        <p className="composer-quick-notice" role="status">
+          {(selectedOptions ? `Next message: ${selectedOptions}` : menu.notice) ||
+            'Type / for model, reasoning, and skills'}
+        </p>
+      )}
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}
     </form>
   );

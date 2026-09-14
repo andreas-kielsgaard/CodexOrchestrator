@@ -303,6 +303,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::interactions::list_agent_session_interactions,
             crate::agent_sessions::transport::interactions::resolve_agent_session_working_directory,
             crate::agent_sessions::transport::selections::load_pinned_agent_session_profile,
+            crate::agent_sessions::transport::quick_features::load_agent_session_quick_features,
             crate::agent_sessions::transport::selections::send_direct_user_agent_session_message,
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,

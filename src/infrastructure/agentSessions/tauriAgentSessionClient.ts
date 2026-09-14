@@ -61,6 +61,7 @@ export function createTauriAgentSessionClient(
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
   return {
+    loadQuickFeatures: (input) => invokeCommand('load_agent_session_quick_features', { input }),
     startDirectUserSession: async (input) => {
       await ensureUpdateBridge();
       return invokeCommand('start_direct_user_agent_session', { input });

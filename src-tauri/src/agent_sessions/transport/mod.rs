@@ -2,6 +2,7 @@
 
 mod dto;
 pub(crate) mod interactions;
+pub(crate) mod quick_features;
 pub(crate) mod selections;
 
 use self::dto::{

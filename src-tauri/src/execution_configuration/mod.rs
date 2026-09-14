@@ -6,6 +6,8 @@ mod inventory;
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
 mod creation_intent;
 mod native_codex;
+mod quick_features;
+pub(crate) use quick_features::{QuickModel, QuickReasoningMode, QuickSkill, RuntimeQuickFeatures};
 mod node_profile;
 mod ports;
 mod repository;

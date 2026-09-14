@@ -2,6 +2,14 @@ import { vi } from 'vitest';
 import { createTauriAgentSessionClient } from '../agentSessions/tauriAgentSessionClient';
 
 describe('Tauri Agent Session Profile client', () => {
+  it('discovers quick features for an explicit composer context', async () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    const client = createTauriAgentSessionClient({ invoke, listen: async () => () => undefined });
+    await client.loadQuickFeatures!({ sessionId: 'session-1', workingDirectory: null });
+    expect(invoke).toHaveBeenCalledWith('load_agent_session_quick_features', {
+      input: { sessionId: 'session-1', workingDirectory: null },
+    });
+  });
   it('keeps pinned-profile reads separate from message-local runtime choices', async () => {
     const invoke = vi.fn().mockResolvedValue(null);
     const client = createTauriAgentSessionClient({ invoke, listen: async () => () => undefined });
