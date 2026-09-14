@@ -58,4 +58,12 @@ One laptop profile save encountered a changing native Codex skill catalogue betw
 
 Visual artifacts are in `.dev/`: `remote-connection-settings.png`, `target-two-devices.png`, `target-empty-remote-instance.png`, `target-branch-graph.png`, `remote-first-prompt.png`, `remote-followup.png`, `remote-canceled.png`, `remote-approval-pending.png`, `remote-approval-complete.png`, `laptop-target-complete.png`, and `remote-restored-after-ui-reload.png`.
 
-These checks cover the connected prototype and UI reload. They do not establish detached execution, recovery after connectivity loss, synchronization, workflow operation, or Claude support.
+These checks cover the connected prototype and UI reload. They do not establish detached execution, recovery of interrupted active work, synchronization, workflow operation, or Claude support.
+
+## Closed idle connection repair
+
+The user's demo invocation `9812c9ea-11d1-4573-84fa-78ee132a448d` in Session `c940bb82-3f86-458c-b6cd-9efefcb26a76` failed with `runtime_preflight_failed: Remote connection has closed`. The cached execution endpoint retained an exited SSH process. The failure occurred before a provider thread was created or the prompt was delivered; the requested demo file did not exist. A fresh SSH connection and host discovery succeeded. The original failure record is retained in `.dev/closed-connection-before.json`.
+
+The desktop runtime now replaces a closed idle connection before a new invocation. Active interactions retain their existing connection, and an uncertain invocation is never automatically replayed. Four focused regression tests cover idle replacement with resume identity, active interaction behavior, no replay after an uncertain failure, and healthy connection reuse. The native `test-fast` build passed; no server redeployment was required.
+
+The rebuilt native app retried the original prompt in the same product Session. Invocation `e536bceb-0a65-4bbb-9af0-18079a0d6031` completed and created `orchid-remote-demo.txt`; an independent SSH read confirmed the hostname, remote worktree path, published HEAD, README heading, and requested phrase. With no active invocation or host child process, host PID 27771 was deliberately terminated. Without restarting Orchid, follow-up invocation `677d2218-1bfd-4b71-a42b-ea00e26b0686` completed through replacement host PID 29390. The Codex thread remained `01a0a135-5c59-7a22-b700-872338501edb`. SSH confirmed the appended line, and Git status showed only the new demo file alongside the existing smoke artifacts. The original failed invocation remains in history. Evidence: `.dev/closed-connection-after.json` and `.dev/closed-connection-recovered.png`.

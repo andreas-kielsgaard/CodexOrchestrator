@@ -21,6 +21,7 @@ pub(crate) struct SshConnection {
     child: Mutex<Child>,
     pending: Arc<Mutex<HashMap<String, mpsc::Sender<Reply>>>>,
     sinks: Arc<Mutex<HashMap<AgentInvocationId, Arc<dyn AgentRuntimeUpdateSink>>>>,
+    closed: Arc<Mutex<Option<String>>>,
 }
 
 fn unavailable(message: impl Into<String>) -> RuntimePortError {
@@ -71,13 +72,19 @@ impl SshConnection {
             Default::default();
         let response_channels = pending.clone();
         let event_sinks = sinks.clone();
+        let closed: Arc<Mutex<Option<String>>> = Default::default();
+        let reader_closed = closed.clone();
         let (delivery_tx, delivery_rx) = mpsc::channel::<Delivery>();
         std::thread::spawn(move || {
             for delivery in delivery_rx {
                 match delivery {
                     Delivery::Update(invocation_id, update) => {
                         let terminal = matches!(&update, RuntimeUpdate::Finished(_));
-                        let sink = event_sinks.lock().unwrap().get(&invocation_id).cloned();
+                        let sink = if terminal {
+                            event_sinks.lock().unwrap().remove(&invocation_id)
+                        } else {
+                            event_sinks.lock().unwrap().get(&invocation_id).cloned()
+                        };
                         if let Some(sink) = sink {
                             if let Err(error) = sink.emit_update(&invocation_id, update.clone()) {
                                 sink.report_delivery_failure(
@@ -85,9 +92,6 @@ impl SshConnection {
                                     RuntimeUpdateDeliveryFailure { update, error },
                                 );
                             }
-                        }
-                        if terminal {
-                            event_sinks.lock().unwrap().remove(&invocation_id);
                         }
                     }
                     Delivery::Disconnected(message) => {
@@ -147,6 +151,7 @@ impl SshConnection {
             let message = format!(
                 "Remote connection closed; remote outcome is unconfirmed. {detail} {diagnostic}"
             );
+            *reader_closed.lock().unwrap() = Some(message.clone());
             for (_, tx) in response_channels.lock().unwrap().drain() {
                 let _ = tx.send(Err(unavailable(&message)));
             }
@@ -157,31 +162,53 @@ impl SshConnection {
             child: Mutex::new(child),
             pending,
             sinks,
+            closed,
         })
+    }
+
+    pub(crate) fn is_closed(&self) -> Result<bool, RuntimePortError> {
+        if self.closed.lock().unwrap().is_some() {
+            return Ok(true);
+        }
+        self.child
+            .lock()
+            .unwrap()
+            .try_wait()
+            .map(|status| status.is_some())
+            .map_err(|e| unavailable(e.to_string()))
+    }
+
+    pub(crate) fn has_active_invocations(&self) -> bool {
+        !self.sinks.lock().unwrap().is_empty()
     }
 
     pub(crate) fn request<T: DeserializeOwned>(
         &self,
         command: HostCommand,
     ) -> Result<T, RuntimePortError> {
-        if self
-            .child
-            .lock()
-            .unwrap()
-            .try_wait()
-            .map_err(|e| unavailable(e.to_string()))?
-            .is_some()
-        {
-            return Err(unavailable("Remote connection has closed"));
+        if self.is_closed()? {
+            return Err(unavailable(
+                self.closed
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| "Remote connection has closed".into()),
+            ));
         }
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
         let bytes = serde_json::to_vec(&HostRequest {
             id: id.clone(),
             command,
         })
         .map_err(|e| unavailable(e.to_string()))?;
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if let Some(message) = self.closed.lock().unwrap().as_ref() {
+                return Err(unavailable(message.clone()));
+            }
+            pending.insert(id.clone(), tx);
+        }
         let write = (|| {
             let mut input = self.stdin.lock().unwrap();
             let input = input
@@ -212,6 +239,10 @@ impl SshConnection {
         self.sinks.lock().unwrap().remove(id);
     }
     pub(crate) fn shutdown(&self) -> Result<(), RuntimePortError> {
+        self.closed
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| "Remote connection is closed".into());
         self.stdin.lock().unwrap().take();
         let mut child = self.child.lock().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);

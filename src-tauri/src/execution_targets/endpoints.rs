@@ -122,10 +122,7 @@ impl ExecutionEndpoints {
     ) -> Result<Arc<dyn AgentRuntime>, String> {
         match &binding.connection {
             ExecutionConnection::Local => Ok(self.local_runtime.clone()),
-            ExecutionConnection::Ssh {
-                target,
-                host_executable,
-            } => {
+            ExecutionConnection::Ssh { .. } => {
                 let key = serde_json::to_string(binding).map_err(|e| e.to_string())?;
                 let mut runtimes = self
                     .remote_runtimes
@@ -134,13 +131,8 @@ impl ExecutionEndpoints {
                 if let Some(runtime) = runtimes.get(&key) {
                     return Ok(runtime.clone());
                 }
-                let runtime = Arc::new(RemoteRuntime {
-                    connection: Arc::new(
-                        SshConnection::connect(target, host_executable)
-                            .map_err(|e| e.to_string())?,
-                    ),
-                    binding: binding.clone(),
-                });
+                let runtime =
+                    Arc::new(RemoteRuntime::connect(binding.clone()).map_err(|e| e.to_string())?);
                 runtimes.insert(key, runtime.clone());
                 Ok(runtime)
             }
