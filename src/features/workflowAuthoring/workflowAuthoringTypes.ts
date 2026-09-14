@@ -1,4 +1,4 @@
 export type WorkflowEditorSelection = Readonly<{
-  kind: 'node' | 'connection' | 'run';
+  kind: 'node' | 'connection';
   id: string | null;
 }>;

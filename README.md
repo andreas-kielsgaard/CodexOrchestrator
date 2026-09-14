@@ -29,17 +29,16 @@ For the desktop development loop on Windows, run the launcher from the repo root
 launch-dev.bat
 ```
 
-The launcher prepares the local Cargo/MSVC/Codex paths, starts the runtime status server, clears any
-old stale marker, and then starts `npm run dev:tauri`. The app shows a loading screen until the
-Tauri command backend responds.
+The launcher prepares the local Cargo/MSVC/Codex paths and starts `npm run dev:tauri`. The app shows
+a loading screen until the Tauri command backend responds.
 
 ## Scripts
 
 - `npm run dev`: start the React/Vite app.
-- `npm run dev:status`: start the local runtime status server used by the stale-state banner.
+- `npm run dev:status`: explicitly start the optional runtime status server for the review CLI.
 - `npm run dev:tauri`: start the Tauri desktop shell.
-- `npm run mark:stale -- --target backend --reason "Rust command changed"`: mark app,
-  frontend, or backend state stale so the running UI offers a refresh.
+- `npm run mark:stale -- --target backend --reason "Rust command changed"`: record a stale-state
+  marker for review tooling.
 - `npm run clear:stale`: clear the runtime stale marker.
 - `npm run build`: type-check and build the frontend.
 - `npm run build:tauri`: build the desktop app.
@@ -72,10 +71,13 @@ The implemented vertical slice and its deliberate boundaries are documented in
 [`docs/agent-session/README.md`](docs/agent-session/README.md). The earlier integrated prototype
 remains on archive branches only as evidence; it was not merged wholesale.
 
-## Runtime Status
+## Optional Review Runtime Status
 
-The runtime status server stores its local state in `.dev/runtime-status.json`. It is intentionally
-ignored by Git. When a running dev app should refresh after code changes, call:
+The review CLI can inspect a separately started runtime status server. Start it with
+`npm run dev:status` when needed; `launch-dev.bat` does not start it. Its state is stored in the
+Git-ignored `.dev/runtime-status.json`. The current application has no stale-state banner.
+
+To record a marker for review tooling, call:
 
 ```bash
 npm run mark:stale -- --target frontend
