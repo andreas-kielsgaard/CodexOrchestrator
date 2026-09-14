@@ -51,7 +51,7 @@ fn main_v47_sessions_upgrade_without_moving_context_or_losing_history() {
     let database = crate::product_database::open(&path).unwrap();
     database.read("verify Session migration", |connection| -> Result<(), String> {
         assert_eq!(session_rows(connection), before);
-        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 48);
+        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), ACTIVE_SCHEMA_VERSION);
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM execution_default_capability_profile", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
         assert_eq!(connection.query_row("SELECT COUNT(*) FROM agent_sessions WHERE workspace_origin IS NOT NULL", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
         let (policy, token): (String, String) = connection.query_row("SELECT mediation_plan,harness_token FROM session_harness_bindings", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();

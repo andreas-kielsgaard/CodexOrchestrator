@@ -17,6 +17,13 @@ fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
 
 pub(crate) fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let app_data_dir = crate::runtime::instance::app_data_dir(|| {
                 app.path()
@@ -156,6 +163,9 @@ pub(crate) fn run() {
                 let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
+            app.manage(crate::session_navigation::transport::SessionNavigationTauriState(Arc::new(
+                crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone())
+            )));
             app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
             let (workflow_mcp, workflow_mcp_owner) =
                 crate::workflows::mcp::start_session_event_server(Arc::downgrade(&workflow_execution))?;
@@ -289,9 +299,11 @@ pub(crate) fn run() {
                     orchestration.clone(),
                 ),
             );
+            crate::session_navigation::agent_access::start(app.handle(), &app_data_dir)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::session_navigation::agent_access::complete_session_navigation_command,
             crate::app_metadata,
             crate::load_open_task_dashboard,
             crate::register_task_worktree,
@@ -326,7 +338,10 @@ pub(crate) fn run() {
             crate::execution_configuration::transport::update_capability_profile,
             crate::execution_configuration::transport::delete_capability_profile,
             crate::session_events::transport::load_session_event_group,
-            crate::agent_sessions::transport::selections::start_direct_user_agent_session,
+            crate::session_navigation::transport::start_direct_user_agent_session,
+            crate::session_navigation::transport::load_agent_session_navigation,
+            crate::session_navigation::transport::move_agent_session,
+            crate::session_navigation::transport::pin_agent_session,
             crate::workflows::execution_transport::create_workflow_recipe_instance,
             crate::workflows::execution_transport::list_workflow_recipe_instances,
             crate::workflows::execution_transport::load_workflow_recipe_instance,

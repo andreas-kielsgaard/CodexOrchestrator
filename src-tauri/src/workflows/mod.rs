@@ -12,3 +12,5 @@ pub(crate) mod instance_domain;
 pub(crate) mod instances;
 pub(crate) mod mcp;
 pub(crate) mod prompt_content;
+
+pub(crate) mod session_navigation;

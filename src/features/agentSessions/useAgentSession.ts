@@ -1,17 +1,14 @@
 import { sessionErrorMessage as errorMessage } from './sessionErrors';
-import { sessionSummaryChanged } from './sessionAttention';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentSessionClient,
   AgentSessionDetailsDto,
-  AgentSessionSummaryDto,
   AgentSessionUpdateDto,
   AgentSessionProfileClient,
 } from '../../application/agentSessions';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 
-export interface AgentSessionController {
-  summaries: AgentSessionSummaryDto[];
+export interface AgentSessionWorkspaceController {
   selectedSessionId: string | null;
   details: AgentSessionDetailsDto | null;
   transcript: ReturnType<typeof projectAgentSessionTranscript> | null;
@@ -22,8 +19,6 @@ export interface AgentSessionController {
   canceling: boolean;
   error: string | null;
   expandedProcessing: ReadonlySet<string>;
-  selectSession(sessionId: string): Promise<void>;
-  startNewSession(): void;
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
   send(): Promise<void>;
@@ -38,21 +33,6 @@ export interface AgentSessionController {
   clearError(): void;
 }
 
-export type AgentSessionCollectionController = Pick<
-  AgentSessionController,
-  'summaries' | 'selectedSessionId' | 'loading' | 'selectSession' | 'startNewSession' | 'reload'
-> & {
-  error: string | null;
-  clearError(): void;
-};
-export type AgentSessionWorkspaceController = Omit<
-  AgentSessionController,
-  'summaries' | 'selectSession' | 'startNewSession'
->;
-
-export { useAgentSessionCollection } from './useAgentSessionCollection';
-export type { AgentSessionCollectionOptions } from './useAgentSessionCollection';
-
 export interface UseAgentSessionOptions {
   execution?: {
     readonly client: AgentSessionProfileClient;
@@ -65,6 +45,8 @@ export interface UseAgentSessionOptions {
     readonly title: string | null;
   }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   selectedSessionId: string | null;
+  draftId?: string;
+  folderTarget?: import('../../application/agentSessions/organization').SessionFolderTarget | null;
   onSessionCreated?(sessionId: string): void;
   /** Optional replacement boundary for messages sent to an already-created Session. */
   sendExistingMessage?(input: {
@@ -79,35 +61,7 @@ export function useAgentSession(
   client: AgentSessionClient,
   options: UseAgentSessionOptions,
 ): AgentSessionWorkspaceController {
-  return useAgentSessionController(client, {
-    controlledSessionId: options.selectedSessionId,
-    skipCollection: true,
-    onSessionCreated: options.onSessionCreated,
-    sendExistingMessage: options.sendExistingMessage,
-    startSession: options.startSession,
-    sessionTitle: options.sessionTitle,
-    execution: options.execution,
-  });
-}
-
-interface ControllerOptions {
-  execution?: UseAgentSessionOptions['execution'];
-  startSession?: UseAgentSessionOptions['startSession'];
-  controlledSessionId?: string | null;
-  skipCollection?: boolean;
-  onSessionCreated?(id: string): void;
-  sendExistingMessage?(input: {
-    readonly sessionId: string;
-    readonly submittedText: string;
-  }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
-  sessionTitle?: string;
-}
-export function useAgentSessionController(
-  client: AgentSessionClient,
-  options: ControllerOptions = {},
-): AgentSessionController {
-  const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const selectedSessionId = options.selectedSessionId;
   const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
   const [draft, setDraft] = useState('');
   const [workingDirectory, setWorkingDirectory] = useState('');
@@ -121,13 +75,6 @@ export function useAgentSessionController(
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
-
-  const refreshSummaries = useCallback(async () => {
-    if (options.skipCollection) return [];
-    const next = await client.listSessions({ availability: 'available' });
-    if (mountedRef.current) setSummaries(next);
-    return next;
-  }, [client, options.skipCollection]);
 
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
@@ -159,14 +106,11 @@ export function useAgentSessionController(
       }
       try {
         await loadSelected(update.sessionId, true);
-        if (sessionSummaryChanged(update)) {
-          await refreshSummaries();
-        }
       } catch (caught) {
         if (mountedRef.current) setError(`Session reload failed: ${errorMessage(caught)}`);
       }
     },
-    [loadSelected, refreshSummaries],
+    [loadSelected],
   );
 
   useEffect(() => {
@@ -180,23 +124,9 @@ export function useAgentSessionController(
         unsubscribe = undefined;
         return;
       }
-      const nextSummaries = await refreshSummaries();
-      if (canceled) return;
-      const initialId = options.skipCollection
-        ? null
-        : (selectedIdRef.current ?? nextSummaries[0]?.id ?? null);
-      if (initialId) {
-        selectedIdRef.current = initialId;
-        setSelectedSessionId(initialId);
-        await loadSelected(initialId);
-      }
-    })()
-      .catch((caught) => {
-        if (mountedRef.current) setError(errorMessage(caught));
-      })
-      .finally(() => {
-        if (mountedRef.current) setLoading(false);
-      });
+    })().catch((caught) => {
+      if (mountedRef.current) setError(errorMessage(caught));
+    });
     subscriptionReadyRef.current = ready;
 
     return () => {
@@ -204,12 +134,11 @@ export function useAgentSessionController(
       mountedRef.current = false;
       unsubscribe?.();
     };
-  }, [client, loadSelected, options.skipCollection, reconcileUpdate, refreshSummaries]);
+  }, [client, reconcileUpdate]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
       selectedIdRef.current = sessionId;
-      setSelectedSessionId(sessionId);
       setDetails(null);
       setLoading(true);
       setError(null);
@@ -218,7 +147,7 @@ export function useAgentSessionController(
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
-        if (mountedRef.current) setLoading(false);
+        if (mountedRef.current && selectedIdRef.current === sessionId) setLoading(false);
       }
     },
     [loadSelected],
@@ -227,7 +156,6 @@ export function useAgentSessionController(
   const startNewSession = useCallback(() => {
     loadGenerationRef.current += 1;
     selectedIdRef.current = null;
-    setSelectedSessionId(null);
     setDetails(null);
     invocationIdsRef.current = new Set();
     setWorkingDirectory('');
@@ -236,43 +164,42 @@ export function useAgentSessionController(
     setLoading(false);
   }, []);
 
+  const draftKey = options.draftId ?? 'new';
+  const contextKey = selectedSessionId ?? draftKey;
+  const contextRef = useRef(contextKey);
+  contextRef.current = contextKey;
   useEffect(() => {
-    if (
-      options.controlledSessionId === undefined ||
-      options.controlledSessionId === selectedIdRef.current
-    )
-      return;
-    if (options.controlledSessionId) void selectSession(options.controlledSessionId);
-    else startNewSession();
-  }, [options.controlledSessionId, selectSession, startNewSession]);
+    if (selectedSessionId) {
+      if (selectedIdRef.current !== selectedSessionId) void selectSession(selectedSessionId);
+    } else startNewSession();
+  }, [selectedSessionId, draftKey, selectSession, startNewSession]);
 
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
     if (!sessionId) {
-      await refreshSummaries();
       return;
     }
     setLoading(true);
     setError(null);
     try {
       await loadSelected(sessionId, true);
-      await refreshSummaries();
     } catch (caught) {
       if (mountedRef.current) setError(errorMessage(caught));
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && selectedIdRef.current === sessionId) setLoading(false);
     }
-  }, [loadSelected, refreshSummaries]);
+  }, [loadSelected]);
 
   const sendText = useCallback(
     async (value: string, clearComposer = false) => {
       const submittedText = value.trim();
       if (!submittedText || sending) return;
+      const sendContext = contextRef.current;
+      const existingSessionId = selectedIdRef.current;
       setSending(true);
       setError(null);
       try {
         await subscriptionReadyRef.current;
-        const existingSessionId = selectedIdRef.current;
         const activeInvocationId =
           details && details.session.id === existingSessionId
             ? projectAgentSessionTranscript(details).activeInvocationId
@@ -327,6 +254,7 @@ export function useAgentSessionController(
                     workingDirectory: workingDirectory.trim() || null,
                     title: options.sessionTitle ?? null,
                     ...options.execution.selection,
+                    ...(options.folderTarget ? { folderTarget: options.folderTarget } : {}),
                   })
               : !existingSessionId && options.startSession
                 ? await options.startSession({
@@ -345,22 +273,21 @@ export function useAgentSessionController(
                       : {}),
                   });
         options.execution?.afterAccepted();
-        if (!existingSessionId) options.onSessionCreated?.(acknowledgement.sessionId);
-        if (selectedIdRef.current === existingSessionId) {
+        if (!existingSessionId && contextRef.current === sendContext)
+          options.onSessionCreated?.(acknowledgement.sessionId);
+        if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
           selectedIdRef.current = acknowledgement.sessionId;
           invocationIdsRef.current.add(acknowledgement.invocationId);
-          setSelectedSessionId(acknowledgement.sessionId);
           if (clearComposer) setDraft((current) => (current === value ? '' : current));
           await loadSelected(acknowledgement.sessionId, true);
         }
-        await refreshSummaries();
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, options, refreshSummaries, sending, workingDirectory],
+    [client, details, loadSelected, options, sending, workingDirectory],
   );
 
   const send = useCallback(() => sendText(draft, true), [draft, sendText]);
@@ -375,13 +302,12 @@ export function useAgentSessionController(
     try {
       await client.cancelInvocation({ invocationId: activeInvocationId });
       if (selectedIdRef.current) await loadSelected(selectedIdRef.current, true);
-      await refreshSummaries();
     } catch (caught) {
       if (mountedRef.current) setError(errorMessage(caught));
     } finally {
       if (mountedRef.current) setCanceling(false);
     }
-  }, [canceling, client, details, loadSelected, refreshSummaries]);
+  }, [canceling, client, details, loadSelected]);
 
   const respondToRequest = useCallback(
     async (invocationId: string, requestId: string, response: unknown) => {
@@ -418,26 +344,17 @@ export function useAgentSessionController(
     if (!sessionId || !transcript?.activeInvocationId) return;
 
     const interval = window.setInterval(() => {
-      void loadSelected(sessionId, true)
-        .then((next) => {
-          const stillActive = next.invocations.some(({ invocation }) =>
-            ['pending', 'running'].includes(invocation.status),
-          );
-          if (!stillActive) return refreshSummaries().then(() => undefined);
-        })
-        .catch((caught) => {
-          if (mountedRef.current)
-            setError(`Session reconciliation failed: ${errorMessage(caught)}`);
-        });
+      void loadSelected(sessionId, true).catch((caught) => {
+        if (mountedRef.current) setError(`Session reconciliation failed: ${errorMessage(caught)}`);
+      });
     }, 1500);
 
     return () => window.clearInterval(interval);
-  }, [loadSelected, refreshSummaries, selectedSessionId, transcript?.activeInvocationId]);
+  }, [loadSelected, selectedSessionId, transcript?.activeInvocationId]);
 
   return {
     respondToRequest,
     steeringAvailable: Boolean(client.steerSession),
-    summaries,
     selectedSessionId,
     details,
     transcript,
@@ -448,8 +365,6 @@ export function useAgentSessionController(
     canceling,
     error,
     expandedProcessing,
-    selectSession,
-    startNewSession,
     setDraft,
     setWorkingDirectory,
     send,

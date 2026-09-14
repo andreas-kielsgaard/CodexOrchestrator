@@ -722,3 +722,104 @@ fn at(second: u32) -> DateTime<Utc> {
         .parse()
         .expect("timestamp")
 }
+
+#[test]
+fn organization_moves_and_pins_preserve_session_and_logical_address_across_reopen() {
+    use crate::agent_sessions::organization::SessionPlacement;
+    use crate::session_events::{ReferenceIdentity, SessionLogicalAddress};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("organization.sqlite");
+    let original = test_session("organized", at(0));
+    let address = SessionLogicalAddress::new(
+        ReferenceIdentity::new("workflow", "instance", "original").unwrap(),
+        ReferenceIdentity::new("workflow", "node", "worker").unwrap(),
+    );
+    {
+        let repository = SqliteAgentSessionRepository::open(&path).unwrap();
+        repository
+            .create_addressed_session(
+                original.clone(),
+                &address,
+                &ReferenceIdentity::new("workflow", "event_definition", "entry").unwrap(),
+                None,
+            )
+            .unwrap();
+        for placement in [
+            SessionPlacement::Repository {
+                repository_id: "other-repo".into(),
+            },
+            SessionPlacement::WorkflowInstance {
+                instance_id: "other-instance".into(),
+            },
+            SessionPlacement::Unfiled,
+        ] {
+            repository.move_session(&original.id, &placement).unwrap();
+            repository.pin_session(&original.id, true, at(10)).unwrap();
+            assert_eq!(
+                repository.get_session(&original.id).unwrap(),
+                Some(original.clone())
+            );
+            assert_eq!(
+                repository.list_logical_addresses().unwrap(),
+                vec![(original.id.clone(), address.clone())]
+            );
+            assert_eq!(
+                repository.list_organization().unwrap()[0].placement,
+                placement
+            );
+        }
+    }
+    let repository = SqliteAgentSessionRepository::open(&path).unwrap();
+    assert_eq!(
+        repository.get_session(&original.id).unwrap(),
+        Some(original.clone())
+    );
+    let organization = repository.list_organization().unwrap();
+    assert_eq!(organization[0].placement, SessionPlacement::Unfiled);
+    assert_eq!(organization[0].pinned_at, Some(at(10)));
+    repository.pin_session(&original.id, false, at(20)).unwrap();
+    assert_eq!(repository.list_organization().unwrap()[0].pinned_at, None);
+    assert_eq!(
+        repository.list_organization().unwrap()[0].placement,
+        SessionPlacement::Unfiled
+    );
+}
+
+#[test]
+fn organization_creation_is_atomic_and_default_pin_does_not_change_placement() {
+    use crate::agent_sessions::organization::SessionPlacement;
+    let repository = memory_repository();
+    let session = test_session("rollback", at(0));
+    assert!(repository
+        .create_session_with_placement(
+            session.clone(),
+            &SessionPlacement::Repository {
+                repository_id: String::new()
+            }
+        )
+        .is_err());
+    assert!(repository.get_session(&session.id).unwrap().is_none());
+    assert!(repository.list_organization().unwrap().is_empty());
+    repository
+        .create_session_with_placement(
+            session.clone(),
+            &SessionPlacement::Repository {
+                repository_id: "repo".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(repository.get_session(&session.id).unwrap(), Some(session));
+    let default = test_session("default", at(1));
+    repository.create_session(default.clone()).unwrap();
+    repository.pin_session(&default.id, true, at(2)).unwrap();
+    assert_eq!(
+        repository
+            .list_organization()
+            .unwrap()
+            .iter()
+            .find(|o| o.session_id == default.id)
+            .unwrap()
+            .placement,
+        SessionPlacement::Default
+    );
+}

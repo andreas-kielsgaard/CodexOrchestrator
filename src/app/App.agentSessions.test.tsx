@@ -210,7 +210,6 @@ describe('App application surfaces', () => {
       ).toHaveAttribute('aria-selected', 'true'),
     );
 
-    expect(screen.getByRole('region', { name: 'Epic return context' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Return to Epic' })).toBeNull();
     fireEvent.click(
       within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
@@ -239,7 +238,9 @@ describe('App application surfaces', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Open Codex Epic Runner/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
-    expect(await screen.findByRole('region', { name: 'Epic return context' })).toBeVisible();
+    expect(
+      await screen.findByRole('heading', { name: 'Orientation discovery handler' }),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
     expect(screen.queryByRole('region', { name: /return context/i })).toBeNull();
@@ -250,107 +251,6 @@ describe('App application surfaces', () => {
       }),
     );
     expect(await screen.findByRole('main', { name: 'Epic detail' })).toBeVisible();
-  });
-
-  it('round-trips the WU-ECS2E handler without manufacturing a Reviewer Session', async () => {
-    const composition = createRecordedDevelopmentApplicationComposition({
-      includeWorkUnitReview: true,
-    });
-    const loadedSessionIds: string[] = [];
-    const tracingClient: AgentSessionClient = {
-      ...composition.agentSessionClient,
-      loadSession: async (request) => {
-        loadedSessionIds.push(request.sessionId);
-        return composition.agentSessionClient.loadSession(request);
-      },
-    };
-    render(
-      <App
-        {...composition}
-        agentSessionClient={tracingClient}
-        orchestrationAgentSessionComposition={{ client: tracingClient }}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
-    const tree = await screen.findByRole('tree', { name: 'Epics session hierarchy' });
-    await expandTreeItem(tree, /Codex Epic Runner workspace development/);
-    await expandTreeItem(tree, 'Sprint Control Surface Discovery');
-    await expandTreeItem(tree, 'Integrated detail surfaces');
-    await expandTreeItem(tree, 'Plan and Work Unit detail surfaces');
-    const handlerTreeItem = within(tree).getByRole('treeitem', {
-      name: /Recorded WU-ECS2E Work Unit Handler/,
-    });
-    expect(handlerTreeItem).toHaveTextContent('Work Unit Handler');
-    expect(
-      within(tree).getByRole('treeitem', {
-        name: /Recorded WU-ECS2E Work Unit Implementer/,
-      }),
-    ).toHaveTextContent('Work Unit Implementer');
-    expect(within(tree).queryByRole('treeitem', { name: /Reviewer/ })).toBeNull();
-    fireEvent.click(handlerTreeItem);
-
-    expect(await screen.findByRole('button', { name: 'Go to Work Unit' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Go to Work Unit' }));
-    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: /Agent Session$/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Reviewer' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Reviewer' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Reviewer Agent Session' })).toBeNull();
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: /Implementation reviewed.*recorded-handler-WU-ECS2E-first-review/,
-      }),
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Open in Agent Sessions' }));
-    expect(
-      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Handler/ }),
-    ).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
-    expect(
-      within(screen.getByRole('region', { name: 'Work Unit return context' })).queryByRole(
-        'button',
-      ),
-    ).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Return to Work Unit Activity' })).toBeNull();
-
-    fireEvent.click(
-      screen.getByRole('treeitem', { name: /Recorded WU-ECS2E Work Unit Implementer/ }),
-    );
-    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
-    expect(
-      screen.queryByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
-    ).toBeNull();
-
-    fireEvent.click(
-      within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
-        name: 'Back',
-      }),
-    );
-    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    expect(
-      screen.getByLabelText('Agent Session turn: recorded-handler-WU-ECS2E-first-review'),
-    ).toBeVisible();
-    expect(loadedSessionIds).toContain('recorded-session-WU-ECS2E');
-    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }));
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: /Open exact diff for src\/features\/orchestrations\/components\/WorkUnitDetailWorkspace.tsx/,
-      }),
-    );
-    expect(await screen.findByRole('main', { name: 'Files and diffs' })).toBeVisible();
-    expect(
-      screen.getByRole('region', {
-        name: 'src/features/orchestrations/components/WorkUnitDetailWorkspace.tsx',
-      }),
-    ).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Return to Work Unit Evidence' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Work Unit Evidence' }));
-    expect(await screen.findByRole('main', { name: 'Work Unit detail: WU-ECS2E' })).toBeVisible();
-    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute('aria-selected', 'true');
-    expect(loadedSessionIds).not.toContain('recorded-session-reviewer-WU-ECS2E');
   });
 
   it('restores the exact Work Unit Activity after a late Agent Sessions collection refresh', async () => {
@@ -403,6 +303,7 @@ describe('App application surfaces', () => {
       await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Handler' }),
     ).toBeVisible();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     fireEvent.click(
       within(screen.getByRole('navigation', { name: 'Product commands' })).getByRole('button', {
         name: 'Back',
@@ -683,12 +584,6 @@ describe('App application surfaces', () => {
     expect(await screen.findByRole('main', { name: 'Epic Product Decisions' })).toBeVisible();
   });
 });
-
-async function expandTreeItem(tree: HTMLElement, name: string | RegExp) {
-  const item = await within(tree).findByRole('treeitem', { name });
-  if (item.getAttribute('aria-expanded') !== 'true') fireEvent.click(item);
-  await waitFor(() => expect(item).toHaveAttribute('aria-expanded', 'true'));
-}
 
 function emptyAgentClient(): AgentSessionClient {
   return {

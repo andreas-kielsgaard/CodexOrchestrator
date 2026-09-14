@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 mod addressed;
 mod commands;
-mod configuration;
+pub(crate) mod configuration;
 mod creation;
 mod dependencies;
 mod diagnostics;
+mod direct_user;
 mod interactions;
 mod invocation;
 mod lifecycle;

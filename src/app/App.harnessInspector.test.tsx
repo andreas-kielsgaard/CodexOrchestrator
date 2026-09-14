@@ -47,8 +47,11 @@ describe('App Harness Management preview', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Sessions' }));
     const sessionList = await screen.findByRole('navigation', { name: 'Session list' });
+    fireEvent.click(
+      await within(sessionList).findByRole('treeitem', { name: 'Show more in Unfiled' }),
+    );
     const recordedSession = within(sessionList).getByRole('treeitem', {
-      name: new RegExp(displayTitle ?? 'Epic Plan Builder'),
+      name: 'Epic Plan Builder exploration',
     });
     fireEvent.click(recordedSession);
 

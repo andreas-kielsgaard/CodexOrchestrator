@@ -1,15 +1,16 @@
 //! Tauri state, commands, DTO mapping, and persisted update notifications.
 
 mod dto;
+pub(crate) use dto::AgentSessionSummaryDto;
 pub(crate) mod interactions;
 pub(crate) mod selections;
 
 use self::dto::{
-    AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionSummaryDto,
-    AgentSessionUpdateDto, CancelAgentInvocationCommandDto, CreateAgentSessionCommandDto,
-    ListAgentSessionsQueryDto, LoadAgentSessionQueryDto, SendAgentSessionMessageCommandDto,
-    SendAgentSessionMessageResultDto, UpdateAgentSessionHarnessCommandDto,
-    UpdateAgentSessionIdentityCommandDto, UpdateAgentSessionModelOverrideCommandDto,
+    AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionUpdateDto,
+    CancelAgentInvocationCommandDto, CreateAgentSessionCommandDto, ListAgentSessionsQueryDto,
+    LoadAgentSessionQueryDto, SendAgentSessionMessageCommandDto, SendAgentSessionMessageResultDto,
+    UpdateAgentSessionHarnessCommandDto, UpdateAgentSessionIdentityCommandDto,
+    UpdateAgentSessionModelOverrideCommandDto,
 };
 use crate::agent_sessions::application::{
     AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,

@@ -1,109 +1,96 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AgentSessionClient, AgentSessionSummaryDto } from '../../application/agentSessions';
-import type { AgentSessionCollectionController } from './useAgentSessionController';
-import { sessionErrorMessage as errorMessage } from './sessionErrors';
+import type { AgentSessionClient } from '../../application/agentSessions';
+import {
+  emptySessionNavigation,
+  type SessionNavigationClient,
+  type SessionPlacement,
+} from '../../application/agentSessions/organization';
+import { sessionErrorMessage } from './sessionErrors';
 import { sessionSummaryChanged } from './sessionAttention';
-export interface AgentSessionCollectionOptions {
-  readonly selectedSessionId?: string | null;
-  readonly onSelectedSessionChange?: (sessionId: string | null) => void;
-}
-
 export function useAgentSessionCollection(
   client: AgentSessionClient,
-  options: AgentSessionCollectionOptions = {},
-): AgentSessionCollectionController {
-  const { selectedSessionId: controlledSelectedSessionId, onSelectedSessionChange } = options;
-  const [summaries, setSummaries] = useState<AgentSessionSummaryDto[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    controlledSelectedSessionId ?? null,
-  );
-  const selectedSessionIdRef = useRef<string | null>(controlledSelectedSessionId ?? null);
+  navigation?: SessionNavigationClient,
+) {
+  const [data, setData] = useState(emptySessionNavigation);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const generationRef = useRef(0);
+  const generation = useRef(0);
   const refresh = useCallback(
-    async (showLoading: boolean) => {
-      const generation = ++generationRef.current;
+    async (showLoading = true) => {
+      const request = ++generation.current;
       if (showLoading) {
         setLoading(true);
         setError(null);
       }
       try {
-        const next = await client.listSessions({ availability: 'available' });
-        if (!mountedRef.current || generation !== generationRef.current) return;
-        setSummaries(next);
-        if (!showLoading) return;
-        const selected =
-          selectedSessionIdRef.current ?? controlledSelectedSessionId ?? next[0]?.id ?? null;
-        if (selected !== selectedSessionIdRef.current) {
-          selectedSessionIdRef.current = selected;
-          setSelectedSessionId(selected);
-          onSelectedSessionChange?.(selected);
-        }
+        const next = navigation
+          ? await navigation.load()
+          : {
+              ...emptySessionNavigation(),
+              summaries: await client.listSessions({ availability: 'available' }),
+            };
+        if (request === generation.current) setData(next);
       } catch (caught) {
-        if (mountedRef.current && generation === generationRef.current)
-          setError(`Session list reload failed: ${errorMessage(caught)}`);
+        if (request === generation.current)
+          setError(`Session list reload failed: ${sessionErrorMessage(caught)}`);
       } finally {
-        if (mountedRef.current && generation === generationRef.current) setLoading(false);
+        if (request === generation.current) setLoading(false);
       }
     },
-    [client, controlledSelectedSessionId, onSelectedSessionChange],
+    [client, navigation],
   );
   const reload = useCallback(() => refresh(true), [refresh]);
-  const mountedRef = useRef(true);
+  const invalidatePending = useCallback(() => {
+    generation.current++;
+  }, []);
   useEffect(() => {
-    mountedRef.current = true;
     void reload();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [reload]);
-  useEffect(() => {
-    let disposed = false;
+    let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let unsubscribe: (() => void) | undefined;
+    const stops: (() => void)[] = [];
+    const changed = () => {
+      if (!active) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void refresh(false), 100);
+    };
+    const retain = (stop: () => void) => {
+      if (active) stops.push(stop);
+      else stop();
+    };
+    const failed = (cause: unknown) => {
+      if (active) setError(sessionErrorMessage(cause));
+    };
     void client
       .subscribeUpdates((update) => {
-        if (disposed || !sessionSummaryChanged(update)) return;
-        clearTimeout(timer);
-        timer = setTimeout(() => void refresh(false), 100);
+        if (sessionSummaryChanged(update)) changed();
       })
-      .then((stop) => {
-        if (disposed) stop();
-        else unsubscribe = stop;
-      })
-      .catch((caught) => {
-        if (!disposed) setError(`Session list updates failed: ${errorMessage(caught)}`);
-      });
+      .then(retain, failed);
+    void navigation?.subscribeChanged?.(changed).then(retain, failed);
     return () => {
-      disposed = true;
+      active = false;
+      invalidatePending();
       clearTimeout(timer);
-      unsubscribe?.();
+      stops.forEach((stop) => stop());
     };
-  }, [client, refresh]);
-  useEffect(() => {
-    if (controlledSelectedSessionId === undefined) return;
-    selectedSessionIdRef.current = controlledSelectedSessionId;
-    setSelectedSessionId(controlledSelectedSessionId);
-  }, [controlledSelectedSessionId]);
+  }, [client, navigation, reload, refresh, invalidatePending]);
+  const mutate = async (operation: () => Promise<void>) => {
+    try {
+      await operation();
+      await refresh(false);
+    } catch (cause) {
+      setError(sessionErrorMessage(cause));
+    }
+  };
   return {
-    summaries,
-    selectedSessionId,
+    data,
+    summaries: data.summaries,
     loading,
     error,
-    selectSession: async (id) => {
-      setError(null);
-      selectedSessionIdRef.current = id;
-      setSelectedSessionId(id);
-      onSelectedSessionChange?.(id);
-    },
-    startNewSession: () => {
-      setError(null);
-      selectedSessionIdRef.current = null;
-      setSelectedSessionId(null);
-      onSelectedSessionChange?.(null);
-    },
     reload,
     clearError: () => setError(null),
+    move: (id: string, placement: SessionPlacement) =>
+      navigation ? mutate(() => navigation.move(id, placement)) : Promise.resolve(),
+    pin: (id: string, pinned: boolean) =>
+      navigation ? mutate(() => navigation.pin(id, pinned)) : Promise.resolve(),
   };
 }

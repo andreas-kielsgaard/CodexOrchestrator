@@ -14,7 +14,7 @@ import type { EpicPlanningDraftSummary } from '../../application/orchestrations'
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
-} from '../../application/agentSessionNavigation';
+} from '../../application/orchestrations/navigation';
 import type { ContextualFileReviewResult } from '../../application/contextualFileReview';
 import type { WorkUnitActivitySessionTarget } from './components/WorkUnitDetailWorkspace';
 import type {

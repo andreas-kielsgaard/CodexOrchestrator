@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type {
   AgentInvocationDto,
@@ -10,18 +11,15 @@ import type {
   SendAgentSessionMessageCommandDto,
 } from '../../application/agentSessions';
 import { sessionDetails, sessionSummary } from './testFixtures';
-import {
-  useAgentSession,
-  useAgentSessionCollection,
-  useAgentSessionController,
-} from './useAgentSessionController';
+import { useAgentSession, type UseAgentSessionOptions } from './useAgentSession';
+import { useAgentSessionCollection } from './useAgentSessionCollection';
 
-describe('useAgentSessionController', () => {
+describe('conversation state', () => {
   it('steers an active turn through the shared client without another domain delivery', async () => {
     const steerSession = vi.fn().mockResolvedValue({ state: 'accepted' });
     const client = Object.assign(new FakeAgentSessionClient({ running: true }), { steerSession });
     const sendExistingMessage = vi.fn();
-    const { result } = renderHook(() => useAgentSessionController(client, { sendExistingMessage }));
+    const { result } = renderHook(() => useConversationHost(client, { sendExistingMessage }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('Change direction'));
     await act(() => result.current.send());
@@ -40,7 +38,7 @@ describe('useAgentSessionController', () => {
     const client = Object.assign(new FakeAgentSessionClient({ running: true }), {
       steerSession: vi.fn().mockResolvedValue({ state: 'rejected', result: 'Turn completed' }),
     });
-    const { result } = renderHook(() => useAgentSessionController(client));
+    const { result } = renderHook(() => useConversationHost(client));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('Keep this correction'));
     await act(() => result.current.send());
@@ -56,7 +54,7 @@ describe('useAgentSessionController', () => {
         acknowledge = resolve;
       });
     const client = new FakeAgentSessionClient();
-    const { result } = renderHook(() => useAgentSessionController(client, { sendExistingMessage }));
+    const { result } = renderHook(() => useConversationHost(client, { sendExistingMessage }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('First message'));
     let sending!: Promise<void>;
@@ -66,8 +64,8 @@ describe('useAgentSessionController', () => {
     await waitFor(() => expect(acknowledge).toBeDefined());
     act(() => {
       result.current.startNewSession();
-      result.current.setDraft('New conversation draft');
     });
+    act(() => result.current.setDraft('New conversation draft'));
     await act(async () => {
       acknowledge({ sessionId: 'session-1', invocationId: 'later' });
       await sending;
@@ -77,10 +75,10 @@ describe('useAgentSessionController', () => {
   });
   it('subscribes before opening and loads durable state to close notification gaps', async () => {
     const client = new FakeAgentSessionClient();
-    const { result } = renderHook(() => useAgentSessionController(client));
+    const { result } = renderHook(() => useConversationHost(client));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(client.calls.slice(0, 3)).toEqual(['subscribe', 'list', 'load:session-1']);
+    expect(client.calls.slice(0, 2)).toEqual(['subscribe', 'load:session-1']);
     expect(result.current.details?.session.id).toBe('session-1');
   });
 
@@ -95,7 +93,7 @@ describe('useAgentSessionController', () => {
         }),
     );
 
-    const { unmount } = renderHook(() => useAgentSessionController(client));
+    const { unmount } = renderHook(() => useConversationHost(client));
     unmount();
 
     await act(async () => {
@@ -109,7 +107,7 @@ describe('useAgentSessionController', () => {
 
   it('lazily creates a first session through send, selects acknowledged IDs, and reloads', async () => {
     const client = new FakeAgentSessionClient({ empty: true });
-    const { result } = renderHook(() => useAgentSessionController(client));
+    const { result } = renderHook(() => useConversationHost(client, {}, null));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
@@ -128,7 +126,7 @@ describe('useAgentSessionController', () => {
 
   it('reconciles correlated updates from durable reload and refreshes terminal summaries', async () => {
     const client = new FakeAgentSessionClient();
-    const { result } = renderHook(() => useAgentSessionController(client));
+    const { result } = renderHook(() => useConversationHost(client));
     await waitFor(() => expect(result.current.details).not.toBeNull());
 
     client.listener?.({
@@ -144,12 +142,12 @@ describe('useAgentSessionController', () => {
     await waitFor(() =>
       expect(client.calls.filter((call) => call === 'reload:session-1')).toHaveLength(1),
     );
-    expect(client.calls.filter((call) => call === 'list')).toHaveLength(2);
+    expect(client.calls).not.toContain('list');
   });
 
   it('owns processing expansion and cancellation for the active invocation', async () => {
     const client = new FakeAgentSessionClient({ running: true });
-    const { result } = renderHook(() => useAgentSessionController(client));
+    const { result } = renderHook(() => useConversationHost(client));
     await waitFor(() => expect(result.current.transcript?.activeInvocationId).toBe('invocation-1'));
 
     act(() => result.current.toggleProcessing('invocation-1'));
@@ -165,7 +163,7 @@ describe('extracted Agent Session boundaries', () => {
     const { result } = renderHook(() => useAgentSessionCollection(client));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(client.calls).toEqual(['list', 'subscribe']);
-    expect(result.current.selectedSessionId).toBe('session-1');
+    expect(result.current.summaries[0].id).toBe('session-1');
   });
 
   it('mounts a controlled session without listing collection state', async () => {
@@ -239,10 +237,33 @@ describe('extracted Agent Session boundaries', () => {
     await act(() => result.current.send());
 
     expect(onSessionCreated).toHaveBeenCalledWith('session-1');
-    expect(result.current.selectedSessionId).toBe('session-1');
+    // The parent owns selection; acknowledgment does not replace its input.
+    expect(result.current.selectedSessionId).toBeNull();
     expect(client.calls).not.toContain('list');
   });
 });
+
+function useConversationHost(
+  client: AgentSessionClient,
+  options: Partial<UseAgentSessionOptions> = {},
+  initial: string | null = 'session-1',
+) {
+  const [selected, setSelected] = useState(initial);
+  const [draftId, setDraftId] = useState('draft-1');
+  const conversation = useAgentSession(client, {
+    ...options,
+    selectedSessionId: selected,
+    draftId,
+    onSessionCreated: setSelected,
+  });
+  return {
+    ...conversation,
+    startNewSession: () => {
+      setSelected(null);
+      setDraftId(crypto.randomUUID());
+    },
+  };
+}
 
 class FakeAgentSessionClient implements AgentSessionClient {
   calls: string[] = [];

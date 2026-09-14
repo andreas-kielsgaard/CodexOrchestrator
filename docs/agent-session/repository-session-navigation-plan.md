@@ -1,165 +1,245 @@
 # Repository-based Agent Sessions
 
-Status: implementation plan only, 2026-09-08.
+Status: implemented on 2026-09-14 in `codex/agent-sessions-navigation-refinement`, based on local main `e2bfc6c`. Verification results are recorded below.
 
-Baseline inspected: local `main`, `f5542a4`. Existing launcher edits and presentation artifacts are unrelated and remain untouched. This plan replaces the Agent Sessions Epic/Sprint integration; it does not require preserving that integration.
+Baseline: local `main` at `e2bfc6c`. The existing edit to this plan is carried forward; the separate `docs/architecture/legacy-task-retirement-plan.md` is outside this work. This replaces the implementation approaches recorded on September 8 and 11.
 
-## Requested behavior
+## Functional target
 
-- Show every registered local repository as a folder, with collapsible **Workflows** and **Sessions** sections. Workflows contains instance folders, not workflow definitions.
-- Ordinary sessions can be placed in a repository, a workflow-instance folder, or **Unfiled**. Placement never changes their working directory, runtime context, harness, or workflow ownership.
-- A repository folder's new-session action opens an ordinary draft whose first send uses that repository's main working tree. The action on a workflow-instance folder does the same, placing the session in that instance's manually added area.
-- Show manually placed sessions above the instance's own sessions, separated by a label/divider and ownership markers. A session owned by another workflow retains its original ownership marker.
-- Folder creation actions appear on hover and keyboard focus. Repository-level creation targets its Sessions section; instance-level creation targets that instance. The global action creates an unfiled session.
-- Support drag-and-drop between these locations, pin/unpin, and a session context menu with **Pin/Unpin**, **Move to**, and **Copy deeplink**. Pinned entries are shortcuts to the same sessions, not relocated sessions.
+Every registered repository has a folder, including repositories with no sessions. Each contains collapsible **Workflows** and **Sessions** sections. Workflows contains a folder for each instance targeting that repository.
 
-### Five sessions and Show more
+- Ordinary sessions belong to Unfiled unless explicitly created in or moved to a folder. A working directory alone never implies placement.
+- Workflow-owned sessions default to their owning instance. Moving any session changes display placement only; workspace, workflow ownership, profile, harness, identity, and runtime binding remain unchanged.
+- Inside an instance folder, sessions not owned by that instance appear first under **Added sessions**; its own sessions follow under **Workflow sessions**. A session from another workflow retains its original-owner marker. Moving an owned session back to its owning instance places it among that instance's owned sessions.
+- Repository and grouping-header creation actions start an ordinary repo session. An instance's action starts an ordinary session placed in that instance. Both use the containing repository's main working tree. They create no workflow address.
+- Folder actions appear on hover and keyboard focus. Global/Unfiled creation retains the current allocated-empty-workspace behavior when no directory is supplied.
+- Support drag/drop and a right-click/keyboard menu with **Pin/Unpin**, **Move to**, and **Copy deeplink**.
+- Pins are shortcuts above the repository tree; the original folder entry remains. Sidebar pinning is separate from immutable Session Profile pinning.
 
-“Messages” means session rows in the sidebar, not turns in the transcript.
+“Messages” means sidebar session rows. Initially show five rows per session-containing folder and in Unfiled; Pinned shows all. An instance has one five-row budget across Added sessions followed by Workflow sessions. Labels, repository headers, and instance-folder lists do not count.
 
-- Initially show five session rows per session-containing folder, and five in Unfiled. Pinned shows all.
-- In an instance folder, concatenate manually placed sessions followed by its owned sessions, then take five. This is one limit for the whole folder, not five per group. Labels and dividers do not count.
-- Order sessions by most recently updated first within each group, with session ID as the tie-breaker. Order pinned shortcuts by pin time. Moving or pinning must not update conversation activity timestamps.
-- **Show more** reveals the remaining sessions in that folder. It does not fetch another page or expand other folders. Repository headers and lists of workflow-instance folders are not subject to the session-row limit.
-- Keep disclosure state in UI memory. Selecting a session through a deeplink reveals its containing folder and, when necessary, its remaining rows. An explicitly collapsed folder can stay collapsed afterward.
-- Treat Show more as a keyboard-operable action in the visible navigation sequence. Use one derived visible-row list for rendering and keyboard movement.
+**Show more** reveals the remaining rows in that folder. Disclosure stays in UI memory; no server pagination or saved disclosure settings. Session groups sort by activity time descending with session ID as tie-breaker; pins sort newest first by pin time. Moving/pinning does not modify activity timestamps. Opening a session through a deeplink expands its folder and reveals its row.
 
-## Registration dependency: use the existing work
+## Current evidence and resulting decisions
 
-The referenced task, **Worktree Review: Worktree Cleanup** (`01a0395c-f32c-78c0-8da1-521197812474`), implemented registration in the working tree at:
+| Current code                                                                                                                                                                                     | Decision                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `repository_catalog/application.rs` already exposes persisted `list_registered()` and `resolve_verified()`. Workflow targets and Worktree Review share this catalog.                             | Reuse registration; no branch integration, second catalog, or discovery adapter.                             |
+| Active storage is schema 48 in `codex-orchestrator-active-v3.sqlite`. Current recipe instances and session addresses share this database. The old `workflow_instance_sessions` table is retired. | Add organization metadata to active storage; no V1 reconstruction, old-ID mapping, or cross-database bridge. |
+| `agentSessionNavigation.ts` and `SessionSelector.tsx` still build/render the Epic hierarchy.                                                                                                     | Replace that hierarchy and remove its inputs and related-product controls.                                   |
+| `useAgentSessionCollection.ts` exists, but `useAgentSessionController.ts` retains duplicate collection state, `skipCollection`, and types derived from the combined controller.                  | Complete the split; do not add a competing collection hook.                                                  |
+| Standalone Agent Sessions and `ProfiledSessionPane.tsx` repeat profile loading, execution selection, delivery loading, and identity-update wiring.                                               | Share that conversation behavior across both current consumers. Folder state remains outside it.             |
+| First send uses `AgentSessionProfileClient.startDirectUserSession`. The hook's execution branch precedes its `startSession` fallback.                                                            | Extend the profiled boundary; a generic folder-client wrapper would bypass production behavior.              |
+| `creation.rs` already prepares sessions; ordinary and addressed inserts already share `repository/mapping.rs::insert_session`.                                                                   | Reuse both. Add initial placement beside that insert, not a second session persistence implementation.       |
 
-`C:/Users/user/.codex/worktrees/worktree-review-durable-architecture/Codex Orchestrator`
+Changes since `ac22f01` principally concern Worktree Review branch/commit selection and retained checkouts. They do not replace these session boundaries.
 
-The inspected branch is `codex/worktree-review-durable-architecture`, committed HEAD `dc89528`. That HEAD is not an ancestor of current main. Registration is present in tracked modifications and new files, not in a registration commit. The task was active during inspection. Its last completed report describes tests and implementation; those checks were not rerun for this plan.
+## Ownership after implementation
 
-Relevant existing work there:
+The navigation feature is product composition: it reads repository, workflow, and session facts. It must not make core session execution depend on the workflow engine.
 
-- `src-tauri/src/repository_context/identity.rs`: canonical Git common-directory identity.
-- `src-tauri/src/repository_context/worktrees.rs`: local worktree enumeration.
-- `src-tauri/src/worktree_review/domain/source.rs`: `ReviewRepository`, including `anchor_root` and `common_directory`.
-- `src-tauri/src/worktree_review/storage/repositories.rs`: registered repository persistence and listing.
-- `src-tauri/src/worktree_review/state.rs`: register/select/list operations.
-- `src-tauri/src/worktree_review/repository_registration.rs`: manual/Codex registration and discovery coordination.
-- `src/features/worktreeReview/RepositoryRegistrationModal.tsx`: the existing registration UI.
+```text
+SessionSelector / SessionTree
+    <- pure frontend navigation projection
+    <- useAgentSessionCollection
+    <- SessionNavigationClient
+    <- session_navigation::SessionNavigationService
+         -> RepositoryCatalog
+         -> WorkflowInstanceStore + workflow ownership projection
+         -> SqliteAgentSessionRepository (summaries, addresses, organization)
 
-Use that catalog as the production dependency. This supersedes the earlier suggestion to build a new reader around legacy `repos` as the long-term source. Registration should be integrated into the implementation baseline before production wiring of this view; integrating its active dirty branch is separate work, not performed by this plan. Frontend projection and organization logic can be developed against its small contract meanwhile.
+Folder first send
+    -> same profiled start command
+    -> SessionNavigationService resolves folder and main directory
+    -> AgentSessionApplication prepares, persists, and sends
+         -> shared session insert + optional initial placement
+```
 
-Expose a neutral `RegisteredRepositoryCatalog` with a list operation returning repository ID, name, canonical common directory, and an explicit main working-tree path. Its adapter reads the existing registered catalog. It must not invoke the registration overview, Codex discovery, GitHub discovery, or change Worktree Review's selected repository when listing folders.
+| Responsibility                                   | Owner                                                                         | Consumers and limits                                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Registered repositories and main-tree resolution | Existing `repository_catalog` / `repository_context`                          | Navigation and folder creation reuse them; Worktree Review retains its own checkout-selection behavior.   |
+| Workflow instance/node ownership                 | `workflows/session_navigation.rs` with existing `address_references.rs`       | Supplies typed ownership facts. The sidebar never interprets address namespace strings.                   |
+| Placement and sidebar pins                       | `agent_sessions/organization.rs` and `repository/organization.rs`             | Navigation mutations and initial session persistence; no execution effects.                               |
+| Combining facts and resolving folder targets     | New `session_navigation/` product module                                      | Thin Tauri commands consume it. No policy or SQL in `active_app.rs`.                                      |
+| Grouping, order, and row identity                | `application/agentSessions/navigation.ts`                                     | Sidebar, Move to destinations, and selection reveal use the same model.                                   |
+| Expansion, Show more, focus, menu, and drag UI   | `SessionTree.tsx`, `useSessionTree.ts`, `SessionContextMenu.tsx`              | Feature-local behavior; no generic tree framework.                                                        |
+| Conversation and profiled message execution      | `useAgentSession.ts`, `useProfiledAgentSession.ts`, existing Rust application | Standalone and embedded conversations; no collection queries or placement mutation in conversation hooks. |
 
-The branch's `anchor_root` is documented as a usable checkout. Registration normally chooses the first enumerated worktree but can fall back to the candidate checkout. Make main-working-tree resolution an explicit shared operation using `RepositoryContext`; do not silently equate any anchor with the main working tree. Test registration from a linked worktree and creation at the main tree.
+This replaces the earlier proposal for an all-purpose `agent_sessions/organization/` coordinator/repository. The product composition belongs above the participating modules; session-owned metadata belongs beside existing session persistence.
 
-Current main stores workflows against legacy repository IDs but also records `repository_git_common_directory`. Associate existing workflow folders with the new catalog through that recorded common-directory identity using the shared path identity rules. Do not match names or arbitrary working-directory prefixes. Adapt the existing workflow target source to use the same catalog so newly created instances carry its canonical repository ID. Keep the current `ResolvedRepoBranchWorktreeTarget` contract and temporary selector UI.
+## Backend contracts and flow
 
-There is no need to merge the repository catalogs into one database in this feature. The new catalog uses `worktree-review.sqlite`; sessions/workflows use the active database. Compose their read results through the catalog interface. All session-organization writes stay in the active database.
+### Navigation facts
 
-## Data and application boundary
+Add one `load_agent_session_navigation` query returning existing session summaries plus small repository, instance, ownership, and organization records. Return facts, not rendered tree rows.
 
-Add one active-database table, `agent_session_organization`:
+- Read registered repositories with `list_registered()`; do not call discovery or the Worktree Review overview.
+- Add a lightweight instance read to `WorkflowInstanceStore`: instance ID/name, repository ID, and the node IDs/names needed for ownership labels. Select these from current recipe JSON; do not load attempts or use per-instance detail endpoints.
+- Add a bulk logical-address read beside `load_address` in `agent_sessions/repository/addressing.rs`. It returns opaque session/address pairs.
+- The workflow-owned projection recognizes `workflow/instance/<id>` scopes and `workflow/node/<id>` subjects using the existing typed-reference semantics and matching instance/node facts. Other namespaces do not imply workflow ownership.
+- Reuse the existing summary projection, including pending-request attention. It currently reads active invocation events to calculate that attention; this feature adds no parallel transcript/history query or summary optimization project.
 
-| Field | Purpose |
-| --- | --- |
-| `session_id` | Primary key and foreign key to the session |
-| `placement_kind` | `default`, `unfiled`, `repository`, or `workflow_instance` |
-| `placement_target_id` | Repository/instance ID for the corresponding target kind |
-| `pinned_at` | Nullable pin timestamp |
+`SessionNavigationService` composes these reads. Keep each SQL query with the module owning its records; do not introduce a cross-module SQL repository or a second durable navigation snapshot.
 
-Use a check constraint for the target-kind/target-ID pairing. No row is equivalent to default placement and unpinned. An explicit unfiled value allows a workflow-owned session to be visually moved out without losing ownership. Pinning a default-placed session preserves default placement.
+### Organization storage
 
-Resolve display location once: explicit placement wins; otherwise use recorded workflow ownership; otherwise Unfiled. Existing ordinary sessions remain unfiled until moved. Repository/instance names and paths are read from their owners rather than duplicated in organization rows.
+Add `agent_session_organization`:
 
-Keep actual ownership in `workflow_instance_sessions`. Organization commands never write that table or bind a workflow harness. The workflow's session counts and delivery logic continue to read actual ownership.
+| Field                 | Meaning                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| `session_id`          | Primary key and foreign key to the session                       |
+| `placement_kind`      | `default`, `unfiled`, `repository`, or `workflow_instance`       |
+| `placement_target_id` | ID for repository/instance placement; absent for default/unfiled |
+| `pinned_at`           | Nullable sidebar pin timestamp                                   |
 
-Expose a small organization client:
+Use a constraint for placement-kind/target pairing. Missing row means default placement and unpinned. Default placement resolves to the recorded workflow owner, otherwise Unfiled. Explicit Unfiled overrides workflow default placement. Pinning a default-placed session preserves that default.
 
-1. `loadNavigation()` returns registered repos, lightweight instance facts, session summaries/ownership, and organization records.
-2. `sendFirstMessage(target, message)` creates an ordinary session with its initial placement, then sends through the existing ordinary session application.
-3. `moveSession(sessionId, target)` changes placement only.
-4. `setPinned(sessionId, pinned)` changes pin state only.
+The frontend resolves display placement once in the pure projector. A row's ownership marker comes from ownership facts independently of its folder or pin. No backfill based on directories, profiles, or old Epic references.
 
-For first send, resolve the target repository and main path before entering the managed write. Prepare the ordinary session using shared creation logic, insert session and organization together, commit, then invoke the existing send operation with that session ID. No provider or filesystem operation belongs inside the transaction.
+Use `SqliteAgentSessionRepository` with methods implemented in `repository/organization.rs` for reads, move/pin, and atomic creation with initial placement. Reuse the existing `insert_session` and validation helpers. Add only the atomic creation operation needed by `AgentSessionApplication` to its existing repository port; update the two current test implementations directly. No second repository class or generic transaction callbacks passed into application code.
 
-Use a small folder-bound AgentSessionClient adapter, following the existing workflow-client adaptation pattern. It redirects only a draft's first send to the organization boundary. Existing-session sends delegate to the ordinary client. Folder placement does not enter the transcript or runtime APIs.
+### Main working tree
 
-Load navigation facts in a few bounded queries. Do not load transcripts, recipes, workflow execution plans, or registration-discovery results to render the sidebar. Apply the five-row limit in the pure frontend projection; backend pagination is unnecessary for this scope.
+Add `RepositoryCatalog::resolve_main_working_tree(repository_id)`, backed by an explicit method on the existing `WorktreeInventoryReader`. Keep raw Git interpretation there.
 
-## Change, delete, create
+Git documents that the main worktree is first in the unfiltered `worktree list` output. Use that fact before catalog sorting or filtering, and return its available canonical directory. This does not mean the first UI worktree target or a branch named `main`. See [Git worktree list](https://git-scm.com/docs/git-worktree#Documentation/git-worktree.txt-list).
 
-Paths below are relative to this repository. New file names define responsibilities; colocate their focused tests.
+The catalog verifies repository identity and exposes this directory to folder creation. Its current `anchor_root` is an available checkout and is not a main-tree guarantee. No new persisted main-path field, registration redesign, or worktree switching is needed.
 
-### Frontend
+### Profiled creation
 
-| Action | Files | Result |
-| --- | --- | --- |
-| Replace | `src/application/agentSessionNavigation.ts` | Pure repository/instance/placement projection. Delete Epic reference traversal, semantic-role placement, planning-draft inputs, and the old alphabetical tree sorter. |
-| Create | `src/application/agentSessions/organization.ts` | Target union, navigation facts, and organization-client contract. |
-| Create | `src/application/agentSessions/folderAgentSessionClient.ts` | First-send adapter; no workflow ownership behavior. |
-| Create | `src/infrastructure/agentSessions/tauriSessionOrganizationClient.ts` | Thin transport mapping for the four organization operations. |
-| Replace/split | `src/features/agentSessions/useAgentSessionController.ts` | Move conversation loading, sending, canceling, subscriptions, and transcript state into `useAgentSession.ts`. Remove the combined controller and its `skipCollection` mode after updating callers. |
-| Create | `src/features/agentSessions/useSessionNavigation.ts` | Own navigation loading, selection/new-draft target, move/pin actions, and refresh after successful writes. Use explicit draft state rather than treating null selection as permission to select the first existing session. |
-| Simplify | `src/features/agentSessions/AgentSessionScreen.tsx` | Compose the navigation and existing workspace. Remove Epic/Sprint folder inputs, the Related product views chooser, and the Epic-specific return banner. |
-| Split | `src/features/agentSessions/SessionSelector.tsx` | Keep the sidebar shell. Extract `SessionTree.tsx` for rows and inline folder actions, `useSessionTree.ts` for disclosure/visible rows/keyboard behavior, and `SessionContextMenu.tsx` for the three menu actions. Avoid nested buttons. |
-| Split | `src/features/agentSessions/agentSession.css` | Move sidebar/tree/menu styles and their responsive rules to `sessionNavigation.css`; retain conversation styles in the existing file. |
-| Change | `src/app/App.tsx`, `src/bootstrap/productApplicationComposition.ts` | Inject the organization client and route selected-session navigation. Do not place catalog joins, folder rules, or mutations in App. |
-| Relocate surviving types | `src/application/orchestrations/navigation.ts` | Move old `AgentSessionProductLocation`/`AgentSessionProductOrigin` types here only because other existing orchestration screens still import them. Update imports directly; keep no compatibility exports in the new sidebar model. |
-| Create | `src/application/agentSessions/deepLinks.ts`, `src/infrastructure/agentSessions/tauriSessionDeepLinks.ts` | Small URL formatter/parser and incoming-link adapter. Wire through existing typed app navigation. |
-| Update | Relevant barrel files, recorded clients, fixtures, navigation tests, and existing documentation | Remove stale APIs and assertions; add the requested repo/instance behavior. Mark superseded navigation documentation as historical without rewriting past evidence. |
+Keep the existing `start_direct_user_agent_session` command name and `AgentSessionProfileClient.startDirectUserSession`. Introduce a named first-send input rather than continuing to extend an inline `Omit` type. Add optional `folderTarget`; existing-session messages have no folder input.
 
-Keep `AgentSessionWorkspace`, the transcript projector, composer, and harness controls as the conversation surface. The pure workspace hook remains reusable by existing embedded sessions. Extract a neutral controller type alongside that hook instead of deriving workspace types through `Pick`/`Omit` of a combined sidebar controller.
+Move this start command's thin transport implementation to `session_navigation/transport.rs`. Leave pinned-profile reads and existing-session sends in `agent_sessions/transport/selections.rs`.
 
-Use distinct row IDs for pinned shortcuts and folder entries, both referencing the same session ID. Selection and pin state belong to the session; keyboard focus belongs to the row.
+1. The product service resolves an optional repo/instance folder. For a folder start, its main tree supplies the working directory and its target supplies initial placement. With no target, preserve the current directory/allocated-workspace behavior.
+2. Delegate to `AgentSessionApplication`. Extract the direct-user start/send sequence into `application/direct_user.rs`; keep default/profile resolution and runtime conversion in `configuration.rs`.
+3. Resolve the default Capability Profile and runtime profile at that directory. Validate the first message and its runtime choices before session persistence.
+4. Reuse `prepare_session_with_id` for workspace preparation and pinned session construction.
+5. Persist the session and optional initial placement in one active-database write. Ordinary creation and addressed creation retain their existing shared insert.
+6. Commit, then use the existing resolved direct-user send path.
 
-### Backend and catalog integration
+The application receives a resolved directory and session-owned placement value, never a catalog or workflow executor. Filesystem preparation and runtime launch stay outside database writes. Folder starts never use Session Event addressed-session creation.
 
-| Action | Files | Result |
-| --- | --- | --- |
-| Create | `src-tauri/src/repository_catalog.rs` | Small shared catalog contract and registered-repository projection; reuse existing canonical identity types. |
-| Create adapter | `src-tauri/src/worktree_review/repository_catalog.rs` after registration integration | Read the existing registered inventory and expose main-working-tree resolution. No second catalog or discovery implementation. |
-| Change | `src-tauri/src/worktree_targets_temp/mod.rs` | Consume the shared catalog and RepositoryContext for workflow target choices; remove its duplicated legacy repository-row reader. Retain the target contract. |
-| Extract | `src-tauri/src/agent_sessions/application/creation.rs` from `application/lifecycle.rs` | Shared session construction, normalization, and first-message title derivation. Ordinary and organized creation use one implementation. Keep execution, cancellation, runtime repair, and launch authority in their current runtime path. |
-| Create | `src-tauri/src/agent_sessions/organization/mod.rs` | Organization types, catalog/ownership composition, and the four use cases. |
-| Create | `src-tauri/src/agent_sessions/organization/repository.rs` | Navigation read queries, organization schema, move/pin writes, and atomic session-plus-placement insertion through ActiveDatabase. Reuse the existing session insert helper. |
-| Create | `src-tauri/src/agent_sessions/organization/transport.rs` | Thin native commands and DTO conversion. |
-| Change narrowly | `src-tauri/src/agent_sessions/repository/mapping.rs` and module exports | Share the existing validated session insertion without opening nested managed writes or copying its SQL. |
-| Change | `src-tauri/src/storage.rs` | Register the additive organization migration for current and fresh databases. |
-| Change | `src-tauri/src/active_app.rs` | Construct and register the catalog adapter and organization service. Keep behavior out of composition. |
-| Create/change | `src-tauri/src/session_deep_links.rs`, Tauri config/capabilities, Cargo/npm manifests | Native URL reception and application scheme registration. |
+## Frontend state and consumption
 
-No new behavior goes into quarantined `src-tauri/src/lib.rs`; only necessary module declarations are appropriate there.
+### Selection has one owner
 
-## Monoliths worth addressing in this feature
+Replace the overloaded selected-ID/null input for the standalone view with:
 
-- **`useAgentSessionController.ts`: split now.** It duplicates collection state and has a mode flag to suppress that same responsibility for embedded sessions. Removing that split personality directly clarifies folder drafts and refresh behavior.
-- **`SessionSelector.tsx`: split now.** Rendering, tree traversal, selection reveal, focus management, and keyboard rules currently live together. The three new interactions should not accumulate in one component.
-- **`agentSessionNavigation.ts`: replace its old model.** It mixes product navigation contracts with tree construction. Move still-used orchestration types to their owner and keep the new projector free of Epic/Sprint concepts.
-- **`application/lifecycle.rs`: extract creation only.** Organized first send needs the same creation rules. This does not justify rewriting the complete execution lifecycle.
-- **Registration branch `worktree_review/state.rs`: extract repository operations as part of catalog integration.** Move register/select/list methods together into a focused `registered_repositories.rs` implementation, leaving state/bootstrap access in state.rs. Existing discovery coordination stays in repository_registration.rs. Share existing storage through the catalog adapter; relocating the whole Worktree Review database is unnecessary.
-- **`App.tsx`, `WorkflowScreen.tsx`, and the workflow application/repository files: keep new behavior out.** They are large, but this sidebar does not require a broad rewrite of workflow editing or execution. Query instance IDs, names, repository identity, and actual session associations through the focused organization reader instead of calling full-instance projection.
+```ts
+type SessionNavigationSelection =
+  | { kind: 'initial' }
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'draft'; draftId: string; folderTarget: SessionFolderTarget | null };
+```
 
-Delete superseded implementations and their replacement-only tests in the same change. Do not retain old and new sidebar modes, compatibility switches, or duplicate collections. Existing tests for transcript behavior and unaffected embedded consumers continue to provide coverage.
+The existing product-navigation state owns this value in the running app. The standalone test/development host supplies local state. `useAgentSessionCollection` owns fetched facts, loading, refresh, and organization actions; it no longer keeps a second selected-session state or decides that null means “select the first row.”
 
-## Deeplinks and native dragging
+The screen resolves initial selection after loading; a draft remains a draft across refresh. Starting another draft creates a fresh draft ID even in the same folder. Draft text stays in the conversation hook and is not persisted into routing/history. Restoring navigation restores existing-session destinations; unsent drafts are local to the current view lifetime.
 
-Use a local application URL such as `codex-orchestrator://sessions/<session-id>`. It identifies the application session, never the provider's external thread ID. Copy through the existing clipboard abstraction. Opening it routes to Agent Sessions and reveals the selected row without creating a session or sending a message.
+Pass a draft identity to `useAgentSession` so composer reset and first-send completion are associated with the correct draft. Pass the folder target only through first-send context. A successful creation selects its session only if that draft is still current. Folder identity never becomes a React key for an existing conversation; moving/pinning cannot remount or redirect it.
 
-Use Tauri's [deep-link integration](https://v2.tauri.app/plugin/deep-linking/) for cold and already-running application entry. Keep reviewed-build application identities separate using the existing runtime setup; do not invent a cross-instance routing system.
+### Complete the collection/conversation split
 
-For HTML5 dragging on Windows, configure the relevant webview's `dragDropEnabled: false`, as required by [Tauri](https://v2.tauri.app/reference/config/#dragdropenabled). Move to in the context menu uses the same mutation as dragging. Test the actual packaged/native window, not only browser events.
+Move the controlled conversation implementation into `useAgentSession.ts`, declare its workspace-controller interface directly, and delete `useAgentSessionController.ts` once callers/tests migrate. Remove its collection state, list subscriptions, summary reloads, selection commands, and `skipCollection` branch. Retain steering, approvals/questions, transcript loading, workspace resolution, per-message choices, and existing generation checks.
 
-## Implementation order and acceptance
+Extract `useProfiledAgentSession.ts` from the repeated wiring in `AgentSessionScreen.tsx` and `ProfiledSessionPane.tsx`. It composes the existing execution-selection hook, conversation hook, delivery query, identity update, and send-unavailable reason. Both consumers adopt it. Each keeps its own presentation/wrappers; do not create a configurable universal conversation component.
 
-1. Establish a baseline containing the registration implementation and its existing prerequisites. Add the shared catalog adapter, explicit main-tree resolution, and workflow-target catalog alignment. Verify a registered repo and an existing workflow project to the same folder.
-2. Implement organization persistence, lightweight navigation query, shared session creation, and first-send adapter. Verify ordinary creation at the repo main tree, persistence after reopen, and unchanged runtime/workflow facts after move/pin.
-3. Replace the old navigation projection and split the frontend controllers/tree. Deliver folders, ownership distinction, hover creation, five-row disclosure, dragging, and the context menu together. Update recorded fixtures so the complete flow is reviewable without provider traffic.
-4. Wire native deeplinks and test the visible flow. Remove superseded code, exports, tests, and documentation claims. Run the normal frontend build and focused Rust/frontend checks for the touched boundaries.
+`WorkflowInstanceView` continues consuming `ProfiledSessionPane`. Existing managed/embedded consumers in EpicPlanBuilder, SharedAgentSessionPanel, ProductiveProductDecisionsPanel, and HarnessInspectorDevelopmentSurface import the extracted conversation hook directly. Preserve their current client/send behavior; no folder controls or new profile policy are introduced into those hosts.
 
-Acceptance cases:
+### Tree behavior
 
-- Two registered repositories, including an empty one; workflow instances under the correct repository; ordinary sessions and Unfiled remain available.
-- Six ordinary sessions show five and Show more; revealing one folder leaves the others at five. Six pinned sessions all appear.
-- Mixed manual/owned sessions use one five-row limit, manual first, with a visible distinction. Opening a hidden session by deeplink reveals it.
-- Create from repo and instance folders, including when the repository was registered from a linked checkout; first send uses the main tree and creates no workflow association.
-- Move a session between repos, into/out of an instance folder, and to Unfiled; pin/unpin; reopen storage. Confirm unchanged working directory, runtime binding, harness, and actual workflow membership.
-- Folder actions and Show more work by keyboard; right-click Copy deeplink opens the same session in both cold and running native application flows.
-- Existing conversation rendering, sending/canceling, and embedded-session callers still work after the controller split.
+Move the replacement projector into `src/application/agentSessions/navigation.ts`; remove the old root-level module after moving still-used orchestration-origin types to their owner.
 
-The scope is the requested local happy flow. It adds no custom folders, bulk operations, arbitrary row ordering, folder pinning, search, server pagination, repository discovery UI, cross-machine links, generalized migration framework, or workflow lifecycle changes. Use ordinary errors and existing persistence safeguards; add no recovery subsystem for this feature.
+Keep `SessionSelector` as the sidebar shell. `SessionTree` renders rows and exposes folder create/drop actions. `useSessionTree` owns view state and derives the exact visible-row sequence used by rendering and keyboard movement, including Show more. Keep pure visibility helpers with this feature rather than in the backend or projector.
+
+Use distinct row IDs for pinned shortcuts and folder entries referring to the same session. A fresh open/reveal action finds the placed row and expands it; later metadata refreshes do not repeatedly reopen manually collapsed folders.
+
+Drag/drop and Move to call the same move operation. Repository and grouping headers target the repo's Sessions placement; instance headers target that instance; Unfiled clears explicit folder placement. Menu pin state and ownership labels come from the same model. Use sibling controls for folder expansion and creation, avoiding nested buttons.
+
+### Refresh
+
+Retain the collection's generation guards, debounced summary-update handling, and `sessionAttention.ts`. Route initial load, explicit refresh, successful move/pin/create, and existing `workflow-instance-updated` notifications through one reload function. Reload on entering the view so newly registered repositories/empty instances appear.
+
+The workflow notifier currently reports execution records, not instance creation. Do not claim it supplies a complete catalog feed or add a generalized invalidation bus for this single-window happy flow.
+
+## Concrete file changes
+
+Paths below are repository-relative. Unqualified frontend filenames in this table are under `src/features/agentSessions/`.
+
+| Action         | Files                                                                                                                                                         | Result                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Create         | `src-tauri/src/session_navigation/{mod,application,transport}.rs`                                                                                             | Product service, fact DTOs, load/move/pin commands, and relocated first-send command.                 |
+| Create         | `src-tauri/src/agent_sessions/organization.rs`, `repository/organization.rs`                                                                                  | Placement/pin values, schema, and methods on the existing repository.                                 |
+| Create/adapt   | `src-tauri/src/workflows/session_navigation.rs`, `instances.rs`, `address_references.rs`                                                                      | Lightweight instance/node projection and workflow interpretation of address facts.                    |
+| Adapt          | `src-tauri/src/agent_sessions/repository/{mod,addressing}.rs`, `ports/repository.rs`                                                                          | Bulk address read and atomic initial-placement operation; reuse mapping helpers.                      |
+| Extract/adapt  | `src-tauri/src/agent_sessions/application/{direct_user,configuration,creation,mod}.rs`, `transport/selections.rs`                                             | Shared profiled start/send sequence; no duplicate creation or default resolution.                     |
+| Adapt          | `src-tauri/src/repository_catalog/application.rs`, `repository_context/worktrees.rs`                                                                          | Explicit main-tree resolver through the current Git reader.                                           |
+| Adapt          | `src-tauri/src/storage.rs`                                                                                                                                    | Organization migration and fresh initialization; recheck version 48 at implementation time.           |
+| Create         | `src/application/agentSessions/organization.ts`, `navigation.ts`                                                                                              | Typed folder/organization facts, navigation client, pure projector, and explicit selection type.      |
+| Create/adapt   | `src/infrastructure/agentSessions/tauriSessionNavigationClient.ts`, `tauriAgentSessionClient.ts`, `src/application/agentSessions/selections.ts`               | Navigation transport and named folder-aware profiled first-send input.                                |
+| Adapt          | `src/features/agentSessions/useAgentSessionCollection.ts`                                                                                                     | Sole navigation-data owner with one refresh path; own its types directly.                             |
+| Extract/delete | `useAgentSession.ts`, `useProfiledAgentSession.ts`, `useAgentSessionController.ts`                                                                            | Separate conversation behavior, share profiled wiring, remove combined mode.                          |
+| Adapt          | `AgentSessionScreen.tsx`, `ProfiledSessionPane.tsx`, feature barrel and listed embedded callers                                                               | New sidebar composition; shared conversation behavior; direct imports.                                |
+| Extract        | `SessionTree.tsx`, `useSessionTree.ts`, `SessionContextMenu.tsx`, `sessionNavigation.css`                                                                     | Focused tree interactions and styles taken from SessionSelector/agentSession.css.                     |
+| Move/delete    | `src/application/agentSessionNavigation.ts` -> `agentSessions/navigation.ts` and `orchestrations/navigation.ts`                                               | New tree model and retained product-origin types have separate owners; old Epic traversal disappears. |
+| Adapt          | `src/application/productNavigation.ts`, `src/app/App.tsx`, `ProductCommandBar.tsx`, orchestration type consumers                                              | Explicit session selection, generic session/invocation focus, and direct type imports.                |
+| Adapt          | `src-tauri/src/active_app.rs`, `active_app/sessions.rs`, `src/bootstrap/productApplicationComposition.ts`                                                     | Wire existing services into navigation and expose its client. Only composition here.                  |
+| Create/adapt   | `src/application/agentSessions/deepLinks.ts`, `src/infrastructure/agentSessions/tauriSessionDeepLinks.ts`, Tauri config/capabilities and dependency manifests | Format/parse local session links; receive them through the plugin and existing product navigation.    |
+
+Remove Epic/Sprint traversal, semantic-role grouping, planning-draft folders, obsolete alphabetical session sorting, sidebar Related product views, and the Epic return banner. Update their tests and styles. Keep the existing application's separately owned contextual navigation where still consumed; no compatibility adapter in the new sidebar.
+
+Do not recreate the old WorkflowScreen, V1 storage, folder-client wrapper, catalog facade, or new collection hook. No generic tree library, repository framework, or full application/router refactor. The separate legacy task retirement can proceed independently; this plan neither implements nor requires it. Respect `src-tauri/AGENTS.md`: active behavior stays out of quarantined `lib.rs`.
+
+## Deeplinks and native integration
+
+Use `codex-orchestrator://sessions/<session-id>` for application session identity. Reuse `sessionClipboard.ts` for copying. Parse into the existing typed product-navigation destination, then select/reveal; opening a link sends no messages.
+
+Use the Tauri deep-link plugin's initial URL read and running-app listener, with Windows single-instance forwarding. Put plugin setup in current application composition. The JavaScript plugin adapter provides reception, so do not also create a custom Rust session-link event bus/parser. See [Tauri deep linking](https://v2.tauri.app/plugin/deep-linking/).
+
+Update `package.json`/lockfile, `src-tauri/Cargo.toml`/lockfile, `tauri.conf.json`, and the relevant capability permissions. Configure the webview for native HTML5 dragging using [Tauri's drag/drop setting](https://v2.tauri.app/reference/config/#dragdropenabled). Keep cross-machine/multi-installation routing and deleted development-runtime scripts outside scope.
+
+## Delivery and verification
+
+1. Add session organization values/storage and catalog main-tree resolution. Prove session+placement rollback together, move/pin preservation, and reopen persistence.
+2. Add the lightweight workflow facts and product navigation service. Extend profiled first send through the shared direct-user sequence; verify both ordinary and folder starts.
+3. Replace the projector/tree and make selection explicit. Complete the collection/conversation split and migrate both profiled consumers. Remove obsolete hierarchy code in the same change.
+4. Add local link entry, native drag/drop configuration, and the focused UI acceptance flow. Update the current Agent Sessions documentation.
+
+Focused acceptance:
+
+- Two registered repositories, one with no sessions, and current recipe instances group correctly. Existing ordinary sessions stay Unfiled.
+- Six sessions show five; Show more expands only that folder. Six pinned shortcuts all show. Mixed Added/Workflow rows share one limit and preserve their ordering.
+- Register from a linked checkout, then create from repo and instance folders: both sessions use the main tree and resolve defaults there; neither gets a workflow address. Global creation retains allocated workspaces.
+- Move ordinary and workflow-owned sessions among repos, instances, and Unfiled; pin/unpin and reopen. Cwd, workspace origin, runtime binding, profile, harness, identity, address, activity timestamps, and workflow node listings remain unchanged.
+- Refresh an unsent folder draft; start another draft with a different target; first send uses the current target. Placement/pin changes do not reset an active conversation.
+- Retain steering, pending approvals/questions, unselected attention updates, profile choices, embedded send behavior, and selected-session load guards in their new owning tests.
+- Copy/open a session beyond the initial five in cold and running Windows app flows. Verify real native dragging and keyboard-accessible folder actions, menu, and disclosure.
+
+Test behavior at its owning boundary: pure placement/visibility tests; database migration/transaction tests; profiled start tests; collection/conversation tests; and a recorded UI flow. Do not add tests merely because a wrapper/file exists. Run the relevant Rust/TypeScript suites and frontend build after implementation. Native protocol registration and dragging need an actual desktop check; unit tests cannot establish them.
+
+Scope is the agreed local happy flow: no custom folders, folder pinning, bulk actions, arbitrary reordering, search, server pagination, discovery redesign, workflow lifecycle changes, or old Workflow V1 recovery.
+
+## Implementation result
+
+The module ownership and deletions above are implemented. Session selection now has one owner in product navigation; collection refresh and organization writes do not select sessions. Shared conversation/profile hooks serve standalone and workflow panes. The retired Epic sidebar projector, combined conversation/collection controller, related-product banner, and their obsolete hierarchy tests are removed. Retained orchestration destination types live in `application/orchestrations/navigation.ts`.
+
+Storage schema 49 adds only session placement and pin metadata. Workflow ownership still comes from typed logical addresses. First send resolves folder context through the current repository catalog, then uses the existing profiled session preparation and shared insert in one transaction.
+
+Validation on the implementation worktree:
+
+- All 980 frontend tests (174 files), the frontend production build, and focused lint pass. Existing Vite chunk-size and Rust dead-code warnings remain.
+- Rust: 70 Agent Session tests, 40 storage tests, five repository catalog tests, and the workflow ownership projection test pass. The folder-creation integration test uses a real Git repository registered from a linked checkout and verifies main-tree cwd, pinned profile, no workflow address, lightweight workflow facts, and unchanged execution state after organization writes.
+- UI tests cover folder drafts across refresh, moves/pins preserving composer state, added/owned ordering, shared five-row disclosure, all pin shortcuts, context actions, drag routing, profile choices, steering, approvals, and native-link reception.
+- A disposable Windows application database verified the repository tree, empty repository, workflow owner label, five-row default, Show more, keyboard Pin, and cold/running-instance deeplink selection. The warm-link observation prompted scrolling the selected row into view.
+- Native drag automation did not establish a successful drop. Drag event routing is covered in UI tests; an interactive Windows drag check remains. Protocol activation was exercised by passing the URL to the executable, not by installing the bundle and invoking the registered Windows URL handler. No live provider turn was sent during this navigation smoke test.
+
+The feature adds no compatibility path for retired Epic/Sprint ownership and does not implement the separate legacy-task retirement plan.
+## Agent command access
+
+The requested agent interface is implemented in `session_navigation/agent_access.rs`, `application/agentSessions/agentAccess.ts`, `useSessionNavigationAgentConnection.ts`, and `useSessionNavigationCommands.ts`. The tree controller is shared by the rendered selector and commands. The loopback bridge forwards a typed command to the mounted UI and returns its state after React applies the action; it has no second navigation model or direct execution path.
+
+`navigation-commands.md` documents the connection descriptor and `scripts/agent-session-ui.mjs`. Available commands inspect, select/reveal, open a folder draft, expand/collapse, show more, move, pin/unpin, and return a deeplink. No provider messages are sent by these navigation commands.
+
+After Computer Use was stopped by the user, nine commands passed through the running Windows application endpoint. Verification checked five-row disclosure, reveal, folder drafts, moves into a workflow with Added/Workflow ordering, pins, deeplinks, workspace/address preservation, and rejection of requests without the local token. Restart and running-instance URL-argument checks then passed through the same interface and confirmed persisted placement/pins. Actual pointer drag/drop and installed Windows URL-handler invocation remain outside the verified evidence.

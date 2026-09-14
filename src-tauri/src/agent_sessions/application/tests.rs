@@ -2425,6 +2425,14 @@ struct FaultInjectingRepository {
 }
 
 impl AgentSessionRepository for FaultInjectingRepository {
+    fn create_session_with_placement(
+        &self,
+        session: AgentSession,
+        placement: &crate::agent_sessions::organization::SessionPlacement,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner.create_session_with_placement(session, placement)
+    }
+
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError> {
         self.inner.create_session(session)
     }

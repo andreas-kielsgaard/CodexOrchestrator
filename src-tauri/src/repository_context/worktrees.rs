@@ -55,6 +55,23 @@ impl WorktreeInventoryReader {
         Self { runner }
     }
 
+    /// Git's unfiltered worktree list starts with the main working tree.
+    pub(crate) fn main_working_tree(
+        &self,
+        repository_id: &RepositoryId,
+        root: &Path,
+    ) -> Result<CanonicalDirectory, RepositoryContextError> {
+        match self
+            .list(repository_id, root)?
+            .into_iter()
+            .next()
+            .map(|entry| entry.location)
+        {
+            Some(WorktreeLocation::Available(directory)) => Ok(directory),
+            _ => Err(invalid_output()),
+        }
+    }
+
     pub(crate) fn list(
         &self,
         repository_id: &RepositoryId,

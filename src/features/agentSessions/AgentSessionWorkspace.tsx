@@ -11,7 +11,7 @@ import {
   formatAgentSessionContext,
   type AgentSessionClipboard,
 } from './sessionClipboard';
-import type { AgentSessionWorkspaceController } from './useAgentSessionController';
+import type { AgentSessionWorkspaceController } from './useAgentSession';
 
 export interface AgentSessionPresentation {
   readonly showHeader?: boolean;

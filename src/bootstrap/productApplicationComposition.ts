@@ -1,3 +1,6 @@
+import { tauriSessionNavigationAgent } from '../infrastructure/agentSessions/tauriSessionNavigationAgent';
+import { tauriSessionNavigationClient } from '../infrastructure/agentSessions/tauriSessionNavigationClient';
+import { tauriSessionDeepLinks } from '../infrastructure/agentSessions/tauriSessionDeepLinks';
 import {
   createEpicInitiationCapability,
   unsupportedArtifactAccessController,
@@ -41,6 +44,9 @@ const RepositoryWorktreeTargetSelector =
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
+    sessionNavigationClient: tauriSessionNavigationClient,
+    sessionDeepLinks: tauriSessionDeepLinks,
+    sessionNavigationAgent: tauriSessionNavigationAgent,
     workflowAuthoringClient: tauriWorkflowAuthoringClient,
     workflowInstanceClient: tauriWorkflowInstanceClient,
     draftCloseGuard: tauriDraftCloseGuard,

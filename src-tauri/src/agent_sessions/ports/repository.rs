@@ -77,6 +77,11 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
             "Working context persistence is unavailable",
         ))
     }
+    fn create_session_with_placement(
+        &self,
+        session: AgentSession,
+        placement: &crate::agent_sessions::organization::SessionPlacement,
+    ) -> Result<AgentSession, RepositoryError>;
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError>;
 
     fn get_session(

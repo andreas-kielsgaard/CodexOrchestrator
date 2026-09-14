@@ -352,6 +352,15 @@ struct FakeRepositoryState {
 }
 
 impl AgentSessionRepository for FakeRepository {
+    fn create_session_with_placement(
+        &self,
+        session: AgentSession,
+        placement: &crate::agent_sessions::organization::SessionPlacement,
+    ) -> Result<AgentSession, RepositoryError> {
+        let _ = placement;
+        self.create_session(session)
+    }
+
     fn create_session(&self, session: AgentSession) -> Result<AgentSession, RepositoryError> {
         validate_session(&session).map_err(|error| {
             repository_error(RepositoryErrorKind::InvalidState, error.to_string())

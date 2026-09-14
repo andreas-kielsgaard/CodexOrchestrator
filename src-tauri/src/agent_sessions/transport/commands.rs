@@ -73,6 +73,7 @@ pub(crate) fn send_agent_session_message(
                 choices.model,
                 None,
                 sandbox_mode,
+                None,
             )
             .map(|result| result.acknowledgement.into())
             .map_err(|e| e.to_string());

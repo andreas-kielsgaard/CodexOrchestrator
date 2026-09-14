@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import { AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { projectAgentSessionTranscript } from './transcriptProjector';
-import type { AgentSessionWorkspaceController } from './useAgentSessionController';
+import type { AgentSessionWorkspaceController } from './useAgentSession';
 import { sessionDetails } from './testFixtures';
 
 describe('AgentSessionWorkspace', () => {

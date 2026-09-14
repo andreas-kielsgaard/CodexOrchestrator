@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.10",
     "@vitejs/plugin-react": "^4.6.0",
     "lucide-react": "^0.525.0",
     "react": "^19.1.0",

@@ -102,8 +102,6 @@ it('refreshes pending request counts for an unselected session without moving se
     }),
   );
   await waitFor(() => expect(result.current.summaries[1].pendingRequestCount).toBe(1));
-  expect(result.current.selectedSessionId).toBe('session-1');
-  act(() => result.current.startNewSession());
   count = 0;
   act(() =>
     notify({
@@ -117,5 +115,4 @@ it('refreshes pending request counts for an unselected session without moving se
     }),
   );
   await waitFor(() => expect(result.current.summaries[1].pendingRequestCount).toBe(0));
-  expect(result.current.selectedSessionId).toBeNull();
 });

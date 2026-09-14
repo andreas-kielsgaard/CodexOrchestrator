@@ -1,194 +1,217 @@
-import { AlertCircle, ArrowUpRight, ChevronDown, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
-import type { AgentSessionProfileClient } from '../../application/agentSessions';
+import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
+import type {
+  SessionNavigationCommandRequest,
+  SessionNavigationState,
+} from '../../application/agentSessions/agentAccess';
+import { useSessionTree } from './useSessionTree';
+import { useSessionNavigationCommands } from './useSessionNavigationCommands';
+import { AlertCircle, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  AgentIdentity,
+  AgentSessionClient,
+  AgentSessionProfileClient,
+} from '../../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
-import { useSessionDeliveries } from '../sessionEvents/useSessionDeliveries';
-import {
-  buildAgentSessionNavigation,
-  type AgentSessionNavigationIdentity,
-  type AgentSessionProductLocation,
-  type AgentSessionProductOrigin,
-} from '../../application/agentSessionNavigation';
-import type {
-  EpicPlanningDraftSummary,
-  ProductReadModelsV1,
-} from '../../application/orchestrations';
 import type { ProductDecisionEvidenceDestination } from '../../application/productDecisions';
+import {
+  buildSessionNavigation,
+  selectionKey,
+  sessionIdOf,
+  type SessionNavigationSelection,
+} from '../../application/agentSessions/navigation';
+import type {
+  SessionNavigationClient,
+  SessionFolderTarget,
+} from '../../application/agentSessions/organization';
 import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
-import { useSessionExecutionSelection } from './useSessionExecutionSelection';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
-import { useAgentSession, useAgentSessionCollection } from './useAgentSessionController';
+import { useAgentSessionCollection } from './useAgentSessionCollection';
+import { useProfiledAgentSession } from './useProfiledAgentSession';
 import { ResizableSplitSurface } from '../orchestrations/components/ResizableSplitSurface';
 import './agentSession.css';
-
 export interface AgentSessionScreenProps {
-  readonly onConfigureCapabilities?: () => void;
   readonly client: AgentSessionClient;
-  readonly orchestrations?: ProductReadModelsV1;
-  readonly planningDrafts?: readonly EpicPlanningDraftSummary[];
-  readonly identities?: readonly AgentSessionNavigationIdentity[];
-  readonly selectedSessionId?: string | null;
-  readonly onSelectedSessionChange?: (sessionId: string | null) => void;
-  readonly expandedNodeIds?: ReadonlySet<string>;
-  readonly onExpandedNodeIdsChange?: (ids: ReadonlySet<string>) => void;
-  readonly onNavigateToProduct?: (location: AgentSessionProductLocation) => void;
+  readonly agentRequest?: SessionNavigationCommandRequest | null;
+  readonly onAgentComplete?: (
+    id: string,
+    state: SessionNavigationState | null,
+    error: string | null,
+  ) => Promise<void>;
+  readonly navigationClient?: SessionNavigationClient;
+  readonly selection?: SessionNavigationSelection;
+  readonly onSelectionChange?: (selection: SessionNavigationSelection) => void;
   readonly harnessManagementSource?: ConversationHarnessManagementSource;
   readonly profileClient?: AgentSessionProfileClient;
   readonly sessionEventQueryClient?: SessionEventQueryClient;
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   readonly focusInvocationId?: string;
   readonly focusEvidence?: ProductDecisionEvidenceDestination;
-  readonly returnOrigin?: AgentSessionProductOrigin | null;
+  readonly onConfigureCapabilities?: () => void;
 }
-
 export function StandaloneAgentSessionScreen({
   client,
-  orchestrations,
-  planningDrafts,
-  identities,
-  selectedSessionId,
-  onSelectedSessionChange,
-  expandedNodeIds,
-  onExpandedNodeIdsChange,
-  onNavigateToProduct,
+  agentRequest,
+  onAgentComplete,
+  navigationClient,
+  selection: controlled,
+  onSelectionChange,
   harnessManagementSource,
   profileClient,
   sessionEventQueryClient,
   agentIdentityForSession,
   focusInvocationId,
   focusEvidence,
-  returnOrigin,
   onConfigureCapabilities,
 }: AgentSessionScreenProps) {
-  const [localExpandedNodeIds, setLocalExpandedNodeIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
+    kind: 'initial',
+  });
+  const selection = controlled ?? localSelection;
+  const previousSelection = useRef(selection);
+  const revealRevision = useRef(0);
+  if (previousSelection.current !== selection) {
+    previousSelection.current = selection;
+    revealRevision.current++;
+  }
+  const select = useCallback(
+    (value: SessionNavigationSelection) => {
+      if (onSelectionChange) onSelectionChange(value);
+      else setLocalSelection(value);
+    },
+    [onSelectionChange],
   );
-  const expansion = expandedNodeIds ?? localExpandedNodeIds;
-  const updateExpansion = onExpandedNodeIdsChange ?? setLocalExpandedNodeIds;
-  const collectionOptions = useMemo(
-    () => ({ selectedSessionId, onSelectedSessionChange }),
-    [onSelectedSessionChange, selectedSessionId],
-  );
-  const collection = useAgentSessionCollection(client, collectionOptions);
-  const {
-    profile: pinnedProfile,
-    error: profileError,
-    selection: runtimeSelection,
-    setSelection: setRuntimeSelection,
-    execution,
-  } = useSessionExecutionSelection(profileClient, collection.selectedSessionId);
-  const deliveryQuery = useSessionDeliveries(sessionEventQueryClient, collection.selectedSessionId);
+  const collection = useAgentSessionCollection(client, navigationClient);
+  const selectedSessionId = sessionIdOf(selection);
+  useEffect(() => {
+    if (selection.kind !== 'initial' || collection.loading || collection.error) return;
+    const first = collection.summaries[0];
+    select(
+      first
+        ? { kind: 'session', sessionId: first.id }
+        : { kind: 'draft', draftId: crypto.randomUUID(), folderTarget: null },
+    );
+  }, [selection, collection.loading, collection.error, collection.summaries, select]);
+  const reloadCollection = collection.reload;
   const onCreated = useCallback(
     (id: string) => {
-      onSelectedSessionChange?.(id);
-      void collection.selectSession(id).then(() => collection.reload());
+      select({ kind: 'session', sessionId: id });
+      void reloadCollection();
     },
-    [collection, onSelectedSessionChange],
+    [select, reloadCollection],
   );
-  const session = useAgentSession(client, {
-    selectedSessionId: collection.selectedSessionId,
+  const view = useProfiledAgentSession(client, profileClient, sessionEventQueryClient, {
+    selectedSessionId,
     onSessionCreated: onCreated,
-    execution,
+    draftId: selection.kind === 'draft' ? selection.draftId : undefined,
+    folderTarget: selection.kind === 'draft' ? selection.folderTarget : undefined,
   });
-  const sessionIdentities = useMemo(
-    () =>
-      identities ??
-      collection.summaries.flatMap((summary) => {
-        const identity = agentIdentityForSession?.(summary.id);
-        return identity
-          ? [
-              {
-                sessionId: summary.id,
-                agentName: identity.name,
-                harnessRole: identity.harnessRole,
-              },
-            ]
-          : [];
-      }),
-    [agentIdentityForSession, collection.summaries, identities],
+  const session = view.session;
+  const model = useMemo(() => buildSessionNavigation(collection.data), [collection.data]);
+  const [openRevision, setOpenRevision] = useState(0);
+  const onSelect = (sessionId: string) => {
+    select({ kind: 'session', sessionId });
+    setOpenRevision((value) => value + 1);
+  };
+  const onNew = (folderTarget: SessionFolderTarget | null) =>
+    select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget });
+  const tree = useSessionTree(
+    model,
+    selectedSessionId,
+    `${selectionKey(selection)}:${openRevision}:${revealRevision.current}`,
   );
-  const navigation = useMemo(
-    () =>
-      buildAgentSessionNavigation({
-        summaries: collection.summaries,
-        ...(orchestrations ? { orchestrations } : {}),
-        ...(planningDrafts ? { planningDrafts } : {}),
-        ...(sessionIdentities.length > 0 ? { identities: sessionIdentities } : {}),
-      }),
-    [collection.summaries, orchestrations, planningDrafts, sessionIdentities],
-  );
-  const selectedNavigation = collection.selectedSessionId
-    ? navigation.sessions.get(collection.selectedSessionId)
+  useSessionNavigationCommands({
+    request: agentRequest,
+    complete: onAgentComplete,
+    model,
+    tree,
+    selection,
+    collectionLoading: collection.loading,
+    loading: collection.loading || session.loading,
+    error: collection.error,
+    onSelect,
+    onNew,
+    onMove: collection.move,
+    onPin: collection.pin,
+  });
+  const selectedIdentity = selectedSessionId
+    ? agentIdentityForSession?.(selectedSessionId)
     : undefined;
-  const selectedIdentity = collection.selectedSessionId
-    ? agentIdentityForSession?.(collection.selectedSessionId)
-    : undefined;
+  const folderTarget = selection.kind === 'draft' ? selection.folderTarget : null;
+  const folderLabel =
+    folderTarget?.kind === 'repository'
+      ? collection.data.repositories.find((repo) => repo.id === folderTarget.repositoryId)?.name
+      : folderTarget?.kind === 'workflow_instance'
+        ? collection.data.instances.find((instance) => instance.id === folderTarget.instanceId)
+            ?.name
+        : undefined;
   const emptyState = {
     heading: 'Start with a message',
-    guidance:
-      'Choose a default in Capability Profiles before your first session. Without a working folder, a new session gets its own empty workspace.',
+    guidance: folderLabel
+      ? `New session in ${folderLabel}. It starts in the repository’s main working tree.`
+      : 'Choose a default in Capability Profiles before your first session. Without a working folder, a new session gets its own empty workspace.',
   };
-  const focusedInvocationId =
-    collection.selectedSessionId === returnOrigin?.sessionId ? focusInvocationId : undefined;
   const evidenceRange =
-    focusedInvocationId &&
     focusEvidence &&
-    collection.selectedSessionId === focusEvidence.sessionId &&
-    focusEvidence.invocationId === focusedInvocationId
+    focusEvidence.sessionId === selectedSessionId &&
+    focusEvidence.invocationId === focusInvocationId
       ? evidenceTranscriptRange(focusEvidence)
       : undefined;
   useEffect(() => {
-    if (!focusedInvocationId || collection.selectedSessionId !== returnOrigin?.sessionId) return;
+    if (!focusInvocationId || !selectedSessionId) return;
     const element = document.querySelector<HTMLElement>(
-      `[data-invocation-id="${CSS.escape(focusedInvocationId)}"]`,
+      `[data-invocation-id="${CSS.escape(focusInvocationId)}"]`,
     );
     element?.focus();
     element?.scrollIntoView({ block: 'center' });
-  }, [
-    collection.selectedSessionId,
-    focusedInvocationId,
-    session.transcript,
-    returnOrigin?.sessionId,
-  ]);
-  const sendUnavailableReason =
-    profileClient &&
-    collection.selectedSessionId &&
-    pinnedProfile?.sessionId !== collection.selectedSessionId
-      ? profileError
-        ? 'This Session has no available pinned configuration. Its history is still readable.'
-        : 'Loading Session configuration…'
-      : undefined;
-  const executionSettings =
-    profileClient && collection.selectedSessionId ? (
+  }, [focusInvocationId, selectedSessionId, session.transcript]);
+  const settings =
+    profileClient && selectedSessionId ? (
       <AgentSessionExecutionSettings
-        profile={pinnedProfile}
-        profileError={profileError}
-        deliveries={deliveryQuery.deliveries}
-        deliveryError={deliveryQuery.error}
-        onReloadDeliveries={deliveryQuery.reload}
-        identity={session.details?.session.assignedIdentity ?? null}
-        onIdentityChange={
-          client.updateIdentity && session.details
-            ? async (assignedIdentity) => {
-                await client.updateIdentity!({
-                  sessionId: session.details!.session.id,
-                  assignedIdentity,
-                });
-                await session.reload();
-              }
-            : undefined
-        }
-        selection={runtimeSelection}
+        profile={view.profile}
+        profileError={view.profileError}
+        deliveries={view.deliveries.deliveries}
+        deliveryError={view.deliveries.error}
+        onReloadDeliveries={view.deliveries.reload}
+        selection={view.selection}
+        onSelectionChange={view.setSelection}
         disabled={session.sending}
-        onSelectionChange={setRuntimeSelection}
+        identity={session.details?.session.assignedIdentity}
+        onIdentityChange={view.updateIdentity}
       />
     ) : undefined;
-
+  const workspace =
+    selection.kind === 'initial' ? (
+      <p role="status">Loading sessions…</p>
+    ) : (
+      <AgentSessionHeaderActionsProvider actions={null} settings={settings}>
+        <AgentSessionWorkspace
+          controller={session}
+          sendUnavailableReason={view.sendUnavailableReason}
+          transcriptRange={evidenceRange}
+          inspection={
+            focusEvidence && focusEvidence.sessionId === selectedSessionId
+              ? { sessionId: focusEvidence.sessionId, invocationId: focusEvidence.invocationId }
+              : undefined
+          }
+          presentation={{
+            emptyState,
+            ...(selectedIdentity
+              ? {
+                  identityHeader: {
+                    agentIdentity: selectedIdentity,
+                    title: legacyHarnessRoleLabel(selectedIdentity.harnessRole),
+                  },
+                }
+              : {}),
+          }}
+        />
+      </AgentSessionHeaderActionsProvider>
+    );
   return (
     <main className="agent-session-screen">
       <ResizableSplitSurface
@@ -201,178 +224,57 @@ export function StandaloneAgentSessionScreen({
         compactBreakpoint={860}
         primary={
           <SessionSelector
-            model={navigation}
-            selectedSessionId={collection.selectedSessionId}
-            expandedNodeIds={expansion}
+            model={model}
+            selectedSessionId={selectedSessionId}
+            tree={tree}
             loading={collection.loading}
-            onExpandedNodeIdsChange={updateExpansion}
-            onSelect={(id) => void collection.selectSession(id)}
-            onNew={collection.startNewSession}
+            onSelect={onSelect}
+            onNew={onNew}
+            onMove={collection.move}
+            onPin={collection.pin}
+            organizing={Boolean(navigationClient)}
             onReload={() => {
-              void collection.reload();
+              void reloadCollection();
               void session.reload();
-              deliveryQuery.reload();
+              view.deliveries.reload();
             }}
           />
         }
         secondary={
           <div className="agent-session-content">
-            {returnOrigin ? (
-              <div
-                className="agent-session-return-context"
-                role="region"
-                aria-label={returnContextLabel(returnOrigin.location)}
-              >
-                <span>{returnContextText(returnOrigin.location)}</span>
-              </div>
-            ) : null}
             {session.error?.includes('Choose a default Capability Profile') &&
               onConfigureCapabilities && (
-                <button type="button" onClick={onConfigureCapabilities}>
-                  Choose default Capability Profile
-                </button>
+                <button onClick={onConfigureCapabilities}>Choose default Capability Profile</button>
               )}
             {collection.error && (
               <section className="agent-session-error" role="alert">
-                <AlertCircle size={17} aria-hidden="true" />
+                <AlertCircle size={17} />
                 <span>{collection.error}</span>
-                <button type="button" onClick={collection.clearError} aria-label="Dismiss error">
-                  <X size={15} aria-hidden="true" />
+                <button
+                  className="icon-button"
+                  onClick={collection.clearError}
+                  aria-label="Dismiss error"
+                >
+                  <X size={15} />
                 </button>
               </section>
             )}
-            {collection.selectedSessionId && harnessManagementSource ? (
+            {selectedSessionId && harnessManagementSource ? (
               <HarnessAwareAgentSessionPane
-                sessionId={collection.selectedSessionId}
+                sessionId={selectedSessionId}
                 source={harnessManagementSource}
               >
-                <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
-                  <AgentSessionWorkspace
-                    controller={session}
-                    sendUnavailableReason={sendUnavailableReason}
-                    transcriptRange={evidenceRange}
-                    inspection={
-                      focusEvidence
-                        ? {
-                            sessionId: focusEvidence.sessionId,
-                            invocationId: focusEvidence.invocationId,
-                          }
-                        : undefined
-                    }
-                    presentation={
-                      selectedIdentity
-                        ? {
-                            emptyState,
-                            identityHeader: {
-                              agentIdentity: selectedIdentity,
-                              title: selectedIdentity.harnessRole
-                                .split('_')
-                                .filter(Boolean)
-                                .map(
-                                  (part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`,
-                                )
-                                .join(' '),
-                            },
-                          }
-                        : { emptyState }
-                    }
-                  />
-                </AgentSessionHeaderActionsProvider>
+                {workspace}
               </HarnessAwareAgentSessionPane>
             ) : (
-              <AgentSessionHeaderActionsProvider actions={null} settings={executionSettings}>
-                <AgentSessionWorkspace
-                  controller={session}
-                  presentation={{ emptyState }}
-                  sendUnavailableReason={sendUnavailableReason}
-                  transcriptRange={evidenceRange}
-                  inspection={
-                    focusEvidence
-                      ? {
-                          sessionId: focusEvidence.sessionId,
-                          invocationId: focusEvidence.invocationId,
-                        }
-                      : undefined
-                  }
-                />
-              </AgentSessionHeaderActionsProvider>
+              workspace
             )}
-            {selectedNavigation && onNavigateToProduct ? (
-              <SessionProductNavigation
-                locations={selectedNavigation.productLocations}
-                onNavigate={onNavigateToProduct}
-              />
-            ) : null}
           </div>
         }
       />
     </main>
   );
 }
-
-function SessionProductNavigation({
-  locations,
-  onNavigate,
-}: {
-  readonly locations: readonly AgentSessionProductLocation[];
-  readonly onNavigate: (location: AgentSessionProductLocation) => void;
-}) {
-  if (locations.length === 0) return null;
-  if (locations.length === 1)
-    return (
-      <button
-        className="agent-session-product-link"
-        type="button"
-        onClick={() => onNavigate(locations[0])}
-      >
-        <ArrowUpRight size={15} aria-hidden="true" />
-        {directActionLabel(locations[0])}
-      </button>
-    );
-  return (
-    <details className="agent-session-product-menu">
-      <summary>
-        Related product views
-        <ChevronDown size={14} aria-hidden="true" />
-      </summary>
-      <div>
-        {locations.map((location) => (
-          <button type="button" key={locationKey(location)} onClick={() => onNavigate(location)}>
-            <span>{locationKindLabel(location)}</span>
-            <strong>{location.label}</strong>
-          </button>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function directActionLabel(location: AgentSessionProductLocation) {
-  if (location.kind === 'epic_planning_draft') return 'Go to Epic planning draft';
-  if (location.kind === 'work_slice_planning_point') return 'Go to planning view';
-  if (location.kind === 'work_unit') return 'Go to Work Unit';
-  return `Go to ${location.kind === 'epic' ? 'Epic' : 'Sprint'}`;
-}
-
-function returnContextLabel(location: AgentSessionProductLocation) {
-  return `${locationKindLabel(location)} return context`;
-}
-
-function returnContextText(location: AgentSessionProductLocation) {
-  return `Opened from ${locationKindLabel(location)}`;
-}
-
-function locationKindLabel(location: AgentSessionProductLocation) {
-  return {
-    epic: 'Epic',
-    epic_product_decisions: 'Product decisions',
-    sprint: 'Sprint',
-    work_slice_planning_point: 'Planning',
-    work_unit: 'Work Unit',
-    epic_planning_draft: 'Epic planning draft',
-  }[location.kind];
-}
-
 function evidenceTranscriptRange(
   destination: ProductDecisionEvidenceDestination,
 ): TranscriptAnchorRange {
@@ -385,10 +287,6 @@ function evidenceTranscriptRange(
       : {}),
   } as TranscriptAnchorRange['start'];
   return { start: anchor, end: anchor };
-}
-
-function locationKey(location: AgentSessionProductLocation) {
-  return JSON.stringify(location);
 }
 
 export const AgentSessionScreen = StandaloneAgentSessionScreen;

@@ -1,7 +1,12 @@
+import {
+  selectionKey,
+  sessionIdOf,
+  type SessionNavigationSelection,
+} from './agentSessions/navigation';
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
-} from './agentSessionNavigation';
+} from './orchestrations/navigation';
 import type { ProductDecisionEvidenceDestination } from './productDecisions';
 
 /** Product-owned destinations only; this is deliberately not a command vocabulary. */
@@ -18,7 +23,7 @@ export type ProductNavigationDestination =
     }
   | {
       readonly kind: 'agent_sessions';
-      readonly selectedSessionId: string | null;
+      readonly selection: SessionNavigationSelection;
       readonly focusedInvocationId: string | null;
       /** An exact evidence passage; optional so ordinary Session navigation remains unchanged. */
       readonly focusedEvidence?: ProductDecisionEvidenceDestination;
@@ -162,7 +167,7 @@ export function productNavigationReducer(
         current: {
           destination: {
             kind: 'agent_sessions',
-            selectedSessionId: action.origin.sessionId,
+            selection: { kind: 'session', sessionId: action.origin.sessionId },
             focusedInvocationId: action.focusedInvocationId,
             ...(action.focusedEvidence ? { focusedEvidence: action.focusedEvidence } : {}),
           },
@@ -187,10 +192,10 @@ export function productNavigationReducer(
     case 'enter_agent_sessions_directly': {
       const destination: ProductNavigationDestination = {
         kind: 'agent_sessions',
-        selectedSessionId:
+        selection:
           state.current.destination.kind === 'agent_sessions'
-            ? state.current.destination.selectedSessionId
-            : null,
+            ? state.current.destination.selection
+            : { kind: 'initial' },
         focusedInvocationId: null,
       };
       if (state.current.destination.kind === 'agent_sessions')
@@ -295,17 +300,13 @@ export function isProductNavigationDestination(
       );
     case 'agent_sessions':
       return (
-        hasOnlyKeys(value, [
-          'kind',
-          'selectedSessionId',
-          'focusedInvocationId',
-          'focusedEvidence',
-        ]) &&
-        (value.selectedSessionId === null || isIdentifier(value.selectedSessionId)) &&
+        hasOnlyKeys(value, ['kind', 'selection', 'focusedInvocationId', 'focusedEvidence']) &&
+        isSessionSelection(value.selection) &&
         (value.focusedInvocationId === null || isIdentifier(value.focusedInvocationId)) &&
         (value.focusedEvidence === undefined ||
           (isProductDecisionEvidenceDestination(value.focusedEvidence) &&
-            value.selectedSessionId === value.focusedEvidence.sessionId &&
+            sessionIdOf(value.selection as SessionNavigationSelection) ===
+              value.focusedEvidence.sessionId &&
             value.focusedInvocationId === value.focusedEvidence.invocationId))
       );
     case 'file_review':
@@ -393,7 +394,7 @@ export function sameProductNavigationDestination(
     case 'agent_sessions':
       return (
         right.kind === 'agent_sessions' &&
-        left.selectedSessionId === right.selectedSessionId &&
+        selectionKey(left.selection) === selectionKey(right.selection) &&
         left.focusedInvocationId === right.focusedInvocationId &&
         sameFocusedEvidence(left.focusedEvidence, right.focusedEvidence)
       );
@@ -622,7 +623,10 @@ function sameFocusedEvidence(
 
 /** Evidence focus is introduced only by a live, source-resolved contextual origin. */
 function isReloadSafeDestination(destination: ProductNavigationDestination): boolean {
-  return destination.kind !== 'agent_sessions' || destination.focusedEvidence === undefined;
+  return (
+    destination.kind !== 'agent_sessions' ||
+    (destination.focusedEvidence === undefined && destination.selection.kind !== 'draft')
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -643,4 +647,27 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 
 function isIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+function isSessionSelection(value: unknown): value is SessionNavigationSelection {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'initial') return hasOnlyKeys(value, ['kind']);
+  if (value.kind === 'session')
+    return hasOnlyKeys(value, ['kind', 'sessionId']) && isIdentifier(value.sessionId);
+  if (
+    value.kind !== 'draft' ||
+    !hasOnlyKeys(value, ['kind', 'draftId', 'folderTarget']) ||
+    !isIdentifier(value.draftId)
+  )
+    return false;
+  const target = value.folderTarget;
+  return (
+    target === null ||
+    (isRecord(target) &&
+      (target.kind === 'repository'
+        ? hasOnlyKeys(target, ['kind', 'repositoryId']) && isIdentifier(target.repositoryId)
+        : target.kind === 'workflow_instance' &&
+          hasOnlyKeys(target, ['kind', 'instanceId']) &&
+          isIdentifier(target.instanceId)))
+  );
 }

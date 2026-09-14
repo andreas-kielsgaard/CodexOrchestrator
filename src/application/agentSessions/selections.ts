@@ -1,3 +1,4 @@
+import type { SessionFolderTarget } from './organization';
 import type {
   DirectUserInvocationResolutionDto,
   SessionCreationResolutionDto,
@@ -24,12 +25,17 @@ export interface SendDirectUserAgentSessionMessageResultDto {
   readonly invocationResolution: DirectUserInvocationResolutionDto;
 }
 
+export interface StartDirectUserAgentSessionInput extends Omit<
+  SendDirectUserAgentSessionMessageInput,
+  'sessionId'
+> {
+  readonly title: string | null;
+  readonly workingDirectory: string | null;
+  readonly folderTarget?: SessionFolderTarget | null;
+}
 export interface AgentSessionProfileClient {
   startDirectUserSession(
-    input: Omit<SendDirectUserAgentSessionMessageInput, 'sessionId'> & {
-      readonly title: string | null;
-      readonly workingDirectory: string | null;
-    },
+    input: StartDirectUserAgentSessionInput,
   ): Promise<SendDirectUserAgentSessionMessageResultDto>;
   loadPinnedProfile(sessionId: string): Promise<PinnedAgentSessionProfileDto>;
   sendDirectUserMessage(

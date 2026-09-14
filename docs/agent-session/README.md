@@ -1,5 +1,10 @@
 # Agent Session Recovery Plan
 
+For current repository folders, placement, pins, and deeplinks, see
+[Repository-based Agent Sessions](./repository-session-navigation-plan.md).
+Agent navigation is available through the [local UI command interface](./navigation-commands.md).
+The recovery record below describes the original baseline.
+
 Status: recovery baseline implemented; deterministic verification harness and non-live gate
 complete; live Codex lifecycle proof pending an independently authorized account with available usage
 

@@ -23,7 +23,7 @@ import type { ContextualFileReviewResult } from '../../../application/contextual
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
-} from '../../../application/agentSessionNavigation';
+} from '../../../application/orchestrations/navigation';
 import type { WorkUnitActivitySessionTarget } from './WorkUnitDetailWorkspace';
 import type {
   EpicProductDecisionSource,

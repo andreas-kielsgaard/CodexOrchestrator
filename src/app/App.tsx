@@ -1,3 +1,8 @@
+import type { SessionNavigationAgentAccess } from '../application/agentSessions/agentAccess';
+import { useSessionNavigationAgentConnection } from './useSessionNavigationAgentConnection';
+import type { SessionNavigationClient } from '../application/agentSessions/organization';
+import type { SessionDeepLinkSource } from '../application/agentSessions/deepLinks';
+import type { SessionNavigationSelection } from '../application/agentSessions/navigation';
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
 import type { AgentSessionProfileClient } from '../application/agentSessions';
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
@@ -60,7 +65,7 @@ import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationMod
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
-} from '../application/agentSessionNavigation';
+} from '../application/orchestrations/navigation';
 import type { FileReviewSource } from '../application/fileReview';
 import type {
   ContextualFileReviewClient,
@@ -113,6 +118,9 @@ export type ApplicationSurface =
   | 'product-decision-publish';
 
 export interface AppProps {
+  readonly sessionNavigationClient?: SessionNavigationClient;
+  readonly sessionNavigationAgent?: SessionNavigationAgentAccess;
+  readonly sessionDeepLinks?: SessionDeepLinkSource;
   readonly agentSessionClient: AgentSessionClient;
   /** Plan Builder alone may use a managed send boundary; ordinary screens keep the generic client. */
   readonly managedPlanBuilderSessionClient?: ManagedPlanBuilderSessionClient;
@@ -168,6 +176,9 @@ export interface AppProps {
 
 export function App({
   agentSessionClient,
+  sessionNavigationClient,
+  sessionNavigationAgent,
+  sessionDeepLinks,
   managedPlanBuilderSessionClient = {
     ...agentSessionClient,
     requestPlan: async () => {
@@ -273,7 +284,7 @@ export function App({
   );
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
-      ? { kind: 'agent_sessions', selectedSessionId: null, focusedInvocationId: null }
+      ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
       : initialApplicationSurface === 'workflows'
         ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
         : initialApplicationSurface === 'file-review'
@@ -290,10 +301,39 @@ export function App({
     ) => productNavigationReducer(state, action, supportsProductDestination),
     createProductNavigation(initialNavigationDestination),
   );
-  const selectedAgentSessionId =
+  useEffect(() => {
+    if (!sessionDeepLinks) return;
+    let active = true;
+    let stop: (() => void) | undefined;
+    void sessionDeepLinks
+      .subscribe((sessionId) => {
+        if (active)
+          dispatchProductNavigation({
+            type: 'navigate',
+            intent: 'replace',
+            destination: {
+              kind: 'agent_sessions',
+              selection: { kind: 'session', sessionId },
+              focusedInvocationId: null,
+            },
+          });
+      })
+      .then(
+        (unsubscribe) => {
+          if (active) stop = unsubscribe;
+          else unsubscribe();
+        },
+        (error) => console.error('Session link reception failed', error),
+      );
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [sessionDeepLinks]);
+  const agentSessionSelection: SessionNavigationSelection =
     productNavigation.current.destination.kind === 'agent_sessions'
-      ? productNavigation.current.destination.selectedSessionId
-      : null;
+      ? productNavigation.current.destination.selection
+      : { kind: 'initial' };
   const focusedAgentSessionInvocationId =
     productNavigation.current.destination.kind === 'agent_sessions'
       ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
@@ -303,6 +343,18 @@ export function App({
       ? productNavigation.current.destination.focusedEvidence
       : undefined;
   const currentProductDestination = productNavigation.current.destination;
+  const navigationAgent = useSessionNavigationAgentConnection(sessionNavigationAgent, () => {
+    if (currentProductDestination.kind !== 'agent_sessions')
+      dispatchProductNavigation({
+        type: 'navigate',
+        intent: 'push',
+        destination: {
+          kind: 'agent_sessions',
+          selection: { kind: 'initial' },
+          focusedInvocationId: null,
+        },
+      });
+  });
   const activeFileReviewSource =
     currentProductDestination.kind === 'file_review'
       ? currentProductDestination.target.kind === 'direct'
@@ -331,10 +383,6 @@ export function App({
         supportsProductDestination(productNavigation.contextualOrigin.returnTo)))
       ? productNavigation.contextualOrigin
       : null;
-  const agentSessionReturnOrigin =
-    productReturnOrigin && isAgentSessionProductOrigin(productReturnOrigin)
-      ? productReturnOrigin
-      : null;
   const canGoBack = canNavigateBack(productNavigation, supportsProductDestination);
   const contextualReturnDuplicatesBack =
     canGoBack &&
@@ -343,9 +391,6 @@ export function App({
       productNavigation.history.at(-1)!.destination,
       contextualOriginDestination(productReturnOrigin),
     );
-  const [expandedAgentSessionNodes, setExpandedAgentSessionNodes] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const [requestedProductLocation, setRequestedProductLocation] =
     useState<AgentSessionProductLocation | null>(null);
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
@@ -696,40 +741,6 @@ export function App({
       setSurface('product-decision-publish');
     },
     [productDecisionClient],
-  );
-  const navigateToProductLocation = useCallback(
-    (location: AgentSessionProductLocation) => {
-      productNavigationEpoch.current += 1;
-      if (location.kind === 'epic_planning_draft') {
-        const draft = planningDrafts.find(
-          ({ epicPlanningDraftId }) => epicPlanningDraftId === location.epicPlanningDraftId,
-        );
-        if (!draft) return;
-        setSelectedDraft({
-          draftId: draft.epicPlanningDraftId,
-          sessionId: draft.agentSessionId,
-          ...(draft.title ? { title: draft.title } : {}),
-        });
-        dispatchProductNavigation({
-          type: 'navigate',
-          intent: 'push',
-          destination: {
-            kind: 'plan_builder',
-            epicPlanningDraftId: draft.epicPlanningDraftId,
-          },
-        });
-        setOrchestrationRoute('plan-builder');
-      } else {
-        dispatchProductNavigation({
-          type: 'navigate',
-          intent: 'push',
-          destination: { kind: 'orchestration', location },
-        });
-        setOrchestrationRoute('overview');
-      }
-      setSurface('epics');
-    },
-    [planningDrafts],
   );
   const navigateFromOrchestration = useCallback(
     (location: AgentSessionProductLocation | null, intent: OrchestrationNavigationChangeIntent) => {
@@ -1148,17 +1159,15 @@ export function App({
           profileClient={agentSessionProfileClient}
           sessionEventQueryClient={sessionEventQueryClient}
           agentIdentityForSession={agentIdentityForSession}
-          orchestrations={
-            orchestrationLoad.kind === 'ready' ? orchestrationLoad.readModels : undefined
-          }
-          planningDrafts={planningDrafts}
-          selectedSessionId={selectedAgentSessionId}
+          navigationClient={sessionNavigationClient}
+          agentRequest={navigationAgent.request}
+          onAgentComplete={navigationAgent.complete}
+          selection={agentSessionSelection}
           focusInvocationId={focusedAgentSessionInvocationId}
           focusEvidence={focusedAgentSessionEvidence}
-          returnOrigin={agentSessionReturnOrigin}
-          onSelectedSessionChange={(() => {
+          onSelectionChange={(() => {
             const renderEpoch = productNavigationEpoch.current;
-            return (sessionId: string | null) => {
+            return (selection: SessionNavigationSelection) => {
               if (currentProductDestination.kind !== 'agent_sessions') return;
               if (renderEpoch !== productNavigationEpoch.current) return;
               dispatchProductNavigation({
@@ -1166,15 +1175,12 @@ export function App({
                 intent: 'replace',
                 destination: {
                   kind: 'agent_sessions',
-                  selectedSessionId: sessionId,
+                  selection,
                   focusedInvocationId: null,
                 },
               });
             };
           })()}
-          expandedNodeIds={expandedAgentSessionNodes}
-          onExpandedNodeIdsChange={setExpandedAgentSessionNodes}
-          onNavigateToProduct={navigateToProductLocation}
         />
       ) : surface === 'native-settings' && nativeProfileClient ? (
         <NativeProfileSettings client={nativeProfileClient} />

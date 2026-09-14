@@ -27,11 +27,8 @@ export {
   type ConversationViewportProps,
   type ConversationViewportSegment,
 } from './ConversationViewport';
-export {
-  useAgentSessionController,
-  useAgentSessionCollection,
-  useAgentSession,
-} from './useAgentSessionController';
+export { useAgentSession } from './useAgentSession';
+export { useAgentSessionCollection } from './useAgentSessionCollection';
 export {
   embeddedSessionIsWritable,
   type EmbeddedAgentSessionComposition,

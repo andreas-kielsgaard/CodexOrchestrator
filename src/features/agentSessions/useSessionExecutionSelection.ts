@@ -11,12 +11,13 @@ const inherited = (): PerMessageRuntimeSelection => ({ model: null, reasoningMod
 export function useSessionExecutionSelection(
   client: AgentSessionProfileClient | undefined,
   sessionId: string | null,
+  draftId?: string,
 ) {
   const [profile, setProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState(inherited);
-  const currentSession = useRef(sessionId);
-  currentSession.current = sessionId;
+  const currentSession = useRef(sessionId ?? draftId);
+  currentSession.current = sessionId ?? draftId;
   useEffect(() => {
     let active = true;
     setProfile(null);
@@ -34,9 +35,9 @@ export function useSessionExecutionSelection(
     return () => {
       active = false;
     };
-  }, [client, sessionId]);
+  }, [client, sessionId, draftId]);
   const afterAccepted = () => {
-    if (currentSession.current === sessionId)
+    if (currentSession.current === (sessionId ?? draftId))
       setSelection((current) => (current === selection ? inherited() : current));
   };
   return {

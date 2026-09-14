@@ -1,4 +1,4 @@
-import type { AgentSessionProductOrigin } from './agentSessionNavigation';
+import type { AgentSessionProductOrigin } from './orchestrations/navigation';
 import {
   canNavigateBack,
   contextualOriginDestination,
@@ -170,7 +170,7 @@ describe('Product navigation history', () => {
     });
     expect(state.current.destination).toEqual({
       kind: 'agent_sessions',
-      selectedSessionId: 'session-handler',
+      selection: { kind: 'session', sessionId: 'session-handler' },
       focusedInvocationId: 'invocation-handler',
     });
     expect(state.contextualOrigin).toBe(workUnitOrigin);
@@ -199,7 +199,7 @@ describe('Product navigation history', () => {
       intent: 'replace',
       destination: {
         kind: 'agent_sessions',
-        selectedSessionId: 'session-implementer',
+        selection: { kind: 'session', sessionId: 'session-implementer' },
         focusedInvocationId: null,
       },
     });
@@ -209,7 +209,7 @@ describe('Product navigation history', () => {
     expect(state.contextualOrigin).toBeNull();
     expect(state.current.destination).toEqual({
       kind: 'agent_sessions',
-      selectedSessionId: 'session-implementer',
+      selection: { kind: 'session', sessionId: 'session-implementer' },
       focusedInvocationId: null,
     });
   });
@@ -224,7 +224,7 @@ describe('Product navigation history', () => {
     expect(state.contextualOrigin).toBeNull();
     expect(state.current.destination).toEqual({
       kind: 'agent_sessions',
-      selectedSessionId: 'session-handler',
+      selection: { kind: 'session', sessionId: 'session-handler' },
       focusedInvocationId: null,
     });
     expect(state.history).toEqual([{ destination: overview, intent: 'direct' }]);
@@ -283,7 +283,7 @@ describe('Product navigation history', () => {
     });
     expect(opened.current.destination).toEqual({
       kind: 'agent_sessions',
-      selectedSessionId: evidence.sessionId,
+      selection: { kind: 'session', sessionId: evidence.sessionId },
       focusedInvocationId: evidence.invocationId,
       focusedEvidence: evidence,
     });
@@ -295,7 +295,7 @@ describe('Product navigation history', () => {
       restoreProductNavigation(
         {
           kind: 'agent_sessions',
-          selectedSessionId: evidence.sessionId,
+          selection: { kind: 'session', sessionId: evidence.sessionId },
           focusedInvocationId: evidence.invocationId,
           focusedEvidence: evidence,
         },
@@ -307,7 +307,7 @@ describe('Product navigation history', () => {
       restoreProductNavigation(
         {
           kind: 'agent_sessions',
-          selectedSessionId: 'foreign-session',
+          selection: { kind: 'session', sessionId: 'foreign-session' },
           focusedInvocationId: evidence.invocationId,
           focusedEvidence: evidence,
         },
@@ -321,7 +321,11 @@ describe('Product navigation history', () => {
     const fallback = { kind: 'orchestration', location: null } as const;
     expect(
       restoreProductNavigation(
-        { kind: 'agent_sessions', selectedSessionId: 'session-1', focusedInvocationId: null },
+        {
+          kind: 'agent_sessions',
+          selection: { kind: 'session', sessionId: 'session-1' },
+          focusedInvocationId: null,
+        },
         fallback,
         () => false,
       ),

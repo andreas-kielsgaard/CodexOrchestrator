@@ -1,5 +1,5 @@
 import { ArrowLeft, CornerUpLeft } from 'lucide-react';
-import type { AgentSessionProductOrigin } from '../application/agentSessionNavigation';
+import type { AgentSessionProductOrigin } from '../application/orchestrations/navigation';
 import {
   isAgentSessionProductOrigin,
   type FileReviewProductOrigin,

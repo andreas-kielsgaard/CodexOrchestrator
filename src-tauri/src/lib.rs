@@ -1,3 +1,4 @@
+mod session_navigation;
 mod product_home;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};

@@ -76,7 +76,7 @@ describe('AgentSessionScreen with recorded scenarios', () => {
     });
     render(<AgentSessionScreen client={client} />);
 
-    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
     for (const alert of screen.getAllByRole('alert'))
       expect(alert).toHaveTextContent('Recorded subscription failed');
     for (const dismiss of screen.getAllByRole('button', { name: 'Dismiss error' }))

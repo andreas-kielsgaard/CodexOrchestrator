@@ -426,6 +426,7 @@ fn standalone_first_and_second_message_use_pinned_profile_without_pinning_first_
             Some("user-only".into()),
             Some("medium".into()),
             None,
+            None,
         )
         .unwrap();
     let session_id = created.acknowledgement.session_id;
@@ -484,6 +485,7 @@ fn invalid_standalone_override_leaves_no_session_or_launch() {
             None,
             None,
             Some("not-exposed".into()),
+            None,
             None,
             None
         )
@@ -959,3 +961,5 @@ fn application_event_entry_uses_the_source_instance_and_configured_field() {
         "Ready to review\n\nReview the result"
     );
 }
+
+mod navigation_tests;

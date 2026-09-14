@@ -70,6 +70,15 @@ impl RepositoryCatalog {
         Ok((record, identity))
     }
 
+    pub(crate) fn resolve_main_working_tree(&self, repository_id: &str) -> Result<PathBuf, String> {
+        let (_, identity) = self.resolve_verified(repository_id)?;
+        self.repository_context()?
+            .worktrees()
+            .main_working_tree(&identity.id, identity.top_level.path())
+            .map(|directory| directory.path().to_path_buf())
+            .map_err(|error| error.to_string())
+    }
+
     pub(crate) fn register_directory(
         &self,
         candidate: PathBuf,
@@ -569,5 +578,23 @@ mod tests {
             PathIdentity::of(PathBuf::from(&targets[0].worktree.path).as_path()),
             PathIdentity::of(available.canonicalize().unwrap().as_path())
         );
+    }
+    #[test]
+    fn main_tree_resolution_from_linked_registration_ignores_branch_name_and_target_sorting() {
+        let directory = tempfile::tempdir().unwrap();
+        let main = directory.path().join("z-original");
+        let linked = directory.path().join("a-linked");
+        create_repository(&main);
+        run_git(&main, &["branch", "-m", "trunk"]);
+        run_git(
+            &main,
+            &["worktree", "add", "-b", "main", linked.to_str().unwrap()],
+        );
+        let catalog = catalog();
+        let registration = catalog.register_directory(linked).unwrap();
+        let resolved = catalog
+            .resolve_main_working_tree(&registration.repository_id)
+            .unwrap();
+        assert_eq!(PathIdentity::of(&resolved), PathIdentity::of(&main));
     }
 }

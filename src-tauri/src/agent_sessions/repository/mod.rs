@@ -1,5 +1,7 @@
 mod addressing;
 mod mapping;
+mod organization;
+pub(crate) use organization::SCHEMA as SESSION_ORGANIZATION_SCHEMA;
 mod schema;
 
 #[cfg(test)]
@@ -172,6 +174,14 @@ impl SqliteAgentSessionRepository {
 }
 
 impl AgentSessionRepository for SqliteAgentSessionRepository {
+    fn create_session_with_placement(
+        &self,
+        session: AgentSession,
+        placement: &super::organization::SessionPlacement,
+    ) -> Result<AgentSession, RepositoryError> {
+        SqliteAgentSessionRepository::create_session_with_placement(self, session, placement)
+    }
+
     fn resolve_working_directory(
         &self,
         session_id: &AgentSessionId,
@@ -576,6 +586,9 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
     }
     ensure_agent_session_ownership_schema(connection)?;
     initialize_session_address_storage(connection)?;
+    connection
+        .execute_batch(SESSION_ORGANIZATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
     connection
         .execute_batch(AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA)
         .map_err(|error| format!("Unable to initialize Agent Session launch storage: {error}"))

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 48;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 49;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -31,8 +31,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     let current_version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
-    if current_version == ACTIVE_SCHEMA_VERSION {
-        if active_schema_is_present(connection)? {
+    if current_version == 48 || current_version == ACTIVE_SCHEMA_VERSION {
+        if current_version == ACTIVE_SCHEMA_VERSION && active_schema_is_present(connection)? {
             return Ok(());
         }
         let transaction =
@@ -62,7 +62,13 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
+            .map_err(|e| e.to_string())?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
+        transaction
+            .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
+            .map_err(|e| e.to_string())?;
         transaction
             .commit()
             .map_err(|error| format!("Unable to commit active v48 schema evolution: {error}"))?;
@@ -341,6 +347,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
+            .map_err(|e| e.to_string())?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version == 14 {
             transaction
@@ -443,6 +452,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
     initialize_replacement_workflow_schema(&transaction)?;
+    transaction
+        .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
     crate::harness_engine::migrations::migrate_bindings(&transaction)?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
@@ -661,6 +673,7 @@ mod tests {
                 "agent_session_invocations",
                 "agent_session_native_profile_bindings",
                 "agent_session_native_profile_launch_provenance",
+                "agent_session_organization",
                 "agent_session_runtime_events",
                 "agent_sessions",
                 "capability_profiles",
@@ -2050,5 +2063,32 @@ mod tests {
         connection
             .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
             .expect("pragma value")
+    }
+}
+
+#[cfg(test)]
+mod session_organization_migration_tests {
+    use super::*;
+    #[test]
+    fn v48_upgrade_adds_organization_without_rewriting_sessions_and_reopens() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("active.sqlite");
+        let connection = open_active_database(&path).unwrap();
+        connection
+            .execute_batch("DROP TABLE agent_session_organization; PRAGMA user_version=48;")
+            .unwrap();
+        drop(connection);
+        let connection = open_active_database(&path).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            49
+        );
+        assert!(connection
+            .prepare("SELECT * FROM agent_session_organization")
+            .is_ok());
+        drop(connection);
+        assert!(open_active_database(&path).is_ok());
     }
 }

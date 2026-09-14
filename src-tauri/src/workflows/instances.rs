@@ -124,6 +124,19 @@ impl WorkflowInstanceStore {
         })
     }
 
+    pub(crate) fn list_navigation(
+        &self,
+    ) -> Result<Vec<super::session_navigation::NavigationInstance>, String> {
+        self.read("list Workflow navigation", |connection| {
+            let mut query = connection.prepare("SELECT id,json_extract(record_json,'$.name'),json_extract(record_json,'$.target.repository.id'),(SELECT json_group_array(json_object('id',json_extract(value,'$.nodeId'),'name',json_extract(value,'$.name'))) FROM json_each(record_json,'$.recipe.nodes')) FROM workflow_recipe_instances ORDER BY json_extract(record_json,'$.createdAt') DESC,id").map_err(|e| e.to_string())?;
+            let rows = query.query_map([], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?))).map_err(|e| e.to_string())?;
+            rows.map(|row| {
+                let (id,name,repository_id,nodes) = row.map_err(|e| e.to_string())?;
+                Ok(super::session_navigation::NavigationInstance { id,name,repository_id,nodes: serde_json::from_str(&nodes).map_err(|e| e.to_string())? })
+            }).collect()
+        })
+    }
+
     pub(crate) fn list(&self) -> Result<Vec<RecipeInstance>, String> {
         self.read("list Workflow instances", |connection| {
         let mut query = connection.prepare("SELECT record_json FROM workflow_recipe_instances ORDER BY json_extract(record_json,'$.createdAt') DESC,id")

@@ -119,6 +119,24 @@ impl SqliteAgentSessionRepository {
         })
     }
 
+    pub(crate) fn list_logical_addresses(
+        &self,
+    ) -> Result<Vec<(AgentSessionId, SessionLogicalAddress)>, SessionDirectoryError> {
+        self.database.read("list Session logical addresses", |connection| {
+            let mut query = connection.prepare("SELECT session_id,scope_namespace,scope_kind,scope_id,subject_namespace,subject_kind,subject_id FROM agent_session_addresses")
+                .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+            let rows = query.query_map([], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?, row.get::<_,String>(3)?, row.get::<_,String>(4)?, row.get::<_,String>(5)?, row.get::<_,String>(6)?)))
+                .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+            rows.map(|row| {
+                let (id,sn,sk,si,tn,tk,ti) = row.map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+                let id = AgentSessionId::new(id).map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+                let scope = ReferenceIdentity::new(sn,sk,si).map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+                let subject = ReferenceIdentity::new(tn,tk,ti).map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+                Ok((id,SessionLogicalAddress::new(scope,subject)))
+            }).collect()
+        }).map_err(directory_error)
+    }
+
     pub(crate) fn load_address(
         &self,
         session_id: &AgentSessionId,

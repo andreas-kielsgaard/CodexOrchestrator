@@ -31,7 +31,7 @@ import {
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
-} from '../../../application/agentSessionNavigation';
+} from '../../../application/orchestrations/navigation';
 import '../styles/sprintWorkspace.css';
 import type { EmbeddedAgentSessionComposition } from '../../agentSessions';
 import type {

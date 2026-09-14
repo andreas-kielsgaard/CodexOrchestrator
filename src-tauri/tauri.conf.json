@@ -16,7 +16,8 @@
         "width": 1280,
         "height": 820,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -27,5 +28,12 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["codex-orchestrator"]
+      }
+    }
   }
 }

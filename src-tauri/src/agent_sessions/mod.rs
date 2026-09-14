@@ -23,3 +23,5 @@ mod live_smoke;
 pub(crate) mod workspace;
 
 pub(crate) mod interactions;
+
+pub(crate) mod organization;

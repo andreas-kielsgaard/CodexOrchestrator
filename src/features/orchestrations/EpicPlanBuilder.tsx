@@ -87,14 +87,17 @@ export function EpicPlanBuilder({
   useEffect(() => {
     if (!hasUserEnteredName && !draft?.title && suggestedName) setEpicName(suggestedName);
   }, [draft?.title, hasUserEnteredName, suggestedName]);
+  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const session = useAgentSession(agentSessionClient, {
-    selectedSessionId: draft?.sessionId ?? null,
+    selectedSessionId: draft?.sessionId ?? createdSessionId,
     sessionTitle: managedPlanBuilderSessionConfiguration.titleForEpicName(epicName),
-    onSessionCreated: (sessionId) =>
+    onSessionCreated: (sessionId) => {
+      setCreatedSessionId(sessionId);
       onSessionCreated?.(
         sessionId,
         managedPlanBuilderSessionConfiguration.titleForEpicName(epicName),
-      ),
+      );
+    },
   });
   // Session loads are a re-query fallback for missed notifications and restart recovery.
   useEffect(() => {

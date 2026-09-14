@@ -1,111 +1,65 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { composeProductOrchestrationReadModels } from '../../application/orchestrations';
-import type { ProductReadModelsV1 } from '../../application/orchestrations';
-import { recordedProductReadCompositionInput } from '../../dev/orchestrationSection/recordedProductReadCompositionInput';
-import { recordedDevelopmentAgentSessionClient } from '../../dev/orchestrationSection/recordedOrchestrationClient';
 import { StandaloneAgentSessionScreen } from './AgentSessionScreen';
-
-describe('standalone Agent Session product navigation', () => {
-  it('offers an explicit chooser when durable references lead to multiple views', async () => {
-    const read = structuredClone(
-      composeProductOrchestrationReadModels(recordedProductReadCompositionInput),
-    ) as Mutable<ProductReadModelsV1>;
-    const sessionId = 'recorded-epic-runner-manual-continuation-ready';
-    read.epics[0].agentSessionReferences.push({
-      agentSessionRefId: 'session-ref-additional-sprint-view',
-      agentSessionId: sessionId,
-      title: 'Orientation discovery handler',
-      source: read.epics[0].source,
-      targetKind: 'sprint',
-      targetId: 'sprint-control-surface',
-      semanticRole: 'sprint',
-    });
-    const navigate = vi.fn();
-    render(
-      <StandaloneAgentSessionScreen
-        client={recordedDevelopmentAgentSessionClient}
-        orchestrations={read}
-        selectedSessionId={sessionId}
-        onNavigateToProduct={navigate}
-      />,
-    );
-
-    const chooser = await screen.findByText('Related product views');
-    fireEvent.click(chooser);
-    const sprint = screen.getByRole('button', {
-      name: /Sprint Sprint Control Surface Discovery/i,
-    });
-    fireEvent.click(sprint);
-    expect(navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'sprint', sprintId: 'sprint-control-surface' }),
-    );
+import { repairSessionClients } from './profileTestFixtures';
+import { navigationData, recordedNavigation } from './navigationTestFixtures';
+it('keeps a folder draft through refresh and sends the current folder through the profiled path', async () => {
+  const fixture = repairSessionClients(false);
+  const start = vi.spyOn(fixture.profiles, 'startDirectUserSession');
+  const navigation = recordedNavigation({
+    ...navigationData(),
+    summaries: [],
+    organization: [],
+    owners: [],
   });
-
-  it('omits product navigation when no typed relationship exists', async () => {
-    render(
-      <StandaloneAgentSessionScreen
-        client={recordedDevelopmentAgentSessionClient}
-        orchestrations={composeProductOrchestrationReadModels(recordedProductReadCompositionInput)}
-        selectedSessionId="recorded-independent-research"
-        onNavigateToProduct={vi.fn()}
-      />,
-    );
-
-    expect(
-      await screen.findByRole('heading', { name: 'Independent product research' }),
-    ).toBeVisible();
-    expect(screen.queryByRole('button', { name: /Go to/ })).toBeNull();
-    expect(screen.queryByText('Related product views')).toBeNull();
+  render(
+    <StandaloneAgentSessionScreen
+      client={fixture.sessions}
+      profileClient={fixture.profiles}
+      navigationClient={navigation}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'New session in Alpha' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Repo draft' },
   });
-
-  it('fails closed for invocation focus when a different Session is selected', async () => {
-    const origin = {
-      sessionId: 'recorded-session-WU-ECS2E',
-      invocationId: 'recorded-handler-WU-ECS2E-first-review',
-      location: {
-        kind: 'work_unit' as const,
-        epicId: 'epic-runner',
-        sprintId: 'sprint-control-surface',
-        revisionId: 'ECS-R4',
-        workSlicePlanningPointId: 'planning-point-ECS2E',
-        workUnitId: 'WU-ECS2E',
-        label: 'Plan and Work Unit detail surfaces',
-        inspectionState: {
-          tab: 'activity' as const,
-          activityId:
-            'work-unit-inspection:WU-ECS2E:WU-ECS2E-attempt-1:handler-action:recorded-handler-WU-ECS2E-first-review',
-          sessionId: 'recorded-session-WU-ECS2E',
-          invocationId: 'recorded-handler-WU-ECS2E-first-review',
-        },
-      },
-    };
-    const foreignInvocation = document.createElement('button');
-    foreignInvocation.dataset.invocationId = origin.invocationId;
-    const focus = vi.spyOn(foreignInvocation, 'focus');
-    document.body.append(foreignInvocation);
-
-    render(
-      <StandaloneAgentSessionScreen
-        client={recordedDevelopmentAgentSessionClient}
-        selectedSessionId="recorded-implementer-WU-ECS2E"
-        focusInvocationId={origin.invocationId}
-        returnOrigin={origin}
-      />,
-    );
-
-    expect(
-      await screen.findByRole('heading', { name: 'Recorded WU-ECS2E Work Unit Implementer' }),
-    ).toBeVisible();
-    await waitFor(() => expect(focus).not.toHaveBeenCalled());
-    expect(screen.getByRole('region', { name: 'Work Unit return context' })).toBeVisible();
-    foreignInvocation.remove();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).not.toBeDisabled());
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Repo draft');
+  fireEvent.click(screen.getByRole('button', { name: 'New session in Feature build' }));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Instance notes' },
   });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submittedText: 'Instance notes',
+        folderTarget: { kind: 'workflow_instance', instanceId: 'flow-a' },
+      }),
+    ),
+  );
 });
-
-type Mutable<T> = {
-  -readonly [K in keyof T]: T[K] extends readonly (infer U)[]
-    ? Mutable<U>[]
-    : T[K] extends object
-      ? Mutable<T[K]>
-      : T[K];
-};
+it('does not reset a conversation draft on pin and move', async () => {
+  const fixture = repairSessionClients();
+  const navigation = recordedNavigation();
+  render(
+    <StandaloneAgentSessionScreen
+      client={fixture.sessions}
+      profileClient={fixture.profiles}
+      navigationClient={navigation}
+    />,
+  );
+  const message = await screen.findByRole('textbox', { name: 'Message' });
+  fireEvent.change(message, { target: { value: 'Keep my draft' } });
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Session 1' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Pin' }));
+  await waitFor(() =>
+    expect(screen.getAllByRole('treeitem', { name: 'Session 1' })).toHaveLength(2),
+  );
+  expect(message).toHaveValue('Keep my draft');
+  fireEvent.contextMenu(screen.getAllByRole('treeitem', { name: 'Session 1' })[0]);
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Move to…' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Empty repo' }));
+  await waitFor(() => expect(message).toHaveValue('Keep my draft'));
+});

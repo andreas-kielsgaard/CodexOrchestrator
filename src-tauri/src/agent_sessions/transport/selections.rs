@@ -24,40 +24,6 @@ pub(crate) struct SendDirectUserAgentSessionMessageInput {
     sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct StartDirectUserAgentSessionInput {
-    submitted_text: String,
-    title: Option<String>,
-    working_directory: Option<String>,
-    model: Option<String>,
-    reasoning_mode: Option<String>,
-    sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
-}
-
-#[tauri::command]
-pub(crate) fn start_direct_user_agent_session(
-    state: State<'_, super::AgentSessionTauriState>,
-    input: StartDirectUserAgentSessionInput,
-) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
-    let result = state
-        .application
-        .start_direct_user_session(
-            input.submitted_text,
-            input.title,
-            input.working_directory,
-            input.model,
-            input.reasoning_mode,
-            input.sandbox_mode,
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(SendDirectUserAgentSessionMessageResultDto {
-        session_id: result.acknowledgement.session_id,
-        invocation_id: result.acknowledgement.invocation_id,
-        invocation_resolution: result.invocation_resolution,
-    })
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PinnedAgentSessionProfileDto {
@@ -136,5 +102,20 @@ mod tests {
             }))
             .is_err()
         );
+    }
+}
+
+impl
+    From<crate::agent_sessions::application::configuration::SendDirectUserAgentSessionMessageResult>
+    for SendDirectUserAgentSessionMessageResultDto
+{
+    fn from(
+        result: crate::agent_sessions::application::configuration::SendDirectUserAgentSessionMessageResult,
+    ) -> Self {
+        Self {
+            session_id: result.acknowledgement.session_id,
+            invocation_id: result.acknowledgement.invocation_id,
+            invocation_resolution: result.invocation_resolution,
+        }
     }
 }
