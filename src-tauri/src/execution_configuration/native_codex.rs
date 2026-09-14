@@ -11,6 +11,7 @@ use crate::{
     runtime::codex::app_server::environment::{CodexEnvironmentReader, CodexEnvironmentSource},
 };
 use std::sync::Arc;
+mod quick_features;
 
 pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
     service: Arc<NativeProfileService>,
@@ -41,6 +42,23 @@ impl NativeCodexSelectedRuntimeProfileSource {
 }
 
 impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
+    fn quick_features_at(
+        &self,
+        cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        let selected = self
+            .service
+            .resolve_session_home()
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+        let native = self
+            .reader
+            .read(selected.home, cwd.map(std::path::PathBuf::from))
+            .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
+        Ok(quick_features::project(
+            format!("native-codex:{}", selected.profile_id),
+            &native,
+        ))
+    }
     fn native_inventory(
         &self,
     ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {

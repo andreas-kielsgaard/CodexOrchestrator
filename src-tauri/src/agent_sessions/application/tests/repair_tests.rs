@@ -61,6 +61,77 @@ struct Fixture {
     engine: Option<Arc<HarnessEngineService>>,
 }
 
+use crate::execution_configuration::RuntimeQuickFeatures;
+struct QuickSource {
+    profile_ref: String,
+    contexts: Mutex<Vec<Option<String>>>,
+}
+impl SelectedRuntimeProfileSource for QuickSource {
+    fn selected_runtime_profile(
+        &self,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        Ok(test_selected_runtime_profile())
+    }
+    fn quick_features_at(
+        &self,
+        cwd: Option<&str>,
+    ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        self.contexts.lock().unwrap().push(cwd.map(String::from));
+        Ok(RuntimeQuickFeatures {
+            profile_ref: self.profile_ref.clone(),
+            ..Default::default()
+        })
+    }
+}
+
+#[test]
+fn quick_features_use_session_context_and_reject_a_different_provider_profile() {
+    let fixture = Fixture::new();
+    let source = Arc::new(QuickSource {
+        profile_ref: test_selected_runtime_profile().profile_ref,
+        contexts: Mutex::new(Vec::new()),
+    });
+    let application = fixture.direct.clone().with_profile_source(source.clone());
+    application
+        .load_quick_features(None, Some("preview-directory"))
+        .unwrap();
+    assert!(fixture.launches().is_empty());
+    let cwd = fixture.folder.path().to_string_lossy().into_owned();
+    let session = application
+        .create_default_session(
+            CreateAgentSessionCommand {
+                title: Some("Quick features".into()),
+                working_directory: Some(cwd.clone()),
+                requested_options: Default::default(),
+            },
+            Default::default(),
+        )
+        .unwrap();
+    application
+        .load_quick_features(
+            Some(&session.id),
+            Some("caller-cannot-replace-session-context"),
+        )
+        .unwrap();
+    assert_eq!(
+        *source.contexts.lock().unwrap(),
+        vec![Some("preview-directory".into()), Some(cwd)]
+    );
+    assert!(application
+        .load_session(&session.id)
+        .unwrap()
+        .invocations
+        .is_empty());
+    let changed = application.with_profile_source(Arc::new(QuickSource {
+        profile_ref: "different-profile".into(),
+        contexts: Mutex::new(Vec::new()),
+    }));
+    assert!(changed
+        .load_quick_features(Some(&session.id), None)
+        .unwrap_err()
+        .contains("no longer matches"));
+}
+
 #[test]
 fn steering_is_durable_and_does_not_create_a_workflow_delivery() {
     let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, false);

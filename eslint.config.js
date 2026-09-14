@@ -10,11 +10,20 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['scripts/**/*.{js,cjs,mjs}', 'review-tools/app-inspector/**/*.{js,mjs}'],
+    files: [
+      'scripts/**/*.{js,cjs,mjs}',
+      'review-tools/app-inspector/**/*.{js,mjs}',
+      'docs/regression-review/**/run-browser.mjs',
+      'docs/ux/session-event-model-walkthrough/build/*.mjs',
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
     },
+  },
+  {
+    files: ['docs/regression-review/**/run-browser.mjs'],
+    languageOptions: { globals: globals.browser },
   },
   {
     files: ['**/*.{ts,tsx}'],

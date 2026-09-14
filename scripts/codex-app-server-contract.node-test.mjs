@@ -226,7 +226,7 @@ requires_openai_auth = false
 `;
 
 test(
-  'installed app-server: steering, interruption, resume and native defaults',
+  'installed app-server: quick features, skill mentions, steering, interruption, resume and native defaults',
   {
     skip:
       !executable &&
@@ -277,6 +277,17 @@ test(
     );
     const models = await server.call('model/list', {});
     assert.ok(models.data.some((model) => model.model === 'gpt-5.6-terra'));
+    const quickSkill = skills.data
+      .flatMap((entry) => entry.skills)
+      .find((skill) => skill.name === 'orchestrator-contract');
+    assert.equal(quickSkill.enabled, true);
+    assert.equal(path.resolve(quickSkill.path), path.resolve(extraSkill, 'SKILL.md'));
+    const quickModel = models.data.find((model) => model.model === 'gpt-5.6-terra');
+    assert.ok(
+      quickModel.supportedReasoningEfforts.some(
+        (mode) => mode.reasoningEffort === quickModel.defaultReasoningEffort,
+      ),
+    );
     const started = await server.call('thread/start', { cwd });
     const threadId = started.thread.id;
     assert.equal(started.model, 'gpt-5.6-terra');
@@ -287,10 +298,14 @@ test(
     const turn = (
       await server.call('turn/start', {
         threadId,
-        input: [{ type: 'text', text: 'Reply with the fixture result.' }],
+        input: [{ type: 'text', text: '$orchestrator-contract Reply with the fixture result.' }],
       })
     ).turn;
-    await providerStarted;
+    const [firstRequest] = await providerStarted;
+    assert.ok(
+      JSON.stringify(firstRequest.input).includes('SKILL_ROOT_MARKER'),
+      'An explicit skill mention loads its instructions into the provider input',
+    );
     const steered = await server.call('turn/steer', {
       threadId,
       expectedTurnId: turn.id,

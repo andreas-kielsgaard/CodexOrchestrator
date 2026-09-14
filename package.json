@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "install:app": "npm install",
+    "install:app": "npm ci --include=dev",
     "dev": "vite",
     "dev:status": "node scripts/runtime-status-server.mjs",
     "dev:tauri": "tauri dev",
@@ -22,15 +22,16 @@
     "test:rust:full": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:rust:worktree-review": "cargo test --manifest-path src-tauri/Cargo.toml --profile test-fast --lib worktree_ -- --test-threads=1",
     "test:worktree-review": "vitest run src/app/ApplicationRoot.test.tsx src/app/App.agentSessions.test.tsx src/bootstrap/productApplicationComposition.test.ts src/features/repositoryCatalog/RepositoryWorktreeTargetSelector.test.tsx src/features/worktreeReview src/infrastructure/repositoryCatalog/tauriRepositoryCatalog.test.ts src/infrastructure/tauriWorktreeReview.test.ts",
-    "validate:product": "npm run build && npm run test:worktree-review && npm run test:rust:worktree-review && npm run check:rust",
-    "validate:release": "npm run build && npm run check:rust:release && tauri build --no-bundle",
+    "validate:worktree-review": "npm run build && npm run test:worktree-review && npm run test:rust:worktree-review && npm run check:rust",
+    "validate:release-build": "tauri build --no-bundle",
     "test:codex-app-server": "node --test scripts/codex-app-server-contract.node-test.mjs",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:app-inspector": "node --test review-tools/app-inspector/test/interaction-adapter-framing.test.mjs review-tools/app-inspector/test/launch-paths.test.mjs review-tools/app-inspector/test/rendered-state.test.mjs review-tools/app-inspector/test/snapshot-compare.test.mjs review-tools/app-inspector/test/wait-for-change.test.mjs review-tools/app-inspector/test/webview-control.test.mjs review-tools/app-inspector/test/windows-adapter-framing.test.mjs review-tools/app-inspector/test/windows-webview-owner-boundary.test.mjs",
+    "test:app-inspector:browser": "node --test review-tools/app-inspector/test/webview-control-live.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-deep-link": "^2.4.10",
-    "@vitejs/plugin-react": "^4.6.0",
     "lucide-react": "^0.525.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -46,6 +47,7 @@
     "@types/node": "^24.0.10",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
     "eslint": "^9.30.1",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-react-hooks": "^5.2.0",

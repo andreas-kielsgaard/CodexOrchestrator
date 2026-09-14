@@ -53,11 +53,22 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         .instances
         .create("Feature build".into(), base.recipe, target)
         .unwrap();
+    let source = Arc::new(QuickSource {
+        profile_ref: test_selected_runtime_profile().profile_ref,
+        contexts: Mutex::new(Vec::new()),
+    });
+    let sessions = Arc::new(
+        fixture
+            .sessions
+            .as_ref()
+            .clone()
+            .with_profile_source(source.clone()),
+    );
     let navigation = SessionNavigationService::new(
         catalog,
         fixture.execution.instances.clone(),
         fixture.repository.clone(),
-        fixture.sessions.clone(),
+        sessions,
         crate::session_navigation::order_repository::NavigationOrderRepository::new(database),
     );
 
@@ -99,6 +110,28 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
             instance_id: instance.id.clone(),
         },
     ] {
+        let before = navigation.load().unwrap();
+        navigation
+            .load_quick_features(None, linked.to_str(), Some(&folder_target))
+            .unwrap();
+        assert_eq!(
+            PathIdentity::of(std::path::Path::new(
+                source
+                    .contexts
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+            )),
+            PathIdentity::of(&main)
+        );
+        assert_eq!(
+            navigation.load().unwrap().summaries.len(),
+            before.summaries.len()
+        );
+        assert_eq!(navigation.load().unwrap().organization, before.organization);
         let result = navigation
             .start_session(StartSessionRequest {
                 submitted_text: "Ordinary notes".into(),
@@ -165,6 +198,28 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
                 vec!["workflows".into(), "sessions".into()],
             )
             .unwrap();
+        navigation
+            .load_quick_features(
+                Some(&session_id),
+                linked.to_str(),
+                Some(&SessionFolderTarget::Repository {
+                    repository_id: "nonexistent-visual-folder".into(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            PathIdentity::of(std::path::Path::new(
+                source
+                    .contexts
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+            )),
+            PathIdentity::of(&main)
+        );
         assert_eq!(
             fixture
                 .repository

@@ -15,6 +15,7 @@ mod interactions;
 mod invocation;
 mod lifecycle;
 pub(crate) mod observation;
+mod quick_features;
 mod update_sink;
 mod workspaces;
 pub(crate) use crate::agent_sessions::interactions::{project_interactions, SessionInteraction};

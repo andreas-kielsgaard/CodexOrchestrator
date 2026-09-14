@@ -34,6 +34,9 @@ export interface StartDirectUserAgentSessionInput extends Omit<
   readonly folderTarget?: SessionFolderTarget | null;
 }
 export interface AgentSessionProfileClient {
+  loadQuickFeatures?(
+    input: import('./quickFeatures').LoadAgentSessionQuickFeaturesInput,
+  ): Promise<import('./quickFeatures').AgentSessionQuickFeatures>;
   startDirectUserSession(
     input: StartDirectUserAgentSessionInput,
   ): Promise<SendDirectUserAgentSessionMessageResultDto>;

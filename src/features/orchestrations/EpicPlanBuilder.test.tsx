@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import type {
   AgentInvocationDto,
@@ -28,7 +28,7 @@ describe('EpicPlanBuilder', () => {
       target: { value: 'Normal planning discussion' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText('Normal planning discussion')).toBeVisible();
+    expect(await screen.findByText('Normal planning discussion', { selector: '.user-message p' })).toBeVisible();
 
     source.setDurableSnapshot(availableProposal('2026-07-10T12:01:00.000Z'));
     await act(async () => client.emitTerminal());
@@ -102,7 +102,9 @@ describe('EpicPlanBuilder', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Plan Epic' }));
+    const plan = await screen.findByRole('button', { name: 'Plan Epic' });
+    await waitFor(() => expect(plan).toBeEnabled());
+    fireEvent.click(plan);
     expect(await screen.findByText(BUILD_EPIC_PLAN_PROMPT)).toBeVisible();
     expect(screen.getByText('Plan Builder / Application')).toBeVisible();
     expect(client.requestPlanCalls).toBe(1);

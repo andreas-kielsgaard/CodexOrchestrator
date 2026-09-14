@@ -221,18 +221,38 @@ impl SessionNavigationService {
             .pin_session(&id, pinned, chrono::Utc::now())
             .map_err(|e| e.to_string())
     }
+    fn working_directory_for_folder(&self, target: &SessionFolderTarget) -> Result<String, String> {
+        let repository = self.repository_for_folder(target)?;
+        Ok(self
+            .catalog
+            .resolve_main_working_tree(&repository)?
+            .to_string_lossy()
+            .into_owned())
+    }
+    pub(crate) fn load_quick_features(
+        &self,
+        session_id: Option<&AgentSessionId>,
+        working_directory: Option<&str>,
+        folder_target: Option<&SessionFolderTarget>,
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, String> {
+        let folder_directory = if session_id.is_none() {
+            folder_target
+                .map(|target| self.working_directory_for_folder(target))
+                .transpose()?
+        } else {
+            None
+        };
+        self.sessions.load_quick_features(
+            session_id,
+            folder_directory.as_deref().or(working_directory),
+        )
+    }
     pub(crate) fn start_session(
         &self,
         mut request: StartSessionRequest,
     ) -> Result<SendDirectUserAgentSessionMessageResult, String> {
         if let Some(target) = &request.folder_target {
-            let repository = self.repository_for_folder(target)?;
-            request.working_directory = Some(
-                self.catalog
-                    .resolve_main_working_tree(&repository)?
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            request.working_directory = Some(self.working_directory_for_folder(target)?);
         }
         self.sessions
             .start_direct_user_session(

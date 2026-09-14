@@ -3,6 +3,41 @@ import userEvent from '@testing-library/user-event';
 import { StandaloneAgentSessionScreen } from './AgentSessionScreen';
 import { repairSessionClients } from './profileTestFixtures';
 
+it('uses slash choices for the first message and refreshes discovery in the created Session context', async () => {
+  const user = userEvent.setup();
+  const fixture = repairSessionClients(false);
+  const load = vi.spyOn(fixture.profiles, 'loadQuickFeatures');
+  const start = vi.spyOn(fixture.profiles, 'startDirectUserSession');
+  render(
+    <StandaloneAgentSessionScreen client={fixture.sessions} profileClient={fixture.profiles} />,
+  );
+  let input = await screen.findByRole('textbox', { name: 'Message' });
+  await user.type(input, '/model');
+  await screen.findByRole('option', { name: /Model/ });
+  await user.keyboard('{Enter}');
+  await user.type(input, 'model-b{Enter}');
+  expect(start).not.toHaveBeenCalled();
+  expect(load).toHaveBeenCalledWith({ sessionId: null, workingDirectory: null });
+  await user.type(input, 'First{Enter}');
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({ submittedText: 'First', model: 'model-b' }),
+    ),
+  );
+  input = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(input, '/reasoning');
+  await screen.findByRole('option', { name: /Reasoning/ });
+  expect(load).toHaveBeenLastCalledWith({
+    sessionId: 'session-1',
+    workingDirectory: fixture.details.session.workingDirectory,
+  });
+  await user.keyboard('{Enter}');
+  await user.type(input, 'medium{Enter}');
+  await user.click(screen.getByRole('button', { name: /Message and Session configuration/ }));
+  expect(screen.getByLabelText('Model')).toHaveValue('');
+  expect(screen.getByLabelText('Reasoning')).toHaveValue('medium');
+});
+
 it('uses the profiled route for both the first and next message, with message-local choices', async () => {
   const user = userEvent.setup();
   const fixture = repairSessionClients(false);

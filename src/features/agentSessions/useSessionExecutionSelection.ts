@@ -45,6 +45,6 @@ export function useSessionExecutionSelection(
     error,
     selection,
     setSelection,
-    execution: client ? { client, selection, afterAccepted } : undefined,
+    execution: client ? { client, selection, setSelection, afterAccepted } : undefined,
   };
 }

@@ -61,6 +61,24 @@ export function repairSessionClients(initiallyCreated = true) {
     },
   };
   const profiles: AgentSessionProfileClient = {
+    loadQuickFeatures: async () => ({
+      profileRef: repairRuntime.profileRef,
+      defaults: profile.creationResolution.sessionProfile.pinnedDefaults,
+      models: repairRuntime.exposure.models.map((id) => ({
+        id,
+        label: id,
+        description: '',
+        defaultReasoningMode: 'medium',
+        reasoningModes: repairRuntime.exposure.reasoningModes.map((id) => ({
+          id,
+          description: '',
+        })),
+      })),
+      skills: [
+        { id: 'review', name: 'review', description: 'Review changes', invocationText: '$review' },
+      ],
+      limitations: [],
+    }),
     loadPinnedProfile: async () => structuredClone(profile),
     startDirectUserSession: async () => {
       created = true;

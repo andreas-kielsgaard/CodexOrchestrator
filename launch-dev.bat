@@ -40,12 +40,6 @@ if exist "%VCVARS64%" (
   if errorlevel 1 exit /b 1
 )
 
-set "VITE_RUNTIME_STATUS_URL=http://127.0.0.1:41415/status"
-
-call npm run clear:stale
-if errorlevel 1 exit /b 1
-start "Codex Orchestrator status" /b node scripts/runtime-status-server.mjs
-
 echo Starting Codex Orchestrator...
 echo The app will show a loading screen until the Tauri backend responds.
 

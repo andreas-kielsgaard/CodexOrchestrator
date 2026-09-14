@@ -216,6 +216,7 @@ export function AgentSessionWorkspace({
               : presentation.composer
           }
           composerTarget={{
+            quickFeatures: controller.quickFeatures,
             steeringAvailable: controller.steeringAvailable,
             needsWorkingDirectory: Boolean(
               controller.details && !controller.details.session.workingDirectory,
