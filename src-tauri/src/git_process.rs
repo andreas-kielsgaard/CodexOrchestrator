@@ -113,7 +113,11 @@ impl HardenedGitProcess {
                 "diff.external=",
             ])
             .arg("-c")
-            .arg(format!("core.hooksPath={}", null_device()))
+            .arg(format!("core.hooksPath={}", null_device()));
+        // Retained checkouts can put tracked files beyond Windows' legacy MAX_PATH limit.
+        #[cfg(windows)]
+        command.args(["-c", "core.longpaths=true"]);
+        command
             .args(arguments)
             .current_dir(root)
             .stdin(Stdio::null())

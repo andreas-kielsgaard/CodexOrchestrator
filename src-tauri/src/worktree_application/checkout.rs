@@ -264,6 +264,40 @@ mod tests {
         assert_eq!(result.head_ref.as_deref(), Some("refs/heads/feature/exact"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn creates_and_adopts_checkout_with_files_beyond_windows_legacy_path_limit() {
+        let fixture = fixture();
+        let relative = PathBuf::from("nested/another-source-directory/one-more-directory")
+            .join("source-file-with-a-long-name.txt");
+        fs::create_dir_all(fixture.repository.join(relative.parent().unwrap())).unwrap();
+        fs::write(fixture.repository.join(&relative), "retained source\n").unwrap();
+        run(&fixture.repository, &["add", "--all"]);
+        run(&fixture.repository, &["commit", "-m", "nested source"]);
+        // The checkout root itself fits; its tracked files exceed MAX_PATH.
+        let base = fixture.directory.path().join("retained-output");
+        let padding = 210 - base.to_string_lossy().len() - "/checkout".len() - 1;
+        let parent = base.join("w".repeat(padding));
+        fs::create_dir_all(&parent).unwrap();
+        let target = parent.join("checkout");
+        assert!(target.join(&relative).to_string_lossy().len() > 260);
+        let commit = GitCommitId::new(text(&fixture.repository, &["rev-parse", "HEAD"])).unwrap();
+        let request = PhysicalWorktreeCheckoutRequest::new(
+            fixture.repository.canonicalize().unwrap(),
+            target,
+            commit,
+            PhysicalWorktreeAttachment::Detached,
+        )
+        .unwrap();
+        let git = GitExecutable::discover().unwrap();
+        let created = materialize_checkout(&git, &request).unwrap();
+        assert_eq!(
+            fs::read_to_string(created.worktree_root.join(relative)).unwrap(),
+            "retained source\n"
+        );
+        assert_eq!(materialize_checkout(&git, &request).unwrap(), created);
+    }
+
     struct Fixture {
         directory: tempfile::TempDir,
         repository: PathBuf,
