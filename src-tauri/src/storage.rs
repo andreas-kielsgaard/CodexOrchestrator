@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 50;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 51;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -482,6 +482,7 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
              DROP TABLE IF EXISTS workflow_types;",
         )
         .map_err(|error| format!("Unable to retire Workflow V1 storage: {error}"))?;
+    connection.execute_batch(crate::agent_sessions::repository::IMPORT_SCHEMA).map_err(|e| e.to_string())?;
     crate::agent_sessions::repository::ensure_agent_session_ownership_schema(connection)?;
     crate::agent_sessions::repository::initialize_session_address_storage(connection)?;
     crate::execution_configuration::initialize_capability_profile_storage(connection)?;
@@ -582,7 +583,10 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
             |row| row.get::<_, bool>(0),
         )
         .map_err(|error| format!("Unable to inspect repository catalog schema: {error}"))?;
-    Ok(native_profile_schema_is_present
+    let import_schema_is_present: bool = connection.query_row(
+        "SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_imports','agent_session_imported_turns')",
+        [], |row| row.get(0)).map_err(|e| e.to_string())?;
+    Ok(import_schema_is_present && native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && replacement_workflow_schema_is_present
@@ -675,6 +679,8 @@ mod tests {
                 "accepted_work_unit_integrations",
                 "agent_session_address_clock",
                 "agent_session_addresses",
+                "agent_session_imported_turns",
+                "agent_session_imports",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",

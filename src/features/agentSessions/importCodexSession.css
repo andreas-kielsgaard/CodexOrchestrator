@@ -1,0 +1,102 @@
+.codex-import-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid #aeb9b1;
+  border-radius: 14px;
+  background: #fffdf8;
+  color: #17211b;
+  box-shadow: 0 20px 80px rgb(23 33 27 / 28%);
+}
+.codex-import-dialog::backdrop {
+  background: rgb(23 33 27 / 34%);
+}
+.codex-import-dialog h2 {
+  margin: 0 0 12px;
+}
+.codex-import-dialog p {
+  line-height: 1.5;
+}
+.codex-import-dialog label {
+  display: block;
+  margin: 20px 0 8px;
+  font-weight: 600;
+}
+.codex-import-dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid #aeb9b1;
+  border-radius: 8px;
+  background: #fff;
+  color: #17211b;
+  font: inherit;
+}
+.codex-import-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+.codex-import-dialog button {
+  padding: 8px 14px;
+  border: 1px solid #aeb9b1;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #17211b;
+  font: inherit;
+  cursor: pointer;
+}
+.codex-import-dialog button[type='submit'] {
+  background: #304c3a;
+  border-color: #304c3a;
+  color: #fff;
+}
+.codex-import-dialog button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.codex-import-dialog :focus-visible {
+  outline: 2px solid #3b6650;
+  outline-offset: 2px;
+}
+.codex-import-preview {
+  margin-top: 20px;
+  padding: 16px;
+  background: #8881;
+  border-radius: 8px;
+}
+.codex-import-preview h3 {
+  margin: 0;
+}
+.codex-import-preview dt {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin-top: 12px;
+}
+.codex-import-preview dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.codex-import-excerpt {
+  white-space: pre-wrap;
+  opacity: 0.85;
+  max-height: 130px;
+  overflow: auto;
+}
+.codex-import-dialog [role='alert'] {
+  color: #9d3025;
+}
+.imported-turn-label {
+  font-size: 0.8rem;
+  opacity: 0.65;
+  margin-bottom: 10px;
+}
+.imported-history-activity {
+  margin: 10px 0;
+}
+.imported-history-activity pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

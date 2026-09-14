@@ -37,6 +37,26 @@ export function formatAgentSessionContext(
       `Status: ${projected.status}`,
       `Created: ${projected.createdAt}`,
     );
+    if (projected.imported) {
+      lines.push('Imported from Codex');
+      if (projected.imported.sourceStartedAt !== null) {
+        lines.push(
+          `Source turn started: ${new Date(projected.imported.sourceStartedAt * 1000).toISOString()}`,
+        );
+      }
+      for (const item of projected.imported.items) {
+        lines.push(
+          '',
+          item.kind === 'user'
+            ? 'User (imported)'
+            : item.kind === 'assistant'
+              ? 'Agent'
+              : 'Historical activity',
+          redactSensitiveText(item.text),
+        );
+      }
+      return;
+    }
     if (source?.startedAt) lines.push(`Started: ${source.startedAt}`);
     if (source?.completedAt) lines.push(`Completed: ${source.completedAt}`);
     lines.push(

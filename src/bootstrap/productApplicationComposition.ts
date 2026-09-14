@@ -1,3 +1,4 @@
+import { tauriAgentSessionImportClient } from '../infrastructure/agentSessions/tauriAgentSessionImportClient';
 import { tauriSessionNavigationAgent } from '../infrastructure/agentSessions/tauriSessionNavigationAgent';
 import { tauriSessionNavigationClient } from '../infrastructure/agentSessions/tauriSessionNavigationClient';
 import { tauriSessionDeepLinks } from '../infrastructure/agentSessions/tauriSessionDeepLinks';
@@ -44,6 +45,7 @@ const RepositoryWorktreeTargetSelector =
 export function createProductApplicationComposition(): AppProps {
   return {
     agentSessionClient: tauriAgentSessionClient,
+    agentSessionImportClient: tauriAgentSessionImportClient,
     sessionNavigationClient: tauriSessionNavigationClient,
     sessionDeepLinks: tauriSessionDeepLinks,
     sessionNavigationAgent: tauriSessionNavigationAgent,

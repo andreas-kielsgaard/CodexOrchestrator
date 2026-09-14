@@ -100,7 +100,7 @@ pub(crate) fn run() {
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
-            let sessions::SessionServices { application, selected_runtime_profile, capability_profiles } = sessions::compose(
+            let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles } = sessions::compose(
                 database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier,
             )?;
             let session_event_adapter = Arc::new(
@@ -134,6 +134,7 @@ pub(crate) fn run() {
                     capability_profiles.clone(),
                 ),
             );
+            app.manage(imports);
             app.manage(
                 crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
             );
@@ -305,6 +306,8 @@ pub(crate) fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::session_navigation::agent_access::complete_session_navigation_command,
             crate::agent_sessions::transport::create_agent_session,
+            crate::agent_sessions::transport::import::preview_codex_import,
+            crate::agent_sessions::transport::import::import_codex_conversation,
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,

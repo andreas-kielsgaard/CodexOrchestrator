@@ -1,3 +1,4 @@
+import { ImportedTurnContent } from './ImportedTurnContent';
 import { SessionInteractions } from './SessionInteractions';
 import {
   projectedTranscriptContent,
@@ -68,72 +69,85 @@ export function AgentSessionTranscript({
           data-invocation-id={invocation.id}
           tabIndex={-1}
         >
-          {invocation.showInput && (
-            <article className="transcript-message user-message">
-              <header>
-                <span>
-                  {invocation.inputProvenance === 'application'
-                    ? 'Plan Builder / Application'
-                    : 'You'}
-                </span>
-              </header>
-              <p>{invocation.submittedText}</p>
-            </article>
-          )}
-          <section
-            className="agent-invocation-output"
-            aria-label={`Agent response: ${invocation.outcome.label}`}
-          >
-            <ProcessingDisclosure
-              invocationId={invocation.id}
-              activity={invocation.processing}
-              running={invocation.isActive}
-              expanded={expandedProcessing.has(invocation.id)}
-              onToggle={() => onToggleProcessing(invocation.id)}
+          {invocation.imported ? (
+            <ImportedTurnContent
+              history={invocation.imported}
+              status={invocation.status}
               safeOnly={safeActivityDetails}
-              heading={processingHeading}
+              showOutcome={invocation.showOutcome}
             />
-            {invocation.interactions?.length ? (
-              <SessionInteractions
-                interactions={invocation.interactions}
-                onRespond={onRespondToRequest}
-              />
-            ) : null}
-            {invocation.finalResponse && (
-              <article className="transcript-message agent-final-message">
-                <header>
-                  <span className="transcript-message__agent">
-                    {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
-                    <span>{agentIdentity?.name ?? 'Agent'}</span>
-                  </span>
-                  <span className="outcome-label">{invocation.outcome.label}</span>
-                </header>
-                <AgentMarkdown>{invocation.finalResponse.text}</AgentMarkdown>
-              </article>
-            )}
-            {invocation.showOutcome && !invocation.finalResponse && invocation.outcome.message && (
-              <>
-                <p className={`invocation-outcome ${invocation.status}`} role="status">
-                  <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
-                </p>
-                <AgentSessionRuntimeGuidance failure={invocation.runtimeFailure} />
-              </>
-            )}
-            {invocation.showOutcome &&
-              !invocation.finalResponse &&
-              invocation.status === 'completed' && (
-                <p className="invocation-outcome completed" role="status">
-                  <strong>Completed without a final response.</strong>
-                </p>
+          ) : (
+            <>
+              {invocation.showInput && (
+                <article className="transcript-message user-message">
+                  <header>
+                    <span>
+                      {invocation.inputProvenance === 'application'
+                        ? 'Plan Builder / Application'
+                        : 'You'}
+                    </span>
+                  </header>
+                  <p>{invocation.submittedText}</p>
+                </article>
               )}
-            {showTechnicalDetails && (
-              <TechnicalDiagnosticDisclosure
-                activity={invocation.technical}
-                diagnostics={invocation.diagnostics}
-                safeOnly={safeActivityDetails}
-              />
-            )}
-          </section>
+              <section
+                className="agent-invocation-output"
+                aria-label={`Agent response: ${invocation.outcome.label}`}
+              >
+                <ProcessingDisclosure
+                  invocationId={invocation.id}
+                  activity={invocation.processing}
+                  running={invocation.isActive}
+                  expanded={expandedProcessing.has(invocation.id)}
+                  onToggle={() => onToggleProcessing(invocation.id)}
+                  safeOnly={safeActivityDetails}
+                  heading={processingHeading}
+                />
+                {invocation.interactions?.length ? (
+                  <SessionInteractions
+                    interactions={invocation.interactions}
+                    onRespond={onRespondToRequest}
+                  />
+                ) : null}
+                {invocation.finalResponse && (
+                  <article className="transcript-message agent-final-message">
+                    <header>
+                      <span className="transcript-message__agent">
+                        {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
+                        <span>{agentIdentity?.name ?? 'Agent'}</span>
+                      </span>
+                      <span className="outcome-label">{invocation.outcome.label}</span>
+                    </header>
+                    <AgentMarkdown>{invocation.finalResponse.text}</AgentMarkdown>
+                  </article>
+                )}
+                {invocation.showOutcome &&
+                  !invocation.finalResponse &&
+                  invocation.outcome.message && (
+                    <>
+                      <p className={`invocation-outcome ${invocation.status}`} role="status">
+                        <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
+                      </p>
+                      <AgentSessionRuntimeGuidance failure={invocation.runtimeFailure} />
+                    </>
+                  )}
+                {invocation.showOutcome &&
+                  !invocation.finalResponse &&
+                  invocation.status === 'completed' && (
+                    <p className="invocation-outcome completed" role="status">
+                      <strong>Completed without a final response.</strong>
+                    </p>
+                  )}
+                {showTechnicalDetails && (
+                  <TechnicalDiagnosticDisclosure
+                    activity={invocation.technical}
+                    diagnostics={invocation.diagnostics}
+                    safeOnly={safeActivityDetails}
+                  />
+                )}
+              </section>
+            </>
+          )}
         </li>
       ))}
     </ol>
@@ -166,6 +180,20 @@ function projectVisibleInvocations(
     return [
       {
         ...invocation,
+        imported: invocation.imported
+          ? {
+              ...invocation.imported,
+              items: invocation.imported.items.filter(
+                (item, index) =>
+                  activityIds.has(item.eventId) ||
+                  (final?.kind === 'final_response' && final.response.eventId === item.eventId) ||
+                  (index ===
+                    invocation.imported!.items.findIndex((entry) => entry.kind === 'user') &&
+                    item.kind === 'user' &&
+                    items.some((i) => i.kind === 'submitted_input')),
+              ),
+            }
+          : undefined,
         processing: invocation.processing.filter((item) => activityIds.has(item.id)),
         technical: invocation.technical.filter((item) => activityIds.has(item.id)),
         finalResponse: final?.kind === 'final_response' ? final.response : null,

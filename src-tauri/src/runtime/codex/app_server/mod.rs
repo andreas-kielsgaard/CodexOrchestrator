@@ -1,10 +1,13 @@
 //! Invocation-scoped Codex app-server adapter. Process ownership remains in the supervisor.
 mod approval_choices;
 mod capability_roots;
+mod client;
 pub(super) mod configuration;
 mod connection;
 pub(crate) mod environment;
+pub(crate) mod history;
 mod inventory;
+mod items;
 mod notifications;
 mod process_context;
 mod requests;

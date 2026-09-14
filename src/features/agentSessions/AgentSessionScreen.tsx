@@ -1,3 +1,5 @@
+import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
+import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
 import type {
@@ -36,6 +38,7 @@ import { useProfiledAgentSession } from './useProfiledAgentSession';
 import { ResizableSplitSurface } from '../orchestrations/components/ResizableSplitSurface';
 import './agentSession.css';
 export interface AgentSessionScreenProps {
+  readonly importClient?: AgentSessionImportClient;
   readonly client: AgentSessionClient;
   readonly agentRequest?: SessionNavigationCommandRequest | null;
   readonly onAgentComplete?: (
@@ -56,6 +59,7 @@ export interface AgentSessionScreenProps {
   readonly onConfigureCapabilities?: () => void;
 }
 export function StandaloneAgentSessionScreen({
+  importClient,
   client,
   agentRequest,
   onAgentComplete,
@@ -71,6 +75,7 @@ export function StandaloneAgentSessionScreen({
   onConfigureCapabilities,
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
+  const [importOpen, setImportOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
     kind: 'initial',
   });
@@ -218,68 +223,83 @@ export function StandaloneAgentSessionScreen({
       </AgentSessionHeaderActionsProvider>
     );
   return (
-    <main className="agent-session-screen">
-      <ResizableSplitSurface
-        axis="horizontal"
-        primaryLabel="Agent Session navigation"
-        secondaryLabel="Selected Agent Session"
-        initialPrimaryPercent={25}
-        minimumPrimaryPixels={240}
-        minimumSecondaryPixels={480}
-        compactBreakpoint={860}
-        primary={
-          <SessionSelector
-            onOpenWorkflow={onOpenWorkflow}
-            model={model}
-            selectedSessionId={selectedSessionId}
-            tree={tree}
-            loading={collection.loading}
-            onSelect={onSelect}
-            onNew={onNew}
-            onMove={collection.move}
-            onPin={collection.pin}
-            onReorder={collection.reorder}
-            organizing={Boolean(navigationClient)}
-            onReload={() => {
-              void reloadCollection();
-              void session.reload();
-              view.deliveries.reload();
-            }}
-          />
-        }
-        secondary={
-          <div className="agent-session-content">
-            {session.error?.includes('Choose a default Capability Profile') &&
-              onConfigureCapabilities && (
-                <button onClick={onConfigureCapabilities}>Choose default Capability Profile</button>
+    <>
+      {importOpen && importClient && (
+        <ImportCodexSessionDialog
+          client={importClient}
+          onClose={() => setImportOpen(false)}
+          onImported={(id) => {
+            setImportOpen(false);
+            onCreated(id);
+          }}
+        />
+      )}
+      <main className="agent-session-screen">
+        <ResizableSplitSurface
+          axis="horizontal"
+          primaryLabel="Agent Session navigation"
+          secondaryLabel="Selected Agent Session"
+          initialPrimaryPercent={25}
+          minimumPrimaryPixels={240}
+          minimumSecondaryPixels={480}
+          compactBreakpoint={860}
+          primary={
+            <SessionSelector
+              onImport={importClient ? () => setImportOpen(true) : undefined}
+              onOpenWorkflow={onOpenWorkflow}
+              model={model}
+              selectedSessionId={selectedSessionId}
+              tree={tree}
+              loading={collection.loading}
+              onSelect={onSelect}
+              onNew={onNew}
+              onMove={collection.move}
+              onPin={collection.pin}
+              onReorder={collection.reorder}
+              organizing={Boolean(navigationClient)}
+              onReload={() => {
+                void reloadCollection();
+                void session.reload();
+                view.deliveries.reload();
+              }}
+            />
+          }
+          secondary={
+            <div className="agent-session-content">
+              {session.error?.includes('Choose a default Capability Profile') &&
+                onConfigureCapabilities && (
+                  <button onClick={onConfigureCapabilities}>
+                    Choose default Capability Profile
+                  </button>
+                )}
+              {collection.error && (
+                <section className="agent-session-error" role="alert">
+                  <AlertCircle size={17} />
+                  <span>{collection.error}</span>
+                  <button
+                    className="icon-button"
+                    onClick={collection.clearError}
+                    aria-label="Dismiss error"
+                  >
+                    <X size={15} />
+                  </button>
+                </section>
               )}
-            {collection.error && (
-              <section className="agent-session-error" role="alert">
-                <AlertCircle size={17} />
-                <span>{collection.error}</span>
-                <button
-                  className="icon-button"
-                  onClick={collection.clearError}
-                  aria-label="Dismiss error"
+              {selectedSessionId && harnessManagementSource ? (
+                <HarnessAwareAgentSessionPane
+                  sessionId={selectedSessionId}
+                  source={harnessManagementSource}
                 >
-                  <X size={15} />
-                </button>
-              </section>
-            )}
-            {selectedSessionId && harnessManagementSource ? (
-              <HarnessAwareAgentSessionPane
-                sessionId={selectedSessionId}
-                source={harnessManagementSource}
-              >
-                {workspace}
-              </HarnessAwareAgentSessionPane>
-            ) : (
-              workspace
-            )}
-          </div>
-        }
-      />
-    </main>
+                  {workspace}
+                </HarnessAwareAgentSessionPane>
+              ) : (
+                workspace
+              )}
+            </div>
+          }
+        />
+      </main>
+    </>
   );
 }
 function evidenceTranscriptRange(

@@ -6,6 +6,7 @@ use super::{
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
+mod import_tests;
 mod repair_tests;
 
 #[test]

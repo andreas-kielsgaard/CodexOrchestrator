@@ -1,3 +1,4 @@
+import type { AgentSessionImportClient } from '../application/agentSessions/importContracts';
 import type { SessionNavigationAgentAccess } from '../application/agentSessions/agentAccess';
 import { useSessionNavigationAgentConnection } from './useSessionNavigationAgentConnection';
 import type { SessionNavigationClient } from '../application/agentSessions/organization';
@@ -118,6 +119,7 @@ export type ApplicationSurface =
   | 'product-decision-publish';
 
 export interface AppProps {
+  readonly agentSessionImportClient?: AgentSessionImportClient;
   readonly sessionNavigationClient?: SessionNavigationClient;
   readonly sessionNavigationAgent?: SessionNavigationAgentAccess;
   readonly sessionDeepLinks?: SessionDeepLinkSource;
@@ -176,6 +178,7 @@ export interface AppProps {
 
 export function App({
   agentSessionClient,
+  agentSessionImportClient,
   sessionNavigationClient,
   sessionNavigationAgent,
   sessionDeepLinks,
@@ -1155,6 +1158,7 @@ export function App({
         />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
+          importClient={agentSessionImportClient}
           client={agentSessionClient}
           harnessManagementSource={agentSessionHarnessManagementSource}
           profileClient={agentSessionProfileClient}

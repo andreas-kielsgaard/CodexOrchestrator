@@ -12,6 +12,111 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 const executable = process.env.CODEX_APP_SERVER_CONTRACT_PROGRAM;
+
+test(
+  'installed app-server: independent history fork and continuation',
+  {
+    skip: !executable,
+    timeout: 90_000,
+  },
+  async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'orchid-import-contract-'));
+    const home = path.join(root, 'home');
+    const cwd = path.join(root, 'workspace');
+    await mkdir(home);
+    await mkdir(cwd);
+    const provider = await fixtureProvider(t);
+    await writeFile(
+      path.join(home, 'config.toml'),
+      configuration(provider.port, 'gpt-5.6-terra', 'low'),
+    );
+    const connections = [];
+    const connect = async () => {
+      const server = new AppServer(home, cwd);
+      connections.push(server);
+      await server.start();
+      return server;
+    };
+    t.after(async () => {
+      for (const server of connections) await server.close();
+      assert.equal(path.resolve(path.dirname(root)), path.resolve(tmpdir()));
+      assert.ok(path.basename(root).startsWith('orchid-import-contract-'));
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+    let server = await connect();
+    const source = (await server.call('thread/start', { cwd })).thread.id;
+    const turn = (
+      await server.call('turn/start', {
+        threadId: source,
+        input: [{ type: 'text', text: 'Remember IMPORT_CONTEXT_MARKER.' }],
+      })
+    ).turn.id;
+    await server.waitFor((m) => m.method === 'turn/completed' && m.params.turn.id === turn);
+    await server.close();
+    server = await connect();
+    const before = (await server.call('thread/read', { threadId: source, includeTurns: true }))
+      .thread;
+    assert.equal(before.turns.length, 1);
+    const fork = (await server.call('thread/fork', { threadId: source, lastTurnId: turn, cwd }))
+      .thread;
+    assert.notEqual(fork.id, source);
+    assert.deepEqual(fork.turns, before.turns);
+    if (process.env.ORCHID_IMPORT_FIXTURE_OUT) {
+      await writeFile(
+        process.env.ORCHID_IMPORT_FIXTURE_OUT,
+        JSON.stringify({ thread: before }, null, 2),
+      );
+    }
+    await server.close();
+    server = await connect();
+    await server.call('thread/resume', { threadId: fork.id, cwd });
+    const next = (
+      await server.call('turn/start', {
+        threadId: fork.id,
+        input: [{ type: 'text', text: 'Continue with the remembered context.' }],
+      })
+    ).turn.id;
+    await server.waitFor((m) => m.method === 'turn/completed' && m.params.turn.id === next);
+    assert.ok(JSON.stringify(provider.requests.at(-1).input).includes('IMPORT_CONTEXT_MARKER'));
+    assert.equal(
+      (await server.call('thread/read', { threadId: source, includeTurns: true })).thread.turns
+        .length,
+      1,
+    );
+    if (process.env.ORCHID_IMPORT_TEST_BINARY) {
+      await server.close();
+      const { stdout } = await promisify(execFile)(
+        process.env.ORCHID_IMPORT_TEST_BINARY,
+        [
+          'installed_codex_import_reopens_and_continues_through_orchid',
+          '--ignored',
+          '--nocapture',
+          '--test-threads=1',
+        ],
+        {
+          windowsHide: true,
+          timeout: 60_000,
+          env: {
+            ...process.env,
+            ORCHID_IMPORT_CONTRACT_HOME: home,
+            ORCHID_IMPORT_CONTRACT_ROOT: root,
+            ORCHID_IMPORT_CONTRACT_THREAD: source,
+          },
+        },
+      );
+      assert.match(stdout, /1 passed/);
+      const imported = JSON.parse(
+        await readFile(path.join(root, 'orchid-import-result.json'), 'utf8'),
+      );
+      assert.notEqual(imported.forkId, source);
+      assert.ok(JSON.stringify(provider.requests.at(-1).input).includes('IMPORT_CONTEXT_MARKER'));
+      t.diagnostic(
+        'Orchid imported through its real adapter, reopened SQLite, and continued through its normal native-bound runtime.',
+      );
+    }
+    t.diagnostic('Fork persisted, inherited model context, and left source history unchanged.');
+  },
+);
 const timeout = (promise, milliseconds, description) => {
   let timer;
   return Promise.race([

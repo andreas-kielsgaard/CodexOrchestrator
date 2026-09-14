@@ -536,28 +536,14 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
 
     fn append_event(&self, event: AgentRuntimeEvent) -> Result<AgentRuntimeEvent, RepositoryError> {
         self.write("append Agent Session runtime event", |transaction| {
-        if get_invocation_from(transaction, &event.invocation_id)?.is_none() {
-            return Err(not_found("invocation not found"));
-        }
-        let previous = last_event(transaction, &event.invocation_id)?;
-        validate_next_event(&event.invocation_id, previous.as_ref(), &event)
-            .map_err(contract_error)?;
-        let sequence = i64::try_from(event.sequence).map_err(|_| {
-            RepositoryError::new(
-                RepositoryErrorKind::InvalidState,
-                "event sequence exceeds SQLite integer range",
-            )
-        })?;
-        transaction
-            .execute(
-                "INSERT INTO agent_session_runtime_events (id, invocation_id, sequence, source, raw_payload_json, normalized_json, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    event.id.as_str(), event.invocation_id.as_str(), sequence, event_source_text(event.source),
-                    event.raw_payload.to_string(), event.normalized.as_ref().map(to_json).transpose()?, timestamp(event.recorded_at)
-                ],
-            )
-            .map_err(sql_write("append runtime event"))?;
-        Ok(event)
+            if get_invocation_from(transaction, &event.invocation_id)?.is_none() {
+                return Err(not_found("invocation not found"));
+            }
+            let previous = last_event(transaction, &event.invocation_id)?;
+            validate_next_event(&event.invocation_id, previous.as_ref(), &event)
+                .map_err(contract_error)?;
+            insert_event(transaction, &event)?;
+            Ok(event)
         })
     }
 
@@ -586,6 +572,9 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
     ensure_agent_session_ownership_schema(connection)?;
+    connection
+        .execute_batch(IMPORT_SCHEMA)
+        .map_err(|e| e.to_string())?;
     initialize_session_address_storage(connection)?;
     connection
         .execute_batch(SESSION_ORGANIZATION_SCHEMA)
@@ -611,3 +600,6 @@ pub(crate) fn initialize_session_address_storage(connection: &Connection) -> Res
         .execute_batch(addressing::SCHEMA)
         .map_err(|error| format!("Unable to initialize Session addresses: {error}"))
 }
+
+mod import;
+pub(crate) use import::SCHEMA as IMPORT_SCHEMA;
