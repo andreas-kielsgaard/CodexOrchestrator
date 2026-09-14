@@ -100,21 +100,33 @@ impl Error for SessionConfigurationError {}
 impl AgentSessionApplication {
     pub(crate) fn create_default_session(
         &self,
-        mut command: CreateAgentSessionCommand,
-        mut ownership: AgentSessionOwnership,
+        command: CreateAgentSessionCommand,
+        ownership: AgentSessionOwnership,
     ) -> Result<crate::agent_sessions::domain::AgentSession, SessionConfigurationError> {
         if command.requested_options != AgentRuntimeOptions::default() {
             return Err(SessionConfigurationError::new(SessionConfigurationErrorKind::InvalidInvocationSelection, "Session creation uses the default Capability Profile. Submit runtime choices with the first message."));
         }
-        let working_directory = command.working_directory.clone();
-        let (_, resolution) = self.resolve_default_creation(working_directory.as_deref())?;
+        let session = self.prepare_default_session(self.ids.session_id(), command, ownership)?;
+        self.repository.create_session(session).map_err(|e| {
+            SessionConfigurationError::agent_session(AgentSessionApplicationError::repository(e))
+        })
+    }
+
+    pub(crate) fn prepare_default_session(
+        &self,
+        id: AgentSessionId,
+        mut command: CreateAgentSessionCommand,
+        mut ownership: AgentSessionOwnership,
+    ) -> Result<crate::agent_sessions::domain::AgentSession, SessionConfigurationError> {
+        let (_, resolution) =
+            self.resolve_default_creation(command.working_directory.as_deref())?;
         command.requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         ownership.session_profile = Some(resolution);
-        self.create_session_with_ownership(command, ownership)
+        self.prepare_session_with_id(command, id, ownership)
             .map_err(SessionConfigurationError::agent_session)
     }
 
-    pub(super) fn resolve_default_creation(
+    pub(crate) fn resolve_default_creation(
         &self,
         working_directory: Option<&str>,
     ) -> Result<

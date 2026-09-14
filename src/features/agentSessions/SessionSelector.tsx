@@ -5,8 +5,13 @@ import './sessionNavigation.css';
 export function SessionSelector({
   loading,
   onReload,
+  onImport,
   ...tree
-}: ComponentProps<typeof SessionNavigation> & { loading: boolean; onReload(): void }) {
+}: ComponentProps<typeof SessionNavigation> & {
+  loading: boolean;
+  onReload(): void;
+  onImport?(): void;
+}) {
   return (
     <nav className="agent-session-selector" aria-label="Session list">
       <header>
@@ -21,6 +26,11 @@ export function SessionSelector({
           <SquarePen size={17} />
         </button>
       </header>
+      {onImport && (
+        <button className="session-refresh-button" onClick={onImport}>
+          Import from Codex
+        </button>
+      )}
       <div className="session-tree" aria-busy={loading}>
         <SessionNavigation {...tree} />
       </div>

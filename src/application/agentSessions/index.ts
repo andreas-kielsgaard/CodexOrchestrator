@@ -8,3 +8,9 @@
 export * from './contracts';
 
 export * from './selections';
+
+export type {
+  AgentSessionImportClient,
+  CodexImportPreview,
+  CodexImportCommand,
+} from './importContracts';

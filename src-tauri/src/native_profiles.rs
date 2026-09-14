@@ -2,7 +2,7 @@
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
 mod readiness;
-mod session_binding;
+pub(crate) mod session_binding;
 mod discovery;
 
 use crate::persistence::ActiveDatabase;

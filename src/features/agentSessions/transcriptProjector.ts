@@ -1,3 +1,4 @@
+import { importedTranscript, type ImportedTranscript } from './importedTranscript';
 import type { SessionInteractionDto } from '../../application/agentSessions';
 import type {
   AgentDiagnosticDto,
@@ -75,6 +76,7 @@ export interface TranscriptAnchorRange {
 }
 
 export interface ProjectedInvocation {
+  imported?: ImportedTranscript;
   interactions?: readonly SessionInteractionDto[];
   id: string;
   submittedText: string;
@@ -103,16 +105,19 @@ const activeStatuses = new Set<AgentInvocationStatusDto>(['pending', 'running'])
 export function projectAgentSessionTranscript(
   details: AgentSessionDetailsDto,
 ): ProjectedTranscript {
-  const invocations = [...details.invocations]
+  const invocations = details.invocations
+    .map((entry) => ({ ...entry, imported: importedTranscript(entry.events) }))
     .sort((left, right) =>
-      compareOrdered(
-        left.invocation.createdAt,
-        left.invocation.id,
-        right.invocation.createdAt,
-        right.invocation.id,
-      ),
+      left.imported && right.imported
+        ? left.imported.ordinal - right.imported.ordinal
+        : compareOrdered(
+            left.invocation.createdAt,
+            left.invocation.id,
+            right.invocation.createdAt,
+            right.invocation.id,
+          ),
     )
-    .map(({ invocation, events }): ProjectedInvocation => {
+    .map(({ invocation, events, imported }): ProjectedInvocation => {
       const orderedEvents = [...events].sort(
         (left, right) =>
           left.sequence - right.sequence ||
@@ -139,6 +144,7 @@ export function projectAgentSessionTranscript(
       }
 
       return {
+        imported,
         id: invocation.id,
         interactions: details.interactions?.filter((item) => item.invocationId === invocation.id),
         submittedText: invocation.submittedText,

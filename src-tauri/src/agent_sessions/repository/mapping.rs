@@ -511,3 +511,25 @@ pub(super) fn sql_write(context: &'static str) -> impl FnOnce(rusqlite::Error) -
         RepositoryError::new(kind, format!("Unable to {context}: {error}"))
     }
 }
+
+pub(super) fn insert_event(
+    transaction: &Transaction<'_>,
+    event: &AgentRuntimeEvent,
+) -> Result<(), RepositoryError> {
+    let sequence = i64::try_from(event.sequence).map_err(|_| {
+        RepositoryError::new(
+            RepositoryErrorKind::InvalidState,
+            "event sequence exceeds SQLite integer range",
+        )
+    })?;
+    transaction
+            .execute(
+                "INSERT INTO agent_session_runtime_events (id, invocation_id, sequence, source, raw_payload_json, normalized_json, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    event.id.as_str(), event.invocation_id.as_str(), sequence, event_source_text(event.source),
+                    event.raw_payload.to_string(), event.normalized.as_ref().map(to_json).transpose()?, timestamp(event.recorded_at)
+                ],
+            )
+            .map_err(sql_write("append runtime event"))?;
+    Ok(())
+}

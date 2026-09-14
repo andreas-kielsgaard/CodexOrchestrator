@@ -74,6 +74,21 @@ pub(crate) struct AgentInvocationObservation {
 pub(crate) fn project_invocation_observation(
     history: &AgentInvocationHistory,
 ) -> AgentInvocationObservation {
+    if history
+        .events
+        .iter()
+        .any(|e| e.raw_payload["kind"] == "codex_history_import")
+    {
+        return AgentInvocationObservation {
+            launch_accepted_at: None,
+            external_context: None,
+            provider_activity: None,
+            provider_terminal: None,
+            process_terminal: None,
+            mcp_tool_activities: vec![],
+            mcp_tool_activity_partial: false,
+        };
+    }
     let mut external_context = None;
     let mut provider_activity = None;
     let mut observed_provider_terminal = None;

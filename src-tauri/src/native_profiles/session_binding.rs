@@ -1,5 +1,35 @@
 //! Native home continuity and launch-only environment binding for Sessions.
 use super::*;
+
+impl crate::agent_sessions::ports::ImportHomeSource for NativeProfileService {
+    fn selected_import_home(&self) -> Result<crate::agent_sessions::imports::ImportHome, String> {
+        let home = self.resolve_session_home()?;
+        Ok(crate::agent_sessions::imports::ImportHome {
+            profile_id: home.profile_id,
+            filesystem_identity: home.filesystem_identity,
+            path: home.home.to_string_lossy().into_owned(),
+        })
+    }
+}
+
+pub(crate) fn insert_import_binding(
+    tx: &rusqlite::Transaction<'_>,
+    session_id: &str,
+    home: &crate::agent_sessions::imports::ImportHome,
+    at: &str,
+) -> Result<(), String> {
+    // Check selection and continuity inside the materialization transaction.
+    let valid: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM native_codex_profiles WHERE id=?1 AND filesystem_identity=?2 AND selected_at IS NOT NULL AND lifecycle='active')",
+        params![home.profile_id, home.filesystem_identity], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    if !valid {
+        return Err("Selected native profile continuity changed during import".into());
+    }
+    tx.execute("INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES (?1,?2,?3,?4)",
+        params![session_id, home.profile_id, home.filesystem_identity, at]).map_err(|e| e.to_string())?;
+    Ok(())
+}
 impl NativeProfileService {
     pub(crate) fn resolve_session_home(&self) -> Result<ResolvedNativeCodexHome, String> {
         let profile = self.read("resolve Session native home", |connection| {
