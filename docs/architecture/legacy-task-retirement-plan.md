@@ -160,3 +160,8 @@ Validation:
 No provider invocation was needed for the desktop smoke check. Local logs, test manifests,
 screenshots, and disposable data are retained under `.dev/legacy-task-retirement/` and are not part
 of the source commit.
+
+Follow-up: [real agent verification](legacy-task-retirement-verification.md) records authenticated
+conversation, file-tool, cancellation, and continuation checks, plus the requested code analysis
+of the remaining impact. Cancellation succeeded with a roughly 20-second delay requiring separate
+investigation.
