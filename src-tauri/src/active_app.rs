@@ -292,16 +292,6 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            crate::app_metadata,
-            crate::load_open_task_dashboard,
-            crate::register_task_worktree,
-            crate::register_task_repo,
-            crate::discover_task_repos,
-            crate::create_open_task,
-            crate::update_open_task,
-            crate::archive_open_task,
-            crate::load_task_run_detail,
-            crate::start_codex_task_run,
             crate::agent_sessions::transport::create_agent_session,
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,

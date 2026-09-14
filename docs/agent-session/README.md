@@ -22,7 +22,7 @@ overlay. It does not adopt the old task dashboard or orchestration models as pre
 The current Agent Session-to-runtime contract and Sprint 3 capability-discovery extension protocol
 are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
 
-## Implemented Baseline
+## Recovery baseline and subsequent changes
 
 1. The structural baseline was recovered selectively without merging either archive wholesale.
 2. Stable Agent Session, runtime binding, invocation, event, repository, and runtime contracts are
@@ -34,10 +34,10 @@ are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
 7. The independent UI shows live work, collapses completed processing, and keeps the final response
    prominent with safe Markdown rendering.
 8. Default boundary tests prove continuation, persistence, cancellation, restart recovery, and
-   migration compatibility. Installed CLI help compatibility is a feature-gated, ignored manual
+   current-schema upgrades. Installed CLI help compatibility is a feature-gated, ignored manual
    probe rather than current default-test proof.
-9. The production app mounts only Agent Sessions. Legacy task handlers fail closed before database
-   or process work, while their migration compatibility and isolated component tests remain.
+9. The original task dashboard, its command handlers, and its isolated tests were retired on
+   2026-09-14. Current startup uses the active-v3 database and leaves the older database files untouched.
 10. Startup does not probe Codex. The retained SQLite connection uses an explicit foreign-key,
     five-second busy-timeout, WAL, and full-synchronous policy.
 
@@ -134,8 +134,9 @@ current full matrix. Recorded-harness manual responsive checks previously passed
   validation, and stop conditions.
 - [Execution ledger](./execution-ledger.md): work-thread ownership, dependency gates, integration
   state, commit references, and validation outcomes.
-- [Prototype database procedure](./prototype-database.md): read-only audit, non-destructive reset,
-  and retained-data upgrade rules for archived migration records.
+- [Historical prototype database procedure](./prototype-database.md): archived reset and migration
+  guidance for the retired task implementation. Current active-v3 upgrades live in
+  `src-tauri/src/storage.rs`.
 
 ## Scope Boundaries
 

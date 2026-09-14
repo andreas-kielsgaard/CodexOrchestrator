@@ -3,8 +3,8 @@
 Codex Orchestrator is a local-first desktop surface for doing work with agents. Its current core is
 a durable Agent Session: a text interaction context that can stream Codex CLI work, preserve the
 technical record, reopen after an app restart, and continue the same external Codex thread. The
-older task/dashboard implementation remains in the repository for migration compatibility and
-isolated tests, but it is quarantined from the mounted UI and its Tauri commands fail closed.
+retired task/dashboard implementation has been removed; current product capabilities use focused
+Agent Session, Workflow, orchestration, and repository services.
 
 ## Prerequisites
 
@@ -52,8 +52,7 @@ a loading screen until the Tauri command backend responds.
 src/
   app/                 React application shell
   application/         Browser-safe client contracts
-  domain/              Domain types, seed records, and dashboard projection
-  features/            Mounted Agent Session screen and quarantined legacy task components
+  features/            Product screens and their controllers
   infrastructure/      Tauri command adapters
   test/                Test setup
 src-tauri/

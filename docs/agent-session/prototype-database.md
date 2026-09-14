@@ -1,6 +1,11 @@
 # Prototype Database Reset and Upgrade Procedure
 
-Status: AS-00 development procedure
+Status: historical AS-00 development procedure; superseded.
+
+The legacy migration implementation described below was retired on 2026-09-14. Current startup
+opens `codex-orchestrator-active-v3.sqlite` and leaves the older database files untouched. Use
+[`src-tauri/src/storage.rs`](../../src-tauri/src/storage.rs) for current upgrade behavior; the
+procedure below records the earlier prototype and does not apply to current startup.
 
 The Agent Session reset does not imply that a developer's local SQLite database was reset. A
 database created by the archived prototype may contain these durable migration-ledger entries:
