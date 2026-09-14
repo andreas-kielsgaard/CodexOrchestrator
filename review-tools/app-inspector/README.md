@@ -1,166 +1,64 @@
-# Provisional application review companion
+# Application inspector
 
-This development/review-only CLI observes an explicitly identified Codex Orchestrator instance. It
-does not add a Tauri command, production route, driver permission, or orchestration action.
+A development CLI for observing an explicitly identified Codex Orchestrator instance and performing bounded review interactions. It does not add product commands or orchestration authority. Run commands from the repository root; example paths and PID below must identify the intended local instance.
 
-## Explicit desktop interaction companion
+Start the optional status endpoint explicitly with `npm run dev:status` when an inspection needs it; the normal desktop launcher no longer starts it. Marker commands remain `npm run mark:stale` and `npm run clear:stale`.
 
-`interact-app.mjs` is a separate development-only click transport for a named Windows instance.
-It requires both the exact executable path and PID, validates its client coordinates directly in
-the PowerShell boundary, and requires the target HWND to belong to that process or a live
-descendant. It never foregrounds the window and has no clipboard authority. A receipt proves only
-that the target acknowledged the explicit mouse-down and mouse-up messages, so retain a separate
-native-window or SQLite observation for every product, provider, or orchestration claim.
+## Observe and compare
 
 ```powershell
-node review-tools/app-inspector/interact-app.mjs click --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --x 470 --y 760 --out "C:\path\to\interaction-receipt.json"
+node review-tools/app-inspector/review-app.mjs inspect --workspace "C:\work\Codex Orchestrator" --exe "C:\work\Codex Orchestrator\src-tauri\target\debug\codex-orchestrator.exe" --pid 1234 --instance local-review --out "C:\review\before.json"
+node review-tools/app-inspector/review-app.mjs compare --before "C:\review\before.json" --after "C:\review\after.json" --format human
+node review-tools/app-inspector/review-app.mjs --help
 ```
 
-Coordinates must be from `0` through `32767` and fall in the selected main window's client area.
-This tool is for explicitly authorized development/review interaction only; it does not become an
-application transport or infer that any requested workflow stage occurred.
+Use `--app-data-dir` or `--database` to select explicit storage, `--evidence-root` for screenshots, and `--status-url` for the optional development endpoint. `--no-screenshot` skips native capture. Keep executable, PID, application data and evidence paths associated with the same instance.
 
-For an isolated development instance deliberately launched with a loopback WebView2 debugging
-port, `webview-control.mjs` can instead type into or click one bounded CSS selector without
-foregrounding the window. It requires the exact owner executable and PID; exactly one listener
-endpoint must be on a loopback address, belong to a descendant process, and declare the requested
-port. The returned WebSocket URL must also be `ws`, loopback, and use the same port. These are
-point-in-time checks before dispatch, not race-free identity proof. The tool resolves one supported
-DOM control, derives a point with a fixed internal geometry query, and sends Chrome DevTools
-Protocol `Input` events. It accepts neither coordinates nor caller-supplied script, and exposes no
-generic browser control. The receipt redacts text and distinguishes pre-dispatch ownership, sent
-input commands, and unobserved product semantics. The debugger port is a development-only launch
-choice, never a production application transport.
+Inspection observes processes/windows, executable/file hashes, source facts and optional status responses. SQLite is opened read-only with `query_only=ON`; its summaries exclude submitted message text, raw runtime payloads and credentials. Rows are labeled recorded evidence. Source-to-binary association inferred from path containment is weaker than a producing-commit record.
 
-`select` supports a single-selection HTML control using `--selector` and `--value` (an observed
-option value). It focuses that control inside the WebView and sends Home/ArrowDown keys through
-enabled options without opening an OS dropdown. Retain a subsequent snapshot to verify selection;
-keyboard traversal may emit intermediate change events.
+The v1 status endpoint at port 41415 has no process/instance identity. A successful response does not prove it belongs to the selected application. Its consumer is `review-app.mjs` through `src/status-adapter.mjs`, independently of the removed product widget.
 
-## First snapshot
+## Wait for a change
 
-### Rendered WebView state
+`review-app.mjs wait` accepts the same instance inputs and observes a stable `visual`, `durable` or `either` change. It captures a baseline unless `--before` supplies one. `--poll-ms`, `--stable-observations` and `--timeout-ms` bound the observation; `--before-out`, `--after-out`, `--comparison-out`, `--human-out` and `--out` retain results. Use the CLI help for the complete argument list.
 
-For an isolated instance launched with a loopback debugging port, use the same owner-bound CLI
-to read the actual rendered page without moving desktop focus:
+Exit status is 0 for the selected stable change, 2 for timeout, 130 for cancellation, or 1 for invalid input/setup failure. Visual change can be animation or caret activity; durable change is limited to summarized tables. Neither proves the intended semantic action happened. Compare the actual observations needed for that claim.
+
+`launch-wait` starts a detached evidence watcher and returns its PID and paths. It requires `--watcher-log` and `--launch-out`; `--cancel-file` selects an explicit cancellation signal. Creating that file requests graceful completion of the evidence record. Forced process termination can prevent finalization. It does not interact with the application.
+
+`--callback-spec` is rejected before launch. This tool has no supported desktop-task wake transport. The historical experiment with `codex exec resume` started a separate CLI turn instead of resuming the visible task; that failed approach is not part of the current operating procedure.
+
+## Rendered WebView state and interaction
+
+For an isolated development instance deliberately launched with a loopback WebView2 debugging port, use `webview-control.mjs`:
 
 ```powershell
-node review-tools/app-inspector/webview-control.mjs snapshot --exe "C:\path\to\codex-orchestrator.exe" --pid 19760 --debug-url http://127.0.0.1:9231 --target-url http://127.0.0.1:1490/ --out "C:\review\state.json" --screenshot "C:\review\screen.png"
+node review-tools/app-inspector/webview-control.mjs snapshot --exe "C:\review\codex-orchestrator.exe" --pid 1234 --debug-url http://127.0.0.1:9231 --target-url http://127.0.0.1:1420/ --out "C:\review\state.json" --screenshot "C:\review\screen.png"
+node review-tools/app-inspector/webview-control.mjs --help
 ```
 
-It returns rendered text, headings, control labels/values/states, unique CSS selectors, layout
-bounds, focus, scroll regions and the accessibility tree. Optional PNG capture reads the WebView
-compositor, so other desktop windows do not obscure it; native title bars and native dialogs are
-outside that image. Snapshot neither scrolls nor sends input. Password values are redacted;
-other visible app content is included. DOM, accessibility and image reads are sequential, not
-atomic, and do not establish durable or provider outcomes. Truncation is reported explicitly.
+The launch setting is `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>`. The tool checks the exact owner executable/PID, loopback listener ownership and one matching page URL before each operation. It does not attach a debug endpoint to an existing production process.
 
-Keep each review instance's PID, executable, debug port and app-data directory together. A
-debugging endpoint must be enabled at launch using
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9231`; snapshot cannot attach to
-an existing process that lacks it. Use an isolated copy when restarting could lose user state.
+Snapshot reads rendered text, controls, selectors, geometry, focus, scroll regions and accessibility state without input or scrolling. PNG capture reads the WebView compositor, excluding native chrome/dialogs. Password values are redacted; other visible content is included. Reads occur sequentially and can be truncated; they do not establish durable or provider outcomes.
 
-The existing native `review-app.mjs inspect` remains available without a WebView debug endpoint:
+The same owner options support `click --selector`, `type --selector --text-file`, and `select --selector --value`, each with an output receipt. They resolve one bounded control and send CDP Input events; arbitrary scripts and coordinates are not accepted. Selection traverses enabled options using Home/ArrowDown and may emit intermediate changes. A subsequent snapshot verifies the resulting selection. Receipts redact entered text and distinguish ownership checks, dispatched input and unobserved semantics.
 
-Run from any PowerShell directory:
+`interact-app.mjs click --exe <absolute-exe> --pid <pid> --x <x> --y <y> --out <receipt>` is the separate native Windows mouse-message transport. Coordinates must be 0–32767 and inside the named process window's client area; the HWND must belong to that process or a live descendant. It does not foreground the window or use the clipboard. Acknowledged mouse messages still require a separate product-state observation.
+
+These process/endpoint checks are point-in-time observations, not race-free identity proof. Debug endpoints and raw evidence paths belong to development tooling rather than the product's application contract.
+
+## Checks
+
+The inspector uses Node's test runner, not Vitest. It has no additional package dependency for ordinary checks. Run the eight non-browser test files explicitly:
 
 ```powershell
-node --no-warnings "C:\Users\user\Documents\Code Projects\Codex Orchestrator\review-tools\app-inspector\review-app.mjs" inspect --workspace "C:\Users\user\Documents\Code Projects\Codex Orchestrator" --exe "C:\Users\user\Documents\Code Projects\Codex Orchestrator\src-tauri\target\release\codex-orchestrator.exe" --instance "sprint-6-review" --status-url "http://127.0.0.1:41415" --out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-before.json" --format human
+node --test review-tools/app-inspector/test/interaction-adapter-framing.test.mjs review-tools/app-inspector/test/launch-paths.test.mjs review-tools/app-inspector/test/rendered-state.test.mjs review-tools/app-inspector/test/snapshot-compare.test.mjs review-tools/app-inspector/test/wait-for-change.test.mjs review-tools/app-inspector/test/webview-control.test.mjs review-tools/app-inspector/test/windows-adapter-framing.test.mjs review-tools/app-inspector/test/windows-webview-owner-boundary.test.mjs
 ```
 
-The command matches the process by exact executable path, captures its window without clicking it,
-hashes the executable, reads Git/product identity, probes the development status endpoint, and
-opens active-v3 SQLite with both `readOnly=true` and `PRAGMA query_only=ON`. It excludes submitted
-message text, raw runtime payloads, and credentials from the state summary.
+The separate `node --test review-tools/app-inspector/test/webview-control-live.test.mjs` launches an installed Chromium browser. Windows adapter checks exercise their own local boundaries. Neither command is a live Codex or full product acceptance test. The future tooling task may add named npm wrappers; at `60c3798` they are not present.
 
-## Wait for a human action
+## Source and evidence
 
-Use one active command when Review Coach asks the human to perform an action. This example watches
-both the real window-render hash and the read-only durable-state fingerprint for PID 19760:
+The directory owns the CLI, Windows/HTTP/WebView adapters, comparison and wait logic. Evidence files under an explicitly chosen ignored `.dev/` directory are review outputs; the inspector does not delete them automatically. Reusing the tool in another worktree requires that worktree's actual instance and storage inputs.
 
-```powershell
-node --no-warnings "C:\Users\user\Documents\Code Projects\Codex Orchestrator\review-tools\app-inspector\review-app.mjs" wait --workspace "C:\Users\user\Documents\Code Projects\Codex Orchestrator" --exe "C:\Users\user\Documents\Code Projects\Codex Orchestrator\src-tauri\target\release\codex-orchestrator.exe" --pid 19760 --instance "sprint-6-review" --app-data-dir "C:\Users\user\AppData\Roaming\dev.codex-orchestrator.app" --status-url "http://127.0.0.1:41415" --evidence-root "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review" --condition either --poll-ms 500 --stable-observations 3 --timeout-ms 300000 --before-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-before.json" --after-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-after.json" --comparison-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-comparison.json" --human-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-summary.txt" --out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-result.json" --format human
-```
-
-The wait captures its baseline unless `--before <snapshot.json>` supplies one. It exits `0` only
-after the selected changed fingerprint repeats stably, `2` on timeout, `130` on Ctrl+C/SIGTERM,
-and `1` on invalid input or setup failure. It always retains a complete final snapshot, JSON
-comparison, and readable summary after a bounded wait outcome.
-
-`visual` observes the whole native window render, `durable` observes the summarized SQLite state,
-and `either` accepts either (preferring a durable trigger when both change). Stable repeats reduce
-transient-frame and render-jitter false positives; they cannot prove which control changed or that
-a requested semantic action completed. A steady caret or animation can still satisfy a visual wait,
-and state outside the inspector's summarized tables cannot satisfy a durable wait.
-
-## Detached wait
-
-Launch the watcher and end the Review Coach turn:
-
-```powershell
-node --no-warnings "C:\Users\user\Documents\Code Projects\Codex Orchestrator\review-tools\app-inspector\review-app.mjs" launch-wait --workspace "C:\Users\user\Documents\Code Projects\Codex Orchestrator" --exe "C:\Users\user\Documents\Code Projects\Codex Orchestrator\src-tauri\target\release\codex-orchestrator.exe" --pid 19760 --instance "sprint-6-review" --app-data-dir "C:\Users\user\AppData\Roaming\dev.codex-orchestrator.app" --status-url "http://127.0.0.1:41415" --evidence-root "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review" --condition either --poll-ms 500 --stable-observations 3 --timeout-ms 300000 --cancel-file "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\watcher.cancel" --before-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-before.json" --after-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-after.json" --comparison-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-comparison.json" --human-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-summary.txt" --out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\wait-result.json" --watcher-log "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\watcher.log" --launch-out "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\watcher-launch.json" --format human
-```
-
-The launch response includes the detached watcher PID and every evidence/log path. Request graceful
-cancellation with this exact command; cancellation finalizes evidence and never runs the callback:
-
-```powershell
-New-Item -ItemType File -Path "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-review\watcher.cancel" -Force
-```
-
-After the PID exits, remove only `watcher.cancel`, or remove the explicit evidence directory if none
-of its review evidence is needed. `Stop-Process -Id <watcherPid>` is emergency-only because forced
-Windows termination can prevent final evidence from being written.
-
-On stable completion, the watcher atomically writes and syncs before/after snapshots, comparison,
-human summary, and wait result. Timeout remains `2` and cancellation `130`.
-
-Desktop wake is intentionally disabled. Live use proved that `codex exec resume <task-id> <prompt>`
-starts a separate hidden CLI turn; it does not queue or surface a turn in the existing desktop task,
-and that hidden agent can recursively arm another watcher. `--callback-spec` is therefore rejected
-before inspection or child launch. The installed Windows desktop app exposes its task app-server as
-a private stdio child, not as a supported external endpoint. Until the desktop host provides a
-documented authenticated send-to-existing-task transport, the watcher can finalize evidence but
-cannot resume Review Coach. Return to the desktop task manually after the action.
-
-After a human action, retain another snapshot by changing only the output name, then compare:
-
-```powershell
-node --no-warnings "C:\Users\user\Documents\Code Projects\Codex Orchestrator\review-tools\app-inspector\review-app.mjs" compare --before "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-before.json" --after "C:\Users\user\Documents\Code Projects\Codex Orchestrator\.dev\review-app-inspector\sprint-6-after.json" --format human
-```
-
-JSON is the default output. Run `node ...\review-app.mjs --help` for all explicit instance and
-storage inputs.
-
-## Truth boundary
-
-- Process, window title, render, file hashes, Git state, endpoint responses, and read-only SQLite
-  rows are observed. SQLite rows are additionally labelled `recorded` evidence.
-- A source-to-executable relationship is inferred only from path containment; the binary does not
-  embed its producing commit.
-- WebView ownership checks are point-in-time pre-dispatch observations. External launch provenance
-  records the clean source checkpoint and executable hash; neither is race-free process identity
-  proof or an MCP discovery inventory.
-- Without a WebView debugging endpoint, native inspection exposes the window render but not its
-  semantic DOM. Deliberately launched review instances support the rendered snapshot above.
-- Port 41415 is a separate development status server. Its v1 response has no process or instance
-  identity, so even a successful response does not prove ownership by the selected application.
-
-## Porting and cleanup
-
-The tool has no package dependency and lives entirely in this directory. Copy this directory to
-another worktree and pass that worktree's absolute `--workspace`, `--exe`, `--app-data-dir`, and
-`--status-url`. Keep instance evidence below an ignored `.dev/review-app-inspector/` root. Cleanup is
-limited to deleting that evidence root after the review; the tool never deletes it automatically.
-
-This provisional adapter anticipates the accepted Worktree Runtime and Agent Review boundaries:
-an application should eventually resolve an opaque instance handle, while development-only
-adapters retain process, endpoint, window, driver, and evidence-path details. This CLI accepts raw
-paths because it sits outside application composition; it must not become the product contract.
-
-## Limits and next seam
-
-Rendered DOM/accessibility snapshots and semantic controls require a deliberately launched review
-instance with a debugging endpoint. This does not attach to an already-running production process
-without one. Console/network evidence and an application-composed instance handle remain outside
-this companion's interface.
+Historical operating guidance is retrievable at `e2bfc6c:review-tools/app-inspector/README.md`. The original inspector-design request was not recovered during consolidation; current behavior above was checked against the CLI help and source. Past task-specific paths and Review Coach procedures do not define current product behavior. See [development](../../docs/development.md) and [validation evidence](../../docs/validation-evidence.md) for the wider proof boundaries.

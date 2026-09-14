@@ -1,150 +1,66 @@
-# Architecture Notes
+# Architecture
 
-Updated: 2026-09-14
+Codex Orchestrator is a local React/Tauri application. A durable Agent Session is the central interaction context; application-owned Workflows and the retained Epic/Sprint feature coordinate work around Sessions. Current composition is broader than the July recovery application that mounted only Agent Sessions.
 
-This document describes the current code architecture. It should explain where new work belongs and
-which boundaries should stay intact.
+This guide describes `60c3798`. Feature guides own their detailed contracts and decisions; [validation evidence](validation-evidence.md) records what was actually exercised at earlier checkpoints.
 
-## Execution Configuration and Session Event target
+## Composition and dependency direction
 
-The active overhaul of mixed Harness and generic Workflow Role concepts is documented in
-[`docs/session-event-model/`](session-event-model/README.md). That guide describes the working target,
-recommended implementation shape, UI mapping and migration sequence. The rest of this document
-continues to describe the wider application architecture and contains earlier current-state and
-legacy context that has not all been rewritten around the new model.
-
-The concise target dependency direction is:
-
-```text
-Runtime integration -> Execution Configuration
-Workflow authoring -> Session Event definitions
-Session Event runtime -> Agent Session ports
-Agent Sessions -> runtime execution
-Identity -> independent presentation and assignment
+```mermaid
+flowchart TD
+    UI[React feature views] --> Contracts[Application contracts and read models]
+    Contracts --> Transport[Tauri client adapters]
+    Transport --> Apps[Rust application services]
+    Apps --> Persistence[Capability repositories and ActiveDatabase]
+    Apps --> Runtime[Codex app-server and process supervision]
+    Apps --> Git[Repository and worktree operations]
 ```
 
-Use the target guide for Capability Profile, Node Profile, Session Profile, Session Event and
-Workflow-node work. Treat older Harness/Role material as historical unless a currently active
-feature explicitly still depends on it.
+`src/app/ApplicationRoot.tsx` constructs the product immediately. In Vite development mode, explicit query routes can substitute recorded compositions. Product startup uses `src/bootstrap/productApplicationComposition.ts`; it injects the native Session, Workflow, configuration, identity, repository, Worktree Review, File Review, Product Decision and orchestration clients. `src-tauri/src/active_app.rs` supplies native services, registers commands, and wires notifications and shutdown.
 
-## Runtime Shape
+Views consume application contracts rather than raw repositories or IPC. Transport adapters map DTOs explicitly. Rust application services coordinate operations and effects; repositories own persistence mappings; runtime adapters and physical Git/build helpers own external effects. Read models make stored/observed facts usable for presentation without acquiring mutation authority.
 
-- Desktop shell: Tauri v2.
-- UI: React, TypeScript, Vite.
-- Product composition mounts Orchestration, Workflow, Agent Sessions, Harness Management,
-  Worktree Review, contextual File Review, Product Decisions, and Native Profile settings through
-  explicit application clients.
-- The core Agent Session lifecycle is Rust-first: durable records, SQLite history, application
-  coordination, Codex protocol handling, and process supervision live behind Tauri commands.
-- Current product capabilities share one managed ActiveDatabase where cross-feature configuration
-  or runtime facts require it. Worktree Review keeps its build, source, receipt, and cleanup facts
-  in a separate AppData database.
+There are real unsupported operations in product composition: generic artifact access and Epic/Sprint automatic-continuation policy controllers. Workflow continuation has its own active route. File Review has a scoped loader, native client and commands, but `active_app.rs` installs `ContextualFileReviewTauriState::unavailable`; `request_contextual_file_review` returns `not_ready` without that producer service. A fresh Sprint-context review is therefore unavailable at product boot. The [File Review guide](file-review.md) distinguishes the implemented viewer/loader from that missing connection.
 
-## Active product composition
+## Capability boundaries
 
-`src-tauri/src/active_app.rs` is the composition root. It opens the managed ActiveDatabase once,
-constructs the current product applications, registers their Tauri states and commands, and owns
-shutdown ordering. `src/bootstrap/productApplicationComposition.ts` is the matching browser-side
-composition root; `src/app/App.tsx` only selects and renders already-constructed feature clients.
+| Responsibility                                                 | Principal source owner                                                                          | Contract explained in                                 |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Durable Session context, invocations and history               | `src-tauri/src/agent_sessions/`; `src/application/agentSessions/`                               | [Agent Sessions](agent-session/README.md)             |
+| Provider interaction and supervised processes                  | `src-tauri/src/runtime/`; `src-tauri/src/active_app/sessions.rs`                                | [Agent Sessions](agent-session/README.md)             |
+| Native homes, profile resolution and identities                | `src-tauri/src/native_profiles/`, `execution_configuration/`, `identities/`                     | [Execution configuration](execution-configuration.md) |
+| Workflow authoring, compilation, instances and routing         | `src-tauri/src/workflows/`; `src/features/workflows/`                                           | [Workflows](workflows.md)                             |
+| Generic Session Event addressing, materialization and delivery | `src-tauri/src/session_events/`                                                                 | [Workflows](workflows.md)                             |
+| Shared local repository registrations and Git observations     | `src-tauri/src/repository_catalog/`                                                             | [Worktree Review](worktree-review.md)                 |
+| Review selection and retained operational facts                | `src-tauri/src/worktree_review/`                                                                | [Worktree Review](worktree-review.md)                 |
+| Physical capture, checkout, build and open operations          | `src-tauri/src/worktree_application/`                                                           | [Worktree Review](worktree-review.md)                 |
+| Scoped read-only file review                                   | `src/application/fileReview.ts`; `src-tauri/src/orchestration/file_review_originating_entry.rs` | [File Review](file-review.md)                         |
+| Epic/Sprint planning and execution                             | `src-tauri/src/orchestration/`                                                                  | [Epic/Sprint orchestration](orchestration/README.md)  |
+| Product Decision versions and correction proposals             | `src-tauri/src/product_decisions.rs`                                                            | [Product Decisions](product-decisions.md)             |
+| Shared product database assembly                               | `src-tauri/src/product_database/`, `storage.rs`, `persistence/active_database.rs`               | [ActiveDatabase](architecture/active-database.md)     |
 
-The shared repository catalog is a product capability rather than Worktree Review state. It stores
-registered local repositories and disclosure provenance in ActiveDatabase, then derives branch and
-worktree availability from live standard Git reads. Workflow and Worktree Review consume this one
-catalog. Optional Codex and GitHub discovery add registration candidates but do not define Git
-identity.
+Workflow consumes configuration vocabulary and compiles authoring state into generic Session Event definitions. Session Events express effects through directory and dispatch ports; they do not need Workflow or Agent Session internals. Agent Session integration implements those ports. Configuration resolution does not depend on Workflow presentation, and Agent identity does not determine runtime capabilities.
 
-Worktree Review remains independently responsible for selected review context, worktree/source
-evidence, build attempts, retained outputs, and cleanup receipts. Its reusable
-`worktree_application` dependency owns only physical capture, checkout, compilation, and opening.
+Typed identities and boundary validation keep different kinds of records distinct. A Workflow instance, logical Session address, durable Session, provider thread, invocation, delivery and execution attempt are related identities, not interchangeable IDs. Definition-time intent is also different from runtime observation: dispatching a request does not itself establish the application's semantic result.
 
-## Boundary Rules
+## Persistence and filesystem ownership
 
-- React should consume application/domain facades, not parse Git, open SQLite, or execute Codex.
-- Shared Rust Git facts stay under `src-tauri/src/repository_context/`.
-- Product database composition stays under `src-tauri/src/product_database/` and `src-tauri/src/storage.rs`; capability modules own their schemas and repositories.
-- Lifecycle state changes stay in application services, not UI components.
-- Agent Session execution enters through the provider-neutral `AgentRuntime` port and its current
-  Codex-specific adapter; Codex credentials remain owned by Codex.
-- Agent provider processes are owned through `ProcessSupervisor`. Worktree Review compilation and
-  opening enter through `worktree_application`, which has its own bounded process-effect contract.
-- Persist raw runtime output before deriving transcript presentation. Agent Sessions store
-  ordered raw runtime events.
+The active product schema is assembled into `codex-orchestrator-active-v3.sqlite`; the inspected schema version is 48. Each capability owns its tables and repository contracts even though they share the physical database and managed access boundary. Read the [ActiveDatabase guide](architecture/active-database.md) for query-only reads, immediate writes, rollback and external-effect placement.
 
-## Agent Session Vertical Slice
+Worktree Review has a separate operational database. Product-owned skills and retained empty Session workspaces under the product home are distinct from Tauri application data, a selected native Codex home, repository checkouts and build output. A Session without a selected working directory receives a retained empty workspace; it is intentional Session state rather than a build cache.
 
-Agent Sessions are a first-class product surface, independent from the legacy task dashboard. The
-responsibility flow is:
+The original Task implementation, its legacy TypeScript stack and all ten command registrations were removed at `ac18781`. `src-tauri/src/lib.rs` now contains module declarations and the two entry points. Current startup uses the active schema and leaves older database files untouched. The separate [retirement record](architecture/legacy-task-retirement-plan.md) and [real-agent verification](architecture/legacy-task-retirement-verification.md) preserve that work; [Rust boundary instructions](../src-tauri/AGENTS.md) retain their own owner.
 
-```text
-React Agent Session screen
-  -> TypeScript AgentSessionClient
-    -> Tauri commands and persisted update event
-      -> Rust AgentSessionApplication
-        -> SQLite AgentSessionRepository
-        -> CodexCliRuntime
-          -> ProcessSupervisor
-```
+## Presentation and recorded review
 
-The Rust backend is authoritative. It persists a submitted invocation before launch, persists each
-ordered runtime event before notifying the WebView, separately captures the external Codex context
-ID, and persists terminal state idempotently. The frontend projects durable records into a
-conversation: live work is open, completed work is collapsed, and the final response remains
-prominent. Reload and short-interval active reconciliation repair missed transient events.
-Startup opens and reconciles durable history without executing Codex capability probes. Provider
-resolution and absence therefore affect an invocation, not access to stored sessions.
+Shared controls such as `ProductViewHeader` express presentation hierarchy; their use in one screen does not imply every feature has adopted them. Feature UI state, asynchronous loading and saved-draft ownership stay with the owning feature. Recorded clients demonstrate views with supplied facts; they are not alternative sources of product state or proof of live runtime behavior.
 
-Primary module map:
+See [development](development.md#recorded-review-routes) for the currently mounted recorded routes. The optional inspector remains a development tool with explicit process and evidence inputs, separate from the product's semantic API.
 
-- `src/application/agentSessions/`: serializable client contract and DTOs
-- `src/infrastructure/agentSessions/`: Tauri client and persisted update subscription
-- `src/features/agentSessions/`: controller, transcript projector, and focused UI components
-- `src-tauri/src/agent_sessions/`: domain, ports, repository, lifecycle, and Tauri transport
-- `src-tauri/src/runtime/codex/`: Codex command capability mapping and JSONL normalization
-- `src-tauri/src/runtime/processes/`: direct-child ownership, streaming, cancellation, and shutdown
+## Why these boundaries exist
 
-The Agent Session lifecycle is independent of the retired Task/TaskRun model.
+The original user request emphasized useful overviews of related AI work and clear conceptual separation. The later recovery discussion established a richer interaction context behind the visible conversation and approved a real process supervisor plus a concrete Codex adapter. This supports the responsibility split above, without making early class names or hypothetical providers enduring requirements. Source: task `019f48bb-85b0-7451-bf2c-5483a36a18ff`, original user messages at raw rollout lines 424, 645 and 823.
 
-## Application and infrastructure boundaries
+The Session Event redesign made configuration, identity, generic event delivery and Workflow authoring independently understandable. Its dependency and validation rationale is preserved by `e2bfc6c:docs/session-event-model/conceptual-model.md` and `e2bfc6c:docs/session-event-model/contract-rules.md`; present source determines which parts are implemented. Existing arrangements are not reasons to add a framework or an interface for every function.
 
-TypeScript contracts live under `src/application/`; feature-specific Tauri adapters live under
-`src/infrastructure/`. Rust capability modules own domain rules, application services, and durable
-repositories. `product_database` assembles the current schemas over the managed `ActiveDatabase`.
-
-`active_app.rs` registers Agent Session, Workflow, Harness, Native Profile, Product Decision,
-repository-catalog, and Worktree Review commands. Worktree Review commands are available in both
-debug and release builds. Repository discovery and branch-history commands keep blocking work off
-the UI-facing async executor.
-
-Agent Session notifications use `agent-session://persisted-update`. Event listen/unlisten
-permissions are scoped to the main window. Notifications identify Sessions and invocations;
-durable repository records remain authoritative after missed events or restart.
-
-## Retired task implementation
-
-The original Task/TaskRun/dashboard implementation, its Tauri commands, and its isolated tests
-have been removed. Current startup opens `codex-orchestrator-active-v3.sqlite` and leaves the old
-`codex-orchestrator.sqlite` and active-v2 files untouched. The old migration registry is no longer
-part of the application. Current Agent Session schemas and active-v3 migration support remain.
-
-## UI Layer
-
-Location: `src/app/`, `src/features/`, `src/main.tsx`, `src/styles.css`
-
-The app shell switches among composed product surfaces and does not construct their domain
-services. Agent Session state is owned by its feature controller, Workflow owns its definition and
-instance UI, and Worktree Review owns its branch/build flow. The shared repository selector remains
-an injected application boundary rather than Workflow or Worktree Review component logic.
-
-## Testing And Verification
-
-The reliable verification set today is:
-
-- `npm run lint`
-- `npm run format:check`
-- `npm run test`
-- `npm run build`
-
-Rust/Cargo verification is environment-dependent. When Rust is installed, run the Rust
-format/check/test/build checks in `src-tauri/` plus `npm run build:tauri`. The installed Codex help
-compatibility probe is intentionally ignored by the ordinary suite and should be executed
-explicitly for Agent Session release verification.
+The shared database and repository boundaries arose from actual concurrent-write and inconsistent-repository problems. Their decisions live in [ActiveDatabase](architecture/active-database.md) and [Worktree Review](worktree-review.md). The old development control-room roles are historical context, not instructions for the running product; see [project evolution](project-evolution.md).

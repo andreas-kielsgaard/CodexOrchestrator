@@ -1,65 +1,64 @@
-# Session Event UI regression review
+# Regression and repair evidence package
 
-Reviewed on 7 September 2026. This is a review, not a repair pass.
+This package retains the September 7, 2026 recorded-browser baseline and subsequent repair evidence. The original baseline at `4bded63` reproduced defects; repair work on `e77a725` produced `c1b89b9`, followed by Harness UX consolidation. Current behavior is explained in [Workflows](../workflows.md), [Sessions](../agent-session/README.md) and [configuration](../execution-configuration.md).
 
-The later [repair record](repairs/README.md) describes the implementation and new checks. The findings and evidence on this page remain the original baseline.
+The [consolidated evidence record](../validation-evidence.md#session-event-regressions-and-repair) owns the findings, corrections and proof limits. These images and JSON files keep their original meaning: a baseline `reproduced: true` result is evidence of the old defect, not a passing acceptance test or a claim that the defect remains today.
 
-The replacement UI is mounted, but several basic flows are missing or broken. The missing flow canvas and Workflow instance screens are only part of the problem. Starting a normal Session, sending its next message, handing work to the next node, and keeping the same run selected need attention before another user demo.
+## Replaying the retained probes
 
-## Checkpoint and scope
+From a checkout of the intended source revision with npm dependencies installed:
 
-- Existing walkthrough work committed as `4bded63` on `codex/session-event-model-overhaul`.
-- Review branch: `codex/session-event-regression-review`, created from that commit.
-- Review worktree: `C:/Users/user/.codex/worktrees/session-event-regression-review/Codex Orchestrator`.
-- Comparison point: `9fc822f`, the combined Workflow/Harness work before this overhaul.
-- No product source was changed. No live provider was called. The original demo and its data were left alone.
-- PowerPoint's open-file lock was not committed or removed. The substantive deck, screenshots and source were committed; the deck remains an unfinished review artifact, not UI acceptance.
-- After the checkpoint, two `event-result-fixture` files and `13-event-result-and-delivery-details.png` appeared in the original walkthrough folder. They were left there uncommitted and are not part of the reviewed checkpoint.
+```powershell
+node docs/regression-review/probes/run-browser.mjs
+node docs/regression-review/repairs/run-browser.mjs
+```
 
-Role removal, embedded Node Profiles, pinned Session Profiles, per-message model/reasoning choices and deferred provider setup are accepted changes. They are not regressions. This review also does not require a new run graph or a redesign of the Epic workflow.
+The scripts use installed Microsoft Edge and Playwright supplied by the bundled Codex dependencies; `REVIEW_NODE_MODULES` can select a different directory containing Playwright. The baseline runner starts Vite at `127.0.0.1:2381`, opens its own headless browser, records observations, then stops both. Inspect the selected runner's paths before replay: outputs are local evidence files, and current product imports may no longer reproduce the original snapshot.
 
-## Main findings
+The real React screens use fake clients. Browser-instance storage is fixture state, not native durability. Joined Rust repair tests supplied separate SQLite reopen and normal notification-to-dispatch evidence with recording inference and local HTTP. None of these browser files establishes paid-provider, release-package, native-keyboard or user acceptance.
 
-Browser evidence uses the actual React screens and CSS with fake clients. Backend findings trace the production code but were not exercised through a live native runtime. The distinction matters: passing editor tests does not prove a Workflow can run from end to end.
+## Original baseline
 
-| Area                            | What is wrong                                                                                                                                                                                         | Evidence                                                                                                                                                                                                             |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal Sessions                 | The first message can create a Session with no pinned profile. Once selected, the UI blocks its second message because that profile is missing.                                                       | Browser reproduction plus [B1](backend-findings.md#b1--ordinary-sessions-cannot-receive-their-second-message-p1). [Screenshot](evidence/ordinary-session-second-message-blocked.png).                                |
-| Workflow handoffs               | Connections can be saved and compiled, but their triggers are not wired to the new execution service. Completing A does not start B through that service.                                             | Production source trace, [B2](backend-findings.md#b2--new-workflow-connections-never-run-from-their-triggers-p1).                                                                                                    |
-| Workflow instances and worktree | The instance list, creation form and worktree choice are gone from the mounted route. New event-created Sessions get no working directory. An editable ID is not a replacement for a stored instance. | [U2](ui-layout-findings.md#u2-workflow-instance-creation-and-selection-are-missing), [B3](backend-findings.md#b3--new-workflow-sessions-lose-their-chosen-worktree-p1).                                              |
-| Run selection                   | Leaving the run panel and returning makes a new instance ID, while the old result remains visible.                                                                                                    | Browser reproduction, [F5](frontend-findings.md#f5-returning-to-the-run-page-changes-the-instance-but-keeps-old-results).                                                                                            |
-| Saved and unsaved work          | Activation erases newer local edits. Switching recipes also loses edits. A late save response can overwrite text typed while saving.                                                                  | Browser reproductions for activation/switching; component reproduction for late save. [F1, F2](frontend-findings.md), [F6](frontend-findings.md#f6-changing-screens-or-recipes-drops-unsaved-drafts-without-notice). |
-| Pinned Sessions                 | Workflow sends reload current shared profiles before finding the target Session. A later profile edit or deletion can block a message to an already pinned Session.                                   | Production source trace, [B4](backend-findings.md#b4--editing-shared-definitions-can-break-an-already-pinned-session-p1).                                                                                            |
-| Node choices                    | The editor lets a node select capabilities its Capability Profile forbids. Removing a default from the allowed set leaves a hidden invalid default.                                                   | Browser reproductions, [F3, F4](frontend-findings.md).                                                                                                                                                               |
-| Connection choices              | Activation accepts a prompt source that its selected trigger cannot supply. Delivery then fails.                                                                                                      | Compiler/materializer source trace, [B5](backend-findings.md#b5--activation-accepts-triggersource-pairs-that-cannot-deliver-p2).                                                                                     |
-| Flow layout and screen size     | The canvas was replaced with a list. Below 900 px, even the recipe picker and New Workflow button disappear.                                                                                          | Source comparison and browser reproduction, [U1, U3](ui-layout-findings.md).                                                                                                                                         |
-| Shared controls                 | Collapsed sections remain visible. Checkboxes take most of the row and squeeze their labels.                                                                                                          | Computed browser layout and screenshots, [U4, U5](ui-layout-findings.md).                                                                                                                                            |
-| Session details                 | The old identity view/edit entry point is gone. Delivery history does not refresh while the same Session stays open.                                                                                  | Source trace, [F7, F8](frontend-findings.md).                                                                                                                                                                        |
+The JSON records before/after values that a still image cannot show, including run selection and the blocked second message. Source entries and the runner are retained alongside the evidence.
 
-## What the existing checks prove
+| File                                                                                                | Role                          |
+| --------------------------------------------------------------------------------------------------- | ----------------------------- |
+| [browser-results.json](evidence/browser-results.json)                                               | Recorded browser observation  |
+| [checkbox-label-wrap.png](evidence/checkbox-label-wrap.png)                                         | Original defect screenshot    |
+| [collapsed-runtime-still-visible.png](evidence/collapsed-runtime-still-visible.png)                 | Original defect screenshot    |
+| [node-forbidden-model.png](evidence/node-forbidden-model.png)                                       | Original defect screenshot    |
+| [ordinary-session-second-message-blocked.png](evidence/ordinary-session-second-message-blocked.png) | Original defect screenshot    |
+| [run-id-changed.png](evidence/run-id-changed.png)                                                   | Original defect screenshot    |
+| [workflow-narrow.png](evidence/workflow-narrow.png)                                                 | Original defect screenshot    |
+| [browser.html](probes/browser.html)                                                                 | Recorded fixture/probe source |
+| [browser.tsx](probes/browser.tsx)                                                                   | Recorded fixture/probe source |
+| [run-browser.mjs](probes/run-browser.mjs)                                                           | Recorded fixture/probe source |
 
-- `npm run build`: passed.
-- Full frontend suite: **980 tests passed across 165 files**.
-- Saved browser probe: **nine issues reproduced**, with no page JavaScript errors.
-- Further component checks and backend call-path review are documented in the linked reports.
+## Repair evidence
 
-Many passing tests still exercise the old Workflow screen or isolated new controls. They do not cover the new mounted screen's draft ownership, run selection or the runtime completion path. See [verification and replay](verification.md) for exact commands, fixtures and limits.
+The repair runner exercised four viewport widths, node/connection editing, graph layout, instance creation, opening a Session, Back and saved-instance reopening. `05-saved-instance.png` shows the restored graph; it is later evidence than the walkthrough's earlier list-style instance image. That pair was inspected during documentation research; this rewrite does not claim a fresh review of every image.
 
-## Suggested next repair order
+| File                                                                | Role                           |
+| ------------------------------------------------------------------- | ------------------------------ |
+| [browser.html](repairs/browser.html)                                | Recorded repair fixture/runner |
+| [browser.tsx](repairs/browser.tsx)                                  | Recorded repair fixture/runner |
+| [01-flow.png](repairs/evidence/01-flow.png)                         | Repair screenshot              |
+| [02-connection.png](repairs/evidence/02-connection.png)             | Repair screenshot              |
+| [03-node-1280.png](repairs/evidence/03-node-1280.png)               | Repair screenshot              |
+| [03-node-640.png](repairs/evidence/03-node-640.png)                 | Repair screenshot              |
+| [03-node-850.png](repairs/evidence/03-node-850.png)                 | Repair screenshot              |
+| [03-node-958.png](repairs/evidence/03-node-958.png)                 | Repair screenshot              |
+| [04-create-1280.png](repairs/evidence/04-create-1280.png)           | Repair screenshot              |
+| [04-create-640.png](repairs/evidence/04-create-640.png)             | Repair screenshot              |
+| [04-create-850.png](repairs/evidence/04-create-850.png)             | Repair screenshot              |
+| [04-create-958.png](repairs/evidence/04-create-958.png)             | Repair screenshot              |
+| [05-saved-instance.png](repairs/evidence/05-saved-instance.png)     | Repair screenshot              |
+| [06-instance-session.png](repairs/evidence/06-instance-session.png) | Repair screenshot              |
+| [results.json](repairs/evidence/results.json)                       | Recorded repair result         |
+| [run-browser.mjs](repairs/run-browser.mjs)                          | Recorded repair fixture/runner |
 
-The later [repair plan](../session-event-model/repair-plan/README.md) expands this sequence into work packages, a file-level projection and acceptance checks. This report remains the original regression baseline.
+## Provenance
 
-1. Give normal Session creation a valid path into the new profile model; prove first and second sends together with a fake runtime.
-2. Restore a stored Workflow instance with its target worktree. Keep the instance selected across navigation and keep its results tied to that instance.
-3. Connect one real completion path from node A to node B. Prove it through the normal notifier, not by calling dispatch directly in a test.
-4. Keep existing pinned Sessions usable after shared definitions change. Reject impossible node and connection choices before activation.
-5. Restore the flow canvas around the new node/connection editors. Protect unfinished edits, retain identity inspection, and fix the shared controls and narrow layout.
+The complete former narratives are available at `e2bfc6c:docs/regression-review/README.md`, `e2bfc6c:docs/regression-review/verification.md` and the corresponding `repairs/verification.md`. The repair full Rust run contained one timeout that passed in isolation; it was not silently changed to a full-suite pass. Later integration and native evidence have their own checkpoints in the [evidence record](../validation-evidence.md).
 
-These are proposed repair groups, not a request to preserve the old Role model or to settle the future run UI. The useful old canvas, instance target picker and navigation behavior can be adapted without restoring deprecated concepts.
-
-## Read by task
-
-- Session creation, runtime handoffs, pinning: [backend findings](backend-findings.md).
-- Editing state, node choices, run selection, Session details: [frontend findings](frontend-findings.md).
-- Canvas, instance entry points, responsive layout and CSS: [UI/layout findings](ui-layout-findings.md).
-- Replaying checks and judging their limits: [verification](verification.md).
+No retained image, fixture, script or JSON file was regenerated, relabeled or removed by the documentation rewrite.

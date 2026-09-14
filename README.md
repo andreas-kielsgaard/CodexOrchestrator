@@ -1,86 +1,28 @@
 # Codex Orchestrator
 
-Codex Orchestrator is a local-first desktop surface for doing work with agents. Its current core is
-a durable Agent Session: a text interaction context that can stream Codex CLI work, preserve the
-technical record, reopen after an app restart, and continue the same external Codex thread. The
-retired task/dashboard implementation has been removed; current product capabilities use focused
-Agent Session, Workflow, orchestration, and repository services.
+A local desktop application for working with related agent conversations, configuring their execution, and coordinating work through Workflows. React presents the product; Rust and Tauri own native application operations, persistence and the Codex app-server connection.
 
-## Prerequisites
+The main surfaces are Agent Sessions, Workflow authoring and instances, execution configuration, repository selection and Worktree Review. Product Decisions supports reasoning about work. File Review provides the contextual viewer and scoped loader, with a [remaining native startup limitation](docs/file-review.md). The retained Epic/Sprint system is documented separately because its implementation and its current strategic priority are different facts.
 
-- Node.js 24+
-- npm 11+
-- Rust and Cargo for Tauri desktop commands and packaging
+## Start development
 
-Rust is required for `npm run dev:tauri` and `npm run build:tauri`. The frontend-only app can run with Node/npm.
+On Windows, install Node.js 24 or newer with npm, Rust with the MSVC toolchain, Visual Studio C++ build tools and WebView2. Native Session execution also needs a usable Codex installation and selected native profile.
 
-## Setup
+From the repository root:
 
-```bash
-npm install
-npm run dev
+```powershell
+.\launch-dev.bat
 ```
 
-The Vite dev server runs on `http://localhost:1420`.
+The launcher restores npm development dependencies when its local Vite/Tauri commands are missing and starts Tauri with Vite. See [development](docs/development.md) for direct commands, build outputs and optional validation.
 
-For the desktop development loop on Windows, run the launcher from the repo root:
+## Documentation
 
-```bat
-launch-dev.bat
-```
+Start with the [documentation index](docs/README.md). It routes to current behavior and source ownership, important decisions, and dated validation evidence.
 
-The launcher prepares the local Cargo/MSVC/Codex paths and starts `npm run dev:tauri`. The app shows
-a loading screen until the Tauri command backend responds.
+- [Architecture](docs/architecture.md)
+- [Agent Sessions](docs/agent-session/README.md)
+- [Workflows](docs/workflows.md) and [execution configuration](docs/execution-configuration.md)
+- [Repository and Worktree Review](docs/worktree-review.md)
 
-## Scripts
-
-- `npm run dev`: start the React/Vite app.
-- `npm run dev:status`: explicitly start the optional runtime status server for the review CLI.
-- `npm run dev:tauri`: start the Tauri desktop shell.
-- `npm run mark:stale -- --target backend --reason "Rust command changed"`: record a stale-state
-  marker for review tooling.
-- `npm run clear:stale`: clear the runtime stale marker.
-- `npm run build`: type-check and build the frontend.
-- `npm run build:tauri`: build the desktop app.
-- `npm run lint`: run ESLint.
-- `npm run format:check`: check Prettier formatting.
-- `npm run test`: run Vitest.
-
-## Project Layout
-
-```text
-src/
-  app/                 React application shell
-  application/         Browser-safe client contracts
-  features/            Product screens and their controllers
-  infrastructure/      Tauri command adapters
-  test/                Test setup
-src-tauri/
-  src/agent_sessions/  Durable domain, repository, lifecycle, and transport
-  src/runtime/         Codex adapter and operating-system process supervisor
-docs/
-  architecture.md      Stack and boundary notes
-  agent-session/       Agent Session decisions, implementation evidence, and execution ledger
-  task-logs/           Worker completion logs
-```
-
-## Agent Session Architecture
-
-The implemented vertical slice and its deliberate boundaries are documented in
-[`docs/agent-session/README.md`](docs/agent-session/README.md). The earlier integrated prototype
-remains on archive branches only as evidence; it was not merged wholesale.
-
-## Optional Review Runtime Status
-
-The review CLI can inspect a separately started runtime status server. Start it with
-`npm run dev:status` when needed; `launch-dev.bat` does not start it. Its state is stored in the
-Git-ignored `.dev/runtime-status.json`. The current application has no stale-state banner.
-
-To record a marker for review tooling, call:
-
-```bash
-npm run mark:stale -- --target frontend
-npm run mark:stale -- --target backend --reason "Tauri command changed"
-```
-
-Valid targets are `app`, `frontend`, and `backend`.
+The guides were researched at `e2bfc6c` and reconciled with main `60c3798`. Changes implemented on separate branches are identified as separate work; historical screenshots and test results retain their original scope.
