@@ -3,7 +3,7 @@ import type {
   SessionNavigationCommandRequest,
   SessionNavigationState,
 } from '../../application/agentSessions/agentAccess';
-import { useSessionTree } from './useSessionTree';
+import { useSessionNavigation } from './useSessionNavigation';
 import { useSessionNavigationCommands } from './useSessionNavigationCommands';
 import { AlertCircle, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -119,7 +119,7 @@ export function StandaloneAgentSessionScreen({
   };
   const onNew = (folderTarget: SessionFolderTarget | null) =>
     select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget });
-  const tree = useSessionTree(
+  const tree = useSessionNavigation(
     model,
     selectedSessionId,
     `${selectionKey(selection)}:${openRevision}:${revealRevision.current}`,
@@ -137,6 +137,7 @@ export function StandaloneAgentSessionScreen({
     onNew,
     onMove: collection.move,
     onPin: collection.pin,
+    onReorder: collection.reorder,
   });
   const selectedIdentity = selectedSessionId
     ? agentIdentityForSession?.(selectedSessionId)
@@ -232,6 +233,7 @@ export function StandaloneAgentSessionScreen({
             onNew={onNew}
             onMove={collection.move}
             onPin={collection.pin}
+            onReorder={collection.reorder}
             organizing={Boolean(navigationClient)}
             onReload={() => {
               void reloadCollection();

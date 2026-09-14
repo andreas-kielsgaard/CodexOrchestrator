@@ -1,77 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  SessionNavigationModel,
-  SessionNavigationNode,
-} from '../../application/agentSessions/navigation';
-export interface VisibleSessionTreeRow {
-  readonly id: string;
-  readonly level: number;
-  readonly parentId: string | null;
-  readonly sectionId: string;
-  readonly node:
-    | SessionNavigationNode
-    | {
-        readonly kind: 'more';
-        readonly folderId: string;
-        readonly remaining: number;
-        readonly label: string;
-      };
-}
-export function visibleSessionRows(
-  model: SessionNavigationModel,
-  expanded: ReadonlySet<string>,
-  shown: ReadonlySet<string>,
-): VisibleSessionTreeRow[] {
-  const rows: VisibleSessionTreeRow[] = [];
-  function visit(
-    nodes: readonly SessionNavigationNode[],
-    parentId: string | null,
-    sectionId: string,
-    level: number,
-    limitId: string,
-    label: string,
-    unlimited = false,
-  ) {
-    let sessions = 0,
-      hidden = 0;
-    for (const node of nodes) {
-      if (node.kind === 'session' && ++sessions > 5 && !unlimited && !shown.has(limitId)) {
-        hidden++;
-        continue;
-      }
-      rows.push({ id: node.id, node, parentId, sectionId, level });
-      if (node.kind === 'folder' && expanded.has(node.id))
-        visit(node.children, node.id, sectionId, level + 1, node.id, node.label);
-    }
-    if (hidden)
-      rows.push({
-        id: `more:${limitId}`,
-        node: { kind: 'more', folderId: limitId, remaining: hidden, label },
-        parentId,
-        sectionId,
-        level,
-      });
-  }
-  model.sections.forEach((section) =>
-    visit(section.children, null, section.id, 1, section.id, section.label, section.unlimited),
-  );
-  return rows;
-}
-function ancestorPath(
-  nodes: readonly SessionNavigationNode[],
-  id: string,
-  path: string[] = [],
-): string[] | null {
-  for (const node of nodes) {
-    if (node.id === id) return path;
-    if (node.kind === 'folder') {
-      const found = ancestorPath(node.children, id, [...path, node.id]);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-export function useSessionTree(
+import type { SessionNavigationModel } from '../../application/agentSessions/navigation';
+import {
+  ancestorPath,
+  navigationFolders,
+  projectNavigationView,
+  visibleSessionRows,
+} from '../../application/agentSessions/navigationView';
+export function useSessionNavigation(
   model: SessionNavigationModel,
   selectedSessionId: string | null,
   revealKey: string,
@@ -84,15 +19,7 @@ export function useSessionTree(
   const lastReveal = useRef('');
   useEffect(() => {
     if (initialized.current) return;
-    const ids: string[] = [];
-    const collect = (nodes: readonly SessionNavigationNode[]) =>
-      nodes.forEach((n) => {
-        if (n.kind === 'folder') {
-          ids.push(n.id);
-          collect(n.children);
-        }
-      });
-    model.sections.forEach((s) => collect(s.children));
+    const ids = navigationFolders(model).map((f) => f.node.id);
     if (ids.length) {
       initialized.current = true;
       setExpanded(new Set(ids));
@@ -113,7 +40,28 @@ export function useSessionTree(
     setFocusedId(row.id);
     requestAnimationFrame(() => refs.current.get(row.id)?.scrollIntoView({ block: 'nearest' }));
   }, [model, selectedSessionId, revealKey, expanded, shown]);
-  const rows = useMemo(() => visibleSessionRows(model, expanded, shown), [model, expanded, shown]);
+  const view = useMemo(
+    () => projectNavigationView(model, expanded, shown),
+    [model, expanded, shown],
+  );
+  const rows = view.rows;
+  const previousRows = useRef(rows);
+  useEffect(() => {
+    if (focusedId && !rows.some((r) => r.id === focusedId)) {
+      const previous = previousRows.current.find((r) => r.id === focusedId);
+      const original =
+        previous?.node.kind === 'session'
+          ? model.sessions.get(previous.node.summary.id)?.id
+          : undefined;
+      const next =
+        rows.find((r) => r.id === original) ??
+        rows.find((r) => r.id === previous?.parentId) ??
+        rows[0];
+      setFocusedId(next?.id ?? null);
+      if (next && document.activeElement === document.body) refs.current.get(next.id)?.focus();
+    }
+    previousRows.current = rows;
+  }, [rows, focusedId, model]);
   const focus = (id: string | undefined) => {
     if (id) {
       setFocusedId(id);
@@ -147,6 +95,7 @@ export function useSessionTree(
     });
   return {
     rows,
+    view,
     expanded,
     activeId,
     refs,
@@ -157,4 +106,4 @@ export function useSessionTree(
     setFolderExpanded,
   };
 }
-export type SessionTreeController = ReturnType<typeof useSessionTree>;
+export type SessionNavigationController = ReturnType<typeof useSessionNavigation>;

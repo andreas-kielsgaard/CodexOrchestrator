@@ -42,7 +42,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
     ]);
     let database =
         crate::product_database::open(&fixture.folder.path().join("repair.sqlite")).unwrap();
-    let catalog = Arc::new(RepositoryCatalog::new(database));
+    let catalog = Arc::new(RepositoryCatalog::new(database.clone()));
     let registered = catalog.register_directory(linked.clone()).unwrap();
     let base = fixture.instance(None);
     let mut target = fixture.target();
@@ -58,7 +58,38 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         fixture.execution.instances.clone(),
         fixture.repository.clone(),
         fixture.sessions.clone(),
+        crate::session_navigation::order_repository::NavigationOrderRepository::new(database),
     );
+
+    use crate::session_navigation::order::NavigationOrderScope;
+    let sections = NavigationOrderScope::Sections {
+        repository_id: registered.repository_id.clone(),
+    };
+    assert!(navigation
+        .reorder(
+            sections.clone(),
+            vec!["sessions".into(), "workflows".into()]
+        )
+        .is_ok());
+    assert!(navigation
+        .reorder(sections.clone(), vec!["sessions".into(), "sessions".into()])
+        .is_err());
+    assert!(navigation
+        .reorder(
+            NavigationOrderScope::Workflows {
+                repository_id: "missing".into()
+            },
+            vec![instance.id.clone()]
+        )
+        .is_err());
+    assert!(navigation
+        .reorder(
+            NavigationOrderScope::Workflows {
+                repository_id: registered.repository_id.clone()
+            },
+            vec!["foreign-instance".into()]
+        )
+        .is_err());
 
     for folder_target in [
         SessionFolderTarget::Repository {
@@ -127,6 +158,12 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         navigation.pin_session(session_id.clone(), true).unwrap();
         navigation
             .move_session(session_id.clone(), SessionPlacement::Unfiled)
+            .unwrap();
+        navigation
+            .reorder(
+                sections.clone(),
+                vec!["workflows".into(), "sessions".into()],
+            )
             .unwrap();
         assert_eq!(
             fixture

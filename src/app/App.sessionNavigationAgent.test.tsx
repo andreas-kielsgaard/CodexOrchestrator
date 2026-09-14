@@ -44,6 +44,20 @@ it('agent commands navigate the mounted UI and share its folders, disclosure and
     initial.visibleRows.filter((row) => row.sessionId && row.id.startsWith('repo:repo-a:')),
   ).toHaveLength(5);
   expect(initial.folders.find((folder) => folder.id === 'repo:repo-b')).toBeDefined();
+  const reordered = await run({
+    kind: 'reorder_navigation',
+    scope: { kind: 'sections', repositoryId: 'repo-a' },
+    orderedIds: ['workflows', 'sessions'],
+  });
+  expect(reordered.folders.filter((f) => f.parentId === 'repo:repo-a').map((f) => f.id)).toEqual([
+    'repo:repo-a:workflows',
+    'repo:repo-a:sessions',
+  ]);
+  expect(reordered.folders.find((f) => f.id === 'instance:flow-a')).toMatchObject({
+    role: 'workflow',
+    parentId: 'repo:repo-a:workflows',
+    orderedSiblingIds: ['flow-a'],
+  });
   const revealed = await run({ kind: 'open_session', sessionId: 'session-6' });
   expect(revealed.selection).toEqual({ kind: 'session', sessionId: 'session-6' });
   expect(revealed.visibleRows.some((row) => row.sessionId === 'session-6')).toBe(true);

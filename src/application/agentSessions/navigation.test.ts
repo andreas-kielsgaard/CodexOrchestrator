@@ -1,6 +1,6 @@
 import { buildSessionNavigation } from './navigation';
 import { navigationData } from '../../features/agentSessions/navigationTestFixtures';
-import { visibleSessionRows } from '../../features/agentSessions/useSessionTree';
+import { visibleSessionRows } from './navigationView';
 it('groups registered repositories and typed workflow owners, leaving ordinary sessions unfiled', () => {
   const model = buildSessionNavigation(navigationData());
   expect(model.sections[1].children.map((n) => n.kind === 'folder' && n.label)).toEqual([

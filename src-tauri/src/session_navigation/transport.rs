@@ -1,4 +1,5 @@
 use super::application::{NavigationRepository, SessionNavigationService, StartSessionRequest};
+use super::order::{NavigationOrder, NavigationOrderScope};
 use crate::{
     agent_sessions::{
         domain::AgentSessionId,
@@ -21,6 +22,7 @@ pub(crate) struct SessionNavigationDto {
     instances: Vec<NavigationInstance>,
     owners: Vec<WorkflowSessionOwner>,
     organization: Vec<SessionOrganization>,
+    orders: Vec<NavigationOrder>,
 }
 #[tauri::command]
 pub(crate) fn load_agent_session_navigation(
@@ -33,6 +35,7 @@ pub(crate) fn load_agent_session_navigation(
         instances: data.instances,
         owners: data.owners,
         organization: data.organization,
+        orders: data.orders,
     })
 }
 #[tauri::command]
@@ -50,6 +53,14 @@ pub(crate) fn pin_agent_session(
     pinned: bool,
 ) -> Result<(), String> {
     state.0.pin_session(session_id, pinned)
+}
+#[tauri::command]
+pub(crate) fn reorder_session_navigation(
+    state: State<'_, SessionNavigationTauriState>,
+    scope: NavigationOrderScope,
+    ordered_ids: Vec<String>,
+) -> Result<(), String> {
+    state.0.reorder(scope, ordered_ids)
 }
 #[tauri::command]
 pub(crate) fn start_direct_user_agent_session(

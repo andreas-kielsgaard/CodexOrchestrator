@@ -164,7 +164,7 @@ pub(crate) fn run() {
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
             app.manage(crate::session_navigation::transport::SessionNavigationTauriState(Arc::new(
-                crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone())
+                crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone(), crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()))
             )));
             app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
             let (workflow_mcp, workflow_mcp_owner) =
@@ -342,6 +342,7 @@ pub(crate) fn run() {
             crate::session_navigation::transport::load_agent_session_navigation,
             crate::session_navigation::transport::move_agent_session,
             crate::session_navigation::transport::pin_agent_session,
+            crate::session_navigation::transport::reorder_session_navigation,
             crate::workflows::execution_transport::create_workflow_recipe_instance,
             crate::workflows::execution_transport::list_workflow_recipe_instances,
             crate::workflows::execution_transport::load_workflow_recipe_instance,

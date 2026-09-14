@@ -1,4 +1,8 @@
 //! Product navigation composes facts; Session execution stays independent of folders.
+use super::{
+    order::{validate_siblings, NavigationOrder, NavigationOrderScope},
+    order_repository::NavigationOrderRepository,
+};
 use crate::{
     agent_sessions::{
         application::{
@@ -29,6 +33,7 @@ pub(crate) struct SessionNavigationData {
     pub(crate) instances: Vec<NavigationInstance>,
     pub(crate) owners: Vec<WorkflowSessionOwner>,
     pub(crate) organization: Vec<SessionOrganization>,
+    pub(crate) orders: Vec<NavigationOrder>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,6 +51,7 @@ pub(crate) struct SessionNavigationService {
     instances: Arc<WorkflowInstanceStore>,
     repository: Arc<SqliteAgentSessionRepository>,
     sessions: Arc<AgentSessionApplication>,
+    orders: NavigationOrderRepository,
 }
 impl SessionNavigationService {
     pub(crate) fn new(
@@ -53,12 +59,14 @@ impl SessionNavigationService {
         instances: Arc<WorkflowInstanceStore>,
         repository: Arc<SqliteAgentSessionRepository>,
         sessions: Arc<AgentSessionApplication>,
+        orders: NavigationOrderRepository,
     ) -> Self {
         Self {
             catalog,
             instances,
             repository,
             sessions,
+            orders,
         }
     }
     pub(crate) fn load(&self) -> Result<SessionNavigationData, String> {
@@ -80,6 +88,7 @@ impl SessionNavigationService {
                 .map_err(|e| e.to_string())?,
         )?;
         Ok(SessionNavigationData {
+            orders: self.orders.load()?,
             repositories,
             instances,
             owners,
@@ -95,6 +104,40 @@ impl SessionNavigationService {
                 .list_organization()
                 .map_err(|e| e.to_string())?,
         })
+    }
+    pub(crate) fn reorder(
+        &self,
+        scope: NavigationOrderScope,
+        ordered_ids: Vec<String>,
+    ) -> Result<(), String> {
+        let repositories = self.catalog.list_registered()?;
+        let siblings: Vec<String> = match &scope {
+            NavigationOrderScope::Repositories => repositories
+                .iter()
+                .map(|r| r.repository_id.clone())
+                .collect(),
+            NavigationOrderScope::Sections { repository_id }
+            | NavigationOrderScope::Workflows { repository_id } => {
+                if !repositories
+                    .iter()
+                    .any(|r| &r.repository_id == repository_id)
+                {
+                    return Err("Repository is not registered".into());
+                }
+                if matches!(scope, NavigationOrderScope::Sections { .. }) {
+                    vec!["sessions".into(), "workflows".into()]
+                } else {
+                    self.instances
+                        .list_navigation()?
+                        .into_iter()
+                        .filter(|i| &i.repository_id == repository_id)
+                        .map(|i| i.id)
+                        .collect()
+                }
+            }
+        };
+        validate_siblings(&ordered_ids, &siblings)?;
+        self.orders.save(&scope, &ordered_ids)
     }
     fn repository_for_folder(&self, target: &SessionFolderTarget) -> Result<String, String> {
         let id = match target {

@@ -1,3 +1,4 @@
+import type { NavigationOrderItem, NavigationOrderScope } from './navigationOrder';
 import type { SessionFolderTarget, SessionPlacement } from './organization';
 import type { SessionNavigationSelection } from './navigation';
 
@@ -9,6 +10,7 @@ export type SessionNavigationCommand =
   | { kind: 'show_more'; folderId: string }
   | { kind: 'move_session'; sessionId: string; placement: SessionPlacement }
   | { kind: 'pin_session'; sessionId: string; pinned: boolean }
+  | { kind: 'reorder_navigation'; scope: NavigationOrderScope; orderedIds: readonly string[] }
   | { kind: 'get_deeplink'; sessionId: string };
 export interface SessionNavigationCommandRequest {
   id: string;
@@ -22,6 +24,10 @@ export interface SessionNavigationState {
     id: string;
     label: string;
     expanded: boolean;
+    parentId: string | null;
+    role: 'repository' | 'section' | 'workflow';
+    order: NavigationOrderItem;
+    orderedSiblingIds: readonly string[];
     createTarget: SessionFolderTarget | null;
   }[];
   sessions: readonly {
@@ -36,6 +42,7 @@ export interface SessionNavigationState {
     id: string;
     kind: string;
     level: number;
+    parentId: string | null;
     sessionId?: string;
     folderId?: string;
   }[];

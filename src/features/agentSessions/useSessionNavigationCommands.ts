@@ -1,12 +1,15 @@
+import {
+  navigationFolders,
+  navigationSiblings,
+} from '../../application/agentSessions/navigationView';
+import type { NavigationOrderScope } from '../../application/agentSessions/navigationOrder';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   SessionNavigationCommandRequest,
   SessionNavigationState,
 } from '../../application/agentSessions/agentAccess';
 import type {
-  SessionNavigationFolder,
   SessionNavigationModel,
-  SessionNavigationNode,
   SessionNavigationSelection,
 } from '../../application/agentSessions/navigation';
 import type {
@@ -14,13 +17,13 @@ import type {
   SessionPlacement,
 } from '../../application/agentSessions/organization';
 import { formatSessionDeepLink } from '../../application/agentSessions/deepLinks';
-import type { SessionTreeController } from './useSessionTree';
+import type { SessionNavigationController } from './useSessionNavigation';
 
 export function useSessionNavigationCommands(options: {
   request?: SessionNavigationCommandRequest | null;
   complete?(id: string, state: SessionNavigationState | null, error: string | null): Promise<void>;
   model: SessionNavigationModel;
-  tree: SessionTreeController;
+  tree: SessionNavigationController;
   selection: SessionNavigationSelection;
   collectionLoading: boolean;
   loading: boolean;
@@ -29,6 +32,7 @@ export function useSessionNavigationCommands(options: {
   onNew(target: SessionFolderTarget | null): void;
   onMove(id: string, placement: SessionPlacement): Promise<void>;
   onPin(id: string, pinned: boolean): Promise<void>;
+  onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
 }) {
   const started = useRef<string | null>(null);
   const completed = useRef<string | null>(null);
@@ -36,18 +40,8 @@ export function useSessionNavigationCommands(options: {
   const [settled, setSettled] = useState<{ id: string; deeplink?: string; error?: string } | null>(
     null,
   );
-  const folders = useMemo(() => {
-    const result: SessionNavigationFolder[] = [];
-    const collect = (nodes: readonly SessionNavigationNode[]) =>
-      nodes.forEach((node) => {
-        if (node.kind === 'folder') {
-          result.push(node);
-          collect(node.children);
-        }
-      });
-    options.model.sections.forEach((section) => collect(section.children));
-    return result;
-  }, [options.model]);
+  const folderEntries = useMemo(() => navigationFolders(options.model), [options.model]);
+  const folders = useMemo(() => folderEntries.map((f) => f.node), [folderEntries]);
   useEffect(() => {
     const request = options.request;
     if (!request || options.collectionLoading || request.id === started.current) return;
@@ -89,6 +83,9 @@ export function useSessionNavigationCommands(options: {
         case 'pin_session':
           await options.onPin(command.sessionId, command.pinned);
           break;
+        case 'reorder_navigation':
+          await options.onReorder(command.scope, command.orderedIds);
+          break;
         case 'get_deeplink':
           deeplink = formatSessionDeepLink(command.sessionId);
           break;
@@ -109,7 +106,11 @@ export function useSessionNavigationCommands(options: {
       selection: options.selection,
       loading: options.loading,
       error: options.error,
-      folders: folders.map((folder) => ({
+      folders: folderEntries.map(({ node: folder, parentId }) => ({
+        parentId,
+        role: folder.role,
+        order: folder.order,
+        orderedSiblingIds: navigationSiblings(options.model, folder.order.scope),
         id: folder.id,
         label: folder.label,
         expanded: options.tree.expanded.has(folder.id),
@@ -127,6 +128,7 @@ export function useSessionNavigationCommands(options: {
         id: row.id,
         kind: row.node.kind,
         level: row.level,
+        parentId: row.parentId,
         ...(row.node.kind === 'session'
           ? { sessionId: row.node.summary.id }
           : row.node.kind === 'more'
@@ -136,7 +138,7 @@ export function useSessionNavigationCommands(options: {
       ...(settled.deeplink ? { deeplink: settled.deeplink } : {}),
     };
     void options.complete(settled.id, settled.error ? null : state, settled.error ?? null);
-  }, [settled, readyId, options, folders]);
+  }, [settled, readyId, options, folderEntries]);
 }
 
 function sameFolder(left: SessionFolderTarget | null, right: SessionFolderTarget | null): boolean {

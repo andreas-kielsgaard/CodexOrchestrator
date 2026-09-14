@@ -27,6 +27,13 @@ The first command inspects the view. Use IDs from its reply in subsequent comman
 | `{"kind":"move_session","sessionId":"SESSION_ID","placement":{"kind":"workflow_instance","instanceId":"INSTANCE_ID"}}` | Move display placement through the same action as drag/drop. Placement also accepts `repository` with `repositoryId`, or `unfiled`. |
 | `{"kind":"pin_session","sessionId":"SESSION_ID","pinned":true}`                                                        | Pin a shortcut; use `false` to unpin.                                                                                               |
 | `{"kind":"get_deeplink","sessionId":"SESSION_ID"}`                                                                     | Return the session URL without using the clipboard.                                                                                 |
+| `{"kind":"reorder_navigation","scope":{"kind":"repositories"},"orderedIds":["REPO_B","REPO_A"]}` | Save the repository order. |
+| `{"kind":"reorder_navigation","scope":{"kind":"sections","repositoryId":"REPO_ID"},"orderedIds":["sessions","workflows"]}` | Save the block order within a repository. |
+| `{"kind":"reorder_navigation","scope":{"kind":"workflows","repositoryId":"REPO_ID"},"orderedIds":["INSTANCE_B","INSTANCE_A"]}` | Save the workflow instance order within a repository. |
+
+Each order must contain all current siblings exactly once. Inspection returns each container's `role`, `parentId`, `order` (scope and item ID), and `orderedSiblingIds`. Use these fields directly. Reordering preserves selection, placement, working directory, and workflow ownership; its saved order survives an application restart. New siblings append in the default name order. Session rows still sort by activity; pinned shortcuts sort by pin time.
+
+Logical folder IDs are unchanged, including for containers now drawn as blocks. The same projection controls the nested blocks, keyboard traversal, and `visibleRows`. Each block shows five sessions initially, with Added sessions first and one shared limit across both workflow groups. Pinned is unlimited.
 
 Folder creation opens an unsent draft. It does not send a message. Moving changes organization only; it never changes the session's workspace or workflow ownership. The endpoint accepts only these typed commands, binds to loopback, and requires the descriptor's bearer token. It does not expose arbitrary JavaScript or Tauri invocation.
 

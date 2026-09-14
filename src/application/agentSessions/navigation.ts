@@ -1,3 +1,4 @@
+import { applyNavigationOrder, type NavigationOrderItem } from './navigationOrder';
 import type { AgentSessionSummaryDto } from './contracts';
 import type {
   SessionFolderTarget,
@@ -32,6 +33,8 @@ export interface SessionNavigationRow {
 }
 export interface SessionNavigationFolder {
   readonly kind: 'folder';
+  readonly role: 'repository' | 'section' | 'workflow';
+  readonly order: NavigationOrderItem;
   readonly id: string;
   readonly label: string;
   readonly createTarget: SessionFolderTarget | null;
@@ -102,61 +105,82 @@ export function buildSessionNavigation(data: SessionNavigationData): SessionNavi
   const destinations: { label: string; placement: SessionPlacement }[] = [
     { label: 'Unfiled', placement: { kind: 'unfiled' } },
   ];
-  const repoFolders: SessionNavigationFolder[] = [...data.repositories]
-    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
-    .map((repo) => {
-      const target: SessionFolderTarget = { kind: 'repository', repositoryId: repo.id };
-      destinations.push({ label: repo.name, placement: target });
-      const workflowFolders: SessionNavigationFolder[] = data.instances
+  const repoFolders: SessionNavigationFolder[] = applyNavigationOrder(
+    [...data.repositories].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    (r) => r.id,
+    { kind: 'repositories' },
+    data.orders,
+  ).map((repo) => {
+    const target: SessionFolderTarget = { kind: 'repository', repositoryId: repo.id };
+    destinations.push({ label: repo.name, placement: target });
+    const workflowFolders: SessionNavigationFolder[] = applyNavigationOrder(
+      data.instances
         .filter((i) => i.repositoryId === repo.id)
-        .map((instance) => {
-          const instanceTarget: SessionFolderTarget = {
-            kind: 'workflow_instance',
-            instanceId: instance.id,
-          };
-          destinations.push({
-            label: `${repo.name} / ${instance.name}`,
-            placement: instanceTarget,
-          });
-          const rows = groups.get(`instance:${instance.id}`) ?? [];
-          return {
-            kind: 'folder',
-            id: `instance:${instance.id}`,
-            label: instance.name,
-            createTarget: instanceTarget,
-            placement: instanceTarget,
-            children: [
-              ...rows.filter((r) => r.group === 'added'),
-              ...rows.filter((r) => r.group === 'owned'),
-            ],
-          };
-        });
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+      (i) => i.id,
+      { kind: 'workflows', repositoryId: repo.id },
+      data.orders,
+    ).map((instance) => {
+      const instanceTarget: SessionFolderTarget = {
+        kind: 'workflow_instance',
+        instanceId: instance.id,
+      };
+      destinations.push({
+        label: `${repo.name} / ${instance.name}`,
+        placement: instanceTarget,
+      });
+      const rows = groups.get(`instance:${instance.id}`) ?? [];
       return {
         kind: 'folder',
-        id: `repo:${repo.id}`,
-        label: repo.name,
-        createTarget: target,
-        placement: target,
+        role: 'workflow',
+        order: { scope: { kind: 'workflows', repositoryId: repo.id }, id: instance.id },
+        id: `instance:${instance.id}`,
+        label: instance.name,
+        createTarget: instanceTarget,
+        placement: instanceTarget,
         children: [
+          ...rows.filter((r) => r.group === 'added'),
+          ...rows.filter((r) => r.group === 'owned'),
+        ],
+      };
+    });
+    return {
+      kind: 'folder',
+      role: 'repository',
+      order: { scope: { kind: 'repositories' }, id: repo.id },
+      id: `repo:${repo.id}`,
+      label: repo.name,
+      createTarget: target,
+      placement: target,
+      children: applyNavigationOrder<SessionNavigationFolder>(
+        [
           {
             kind: 'folder',
-            id: `repo:${repo.id}:workflows`,
-            label: 'Workflows',
-            createTarget: target,
-            placement: target,
-            children: workflowFolders,
-          },
-          {
-            kind: 'folder',
+            role: 'section',
+            order: { scope: { kind: 'sections', repositoryId: repo.id }, id: 'sessions' },
             id: `repo:${repo.id}:sessions`,
             label: 'Sessions',
             createTarget: target,
             placement: target,
             children: groups.get(`repo:${repo.id}:sessions`) ?? [],
           },
+          {
+            kind: 'folder',
+            role: 'section',
+            order: { scope: { kind: 'sections', repositoryId: repo.id }, id: 'workflows' },
+            id: `repo:${repo.id}:workflows`,
+            label: 'Workflows',
+            createTarget: target,
+            placement: target,
+            children: workflowFolders,
+          },
         ],
-      };
-    });
+        (n) => n.order.id,
+        { kind: 'sections', repositoryId: repo.id },
+        data.orders,
+      ),
+    };
+  });
   const pinned = [...sessions.values()]
     .filter((s) => s.pinned)
     .sort(

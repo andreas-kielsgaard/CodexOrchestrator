@@ -1,3 +1,4 @@
+import type { NavigationOrder, NavigationOrderScope } from './navigationOrder';
 import type { AgentSessionSummaryDto } from './contracts';
 export type SessionFolderTarget =
   | { readonly kind: 'repository'; readonly repositoryId: string }
@@ -30,11 +31,13 @@ export interface SessionNavigationData {
   readonly instances: readonly NavigationInstance[];
   readonly owners: readonly WorkflowSessionOwner[];
   readonly organization: readonly SessionOrganization[];
+  readonly orders: readonly NavigationOrder[];
 }
 export interface SessionNavigationClient {
   load(): Promise<SessionNavigationData>;
   move(sessionId: string, placement: SessionPlacement): Promise<void>;
   pin(sessionId: string, pinned: boolean): Promise<void>;
+  reorder(scope: NavigationOrderScope, orderedIds: readonly string[]): Promise<void>;
   subscribeChanged?(listener: () => void): Promise<() => void>;
 }
 export const emptySessionNavigation = (): SessionNavigationData => ({
@@ -43,4 +46,5 @@ export const emptySessionNavigation = (): SessionNavigationData => ({
   instances: [],
   owners: [],
   organization: [],
+  orders: [],
 });

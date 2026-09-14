@@ -47,6 +47,10 @@ enum NavigationCommand {
         session_id: String,
         pinned: bool,
     },
+    ReorderNavigation {
+        scope: super::order::NavigationOrderScope,
+        ordered_ids: Vec<String>,
+    },
     GetDeeplink {
         session_id: String,
     },

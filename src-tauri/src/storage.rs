@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 49;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 50;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -31,7 +31,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
     let current_version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
         .map_err(|error| format!("Unable to read active schema version: {error}"))?;
-    if current_version == 48 || current_version == ACTIVE_SCHEMA_VERSION {
+    if (48..=ACTIVE_SCHEMA_VERSION).contains(&current_version) {
         if current_version == ACTIVE_SCHEMA_VERSION && active_schema_is_present(connection)? {
             return Ok(());
         }
@@ -62,9 +62,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
-        transaction
-            .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
-            .map_err(|e| e.to_string())?;
+        initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
@@ -347,9 +345,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
-        transaction
-            .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
-            .map_err(|e| e.to_string())?;
+        initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version == 14 {
             transaction
@@ -452,9 +448,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
         .map_err(|error| format!("Unable to initialize Harness binding schema: {error}"))?;
     initialize_replacement_workflow_schema(&transaction)?;
-    transaction
-        .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
-        .map_err(|e| e.to_string())?;
+    initialize_session_navigation_schema(&transaction)?;
     crate::harness_engine::migrations::migrate_bindings(&transaction)?;
     transaction
         .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
@@ -463,6 +457,15 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .commit()
         .map_err(|error| format!("Unable to commit active schema initialization: {error}"))?;
     Ok(())
+}
+
+fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::session_navigation::order_repository::SCHEMA)
+        .map_err(|e| e.to_string())
 }
 
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
@@ -530,6 +533,9 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 0)
         .map_err(|error| format!("Unable to inspect retired Workflow V1 schema: {error}"))?;
+    let session_navigation_schema_is_present = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_session_organization','session_navigation_order')", [], |row| row.get::<_, i64>(0),
+    ).map(|count| count == 2).map_err(|e| e.to_string())?;
     let session_profile_schema_is_present = connection
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json','workspace_origin')",
@@ -581,6 +587,7 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         && product_decision_schema_is_present
         && replacement_workflow_schema_is_present
         && workflow_v1_schema_is_absent
+        && session_navigation_schema_is_present
         && session_profile_schema_is_present
         && harness_binding_schema_is_present
         && harness_catalog_schema_is_present
@@ -752,6 +759,7 @@ mod tests {
                 "session_event_deliveries",
                 "session_event_groups",
                 "session_harness_bindings",
+                "session_navigation_order",
                 "sprint_target_current_attentions",
                 "sprint_target_currents",
                 "stored_file_review_artifacts",
@@ -2070,6 +2078,38 @@ mod tests {
 mod session_organization_migration_tests {
     use super::*;
     #[test]
+    fn v49_upgrade_adds_navigation_order_and_preserves_session_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("active.sqlite");
+        let connection = open_active_database(&path).unwrap();
+        connection.execute_batch("INSERT INTO agent_sessions(id,title,availability,working_directory,requested_options_json,created_at,updated_at) VALUES('session','Existing conversation','available','C:/repo','{}','2026-09-14','2026-09-14');
+            INSERT INTO agent_session_organization(session_id,placement_kind,pinned_at) VALUES('session','unfiled','2026-09-14');
+            DROP TABLE session_navigation_order; PRAGMA user_version=49;").unwrap();
+        drop(connection);
+        let connection = open_active_database(&path).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            ACTIVE_SCHEMA_VERSION
+        );
+        let saved: (String, String, String, String) = connection.query_row("SELECT title,working_directory,placement_kind,pinned_at FROM agent_sessions JOIN agent_session_organization ON id=session_id", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+        assert_eq!(
+            saved,
+            (
+                "Existing conversation".into(),
+                "C:/repo".into(),
+                "unfiled".into(),
+                "2026-09-14".into()
+            )
+        );
+        assert!(connection
+            .prepare("SELECT * FROM session_navigation_order")
+            .is_ok());
+        drop(connection);
+        assert!(open_active_database(&path).is_ok());
+    }
+    #[test]
     fn v48_upgrade_adds_organization_without_rewriting_sessions_and_reopens() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("active.sqlite");
@@ -2083,7 +2123,7 @@ mod session_organization_migration_tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            49
+            ACTIVE_SCHEMA_VERSION
         );
         assert!(connection
             .prepare("SELECT * FROM agent_session_organization")

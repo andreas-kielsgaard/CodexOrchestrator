@@ -5,6 +5,7 @@ import {
   type SessionNavigationClient,
   type SessionPlacement,
 } from '../../application/agentSessions/organization';
+import type { NavigationOrderScope } from '../../application/agentSessions/navigationOrder';
 import { sessionErrorMessage } from './sessionErrors';
 import { sessionSummaryChanged } from './sessionAttention';
 export function useAgentSessionCollection(
@@ -90,6 +91,8 @@ export function useAgentSessionCollection(
     clearError: () => setError(null),
     move: (id: string, placement: SessionPlacement) =>
       navigation ? mutate(() => navigation.move(id, placement)) : Promise.resolve(),
+    reorder: (scope: NavigationOrderScope, ids: readonly string[]) =>
+      navigation ? mutate(() => navigation.reorder(scope, ids)) : Promise.resolve(),
     pin: (id: string, pinned: boolean) =>
       navigation ? mutate(() => navigation.pin(id, pinned)) : Promise.resolve(),
   };
