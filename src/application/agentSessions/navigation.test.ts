@@ -1,6 +1,6 @@
 import { buildSessionNavigation } from './navigation';
 import { navigationData } from '../../features/agentSessions/navigationTestFixtures';
-import { visibleSessionRows } from './navigationView';
+import { visibleSessionRows, navigationFolders } from './navigationView';
 it('groups registered repositories and typed workflow owners, leaving ordinary sessions unfiled', () => {
   const model = buildSessionNavigation(navigationData());
   expect(model.sections[1].children.map((n) => n.kind === 'folder' && n.label)).toEqual([
@@ -48,16 +48,53 @@ it('uses one five-row budget per folder and keeps all pinned shortcuts', () => {
     'repo:repo-a:workflows',
     'repo:repo-a:sessions',
     'instance:flow-a',
+    'instance:flow-a:added',
+    'instance:flow-a:owned',
   ]);
   const rows = visibleSessionRows(model, expanded, new Set());
   expect(rows.filter((r) => r.sectionId === 'pinned')).toHaveLength(8);
   expect(
-    rows.filter((r) => r.parentId === 'instance:flow-a' && r.node.kind === 'session'),
+    rows.filter((r) => r.parentId?.startsWith('instance:flow-a:') && r.node.kind === 'session'),
   ).toHaveLength(5);
   expect(rows.find((r) => r.id === 'more:instance:flow-a')?.node).toMatchObject({ remaining: 3 });
   const all = visibleSessionRows(model, expanded, new Set(['instance:flow-a']));
-  const workflow = all.filter((r) => r.parentId === 'instance:flow-a' && r.node.kind === 'session');
+  const workflow = all.filter(
+    (r) => r.parentId?.startsWith('instance:flow-a:') && r.node.kind === 'session',
+  );
   expect(workflow).toHaveLength(8);
   expect(workflow.at(-1)?.node).toMatchObject({ group: 'owned' });
   expect(new Set(all.map((r) => r.id)).size).toBe(all.length);
+});
+
+it('applies independent pinned and session orders while keeping owned sessions below added sessions', () => {
+  const data = navigationData();
+  const model = buildSessionNavigation({
+    ...data,
+    organization: data.summaries.map((s) => ({
+      sessionId: s.id,
+      placement: { kind: 'workflow_instance', instanceId: 'flow-a' },
+      pinnedAt: '2026-09-14T12:00:00Z',
+    })),
+    orders: [
+      { scope: { kind: 'pinned' }, orderedIds: ['session-8', 'session-1'] },
+      {
+        scope: { kind: 'sessions', folderId: 'instance:flow-a' },
+        orderedIds: ['session-7', 'session-5', 'session-1'],
+      },
+    ],
+  });
+  expect(
+    model.sections[0].children.slice(0, 2).map((n) => n.kind === 'session' && n.summary.id),
+  ).toEqual(['session-8', 'session-1']);
+  const workflow = navigationFolders(model).find((f) => f.node.id === 'instance:flow-a')!.node;
+  expect(workflow.children.map((n) => n.kind === 'session' && n.summary.id)).toEqual([
+    'session-5',
+    'session-1',
+    'session-2',
+    'session-3',
+    'session-4',
+    'session-6',
+    'session-8',
+    'session-7',
+  ]);
 });

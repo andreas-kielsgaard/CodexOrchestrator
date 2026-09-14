@@ -35,7 +35,11 @@ export interface SessionNavigationData {
 }
 export interface SessionNavigationClient {
   load(): Promise<SessionNavigationData>;
-  move(sessionId: string, placement: SessionPlacement): Promise<void>;
+  move(
+    sessionId: string,
+    placement: SessionPlacement,
+    orderedIds?: readonly string[],
+  ): Promise<void>;
   pin(sessionId: string, pinned: boolean): Promise<void>;
   reorder(scope: NavigationOrderScope, orderedIds: readonly string[]): Promise<void>;
   subscribeChanged?(listener: () => void): Promise<() => void>;

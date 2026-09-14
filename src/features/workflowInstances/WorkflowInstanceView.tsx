@@ -38,6 +38,7 @@ import {
 import './workflowInstanceView.css';
 
 export interface WorkflowInstanceViewProps {
+  readonly sessionFocus?: { readonly nodeId: string; readonly sessionId: string };
   readonly instanceId: string;
   readonly client: WorkflowInstanceClient;
   readonly capabilityProfiles?: ReadonlyMap<string, CapabilityProfileDto>;
@@ -49,6 +50,7 @@ export interface WorkflowInstanceViewProps {
 
 export function WorkflowInstanceView({
   instanceId,
+  sessionFocus,
   client,
   capabilityProfiles = new Map(),
   identities = [],
@@ -57,7 +59,11 @@ export function WorkflowInstanceView({
   queryClient,
 }: WorkflowInstanceViewProps) {
   const [details, setDetails] = useState<WorkflowInstanceDetails | null>(null);
-  const [selection, setSelection] = useState<WorkflowInstanceSelection>(null);
+  const [selection, setSelection] = useState<WorkflowInstanceSelection>(
+    sessionFocus
+      ? { kind: 'session', id: sessionFocus.sessionId, nodeId: sessionFocus.nodeId }
+      : null,
+  );
   const [requestText, setRequestText] = useState('');
   const [eventResult, setEventResult] = useState<SessionEventResultDto | null>(null);
   const [busy, setBusy] = useState(false);
@@ -196,7 +202,10 @@ export function WorkflowInstanceView({
               <WorkflowGraphNodeCard
                 key={graphNode.id}
                 node={graphNode}
-                selected={selection?.kind === 'node' && selection.id === graphNode.id}
+                selected={
+                  (selection?.kind === 'node' && selection.id === graphNode.id) ||
+                  (selection?.kind === 'session' && selection.nodeId === graphNode.id)
+                }
                 aria-label={`Open ${graphNode.name}`}
                 onClick={(event) => {
                   event.stopPropagation();

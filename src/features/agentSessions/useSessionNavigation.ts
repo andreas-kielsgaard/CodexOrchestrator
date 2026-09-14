@@ -3,6 +3,7 @@ import type { SessionNavigationModel } from '../../application/agentSessions/nav
 import {
   ancestorPath,
   navigationFolders,
+  navigationGroups,
   projectNavigationView,
   visibleSessionRows,
 } from '../../application/agentSessions/navigationView';
@@ -16,14 +17,25 @@ export function useSessionNavigation(
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLElement>());
   const initialized = useRef(false);
+  const knownGroups = useRef(new Set<string>());
   const lastReveal = useRef('');
+  const preserveDisclosure = useRef<string | null>(null);
   useEffect(() => {
     if (initialized.current) return;
-    const ids = navigationFolders(model).map((f) => f.node.id);
+    const ids = [
+      ...navigationFolders(model).map((f) => f.node.id),
+      ...navigationGroups(model).map((g) => g.id),
+    ];
     if (ids.length) {
       initialized.current = true;
       setExpanded(new Set(ids));
     }
+  }, [model]);
+  useEffect(() => {
+    const ids = navigationGroups(model).map((g) => g.id);
+    const added = ids.filter((id) => !knownGroups.current.has(id));
+    knownGroups.current = new Set(ids);
+    if (added.length) setExpanded((current) => new Set([...current, ...added]));
   }, [model]);
   useEffect(() => {
     if (!selectedSessionId || lastReveal.current === revealKey) return;
@@ -33,10 +45,19 @@ export function useSessionNavigation(
     if (!section) return;
     const path = ancestorPath(section.children, row.id)!;
     lastReveal.current = revealKey;
+    if (preserveDisclosure.current === selectedSessionId) {
+      preserveDisclosure.current = null;
+      setFocusedId(`pinned:session:${selectedSessionId}`);
+      return;
+    }
+    preserveDisclosure.current = null;
+    if (row.group) path.push(`${path.at(-1)}:${row.group}`);
     const revealedExpansion = new Set([...expanded, ...path]);
     setExpanded(revealedExpansion);
     if (!visibleSessionRows(model, revealedExpansion, shown).some((item) => item.id === row.id))
-      setShown((current) => new Set([...current, path.at(-1) ?? section.id]));
+      setShown(
+        (current) => new Set([...current, (row.group ? path.at(-2) : path.at(-1)) ?? section.id]),
+      );
     setFocusedId(row.id);
     requestAnimationFrame(() => refs.current.get(row.id)?.scrollIntoView({ block: 'nearest' }));
   }, [model, selectedSessionId, revealKey, expanded, shown]);
@@ -76,10 +97,12 @@ export function useSessionNavigation(
       return next;
     });
   const showMore = (folderId: string) => {
-    const index = rows.findIndex((row) => row.id === `more:${folderId}`);
+    const previousIds = new Set(rows.map((row) => row.id));
     const nextShown = new Set([...shown, folderId]);
     setShown(nextShown);
-    const next = visibleSessionRows(model, expanded, nextShown)[index];
+    const next = visibleSessionRows(model, expanded, nextShown).find(
+      (row) => row.node.kind === 'session' && !previousIds.has(row.id),
+    );
     if (next) {
       setFocusedId(next.id);
       requestAnimationFrame(() => refs.current.get(next.id)?.focus());
@@ -93,7 +116,21 @@ export function useSessionNavigation(
       else next.delete(id);
       return next;
     });
+  const selectedAncestors = new Set<string>();
+  const selected = selectedSessionId ? model.sessions.get(selectedSessionId) : undefined;
+  if (selected)
+    for (const section of model.sections) {
+      const path = ancestorPath(section.children, selected.id);
+      if (path) {
+        path.forEach((id) => selectedAncestors.add(id));
+        if (selected.group) selectedAncestors.add(`${path.at(-1)}:${selected.group}`);
+      }
+    }
   return {
+    preserveDisclosureFor: (id: string) => {
+      preserveDisclosure.current = id;
+    },
+    selectedAncestors,
     rows,
     view,
     expanded,

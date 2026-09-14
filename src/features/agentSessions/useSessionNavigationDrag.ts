@@ -2,7 +2,9 @@ import { useRef, useState, type PointerEvent } from 'react';
 import type {
   SessionNavigationFolder,
   SessionNavigationModel,
+  SessionNavigationRow,
 } from '../../application/agentSessions/navigation';
+import { targetId } from '../../application/agentSessions/navigation';
 import type { SessionPlacement } from '../../application/agentSessions/organization';
 import {
   insertNavigationSibling,
@@ -13,19 +15,31 @@ import {
 import {
   navigationFolders,
   navigationSiblings,
+  sessionContainers,
 } from '../../application/agentSessions/navigationView';
 
 type DragSource =
   { kind: 'session'; id: string } | { kind: 'container'; item: NavigationOrderItem };
 type DropTarget =
-  | { id: string; side: 'inside'; placement: SessionPlacement }
-  | { id: string; side: 'before' | 'after'; item: NavigationOrderItem };
+  | {
+      kind: 'session';
+      id: string;
+      side: 'before' | 'after';
+      placement: SessionPlacement;
+      scope: NavigationOrderScope;
+      orderedIds: readonly string[];
+    }
+  | { kind: 'container'; id: string; side: 'before' | 'after'; item: NavigationOrderItem };
 
 /** Pointer capture keeps sidebar gestures inside the application, including on WebView2. */
 export function useSessionNavigationDrag(
   model: SessionNavigationModel,
   enabled: boolean,
-  onMove: (id: string, placement: SessionPlacement) => Promise<void>,
+  onMove: (
+    id: string,
+    placement: SessionPlacement,
+    orderedIds?: readonly string[],
+  ) => Promise<void>,
   onReorder: (scope: NavigationOrderScope, ids: readonly string[]) => Promise<void>,
 ) {
   const gesture = useRef<{ source: DragSource; x: number; y: number; dragging: boolean } | null>(
@@ -37,11 +51,67 @@ export function useSessionNavigationDrag(
   const targetAt = (source: DragSource, x: number, y: number): DropTarget | null => {
     const element = document.elementFromPoint(x, y);
     if (source.kind === 'session') {
-      const id = element?.closest<HTMLElement>('[data-session-placement]')?.dataset
-        .sessionPlacement;
-      if (id === 'unfiled') return { id, side: 'inside', placement: { kind: 'unfiled' } };
-      const folder = folders.find((f) => f.node.id === id)?.node;
-      return folder ? { id: folder.id, side: 'inside', placement: folder.placement } : null;
+      const surface = element?.closest<HTMLElement>('[data-session-placement]');
+      if (!surface) return null;
+      const surfaceId = surface.dataset.sessionPlacement!;
+      const folder = folders.find((f) => f.node.id === surfaceId)?.node;
+      const containerId = folder ? targetId(folder.placement) : surfaceId;
+      const destinationSurface =
+        [...document.querySelectorAll<HTMLElement>('[data-session-placement]')].find(
+          (e) => e.dataset.sessionPlacement === containerId,
+        ) ?? surface;
+      const container = sessionContainers(model).find((c) => c.id === containerId);
+      const session = model.sessions.get(source.id);
+      if (!container || !session || (containerId === 'pinned' && !session.pinned)) return null;
+      const group = containerId.startsWith('instance:')
+        ? containerId === `instance:${session.owner?.instanceId}`
+          ? 'owned'
+          : 'added'
+        : undefined;
+      const eligible = container.rows.filter(
+        (r) => r.summary.id !== source.id && r.group === group,
+      );
+      const eligibleIds = new Set(eligible.map((r) => r.id));
+      const visible = [
+        ...destinationSurface.querySelectorAll<HTMLElement>('[data-session-row]'),
+      ].filter((e) => eligibleIds.has(e.dataset.sessionRow!));
+      const next = visible.find((e) => {
+        const bounds = e.getBoundingClientRect();
+        return y < bounds.top + bounds.height / 2;
+      });
+      const anchor = next ?? visible.at(-1);
+      const side = next ? 'before' : 'after';
+      const ids = container.rows.map((r) => r.summary.id);
+      const target = anchor ? eligible.find((r) => r.id === anchor.dataset.sessionRow) : undefined;
+      let orderedIds: string[];
+      if (target) orderedIds = insertNavigationSibling(ids, source.id, target.summary.id, side);
+      else {
+        orderedIds = ids.filter((id) => id !== source.id);
+        const first = eligible[0];
+        const position = first
+          ? orderedIds.indexOf(first.summary.id)
+          : group === 'added'
+            ? 0
+            : orderedIds.length;
+        orderedIds.splice(position, 0, source.id);
+      }
+      const groupHeader = group
+        ? destinationSurface.querySelector<HTMLElement>(`[data-session-group="${group}"]`)
+        : null;
+      return {
+        kind: 'session',
+        id:
+          anchor?.dataset.sessionRow ??
+          groupHeader?.id ??
+          destinationSurface.dataset.sessionPlacement!,
+        side: anchor ? side : 'after',
+        placement: container.placement,
+        scope:
+          containerId === 'pinned'
+            ? { kind: 'pinned' }
+            : { kind: 'sessions', folderId: containerId },
+        orderedIds,
+      };
     }
     const header = element?.closest<HTMLElement>('[data-navigation-header]');
     const folder = folders.find((f) => f.node.id === header?.dataset.navigationHeader)?.node;
@@ -54,6 +124,7 @@ export function useSessionNavigationDrag(
       return null;
     const rect = header.getBoundingClientRect();
     return {
+      kind: 'container',
       id: folder.id,
       item: folder.order,
       side: y < rect.top + rect.height / 2 ? 'before' : 'after',
@@ -97,9 +168,10 @@ export function useSessionNavigationDrag(
         event.preventDefault();
         event.stopPropagation();
         const target = targetAt(pending.source, event.clientX, event.clientY);
-        if (pending.source.kind === 'session' && target?.side === 'inside')
-          void onMove(pending.source.id, target.placement);
-        else if (pending.source.kind === 'container' && target && target.side !== 'inside') {
+        if (pending.source.kind === 'session' && target?.kind === 'session') {
+          if (target.scope.kind === 'pinned') void onReorder(target.scope, target.orderedIds);
+          else void onMove(pending.source.id, target.placement, target.orderedIds);
+        } else if (pending.source.kind === 'container' && target?.kind === 'container') {
           void onReorder(
             target.item.scope,
             insertNavigationSibling(
@@ -124,7 +196,10 @@ export function useSessionNavigationDrag(
   });
   return {
     indicator,
-    sessionProps: (id: string) => sourceProps({ kind: 'session', id }),
+    sessionProps: (row: SessionNavigationRow) => ({
+      ...sourceProps({ kind: 'session', id: row.summary.id }),
+      'data-session-row': row.id,
+    }),
     headerProps: (folder: SessionNavigationFolder) => ({
       ...sourceProps({ kind: 'container', item: folder.order }),
       'data-navigation-header': folder.id,

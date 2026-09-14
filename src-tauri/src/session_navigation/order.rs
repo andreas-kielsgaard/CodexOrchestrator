@@ -10,6 +10,8 @@ use std::collections::HashSet;
 )]
 pub(crate) enum NavigationOrderScope {
     Repositories,
+    Pinned,
+    Sessions { folder_id: String },
     Sections { repository_id: String },
     Workflows { repository_id: String },
 }

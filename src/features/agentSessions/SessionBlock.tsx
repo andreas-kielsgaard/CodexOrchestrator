@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, Folder, SquarePen } from 'lucide-react';
+import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
+import { ChevronDown, ChevronRight, Folder, SquarePen, GitBranch } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { SessionNavigationFolder } from '../../application/agentSessions/navigation';
 import type { SessionFolderTarget } from '../../application/agentSessions/organization';
@@ -13,12 +14,14 @@ export function SessionBlock({
   drag,
   children,
   onNew,
+  onOpenWorkflow,
 }: {
   entry: NavigationEntry;
   node: SessionNavigationFolder;
   tree: SessionNavigationController;
   drag: SessionNavigationDrag;
   children: ReactNode;
+  onOpenWorkflow?(target: SessionWorkflowTarget): void;
   onNew(target: SessionFolderTarget | null): void;
 }) {
   const expanded = tree.expanded.has(node.id);
@@ -32,7 +35,6 @@ export function SessionBlock({
   return (
     <div
       className={`session-container session-container--${node.role}`}
-      data-drop-target={indicator === 'inside' || undefined}
       {...drag.dropProps(node.id)}
       onClick={(event) => {
         event.stopPropagation();
@@ -49,7 +51,7 @@ export function SessionBlock({
         aria-level={entry.level}
         aria-expanded={expanded}
         tabIndex={tree.activeId === node.id ? 0 : -1}
-        className="session-tree-row session-block-heading"
+        className={`session-tree-row session-block-heading${!expanded && tree.selectedAncestors.has(node.id) ? ' contains-selection' : ''}`}
         data-insertion={indicator === 'before' || indicator === 'after' ? indicator : undefined}
         onFocus={(event) => {
           event.stopPropagation();
@@ -63,6 +65,20 @@ export function SessionBlock({
           {node.label}
           {!expanded && node.role === 'section' ? '…' : ''}
         </span>
+        {node.createTarget?.kind === 'workflow_instance' && onOpenWorkflow && (
+          <button
+            className="session-hover-action session-icon-button"
+            aria-label={`Open workflow ${node.label}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (node.createTarget?.kind === 'workflow_instance')
+                onOpenWorkflow({ instanceId: node.createTarget.instanceId });
+            }}
+          >
+            <GitBranch size={15} />
+          </button>
+        )}
         <button
           className="folder-create session-icon-button"
           aria-label={`New session in ${node.label}`}

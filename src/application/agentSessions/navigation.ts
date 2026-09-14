@@ -56,7 +56,7 @@ export interface SessionNavigationModel {
     readonly placement: SessionPlacement;
   }[];
 }
-const targetId = (placement: SessionPlacement): string =>
+export const targetId = (placement: SessionPlacement): string =>
   placement.kind === 'repository'
     ? `repo:${placement.repositoryId}:sessions`
     : placement.kind === 'workflow_instance'
@@ -102,6 +102,11 @@ export function buildSessionNavigation(data: SessionNavigationData): SessionNavi
     group.push(row);
     groups.set(folder, group);
   }
+  for (const [folderId, rows] of groups)
+    groups.set(
+      folderId,
+      applyNavigationOrder(rows, (r) => r.summary.id, { kind: 'sessions', folderId }, data.orders),
+    );
   const destinations: { label: string; placement: SessionPlacement }[] = [
     { label: 'Unfiled', placement: { kind: 'unfiled' } },
   ];
@@ -195,7 +200,17 @@ export function buildSessionNavigation(data: SessionNavigationData): SessionNavi
     sessions,
     destinations,
     sections: [
-      { id: 'pinned', label: 'Pinned', children: pinned, unlimited: true },
+      {
+        id: 'pinned',
+        label: 'Pinned',
+        children: applyNavigationOrder(
+          pinned,
+          (r) => r.summary.id,
+          { kind: 'pinned' },
+          data.orders,
+        ),
+        unlimited: true,
+      },
       { id: 'repositories', label: 'Repositories', children: repoFolders },
       { id: 'unfiled', label: 'Unfiled', children: groups.get('unfiled') ?? [] },
     ],

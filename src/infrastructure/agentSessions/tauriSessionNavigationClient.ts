@@ -3,7 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import type { SessionNavigationClient } from '../../application/agentSessions/organization';
 export const tauriSessionNavigationClient: SessionNavigationClient = {
   load: () => invoke('load_agent_session_navigation'),
-  move: (sessionId, placement) => invoke('move_agent_session', { sessionId, placement }),
+  move: (sessionId, placement, orderedIds) =>
+    invoke('move_agent_session', { sessionId, placement, orderedIds }),
   pin: (sessionId, pinned) => invoke('pin_agent_session', { sessionId, pinned }),
   reorder: (scope, orderedIds) => invoke('reorder_session_navigation', { scope, orderedIds }),
   subscribeChanged: async (listener) => listen('workflow-instance-updated', listener),

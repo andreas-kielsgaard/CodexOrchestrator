@@ -1,4 +1,6 @@
 export type NavigationOrderScope =
+  | { readonly kind: 'pinned' }
+  | { readonly kind: 'sessions'; readonly folderId: string }
   | { readonly kind: 'repositories' }
   | { readonly kind: 'sections'; readonly repositoryId: string }
   | { readonly kind: 'workflows'; readonly repositoryId: string };
@@ -11,7 +13,11 @@ export interface NavigationOrderItem {
   readonly id: string;
 }
 export const orderScopeKey = (scope: NavigationOrderScope): string =>
-  scope.kind === 'repositories' ? scope.kind : `${scope.kind}:${scope.repositoryId}`;
+  scope.kind === 'repositories' || scope.kind === 'pinned'
+    ? scope.kind
+    : scope.kind === 'sessions'
+      ? `sessions:${scope.folderId}`
+      : `${scope.kind}:${scope.repositoryId}`;
 
 /** Keep saved siblings first; append new siblings in their supplied default order. */
 export function applyNavigationOrder<T>(

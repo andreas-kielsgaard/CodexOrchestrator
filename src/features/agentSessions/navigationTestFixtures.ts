@@ -1,3 +1,4 @@
+import { targetId } from '../../application/agentSessions/navigation';
 import {
   emptySessionNavigation,
   type SessionNavigationClient,
@@ -74,10 +75,18 @@ export function recordedNavigation(
   let data = structuredClone(initial);
   return {
     load: async () => structuredClone(data),
-    move: async (sessionId, placement) => {
+    move: async (sessionId, placement, orderedIds) => {
       const existing = data.organization.find((o) => o.sessionId === sessionId);
       data = {
         ...data,
+        orders: orderedIds
+          ? [
+              ...data.orders.filter(
+                (o) => !(o.scope.kind === 'sessions' && o.scope.folderId === targetId(placement)),
+              ),
+              { scope: { kind: 'sessions', folderId: targetId(placement) }, orderedIds },
+            ]
+          : data.orders,
         organization: [
           ...data.organization.filter((o) => o.sessionId !== sessionId),
           { sessionId, placement, pinnedAt: existing?.pinnedAt ?? null },

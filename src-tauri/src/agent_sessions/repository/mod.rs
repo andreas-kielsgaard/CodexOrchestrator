@@ -1,6 +1,7 @@
 mod addressing;
 mod mapping;
 mod organization;
+pub(crate) use organization::write_placement;
 pub(crate) use organization::SCHEMA as SESSION_ORGANIZATION_SCHEMA;
 mod schema;
 

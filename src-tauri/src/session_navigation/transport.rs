@@ -43,8 +43,9 @@ pub(crate) fn move_agent_session(
     state: State<'_, SessionNavigationTauriState>,
     session_id: AgentSessionId,
     placement: SessionPlacement,
+    ordered_ids: Option<Vec<String>>,
 ) -> Result<(), String> {
-    state.0.move_session(session_id, placement)
+    state.0.move_session(session_id, placement, ordered_ids)
 }
 #[tauri::command]
 pub(crate) fn pin_agent_session(

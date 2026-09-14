@@ -1,3 +1,5 @@
+import { SessionOwnerGroup } from './SessionOwnerGroup';
+import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import { SquarePen } from 'lucide-react';
 import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
 import type {
@@ -30,6 +32,7 @@ export function SessionNavigation({
   tree,
   onSelect,
   onNew,
+  onOpenWorkflow,
   onMove,
   onPin,
   onReorder,
@@ -39,8 +42,9 @@ export function SessionNavigation({
   selectedSessionId: string | null;
   tree: SessionNavigationController;
   onSelect(id: string): void;
+  onOpenWorkflow?(target: SessionWorkflowTarget): void;
   onNew(target: SessionFolderTarget | null): void;
-  onMove(id: string, target: SessionPlacement): Promise<void>;
+  onMove(id: string, target: SessionPlacement, orderedIds?: readonly string[]): Promise<void>;
   onPin(id: string, pinned: boolean): Promise<void>;
   onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
   organizing?: boolean;
@@ -86,12 +90,16 @@ export function SessionNavigation({
     else if (event.key === 'ArrowUp') tree.focus(tree.rows[index - 1]?.id);
     else if (event.key === 'Home') tree.focus(tree.rows[0]?.id);
     else if (event.key === 'End') tree.focus(tree.rows.at(-1)?.id);
-    else if (event.key === 'ArrowRight' && row.node.kind === 'folder') {
+    else if (
+      event.key === 'ArrowRight' &&
+      (row.node.kind === 'folder' || row.node.kind === 'group')
+    ) {
       if (!tree.expanded.has(row.id)) tree.toggle(row.id);
       else
         tree.focus(tree.rows[index + 1]?.parentId === row.id ? tree.rows[index + 1].id : undefined);
     } else if (event.key === 'ArrowLeft') {
-      if (row.node.kind === 'folder' && tree.expanded.has(row.id)) tree.toggle(row.id);
+      if ((row.node.kind === 'folder' || row.node.kind === 'group') && tree.expanded.has(row.id))
+        tree.toggle(row.id);
       else tree.focus(row.parentId ?? undefined);
     } else if (
       (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) &&
@@ -100,23 +108,25 @@ export function SessionNavigation({
       const bounds = tree.refs.current.get(row.id)!.getBoundingClientRect();
       openMenu(row.node, bounds.left + 20, bounds.bottom);
     } else if (event.key === 'Enter' || event.key === ' ') {
-      if (row.node.kind === 'folder') tree.toggle(row.id);
+      if (row.node.kind === 'folder' || row.node.kind === 'group') tree.toggle(row.id);
       else if (row.node.kind === 'more') tree.showMore(row.node.folderId);
-      else onSelect(row.node.summary.id);
+      else {
+        if (row.sectionId === 'pinned') tree.preserveDisclosureFor(row.node.summary.id);
+        onSelect(row.node.summary.id);
+      }
     } else return;
     event.preventDefault();
     event.stopPropagation();
   };
   const render = (content: readonly NavigationContent[]): React.ReactNode =>
     content.map((entry) => {
-      if ('kind' in entry)
-        return (
-          <div key={entry.id} className="session-owner-group" aria-label={entry.label}>
-            <div className="session-owner-heading">{entry.label}</div>
-            {render(entry.children)}
-          </div>
-        );
       const node = entry.node;
+      if (node.kind === 'group')
+        return (
+          <SessionOwnerGroup key={entry.id} entry={entry} node={node} tree={tree} drag={drag}>
+            {render(entry.children)}
+          </SessionOwnerGroup>
+        );
       if (node.kind === 'folder')
         return (
           <SessionBlock
@@ -126,6 +136,7 @@ export function SessionNavigation({
             tree={tree}
             drag={drag}
             onNew={onNew}
+            onOpenWorkflow={onOpenWorkflow}
           >
             {render(entry.children)}
           </SessionBlock>
@@ -143,6 +154,7 @@ export function SessionNavigation({
             onSelect={onSelect}
             onPin={onPin}
             onMenu={openMenu}
+            onOpenWorkflow={onOpenWorkflow}
           />
         );
       return (
@@ -173,10 +185,12 @@ export function SessionNavigation({
         <section
           key={section.id}
           className="session-tree-section"
-          {...(section.id === 'unfiled' ? drag.dropProps('unfiled') : {})}
-          data-drop-target={drag.indicator?.id === section.id || undefined}
+          {...(section.id !== 'repositories' ? drag.dropProps(section.id) : {})}
         >
-          <div className="session-section-heading">
+          <div
+            className="session-section-heading"
+            data-insertion={drag.indicator?.id === section.id ? drag.indicator.side : undefined}
+          >
             <h2>{section.label}</h2>
             {section.id === 'unfiled' && (
               <button

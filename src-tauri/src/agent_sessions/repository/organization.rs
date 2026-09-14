@@ -29,7 +29,7 @@ fn placement_columns(placement: &SessionPlacement) -> (&str, Option<&str>) {
         }
     }
 }
-fn write_placement(
+pub(crate) fn write_placement(
     connection: &Connection,
     session_id: &AgentSessionId,
     placement: &SessionPlacement,

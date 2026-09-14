@@ -89,8 +89,8 @@ export function useAgentSessionCollection(
     error,
     reload,
     clearError: () => setError(null),
-    move: (id: string, placement: SessionPlacement) =>
-      navigation ? mutate(() => navigation.move(id, placement)) : Promise.resolve(),
+    move: (id: string, placement: SessionPlacement, orderedIds?: readonly string[]) =>
+      navigation ? mutate(() => navigation.move(id, placement, orderedIds)) : Promise.resolve(),
     reorder: (scope: NavigationOrderScope, ids: readonly string[]) =>
       navigation ? mutate(() => navigation.reorder(scope, ids)) : Promise.resolve(),
     pin: (id: string, pinned: boolean) =>

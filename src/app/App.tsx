@@ -1112,6 +1112,7 @@ export function App({
           queryClient={sessionEventQueryClient}
           recipeId={currentProductDestination.workflowTypeId}
           instanceId={currentProductDestination.workflowInstanceId}
+          sessionFocus={currentProductDestination.session}
           onOpenRecipe={(recipeId) => {
             productNavigationEpoch.current += 1;
             dispatchProductNavigation({
@@ -1160,6 +1161,23 @@ export function App({
           sessionEventQueryClient={sessionEventQueryClient}
           agentIdentityForSession={agentIdentityForSession}
           navigationClient={sessionNavigationClient}
+          onOpenWorkflow={
+            workflowAuthoringClient && workflowInstanceClient && executionConfigurationClient
+              ? (target) => {
+                  productNavigationEpoch.current += 1;
+                  dispatchProductNavigation({
+                    type: 'navigate',
+                    intent: 'push',
+                    destination: {
+                      kind: 'workflow',
+                      workflowTypeId: null,
+                      workflowInstanceId: target.instanceId,
+                      session: target.session,
+                    },
+                  });
+                }
+              : undefined
+          }
           agentRequest={navigationAgent.request}
           onAgentComplete={navigationAgent.complete}
           selection={agentSessionSelection}

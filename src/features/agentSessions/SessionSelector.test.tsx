@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { within, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { buildSessionNavigation } from '../../application/agentSessions/navigation';
 import { navigationData, populatedNavigationData } from './navigationTestFixtures';
 import { SessionSelector as Selector } from './SessionSelector';
@@ -74,10 +74,14 @@ it('routes dragging and the context-menu move to the same placement operation', 
   render(<SessionSelector {...actions} />);
   const row = await screen.findByRole('treeitem', { name: 'Session 1' });
   dragTo(row, screen.getByRole('treeitem', { name: 'Feature build' }));
-  expect(actions.onMove).toHaveBeenCalledWith('session-1', {
-    kind: 'workflow_instance',
-    instanceId: 'flow-a',
-  });
+  expect(actions.onMove).toHaveBeenCalledWith(
+    'session-1',
+    {
+      kind: 'workflow_instance',
+      instanceId: 'flow-a',
+    },
+    ['session-1', 'session-7'],
+  );
   fireEvent.contextMenu(row, { clientX: 30, clientY: 40 });
   fireEvent.click(screen.getByRole('menuitem', { name: 'Move to…' }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Empty repo' }));
@@ -163,4 +167,141 @@ it('reorders sibling headers by pointer or keyboard without reparenting', async 
   dragTo(empty, screen.getByRole('treeitem', { name: 'Feature build' }));
   expect(actions.onReorder).not.toHaveBeenCalled();
   expect(actions.onMove).not.toHaveBeenCalled();
+});
+
+it('reorders pinned shortcuts independently and preserves closed folders when a shortcut is selected', async () => {
+  const actions = props();
+  const model = buildSessionNavigation(populatedNavigationData());
+  const { rerender } = render(<SessionSelector {...actions} model={model} />);
+  const pins = screen.getByRole('tree', { name: 'Pinned sessions' });
+  const first = within(pins).getByRole('treeitem', { name: 'Discussion 6' });
+  const last = within(pins).getByRole('treeitem', { name: 'Discussion 1' });
+  dragTo(last, first);
+  expect(actions.onReorder).toHaveBeenCalledWith({ kind: 'pinned' }, [
+    'demo-1',
+    'demo-6',
+    'demo-5',
+    'demo-4',
+    'demo-3',
+    'demo-2',
+  ]);
+  expect(actions.onMove).not.toHaveBeenCalled();
+  const repo = await screen.findByRole('treeitem', { name: 'Alpha' });
+  fireEvent.click(repo);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  fireEvent.click(last);
+  rerender(
+    <SessionSelector {...actions} model={model} selectedSessionId="demo-1" revealKey="pin-open" />,
+  );
+  await waitFor(() => expect(repo).toHaveAttribute('aria-expanded', 'false'));
+  expect(repo).toHaveClass('contains-selection');
+  expect(screen.getAllByRole('treeitem', { name: 'Discussion 1' })).toHaveLength(1);
+  rerender(
+    <SessionSelector
+      {...actions}
+      model={model}
+      selectedSessionId="demo-1"
+      revealKey="external-open"
+    />,
+  );
+  await waitFor(() => expect(repo).toHaveAttribute('aria-expanded', 'true'));
+});
+
+it('collapses ownership groups independently and opens the exact workflow session from its hover action', async () => {
+  const actions = props();
+  const onOpenWorkflow = vi.fn();
+  render(
+    <SessionSelector
+      {...actions}
+      model={buildSessionNavigation(populatedNavigationData())}
+      onOpenWorkflow={onOpenWorkflow}
+    />,
+  );
+  const added = await screen.findByRole('treeitem', { name: 'Added sessions' });
+  const owned = screen.getByRole('treeitem', { name: 'Workflow sessions' });
+  fireEvent.click(added);
+  expect(added).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('treeitem', { name: 'Discussion 9' })).toBeNull();
+  expect(screen.getByRole('treeitem', { name: 'Discussion 16' })).toBeVisible();
+  fireEvent.click(owned);
+  expect(screen.queryByRole('treeitem', { name: 'Discussion 12' })).toBeNull();
+  fireEvent.keyDown(owned, { key: 'ArrowRight' });
+  fireEvent.click(screen.getByRole('button', { name: 'Open workflow for Discussion 12' }));
+  expect(onOpenWorkflow).toHaveBeenCalledWith({
+    instanceId: 'flow-a',
+    session: { nodeId: 'worker', sessionId: 'demo-12' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Open workflow Feature build' }));
+  expect(onOpenWorkflow).toHaveBeenLastCalledWith({ instanceId: 'flow-a' });
+  expect(actions.onSelect).not.toHaveBeenCalled();
+});
+
+it('inserts cross-folder and same-folder drops at a row boundary and keeps ownership groups ordered', async () => {
+  const actions = props();
+  render(
+    <SessionSelector {...actions} model={buildSessionNavigation(populatedNavigationData())} />,
+  );
+  const repo = within(screen.getByRole('treeitem', { name: 'Alpha' }).parentElement!);
+  const row = (title: string) => repo.getByRole('treeitem', { name: title });
+  const target = row('Discussion 3');
+  const surface = target.closest('[data-session-placement]')!;
+  surface.querySelectorAll<HTMLElement>('[data-session-row]').forEach((element, i) => {
+    element.getBoundingClientRect = () => ({ top: i * 32, height: 32 }) as DOMRect;
+  });
+  const source = row('Discussion 9');
+  source.setPointerCapture = vi.fn();
+  source.hasPointerCapture = () => true;
+  source.releasePointerCapture = vi.fn();
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => target });
+  for (const [kind, y] of [
+    ['pointerDown', 200],
+    ['pointerMove', 65],
+  ] as const) {
+    const event = createEvent[kind](source);
+    Object.defineProperties(event, {
+      pointerId: { value: 1 },
+      button: { value: 0 },
+      clientX: { value: 100 },
+      clientY: { value: y },
+    });
+    fireEvent(source, event);
+  }
+  expect(target).toHaveAttribute('data-insertion', 'before');
+  expect(surface).not.toHaveAttribute('data-drop-target');
+  const up = createEvent.pointerUp(source);
+  Object.defineProperties(up, {
+    pointerId: { value: 1 },
+    button: { value: 0 },
+    clientX: { value: 100 },
+    clientY: { value: 65 },
+  });
+  fireEvent(source, up);
+  expect(actions.onMove).toHaveBeenLastCalledWith(
+    'demo-9',
+    { kind: 'repository', repositoryId: 'repo-a' },
+    ['demo-1', 'demo-2', 'demo-9', 'demo-3', 'demo-4', 'demo-5', 'demo-6', 'demo-7', 'demo-8'],
+  );
+  expect(target).not.toHaveAttribute('data-insertion');
+  dragTo(row('Discussion 4'), target, 65);
+  expect(actions.onMove).toHaveBeenLastCalledWith(
+    'demo-4',
+    { kind: 'repository', repositoryId: 'repo-a' },
+    ['demo-1', 'demo-2', 'demo-4', 'demo-3', 'demo-5', 'demo-6', 'demo-7', 'demo-8'],
+  );
+  dragTo(row('Discussion 1'), row('Discussion 12'), 1000);
+  expect(actions.onMove).toHaveBeenLastCalledWith(
+    'demo-1',
+    { kind: 'workflow_instance', instanceId: 'flow-a' },
+    [
+      'demo-9',
+      'demo-10',
+      'demo-11',
+      'demo-1',
+      'demo-12',
+      'demo-13',
+      'demo-14',
+      'demo-15',
+      'demo-16',
+    ],
+  );
 });

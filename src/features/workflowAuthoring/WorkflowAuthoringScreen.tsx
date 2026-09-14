@@ -39,6 +39,7 @@ export interface WorkflowAuthoringScreenProps {
   readonly profileClient?: AgentSessionProfileClient;
   readonly queryClient?: SessionEventQueryClient;
   readonly recipeId?: string | null;
+  readonly sessionFocus?: { readonly nodeId: string; readonly sessionId: string };
   readonly instanceId?: string | null;
   readonly onOpenRecipe?: (id: string) => void;
   readonly onOpenInstance?: (id: string) => void;
@@ -56,6 +57,7 @@ export function WorkflowAuthoringScreen({
   queryClient,
   recipeId,
   instanceId,
+  sessionFocus,
   onOpenRecipe,
   onOpenInstance,
 }: WorkflowAuthoringScreenProps) {
@@ -309,8 +311,13 @@ export function WorkflowAuthoringScreen({
         ) : null}
         {selectedInstanceId && instanceClient ? (
           <WorkflowInstanceView
-            key={selectedInstanceId}
+            key={JSON.stringify([
+              selectedInstanceId,
+              sessionFocus?.nodeId,
+              sessionFocus?.sessionId,
+            ])}
             instanceId={selectedInstanceId}
+            sessionFocus={sessionFocus}
             client={instanceClient}
             capabilityProfiles={profileValues}
             identities={identities}

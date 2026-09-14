@@ -157,7 +157,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         );
         navigation.pin_session(session_id.clone(), true).unwrap();
         navigation
-            .move_session(session_id.clone(), SessionPlacement::Unfiled)
+            .move_session(session_id.clone(), SessionPlacement::Unfiled, None)
             .unwrap();
         navigation
             .reorder(
@@ -172,6 +172,82 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
                 .unwrap()
                 .unwrap(),
             session
+        );
+    }
+    let before = navigation.load().unwrap();
+    let mut pinned: Vec<String> = before
+        .organization
+        .iter()
+        .filter(|m| m.pinned_at.is_some())
+        .map(|m| m.session_id.as_str().to_owned())
+        .collect();
+    pinned.reverse();
+    navigation
+        .reorder(NavigationOrderScope::Pinned, pinned.clone())
+        .unwrap();
+    assert!(navigation
+        .reorder(NavigationOrderScope::Pinned, vec!["missing".into()])
+        .is_err());
+    let id = before
+        .organization
+        .iter()
+        .find(|m| m.pinned_at.is_some())
+        .unwrap()
+        .session_id
+        .clone();
+    let destination = SessionPlacement::WorkflowInstance {
+        instance_id: instance.id.clone(),
+    };
+    assert!(navigation
+        .move_session(id.clone(), destination.clone(), Some(vec![]))
+        .is_err());
+    assert_eq!(navigation.load().unwrap().organization, before.organization);
+    navigation
+        .move_session(
+            id.clone(),
+            destination.clone(),
+            Some(vec![id.as_str().to_owned()]),
+        )
+        .unwrap();
+    let after = navigation.load().unwrap();
+    assert_eq!(
+        after
+            .organization
+            .iter()
+            .find(|m| m.session_id == id)
+            .unwrap()
+            .placement,
+        destination
+    );
+    assert_eq!(
+        after
+            .orders
+            .iter()
+            .find(|o| o.scope == NavigationOrderScope::Pinned)
+            .unwrap()
+            .ordered_ids,
+        pinned
+    );
+    assert_eq!(
+        after
+            .orders
+            .iter()
+            .find(|o| o.scope
+                == (NavigationOrderScope::Sessions {
+                    folder_id: format!("instance:{}", instance.id)
+                }))
+            .unwrap()
+            .ordered_ids,
+        vec![id.as_str().to_owned()]
+    );
+    for summary in before.summaries {
+        assert_eq!(
+            fixture
+                .repository
+                .get_session(&summary.session.id)
+                .unwrap()
+                .unwrap(),
+            summary.session
         );
     }
 }

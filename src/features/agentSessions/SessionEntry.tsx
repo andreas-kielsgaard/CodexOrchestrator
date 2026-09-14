@@ -1,4 +1,5 @@
-import { Pin } from 'lucide-react';
+import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
+import { Pin, GitBranch } from 'lucide-react';
 import type { SessionNavigationRow } from '../../application/agentSessions/navigation';
 import type { NavigationEntry } from '../../application/agentSessions/navigationView';
 import type { SessionNavigationController } from './useSessionNavigation';
@@ -15,6 +16,7 @@ export function SessionEntry({
   onSelect,
   onPin,
   onMenu,
+  onOpenWorkflow,
 }: {
   entry: NavigationEntry;
   node: SessionNavigationRow;
@@ -24,6 +26,7 @@ export function SessionEntry({
   organizing: boolean;
   onSelect(id: string): void;
   onPin(id: string, pinned: boolean): Promise<void>;
+  onOpenWorkflow?(target: SessionWorkflowTarget): void;
   onMenu(row: SessionNavigationRow, x: number, y: number): void;
 }) {
   return (
@@ -38,12 +41,14 @@ export function SessionEntry({
       aria-selected={selected}
       tabIndex={tree.activeId === node.id ? 0 : -1}
       className={`session-tree-row session-entry${selected ? ' is-selected' : ''}`}
+      data-insertion={drag.indicator?.id === node.id ? drag.indicator.side : undefined}
       title={node.ownerLabel ? `${node.summary.title}\n${node.ownerLabel}` : node.summary.title}
       onFocus={() => tree.setFocusedId(node.id)}
       onClick={(event) => {
         event.stopPropagation();
         if (drag.consumeClick()) return;
         tree.setFocusedId(node.id);
+        if (entry.sectionId === 'pinned') tree.preserveDisclosureFor(node.summary.id);
         onSelect(node.summary.id);
       }}
       onContextMenu={(event) => {
@@ -51,9 +56,26 @@ export function SessionEntry({
         event.stopPropagation();
         onMenu(node, event.clientX, event.clientY);
       }}
-      {...drag.sessionProps(node.summary.id)}
+      {...drag.sessionProps(node)}
     >
       <span className="session-tree-label">{node.summary.title}</span>
+      {node.owner && onOpenWorkflow && (
+        <button
+          className="session-icon-button session-hover-action"
+          aria-label={`Open workflow for ${node.summary.title}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (node.owner)
+              onOpenWorkflow({
+                instanceId: node.owner.instanceId,
+                session: { nodeId: node.owner.nodeId, sessionId: node.summary.id },
+              });
+          }}
+        >
+          <GitBranch size={14} />
+        </button>
+      )}
       {organizing && (
         <button
           className={`session-icon-button session-pin${node.pinned ? ' is-pinned' : ''}`}
@@ -66,7 +88,7 @@ export function SessionEntry({
             void onPin(node.summary.id, !node.pinned);
           }}
         >
-          <Pin size={14} />
+          <Pin size={14} fill={node.pinned ? 'currentColor' : 'none'} />
         </button>
       )}
       {node.summary.pendingRequestCount > 0 ? (

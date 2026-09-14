@@ -28,6 +28,8 @@ enum NavigationCommand {
     Inspect,
     OpenSession {
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<PinnedSource>,
     },
     NewSession {
         folder_target: Option<SessionFolderTarget>,
@@ -36,12 +38,24 @@ enum NavigationCommand {
         folder_id: String,
         expanded: bool,
     },
+    SetGroupExpanded {
+        group_id: String,
+        expanded: bool,
+    },
+    OpenWorkflow {
+        instance_id: String,
+    },
+    OpenSessionWorkflow {
+        session_id: String,
+    },
     ShowMore {
         folder_id: String,
     },
     MoveSession {
         session_id: String,
         placement: SessionPlacement,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ordered_ids: Option<Vec<String>>,
     },
     PinSession {
         session_id: String,
@@ -54,6 +68,12 @@ enum NavigationCommand {
     GetDeeplink {
         session_id: String,
     },
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PinnedSource {
+    Pinned,
 }
 
 type Reply = Result<Value, String>;

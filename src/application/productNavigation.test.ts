@@ -457,3 +457,24 @@ describe('Product navigation history', () => {
     );
   });
 });
+
+it('retains exact workflow session focus in product history and restored destinations', () => {
+  const destination: ProductNavigationDestination = {
+    kind: 'workflow',
+    workflowTypeId: null,
+    workflowInstanceId: 'flow-a',
+    session: { nodeId: 'worker', sessionId: 'session-7' },
+  };
+  const restored = restoreProductNavigation(
+    destination,
+    { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null },
+    () => true,
+  );
+  expect(restored.current.destination).toEqual(destination);
+  expect(
+    sameProductNavigationDestination(destination, {
+      ...destination,
+      session: { nodeId: 'worker', sessionId: 'session-8' },
+    }),
+  ).toBe(false);
+});

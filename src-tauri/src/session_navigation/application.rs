@@ -112,6 +112,21 @@ impl SessionNavigationService {
     ) -> Result<(), String> {
         let repositories = self.catalog.list_registered()?;
         let siblings: Vec<String> = match &scope {
+            NavigationOrderScope::Pinned => {
+                let data = self.load()?;
+                data.summaries
+                    .iter()
+                    .filter(|s| {
+                        data.organization
+                            .iter()
+                            .any(|m| m.session_id == s.session.id && m.pinned_at.is_some())
+                    })
+                    .map(|s| s.session.id.as_str().to_owned())
+                    .collect()
+            }
+            NavigationOrderScope::Sessions { folder_id } => {
+                super::session_order::session_ids(&self.load()?, folder_id)
+            }
             NavigationOrderScope::Repositories => repositories
                 .iter()
                 .map(|r| r.repository_id.clone())
@@ -165,6 +180,7 @@ impl SessionNavigationService {
         &self,
         id: AgentSessionId,
         placement: SessionPlacement,
+        ordered_ids: Option<Vec<String>>,
     ) -> Result<(), String> {
         match &placement {
             SessionPlacement::Repository { repository_id } => {
@@ -178,6 +194,23 @@ impl SessionNavigationService {
                 })?;
             }
             _ => {}
+        }
+        if let Some(ids) = ordered_ids {
+            let data = self.load()?;
+            if !data.summaries.iter().any(|s| s.session.id == id) {
+                return Err("Session not found".into());
+            }
+            let folder_id = super::session_order::folder_id(&data, &id, Some(&placement));
+            let mut siblings = super::session_order::session_ids(&data, &folder_id);
+            if !siblings.iter().any(|s| s == id.as_str()) {
+                siblings.push(id.as_str().to_owned());
+            }
+            validate_siblings(&ids, &siblings)?;
+            return self.orders.save_with_placement(
+                &NavigationOrderScope::Sessions { folder_id },
+                &ids,
+                Some((&id, &placement)),
+            );
         }
         self.repository
             .move_session(&id, &placement)

@@ -1,3 +1,4 @@
+import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
 import type {
   SessionNavigationCommandRequest,
@@ -51,6 +52,7 @@ export interface AgentSessionScreenProps {
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
   readonly focusInvocationId?: string;
   readonly focusEvidence?: ProductDecisionEvidenceDestination;
+  readonly onOpenWorkflow?: (target: SessionWorkflowTarget) => void;
   readonly onConfigureCapabilities?: () => void;
 }
 export function StandaloneAgentSessionScreen({
@@ -67,6 +69,7 @@ export function StandaloneAgentSessionScreen({
   focusInvocationId,
   focusEvidence,
   onConfigureCapabilities,
+  onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
     kind: 'initial',
@@ -138,6 +141,7 @@ export function StandaloneAgentSessionScreen({
     onMove: collection.move,
     onPin: collection.pin,
     onReorder: collection.reorder,
+    onOpenWorkflow,
   });
   const selectedIdentity = selectedSessionId
     ? agentIdentityForSession?.(selectedSessionId)
@@ -225,6 +229,7 @@ export function StandaloneAgentSessionScreen({
         compactBreakpoint={860}
         primary={
           <SessionSelector
+            onOpenWorkflow={onOpenWorkflow}
             model={model}
             selectedSessionId={selectedSessionId}
             tree={tree}

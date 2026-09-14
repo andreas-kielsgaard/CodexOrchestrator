@@ -20,6 +20,7 @@ export type ProductNavigationDestination =
       readonly kind: 'workflow';
       readonly workflowTypeId: string | null;
       readonly workflowInstanceId: string | null;
+      readonly session?: { readonly nodeId: string; readonly sessionId: string };
     }
   | {
       readonly kind: 'agent_sessions';
@@ -293,7 +294,13 @@ export function isProductNavigationDestination(
       );
     case 'workflow':
       return (
-        hasOnlyKeys(value, ['kind', 'workflowTypeId', 'workflowInstanceId']) &&
+        hasOnlyKeys(value, ['kind', 'workflowTypeId', 'workflowInstanceId', 'session']) &&
+        (value.session === undefined ||
+          (isIdentifier(value.workflowInstanceId) &&
+            isRecord(value.session) &&
+            hasOnlyKeys(value.session, ['nodeId', 'sessionId']) &&
+            isIdentifier(value.session.nodeId) &&
+            isIdentifier(value.session.sessionId))) &&
         (value.workflowTypeId === null || isIdentifier(value.workflowTypeId)) &&
         (value.workflowInstanceId === null || isIdentifier(value.workflowInstanceId)) &&
         !(value.workflowTypeId !== null && value.workflowInstanceId !== null)
@@ -389,7 +396,9 @@ export function sameProductNavigationDestination(
       return (
         right.kind === 'workflow' &&
         left.workflowTypeId === right.workflowTypeId &&
-        left.workflowInstanceId === right.workflowInstanceId
+        left.workflowInstanceId === right.workflowInstanceId &&
+        left.session?.nodeId === right.session?.nodeId &&
+        left.session?.sessionId === right.session?.sessionId
       );
     case 'agent_sessions':
       return (

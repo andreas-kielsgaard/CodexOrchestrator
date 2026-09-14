@@ -4,7 +4,7 @@
   height: 100%;
   min-height: 0;
   padding: 14px 10px 10px;
-  border-right: 1px solid #dddcd7;
+  border-right: 0;
   background: #fffdf8;
 }
 .agent-session-selector > header {
@@ -141,28 +141,21 @@
   outline: 2px solid #727b70;
 }
 .folder-create,
-.session-pin {
+.session-pin,
+.session-hover-action {
   opacity: 0;
 }
-.session-pin.is-pinned,
 .session-tree-row:hover > .session-pin,
-.session-tree-row:focus-within > .session-pin,
+.session-tree-row:hover > .session-hover-action,
 .session-block-heading:hover > .folder-create,
 .session-block-heading:focus-within > .folder-create,
 .session-section-heading:hover > .folder-create,
 .session-section-heading:focus-within > .folder-create {
   opacity: 1;
 }
-.session-pin.is-pinned svg {
-  fill: #71776f22;
-}
-.session-tree [data-drop-target] {
-  background: #e3e7df;
-  outline: 2px solid #7b8b74;
-  outline-offset: -2px;
-}
-.session-block-heading[data-insertion]::after {
+.session-tree [data-insertion]::after {
   content: '';
+  z-index: 2;
   position: absolute;
   height: 2px;
   background: #697860;
@@ -170,10 +163,10 @@
   right: 0;
   pointer-events: none;
 }
-.session-block-heading[data-insertion='before']::after {
+.session-tree [data-insertion='before']::after {
   top: -2px;
 }
-.session-block-heading[data-insertion='after']::after {
+.session-tree [data-insertion='after']::after {
   bottom: -2px;
 }
 .session-show-more {
@@ -265,4 +258,61 @@
 .session-tree-row[data-draggable] {
   user-select: none;
   touch-action: none;
+}
+
+.session-section-heading,
+.session-entry,
+.session-owner-heading {
+  position: relative;
+}
+.session-owner-heading {
+  min-height: 26px;
+  padding: 2px 4px;
+}
+.session-tree-row.contains-selection {
+  background: #e8e8e2;
+}
+
+/* The visible divider is one pixel; its transparent hit area remains easy to grab. */
+.agent-session-screen > .resizable-split[data-effective-split-axis='horizontal'] {
+  grid-template-columns: minmax(0, var(--split-primary-size)) 1px minmax(0, 1fr);
+}
+.agent-session-screen > .resizable-split[data-effective-split-axis='vertical'] {
+  grid-template-rows: minmax(150px, var(--split-primary-size)) 1px minmax(280px, 1fr);
+}
+.agent-session-screen .resizable-split__separator-shell {
+  background: #dddcd7;
+}
+.agent-session-screen .resizable-split__separator {
+  position: absolute;
+  background: transparent;
+}
+.agent-session-screen [data-effective-split-axis='horizontal'] .resizable-split__separator {
+  width: 9px;
+  left: -4px;
+  top: 0;
+}
+.agent-session-screen [data-effective-split-axis='vertical'] .resizable-split__separator {
+  height: 9px;
+  top: -4px;
+  left: 0;
+}
+.agent-session-screen .resizable-split__separator > span {
+  display: none;
+}
+.agent-session-screen .resizable-split__separator::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+}
+.agent-session-screen [data-effective-split-axis='horizontal'] .resizable-split__separator::after {
+  width: 2px;
+  height: 100%;
+}
+.agent-session-screen [data-effective-split-axis='vertical'] .resizable-split__separator::after {
+  height: 2px;
+  width: 100%;
+}
+.agent-session-screen .resizable-split__separator:is(:hover, :focus-visible, :active)::after {
+  background: #7c887d;
 }

@@ -1,5 +1,8 @@
+import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import {
   navigationFolders,
+  navigationGroups,
+  sessionContainers,
   navigationSiblings,
 } from '../../application/agentSessions/navigationView';
 import type { NavigationOrderScope } from '../../application/agentSessions/navigationOrder';
@@ -28,18 +31,22 @@ export function useSessionNavigationCommands(options: {
   collectionLoading: boolean;
   loading: boolean;
   error: string | null;
+  onOpenWorkflow?(target: SessionWorkflowTarget): void;
   onSelect(id: string): void;
   onNew(target: SessionFolderTarget | null): void;
-  onMove(id: string, placement: SessionPlacement): Promise<void>;
+  onMove(id: string, placement: SessionPlacement, orderedIds?: readonly string[]): Promise<void>;
   onPin(id: string, pinned: boolean): Promise<void>;
   onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
 }) {
   const started = useRef<string | null>(null);
   const completed = useRef<string | null>(null);
   const [readyId, setReadyId] = useState<string | null>(null);
-  const [settled, setSettled] = useState<{ id: string; deeplink?: string; error?: string } | null>(
-    null,
-  );
+  const [settled, setSettled] = useState<{
+    id: string;
+    deeplink?: string;
+    error?: string;
+    workflow?: SessionWorkflowTarget;
+  } | null>(null);
   const folderEntries = useMemo(() => navigationFolders(options.model), [options.model]);
   const folders = useMemo(() => folderEntries.map((f) => f.node), [folderEntries]);
   useEffect(() => {
@@ -49,6 +56,7 @@ export function useSessionNavigationCommands(options: {
     void (async () => {
       const command = request.command;
       let deeplink: string | undefined;
+      let workflow: SessionWorkflowTarget | undefined;
       if ('sessionId' in command && !options.model.sessions.has(command.sessionId))
         throw new Error('Session not found');
       if (
@@ -61,6 +69,11 @@ export function useSessionNavigationCommands(options: {
         case 'inspect':
           break;
         case 'open_session':
+          if (command.source === 'pinned') {
+            if (!options.model.sessions.get(command.sessionId)?.pinned)
+              throw new Error('Session is not pinned');
+            options.tree.preserveDisclosureFor(command.sessionId);
+          }
           options.onSelect(command.sessionId);
           break;
         case 'new_session':
@@ -74,11 +87,38 @@ export function useSessionNavigationCommands(options: {
         case 'set_folder_expanded':
           options.tree.setFolderExpanded(command.folderId, command.expanded);
           break;
+        case 'set_group_expanded':
+          if (!navigationGroups(options.model).some((g) => g.id === command.groupId))
+            throw new Error('Group not found');
+          options.tree.setFolderExpanded(command.groupId, command.expanded);
+          break;
+        case 'open_workflow':
+          if (
+            !options.onOpenWorkflow ||
+            !folders.some(
+              (f) =>
+                f.createTarget?.kind === 'workflow_instance' &&
+                f.createTarget.instanceId === command.instanceId,
+            )
+          )
+            throw new Error('Workflow not available');
+          workflow = { instanceId: command.instanceId };
+          break;
+        case 'open_session_workflow': {
+          const owner = options.model.sessions.get(command.sessionId)?.owner;
+          if (!owner || !options.onOpenWorkflow)
+            throw new Error('Session has no available workflow');
+          workflow = {
+            instanceId: owner.instanceId,
+            session: { nodeId: owner.nodeId, sessionId: command.sessionId },
+          };
+          break;
+        }
         case 'show_more':
           options.tree.showMore(command.folderId);
           break;
         case 'move_session':
-          await options.onMove(command.sessionId, command.placement);
+          await options.onMove(command.sessionId, command.placement, command.orderedIds);
           break;
         case 'pin_session':
           await options.onPin(command.sessionId, command.pinned);
@@ -90,7 +130,7 @@ export function useSessionNavigationCommands(options: {
           deeplink = formatSessionDeepLink(command.sessionId);
           break;
       }
-      setSettled({ id: request.id, deeplink });
+      setSettled({ id: request.id, deeplink, workflow });
     })().catch((error) =>
       setSettled({ id: request.id, error: error instanceof Error ? error.message : String(error) }),
     );
@@ -116,6 +156,15 @@ export function useSessionNavigationCommands(options: {
         expanded: options.tree.expanded.has(folder.id),
         createTarget: folder.createTarget,
       })),
+      groups: navigationGroups(options.model).map((group) => ({
+        ...group,
+        expanded: options.tree.expanded.has(group.id),
+      })),
+      orders: sessionContainers(options.model).map((c) => ({
+        scope: c.id === 'pinned' ? { kind: 'pinned' } : { kind: 'sessions', folderId: c.id },
+        orderedIds: c.rows.map((r) => r.summary.id),
+      })),
+      openedWorkflow: settled.workflow,
       sessions: [...options.model.sessions.values()].map((row) => ({
         id: row.summary.id,
         title: row.summary.title,
@@ -137,7 +186,11 @@ export function useSessionNavigationCommands(options: {
       })),
       ...(settled.deeplink ? { deeplink: settled.deeplink } : {}),
     };
-    void options.complete(settled.id, settled.error ? null : state, settled.error ?? null);
+    void options
+      .complete(settled.id, settled.error ? null : state, settled.error ?? null)
+      .then(() => {
+        if (!settled.error && settled.workflow) options.onOpenWorkflow?.(settled.workflow);
+      });
   }, [settled, readyId, options, folderEntries]);
 }
 

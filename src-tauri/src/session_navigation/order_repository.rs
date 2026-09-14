@@ -41,9 +41,21 @@ impl NavigationOrderRepository {
     }
 
     pub(crate) fn save(&self, scope: &NavigationOrderScope, ids: &[String]) -> Result<(), String> {
+        self.save_with_placement(scope, ids, None)
+    }
+    pub(crate) fn save_with_placement(
+        &self,
+        scope: &NavigationOrderScope,
+        ids: &[String],
+        placement: Option<(
+            &crate::agent_sessions::domain::AgentSessionId,
+            &crate::agent_sessions::organization::SessionPlacement,
+        )>,
+    ) -> Result<(), String> {
         let scope = serde_json::to_string(scope).map_err(|e| e.to_string())?;
         let ids = serde_json::to_string(ids).map_err(|e| e.to_string())?;
         self.0.write("save navigation order", |transaction| {
+            if let Some((id, placement)) = placement { crate::agent_sessions::repository::write_placement(transaction, id, placement).map_err(|e| e.to_string())?; }
             transaction.execute("INSERT INTO session_navigation_order(scope, ordered_ids) VALUES(?1, ?2) ON CONFLICT(scope) DO UPDATE SET ordered_ids=excluded.ordered_ids", rusqlite::params![scope, ids]).map(|_| ()).map_err(|e| e.to_string())
         }).map_err(ManagedOperationError::into_string)
     }
@@ -72,10 +84,38 @@ mod tests {
             &["b".into(), "a".into()],
         )
         .unwrap();
+        repo.save(&NavigationOrderScope::Pinned, &["s2".into(), "s1".into()])
+            .unwrap();
+        repo.save(
+            &NavigationOrderScope::Sessions {
+                folder_id: "unfiled".into(),
+            },
+            &["s1".into(), "s2".into()],
+        )
+        .unwrap();
         drop(repo);
         let repo = NavigationOrderRepository::new(crate::product_database::open(&path).unwrap());
         let orders = repo.load().unwrap();
-        assert_eq!(orders.len(), 2);
+        assert_eq!(orders.len(), 4);
+        assert_eq!(
+            orders
+                .iter()
+                .find(|o| o.scope == NavigationOrderScope::Pinned)
+                .unwrap()
+                .ordered_ids,
+            ["s2", "s1"]
+        );
+        assert_eq!(
+            orders
+                .iter()
+                .find(|o| o.scope
+                    == (NavigationOrderScope::Sessions {
+                        folder_id: "unfiled".into()
+                    }))
+                .unwrap()
+                .ordered_ids,
+            ["s1", "s2"]
+        );
         assert_eq!(
             orders
                 .iter()
