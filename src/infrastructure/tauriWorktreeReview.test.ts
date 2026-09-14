@@ -37,6 +37,7 @@ describe('tauri Worktree Review client', () => {
       repositoryId: 'repository-one',
       branchRef: 'refs/heads/codex/review',
       name: 'Snapshot build',
+      profile: 'release',
       source: {
         kind: 'worktree_snapshot',
         associationId: 'association-one',
@@ -90,6 +91,7 @@ describe('tauri Worktree Review client', () => {
             repositoryId: 'repository-one',
             branchRef: 'refs/heads/codex/review',
             name: 'Snapshot build',
+            profile: 'release',
             source: {
               kind: 'worktree_snapshot',
               associationId: 'association-one',

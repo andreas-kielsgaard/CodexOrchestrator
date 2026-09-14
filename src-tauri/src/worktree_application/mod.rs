@@ -1,4 +1,5 @@
 mod build;
+mod build_tool;
 mod capture;
 mod checkout;
 mod domain;
@@ -8,10 +9,11 @@ mod open;
 use crate::repository_context::GitExecutable;
 #[allow(unused_imports)]
 pub(crate) use domain::{
-    GitCommitId, OpenOutcome, PhysicalWorktreeAttachment, PhysicalWorktreeBuildRequest,
-    PhysicalWorktreeBuildResult, PhysicalWorktreeCheckoutRequest, PhysicalWorktreeCheckoutResult,
-    PhysicalWorktreeDependencyPolicy, VirtualCommitCaptureRequest, VirtualCommitCaptureResult,
-    WorktreeApplicationError, WorktreeApplicationErrorKind, WorktreeApplicationLaunchContext,
+    ApplicationBuildProfile, GitCommitId, OpenOutcome, PhysicalWorktreeAttachment,
+    PhysicalWorktreeBuildRequest, PhysicalWorktreeBuildResult, PhysicalWorktreeCheckoutRequest,
+    PhysicalWorktreeCheckoutResult, PhysicalWorktreeDependencyPolicy, VirtualCommitCaptureRequest,
+    VirtualCommitCaptureResult, WorktreeApplicationError, WorktreeApplicationErrorKind,
+    WorktreeApplicationLaunchContext,
 };
 
 #[derive(Default)]

@@ -43,6 +43,38 @@ beforeAll(() => {
 });
 
 describe('WorktreeReviewScreen', () => {
+  it('always confirms a live build, defaults to normal, and never launches it', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    renderScreen(client);
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    const dialog = screen.getByRole('dialog', { name: 'Build this application?' });
+    expect(within(dialog).getByRole('checkbox', { name: 'Enable debugging' })).not.toBeChecked();
+    expect(client.createBuildCalls).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Build' }));
+    await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
+    expect(client.createBuildCalls[0].profile).toBe('release');
+    expect(client.openBuildCalls).toEqual([]);
+  });
+
+  it('resets debugging after cancellation and sends it only on explicit confirmation', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    renderScreen(client);
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Enable debugging' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    expect(client.createBuildCalls).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Build' }));
+    expect(screen.getByRole('checkbox', { name: 'Enable debugging' })).not.toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Enable debugging' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
+    await waitFor(() => expect(client.createBuildCalls[0]?.profile).toBe('debug'));
+    expect(client.openBuildCalls).toEqual([]);
+  });
+
   it('registers a directory in the separate repository modal before presenting branches', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient(branchDetailFixture(), { repositories: [], branches: [] });
@@ -143,7 +175,7 @@ describe('WorktreeReviewScreen', () => {
     await user.type(name, 'Snapshot B');
     await user.click(screen.getByRole('button', { name: 'Build' }));
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
 
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
@@ -174,7 +206,7 @@ describe('WorktreeReviewScreen', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Build' }));
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       source: {
@@ -307,16 +339,16 @@ describe('WorktreeReviewScreen', () => {
     expect(client.createBuildCalls).toHaveLength(0);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Build' }));
-    expect(
-      screen.getByRole('dialog', { name: 'Create a worktree for this build?' }),
-    ).toHaveTextContent(earlierCommit.abbreviatedObjectId);
+    expect(screen.getByRole('dialog', { name: 'Build this application?' })).toHaveTextContent(
+      earlierCommit.abbreviatedObjectId,
+    );
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(client.createBuildCalls).toHaveLength(0);
     expect(
       screen.getByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
     ).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Build' }));
-    await user.click(screen.getByRole('button', { name: 'Create worktree and build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       branchRef: null,
@@ -434,7 +466,7 @@ describe('WorktreeReviewScreen', () => {
     const client = new FixtureClient();
     renderScreen(client);
     const heading = await screen.findByRole('heading', { name: 'Completed review build' });
-    await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Open' }));
+    await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Launch' }));
     await waitFor(() => expect(client.openBuildCalls).toEqual([completedBuild.buildId]));
   });
 });

@@ -53,6 +53,16 @@ export function BuildHistory({
                   <dd>{worktreeStateLabel(build.workspace.lifecycle)}</dd>
                 </div>
                 <div>
+                  <dt>Build mode</dt>
+                  <dd>
+                    {build.profile === 'release'
+                      ? 'Normal'
+                      : build.profile === 'debug'
+                        ? 'Debugging'
+                        : 'Unspecified'}
+                  </dd>
+                </div>
+                <div>
                   <dt>Build output</dt>
                   <dd>{buildOutputLabel(build.output)}</dd>
                 </div>
@@ -79,7 +89,7 @@ export function BuildHistory({
                     disabled={openingBuildId !== undefined}
                     onClick={() => onOpen(build.buildId)}
                   >
-                    {openingBuildId === build.buildId ? 'Opening…' : 'Open'}
+                    {openingBuildId === build.buildId ? 'Launching…' : 'Launch'}
                   </button>
                 </div>
               )}

@@ -151,7 +151,7 @@ impl<Owner: ConnectionProvider> WorkspaceRepository for SqliteWorkspaceRepositor
 impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepository<'_, Owner> {
     fn list_for_repository(&self, id: &RepositoryId) -> StorageResult<Vec<ReviewBuild>> {
         self.owner.with_connection(|connection| {
-            let mut statement = connection.prepare("SELECT build_id, workspace_id, source_binding_json, retention_key, name, current_output_id, lifecycle, created_at, updated_at FROM review_builds WHERE repository_id = ?1 AND data_contract_version = 2 ORDER BY created_at DESC, build_id")
+            let mut statement = connection.prepare("SELECT build_id, workspace_id, source_binding_json, retention_key, name, current_output_id, lifecycle, created_at, updated_at, profile FROM review_builds WHERE repository_id = ?1 AND data_contract_version = 2 ORDER BY created_at DESC, build_id")
                 .map_err(sql_error("prepare repository build query"))?;
             let rows = statement.query_map([id.as_str()], decode_build_row).map_err(sql_error("query repository builds"))?
                 .collect::<Result<Vec<_>, _>>().map_err(sql_error("read repository builds"))?;
@@ -171,8 +171,8 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                     "INSERT INTO review_builds(
                        build_id, name, repository_id, full_branch_ref, workspace_id,
                        source_binding_json, retention_key, current_output_id, lifecycle,
-                       created_at, updated_at, data_contract_version
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 2)
+                       created_at, updated_at, data_contract_version, profile
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 2, ?12)
                      ON CONFLICT(build_id) DO UPDATE SET
                        current_output_id = excluded.current_output_id,
                        lifecycle = excluded.lifecycle,
@@ -183,7 +183,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                        AND full_branch_ref IS excluded.full_branch_ref
                        AND workspace_id = excluded.workspace_id
                        AND source_binding_json = excluded.source_binding_json
-                       AND retention_key = excluded.retention_key",
+                       AND retention_key = excluded.retention_key AND profile IS excluded.profile",
                     params![
                         build.id.as_str(),
                         build.name.as_str(),
@@ -200,6 +200,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
                         build.lifecycle.as_str(),
                         encode_time(build.created_at),
                         encode_time(build.updated_at),
+                        build.profile.map(|profile| profile.as_str()),
                     ],
                 )
                 .map_err(sql_error("save review build"))?;
@@ -218,7 +219,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
             let raw = connection
                 .query_row(
                     "SELECT build_id, workspace_id, source_binding_json, retention_key,
-                            name, current_output_id, lifecycle, created_at, updated_at
+                            name, current_output_id, lifecycle, created_at, updated_at, profile
                      FROM review_builds WHERE build_id = ?1 AND data_contract_version = 2",
                     [id.as_str()],
                     decode_build_row,
@@ -238,7 +239,7 @@ impl<Owner: ConnectionProvider> ReviewBuildRepository for SqliteReviewBuildRepos
             let mut statement = connection
                 .prepare(
                     "SELECT build_id, workspace_id, source_binding_json, retention_key,
-                            name, current_output_id, lifecycle, created_at, updated_at
+                            name, current_output_id, lifecycle, created_at, updated_at, profile
                      FROM review_builds
                      WHERE repository_id = ?1 AND full_branch_ref IS ?2
                        AND data_contract_version = 2
@@ -387,6 +388,7 @@ type BuildRow = (
     String,
     String,
     String,
+    Option<String>,
 );
 
 fn decode_workspace_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceRow> {
@@ -432,6 +434,7 @@ fn decode_build_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BuildRow> {
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
     ))
 }
 
@@ -439,6 +442,13 @@ fn decode_build(raw: BuildRow) -> StorageResult<ReviewBuild> {
     let source: SourceBinding = serde_json::from_str(&raw.2)
         .map_err(|error| StorageError::corrupt(format!("invalid build source binding: {error}")))?;
     let build = ReviewBuild {
+        profile: raw
+            .9
+            .map(|value| {
+                crate::worktree_application::ApplicationBuildProfile::parse(&value)
+                    .ok_or_else(|| StorageError::corrupt("unknown application build profile"))
+            })
+            .transpose()?,
         id: ReviewBuildId::new(raw.0).map_err(|error| StorageError::corrupt(error.to_string()))?,
         workspace_id: WorkspaceId::new(raw.1)
             .map_err(|error| StorageError::corrupt(error.to_string()))?,

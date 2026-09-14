@@ -42,6 +42,7 @@ impl BuildLifecycle {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewBuild {
+    pub(crate) profile: Option<crate::worktree_application::ApplicationBuildProfile>,
     pub(crate) id: ReviewBuildId,
     pub(crate) name: ReviewBuildName,
     pub(crate) source: SourceBinding,

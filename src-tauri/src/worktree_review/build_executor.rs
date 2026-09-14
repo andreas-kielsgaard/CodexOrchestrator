@@ -78,6 +78,7 @@ impl ReviewBuildExecutor {
         build_id: &ReviewBuildId,
         attempt_id: &OperationAttemptId,
         workspace: &ReviewWorkspace,
+        profile: crate::worktree_application::ApplicationBuildProfile,
     ) -> Result<RetainedBuildOutput, BuildExecutionFailure> {
         let attempt_key =
             attempt_storage_key(&self.repository_id, build_id, attempt_id).map_err(|error| {
@@ -90,13 +91,14 @@ impl ReviewBuildExecutor {
         let attempt_root = self.review_root.join(attempt_key.as_str());
         let dependency_policy =
             dependency_policy(&workspace.ownership, &self.dependency_cache_root);
-        let request = PhysicalWorktreeBuildRequest::new(
+        let mut request = PhysicalWorktreeBuildRequest::new(
             PathBuf::from(workspace.location.as_str()),
             attempt_root,
             dependency_policy,
             "codex-orchestrator",
         )
         .map_err(application_failure)?;
+        request.profile = profile;
         let result = self
             .application
             .build(&request)

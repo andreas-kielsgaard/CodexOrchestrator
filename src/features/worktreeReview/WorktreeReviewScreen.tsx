@@ -23,8 +23,8 @@ import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
 import { useReviewSelection } from './useReviewSelection';
 import { useCommitHistory } from './useCommitHistory';
-import { initialBuildDraft, requiresCheckout, type BuildDraft } from './buildDraft';
-import { BuildCheckoutDialog } from './BuildCheckoutDialog';
+import { initialBuildDraft, type BuildDraft } from './buildDraft';
+import { BuildConfirmationDialog } from './BuildConfirmationDialog';
 import { BranchGraphDialog } from './branchSelection/BranchGraphDialog';
 import './worktreeReview.css';
 
@@ -58,7 +58,7 @@ export function WorktreeReviewScreen({
   const refreshTrigger = useRef<HTMLButtonElement>(null);
   const graphTrigger = useRef<HTMLButtonElement>(null);
   const [graphOpen, setGraphOpen] = useState(false);
-  const [checkoutRequest, setCheckoutRequest] = useState<CreateBuildRequest | null>(null);
+  const [confirmationRequest, setConfirmationRequest] = useState<CreateBuildRequest | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -167,8 +167,7 @@ export function WorktreeReviewScreen({
     );
   }
   function requestBuild(request: CreateBuildRequest) {
-    if (requiresCheckout(request)) setCheckoutRequest(request);
-    else void createBuild(request);
+    setConfirmationRequest(request);
   }
   async function createBuild(request: CreateBuildRequest) {
     await mutate('create-build', () => client.createBuild(request), 'Build result recorded.');
@@ -178,7 +177,7 @@ export function WorktreeReviewScreen({
     setError(null);
     try {
       await client.openBuild({ buildId });
-      setNotice('Opened build.');
+      setNotice('Launched build.');
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -336,13 +335,12 @@ export function WorktreeReviewScreen({
           }}
         />
       )}
-      {checkoutRequest && (
-        <BuildCheckoutDialog
-          request={checkoutRequest}
-          onClose={() => setCheckoutRequest(null)}
-          onConfirm={() => {
-            const request = checkoutRequest;
-            setCheckoutRequest(null);
+      {confirmationRequest && (
+        <BuildConfirmationDialog
+          request={confirmationRequest}
+          onClose={() => setConfirmationRequest(null)}
+          onConfirm={(request) => {
+            setConfirmationRequest(null);
             void createBuild(request);
           }}
         />

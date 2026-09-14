@@ -20,44 +20,61 @@ The optional status server is started explicitly with `npm run dev:status` at po
 
 ## Command scope
 
-| Command                                                              | What it does                                                                                                                                                                |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`                                                           | Runs the Vitest frontend suite; many tests use fake clients/JSDOM.                                                                                                          |
-| `npm run lint`                                                       | Runs ESLint.                                                                                                                                                                |
-| `npm run format:check`                                               | Checks repository formatting with Prettier. For a focused change, run the installed Prettier CLI on its changed files.                                                      |
-| `npm run build`                                                      | Typechecks and runs Vite. This is a frontend build.                                                                                                                         |
-| `npm run check:rust` / `npm run check:rust:release`                  | Compiles/checks native code for the selected profile; does not run tests or a native window.                                                                                |
-| `npm run test:rust:fast -- <filter>`                                 | Runs library tests using the named `test-fast` profile with line-table debug information.                                                                                   |
-| `npm run test:rust:full -- <filter>`                                 | Runs library tests with the ordinary test profile.                                                                                                                          |
-| `npm run test:worktree-review` / `npm run test:rust:worktree-review` | Runs the named frontend/native Worktree Review coverage.                                                                                                                    |
-| `npm run validate:worktree-review`                                   | Builds the frontend, runs the Worktree Review frontend/native suites and checks Rust compilation.                                                                           |
-| `npm run build:tauri`                                                | Runs `tauri build`, including the configured frontend prerequisite.                                                                                                         |
-| `npm run validate:release-build`                                     | Runs `tauri build --no-bundle` to build the native release executable. Tauri runs the frontend prerequisite once; release-profile Rust checking remains a separate command. |
-| `npm run test:app-inspector`                                         | Runs the eight Node test files for the optional review companion on Windows with `powershell.exe`; does not launch a browser.                                               |
-| `npm run test:app-inspector:browser`                                 | Separately launches installed Microsoft Edge with a disposable profile and local fixture page; skips if Edge is unavailable.                                                |
+| Command                                                              | What it does                                                                                                                  |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `npm test`                                                           | Runs the Vitest frontend suite; many tests use fake clients/JSDOM.                                                            |
+| `npm run lint`                                                       | Runs ESLint.                                                                                                                  |
+| `npm run format:check`                                               | Checks repository formatting with Prettier. For a focused change, run the installed Prettier CLI on its changed files.        |
+| `npm run build`                                                      | Builds a normal runnable application, retains an independent copy, and prints its path. Launch it separately.                 |
+| `npm run build:frontend`                                             | Typechecks and runs Vite only; does not produce a native application.                                                         |
+| `npm run check:rust` / `npm run check:rust:release`                  | Compiles/checks native code for the selected profile; does not run tests or a native window.                                  |
+| `npm run test:rust:fast -- <filter>`                                 | Runs library tests using the named `test-fast` profile with line-table debug information.                                     |
+| `npm run test:rust:full -- <filter>`                                 | Runs library tests with the ordinary test profile.                                                                            |
+| `npm run test:worktree-review` / `npm run test:rust:worktree-review` | Runs the named frontend/native Worktree Review coverage.                                                                      |
+| `npm run validate:worktree-review`                                   | Builds the frontend, runs the Worktree Review frontend/native suites and checks Rust compilation.                             |
+| `npm run build:tauri`                                                | Builds a runnable application and the configured installer bundles.                                                           |
+| `npm run validate:release-build`                                     | Builds and retains a normal application without installer bundles.                                                            |
+| `npm run test:app-inspector`                                         | Runs the eight Node test files for the optional review companion on Windows with `powershell.exe`; does not launch a browser. |
+| `npm run test:app-inspector:browser`                                 | Separately launches installed Microsoft Edge with a disposable profile and local fixture page; skips if Edge is unavailable.  |
 
 A native executable build does not establish installer behavior, provider compatibility or a usable native flow. Record those outcomes separately in the [evidence record](validation-evidence.md).
 
-## Outputs and optional Rust helpers
+## Build outputs and compiler caches
 
-Ordinary frontend output is `dist/`; native output is normally below `src-tauri/target/`. `VITE_RUNTIME_ROOT` redirects Vite cache/output for an isolated runtime and `VITE_RUNTIME_VITE_PORT` selects its port. Worktree Review's build runner has its own explicit typecheck/frontend/Tauri sequence and disables the duplicate Tauri hook while using isolated outputs; keep that responsibility with [Worktree Review](worktree-review.md).
-
-The named fast/full test lanes compile the library test harness even when a filter selects few tests. Two optional PowerShell helpers remain:
+Application commands and Worktree Review use the same tool in `scripts/build-tools.mjs`. `npm run build` typechecks, builds the embedded frontend, compiles Tauri, and copies the executable into an independent application directory. Normal builds use release mode; `--debug` selects Tauri debugging mode and retains the application's PDB. The command prints the executable path and never launches it.
 
 ```powershell
-.\scripts\cargo-test-fast.ps1 --lib --no-run --locked
-.\scripts\cargo-test-fast.ps1 -TargetDir .dev\local-check\cargo-target --lib --locked
-.\scripts\cargo-sccache.ps1 check --locked --timings
-.\scripts\cargo-sccache.ps1 -TargetDir .dev\cached-check\cargo-target test worktree_application -- --nocapture
+npm run build
+npm run build -- --debug --cache=local
+npm run check:rust -- --cache=shared
+npm run test:rust:fast -- --cache=auto
+node scripts/build-tools.mjs --help
 ```
 
-The older fast helper runs ordinary `cargo test` with process-scoped `CARGO_PROFILE_TEST_DEBUG=0`, removes ambient `RUSTC_WRAPPER`, restores its environment and preserves Cargo's exit code. It does not select the named `test-fast` profile, whose debug setting differs.
+The supplied native build, check and test commands accept `--cache=auto|local|shared`. Auto reuses populated local artifacts for the requested profile, otherwise uses shared sccache when available, otherwise compiles normally. Cargo decides which artifacts are still valid. Local mode suits continued edits and keeps ordinary incremental settings. Shared mode can reuse compilation across worktrees and disables incremental compilation for that invocation. Choose local for incremental work or investigating compiler/wrapper problems; choose shared explicitly when testing cross-worktree reuse. An unavailable explicit shared cache is an error; auto reports its fallback.
 
-The sccache helper requires an installed `sccache` at least 0.17.0, a compatible running cache server and working Cargo/MSVC tools. It uses a stable Cargo working directory under `%LOCALAPPDATA%/CodexOrchestrator/cargo-sccache-cwd`, separate per-worktree targets and a shared compiler cache. It scopes/restores wrapper, incremental and cache variables without changing PATH. Counters are machine-wide command-window deltas and may include concurrent activity.
+A worktree keeps one persistent Cargo target across builds: an explicit `--target-dir`/`CARGO_TARGET_DIR`, its previously selected target, an existing populated `src-tauri/target`, or a short tool-owned path under `%LOCALAPPDATA%/CodexOrchestrator/build-cache/<worktree-key>/t`. Branch-tip changes do not discard it. Different worktrees have separate targets; a new worktree can reuse the shared cache without copying its parent's target. Tool commands refuse overlapping builds for the same worktree.
 
-Ordinary incremental Cargo remains appropriate for repeated local edits. Cache reuse depends on matching command/profile inputs; the historical representative cache-assisted `test --no-run` run was slower, not faster. See [tooling evidence](validation-evidence.md#developer-tooling) for the measurements and limits. Cache contents and build outputs have different producers and purposes; this documentation rewrite does not delete either.
+Application copies default to `%LOCALAPPDATA%/CodexOrchestrator/builds/<worktree-key>/<build-id>/output`; `--output DIR` selects a new attempt directory outside the checkout and compiler cache. Worktree Review supplies its existing retained-output location. Copies contain runtime files and, for debugging builds, application symbols. Compiler intermediates stay in the cache. Rebuilding or clearing a cache does not change an older application copy.
 
-Fake-only helper checks are available through `scripts/cargo-test-fast.tests.ps1` and `scripts/cargo-sccache.tests.ps1`. These verify script contracts and environment/exit handling, not application behavior.
+```powershell
+node scripts/build-tools.mjs clear-cache --worktree C:\path\to\checkout
+```
+
+Clear only when explicitly needed. This command refuses active builds and arbitrary or linked target directories. Build failure and dependency/toolchain changes do not trigger deletion: caches can remain useful for other inputs. Old Review outputs retain their existing layout and retention policy.
+
+The shared helper requires sccache 0.17.0 or newer, a compatible local cache server and working Cargo/MSVC tools. It preserves the stable Cargo working directory at `%LOCALAPPDATA%/CodexOrchestrator/cargo-sccache-cwd`. Environment changes apply only to child processes. Logged cache counters are machine-wide command-window deltas and can include other builds.
+
+The PowerShell entrypoints delegate to the same tool:
+
+```powershell
+.\scripts\cargo-sccache.ps1 check --locked
+.\scripts\cargo-test-fast.ps1 -Cache auto --lib --no-run --locked
+```
+
+The latter preserves its older ordinary-test profile with `CARGO_PROFILE_TEST_DEBUG=0`; it differs from npm's named `test-fast` profile, which retains line-table debug information. Checks and tests keep their existing semantics; neither publishes an application. `npm run test:build-tools` verifies cache selection, invocation, wrappers, locking and output independence.
+
+Frontend-only output is `dist/`. `VITE_RUNTIME_ROOT` redirects development Vite cache/output and `VITE_RUNTIME_VITE_PORT` selects its port. Application builds use stable frontend staging beside their compiler cache and disable the duplicate Tauri frontend hook.
 
 ## Installed and live checks
 
@@ -90,4 +107,4 @@ The [offline packet](../offline-review/README.md), [regression probes](regressio
 
 The manifest, `vite.config.ts`, `src-tauri/tauri.conf.json`, the launcher and script implementations own command behavior. The documentation does not add CI/workflow enforcement or change build policy. `review-tools/app-inspector/` owns observation and development interaction details.
 
-Developer-only optimization scope was set in task `019fcbd6-6e6a-74a1-9514-dad527bb9e36` (raw line 872). The bounded follow-up `019fcc24-b0dd-7240-a423-f435cc54a1af` and publication `019fe0c7-2bda-7ee2-9c08-47b32fa8820e` retained opt-in helpers and separate proof tiers. Original operating/benchmark records remain retrievable at `e2bfc6c:docs/orchestration/rust-test-developer-validation.md` and `e2bfc6c:docs/orchestration/ad-hoc-rust-compilation-cache.md`.
+Developer-only optimization scope was set in task `019fcbd6-6e6a-74a1-9514-dad527bb9e36` (raw line 872). The bounded follow-up `019fcc24-b0dd-7240-a423-f435cc54a1af` and publication `019fe0c7-2bda-7ee2-9c08-47b32fa8820e` originally retained opt-in helpers and separate proof tiers. The application-build refinement now makes automatic cache selection the default on the supplied native commands. Original operating/benchmark records remain retrievable at `e2bfc6c:docs/orchestration/rust-test-developer-validation.md` and `e2bfc6c:docs/orchestration/ad-hoc-rust-compilation-cache.md`.

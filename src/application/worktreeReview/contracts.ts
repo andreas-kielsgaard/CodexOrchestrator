@@ -255,7 +255,10 @@ export type BuildWorkspacePlan =
       readonly originatingAssociationId?: WorktreeAssociationId;
     };
 
+export type ApplicationBuildProfile = 'release' | 'debug';
+
 export interface CreateBuildRequest {
+  readonly profile: ApplicationBuildProfile;
   readonly repositoryId: RepositoryId;
   readonly branchRef: BranchRef | null;
   readonly name: string;
@@ -317,6 +320,7 @@ export type CleanupState =
     };
 
 export interface ReviewBuild {
+  readonly profile?: ApplicationBuildProfile | null;
   readonly buildId: BuildId;
   readonly name: string;
   readonly branchRef: BranchRef | null;
