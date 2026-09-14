@@ -32,13 +32,25 @@ pub(crate) fn insert_import_binding(
 }
 impl NativeProfileService {
     pub(crate) fn resolve_session_home(&self) -> Result<ResolvedNativeCodexHome, String> {
+        self.resolve_configuration_home("selected")
+    }
+
+    pub(crate) fn resolve_configuration_home(
+        &self,
+        reference: &str,
+    ) -> Result<ResolvedNativeCodexHome, String> {
         let profile = self.read("resolve Session native home", |connection| {
             load_profiles(connection)?
                 .into_iter()
-                .find(|profile| profile.selected)
-                .ok_or_else(|| "No native Codex home is selected".to_string())
+                .find(|profile| {
+                    if reference == "selected" {
+                        profile.selected
+                    } else {
+                        profile.id == reference
+                    }
+                })
+                .ok_or_else(|| "The configured native Codex home is not registered".to_string())
         })?;
-        let profile = self.require_selected_active(&profile.id)?;
         if profile.lifecycle != Lifecycle::Active {
             return Err(
                 "The selected native Codex home lost continuity and must be registered again"
@@ -67,6 +79,23 @@ impl NativeProfileService {
         resuming: bool,
         extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
     ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        self.prepare_configured_agent_session_launch(
+            "selected",
+            session_id,
+            invocation_id,
+            resuming,
+            extension,
+        )
+    }
+
+    pub(super) fn prepare_configured_agent_session_launch(
+        &self,
+        reference: &str,
+        session_id: &str,
+        invocation_id: &str,
+        resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
         let mut extension = extension.unwrap_or_default();
         if extension
             .environment
@@ -77,7 +106,7 @@ impl NativeProfileService {
                 "Only the application-selected native profile may supply CODEX_HOME".into(),
             );
         }
-        let resolved = self.resolve_session_home()?;
+        let resolved = self.resolve_configuration_home(reference)?;
         self.write("bind managed Session native profile", |transaction| {
         let binding = transaction
             .query_row(

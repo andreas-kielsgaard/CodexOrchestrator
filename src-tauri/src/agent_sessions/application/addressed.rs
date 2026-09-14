@@ -42,6 +42,7 @@ impl AgentSessionApplication {
             },
             session_id.clone(),
             AgentSessionOwnership {
+                execution_target: None,
                 harness_version: None,
                 assigned_identity,
                 session_profile: Some(resolution.clone()),

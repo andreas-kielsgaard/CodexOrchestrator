@@ -57,20 +57,24 @@ pub(crate) fn load_pinned_agent_session_profile(
 }
 
 #[tauri::command]
-pub(crate) fn send_direct_user_agent_session_message(
+pub(crate) async fn send_direct_user_agent_session_message(
     state: State<'_, super::AgentSessionTauriState>,
     input: SendDirectUserAgentSessionMessageInput,
 ) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
-    let result = state
-        .application
-        .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
-            session_id: input.session_id,
-            submitted_text: input.submitted_text,
-            model: input.model,
-            reasoning_mode: input.reasoning_mode,
-            sandbox_mode: input.sandbox_mode,
-        })
-        .map_err(|error| error.to_string())?;
+    let application = state.application.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        application
+            .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+                session_id: input.session_id,
+                submitted_text: input.submitted_text,
+                model: input.model,
+                reasoning_mode: input.reasoning_mode,
+                sandbox_mode: input.sandbox_mode,
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     Ok(SendDirectUserAgentSessionMessageResultDto {
         session_id: result.acknowledgement.session_id,
         invocation_id: result.acknowledgement.invocation_id,

@@ -1,6 +1,7 @@
 use super::AgentSessionApplication;
 use crate::{
     agent_sessions::domain::AgentSessionId, execution_configuration::RuntimeQuickFeatures,
+    execution_targets::domain::SessionExecutionTarget,
 };
 
 impl AgentSessionApplication {
@@ -8,11 +9,21 @@ impl AgentSessionApplication {
         &self,
         session_id: Option<&AgentSessionId>,
         working_directory: Option<&str>,
+        execution_target: Option<&SessionExecutionTarget>,
     ) -> Result<RuntimeQuickFeatures, String> {
         let history = session_id
             .map(|id| self.load_session(id))
             .transpose()
             .map_err(|e| e.to_string())?;
+        let target = match &history {
+            Some(history) => history.session.execution_target.as_ref(),
+            None => execution_target,
+        };
+        if target.is_some_and(|target| target.execution.is_remote()) {
+            return Err(
+                "Native quick-feature discovery is unavailable for remote sessions.".into(),
+            );
+        }
         let (cwd, defaults, expected_profile) = if let Some(history) = &history {
             let pinned = history
                 .session
@@ -26,14 +37,35 @@ impl AgentSessionApplication {
                 Some(pinned.session_profile().runtime_profile_ref()),
             )
         } else {
-            let capability = self
+            let profiles = self
                 .capability_profiles
                 .as_ref()
-                .ok_or("No Capability Profile service is available.")?
-                .default_profile()
-                .map_err(|e| e.to_string())?;
+                .ok_or("No Capability Profile service is available.")?;
+            let capability = match target {
+                Some(target) => {
+                    let capability = profiles
+                        .read(&target.capability_profile_id)
+                        .map_err(|e| e.to_string())?;
+                    if capability.revision != target.capability_profile_revision
+                        || capability.execution != target.execution
+                    {
+                        return Err(
+                            "The Capability Profile changed. Select the target again.".into()
+                        );
+                    }
+                    capability
+                }
+                None => profiles.default_profile().map_err(|e| e.to_string())?,
+            };
+            if capability.execution.is_remote() {
+                return Err(
+                    "Native quick-feature discovery is unavailable for remote sessions.".into(),
+                );
+            }
             (
-                working_directory.filter(|cwd| !cwd.trim().is_empty()),
+                target
+                    .map(|target| target.path.as_str())
+                    .or(working_directory.filter(|cwd| !cwd.trim().is_empty())),
                 capability.defaults,
                 None,
             )
@@ -41,7 +73,12 @@ impl AgentSessionApplication {
         let mut features = self
             .profile_source()
             .map_err(|e| e.to_string())?
-            .quick_features_at(cwd)
+            .quick_features_for_configuration(
+                target
+                    .map(|target| target.execution.configuration_ref.as_str())
+                    .unwrap_or("selected"),
+                cwd,
+            )
             .map_err(|e| e.to_string())?;
         if expected_profile.is_some_and(|expected| expected != features.profile_ref) {
             return Err("The selected runtime profile no longer matches this Session.".into());

@@ -93,7 +93,7 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
     });
     let application = fixture.direct.clone().with_profile_source(source.clone());
     application
-        .load_quick_features(None, Some("preview-directory"))
+        .load_quick_features(None, Some("preview-directory"), None)
         .unwrap();
     assert!(fixture.launches().is_empty());
     let cwd = fixture.folder.path().to_string_lossy().into_owned();
@@ -111,6 +111,7 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
         .load_quick_features(
             Some(&session.id),
             Some("caller-cannot-replace-session-context"),
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -127,7 +128,7 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
         contexts: Mutex::new(Vec::new()),
     }));
     assert!(changed
-        .load_quick_features(Some(&session.id), None)
+        .load_quick_features(Some(&session.id), None, None)
         .unwrap_err()
         .contains("no longer matches"));
 }

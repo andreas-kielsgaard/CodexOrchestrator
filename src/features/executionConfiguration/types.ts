@@ -1,3 +1,4 @@
+import type { ExecutionBindingDto } from '../../application/executionTargets/contracts';
 import type { PresentableIdentity } from '../identities';
 import type { CatalogState } from '../../components/CatalogSelect';
 import type {
@@ -29,6 +30,7 @@ export interface RuntimeProfileViewModel {
 }
 
 export interface CapabilityProfileDraft {
+  readonly execution?: ExecutionBindingDto;
   readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;

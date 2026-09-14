@@ -80,6 +80,82 @@ impl Fixture {
 }
 
 #[test]
+fn worktree_branch_graph_browses_registered_repository_without_changing_review_state() {
+    use super::{
+        branch_first::BranchFirstReviewService,
+        storage::{RepositorySelectionRepository, ReviewRepositoryRepository},
+        WorktreeReviewApplication,
+    };
+    use crate::{
+        persistence::ActiveDatabase,
+        repository_catalog::{RepositoryCatalog, REPOSITORY_CATALOG_SCHEMA},
+    };
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    let database = ActiveDatabase::from_connection(
+        rusqlite::Connection::open_in_memory().unwrap(),
+        |connection| {
+            connection
+                .execute_batch(REPOSITORY_CATALOG_SCHEMA)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    let catalog = Arc::new(RepositoryCatalog::new(Arc::new(database)));
+    catalog.register_directory(fixture.root.clone()).unwrap();
+    catalog.register_directory(other.root.clone()).unwrap();
+    let application = Arc::new(WorktreeReviewApplication::open(
+        fixture.temp.path().join("review"),
+        catalog,
+    ));
+    let service = BranchFirstReviewService::open(application.clone()).unwrap();
+    let review_database = application.database().unwrap();
+    let repository_id = RepositoryId::new(fixture.repository.id.as_str()).unwrap();
+
+    let graph = service
+        .branch_graph(repository_id.as_str(), 1200, None)
+        .unwrap();
+    assert!(graph.targets.iter().any(|branch| {
+        branch.repository_id == repository_id.as_str()
+            && branch.branch_ref.as_deref() == Some("refs/heads/side")
+    }));
+    assert!(application.overview().selected_repository.is_none());
+    assert!(review_database.selection().load().unwrap().is_none());
+    assert!(review_database
+        .repositories()
+        .find_repository(&repository_id)
+        .unwrap()
+        .is_none());
+    assert!(review_database
+        .repositories()
+        .list_branches(&repository_id)
+        .unwrap()
+        .is_empty());
+
+    application.select_repository(other.repository.id.as_str());
+    let graph = service
+        .branch_graph(repository_id.as_str(), 1200, Some(&graph.snapshot_id))
+        .unwrap();
+    assert!(graph
+        .targets
+        .iter()
+        .all(|branch| branch.repository_id == repository_id.as_str()));
+    assert_eq!(
+        application.selected_repository().unwrap().id,
+        other.repository.id
+    );
+    assert_eq!(
+        review_database
+            .selection()
+            .load()
+            .unwrap()
+            .unwrap()
+            .repository_id,
+        other.repository.id.as_str()
+    );
+}
+
+#[test]
 fn worktree_history_paging_includes_merged_commits_and_keeps_pinned_scope_after_ref_moves() {
     let fixture = Fixture::new();
     let service = BranchHistoryService::default();

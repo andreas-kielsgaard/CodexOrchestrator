@@ -16,9 +16,15 @@ export function useProfiledAgentSession(
     profileClient,
     options.selectedSessionId,
     options.draftId,
+    options.executionTarget
+      ? `${options.executionTarget.capabilityProfileId}:${options.executionTarget.worktreeId}`
+      : undefined,
   );
   const deliveries = useSessionDeliveries(queryClient, options.selectedSessionId);
-  const session = useAgentSession(client, { ...options, execution });
+  const session = useAgentSession(client, {
+    ...options,
+    execution: execution ? { ...execution, target: options.executionTarget } : undefined,
+  });
   const updateIdentity =
     client.updateIdentity && session.details
       ? async (

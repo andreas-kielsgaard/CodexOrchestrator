@@ -3786,6 +3786,13 @@ pub(crate) struct ResolvedNativeCodexHome {
 }
 
 impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
+    fn prepare_configured_launch(
+        &self, configuration_ref: &str, session_id: &crate::agent_sessions::domain::AgentSessionId,
+        invocation_id: &crate::agent_sessions::domain::AgentInvocationId, resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        self.prepare_configured_agent_session_launch(configuration_ref, session_id.as_str(), invocation_id.as_str(), resuming, extension)
+    }
     fn prepare_launch(
         &self,
         session_id: &crate::agent_sessions::domain::AgentSessionId,

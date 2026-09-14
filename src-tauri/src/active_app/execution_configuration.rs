@@ -9,10 +9,12 @@ pub(super) fn compose(
     database: Arc<crate::persistence::ActiveDatabase>,
     profiles: Arc<NativeProfileService>,
     workspaces: &SessionWorkspaces,
+    local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime>,
 ) -> Result<
     (
         Arc<dyn SelectedRuntimeProfileSource>,
         Arc<CapabilityProfileService>,
+        Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
     ),
     String,
 > {
@@ -30,9 +32,15 @@ pub(super) fn compose(
         )
         .with_skill_roots(vec![workspaces.skills_root()]),
     );
-    let service = Arc::new(CapabilityProfileService::new(
-        Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
-        source.clone(),
-    ));
-    Ok((source, service))
+    let endpoints = Arc::new(
+        crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
+    );
+    let service = Arc::new(
+        CapabilityProfileService::new(
+            Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
+            source.clone(),
+        )
+        .with_endpoints(endpoints.clone()),
+    );
+    Ok((source, service, endpoints))
 }

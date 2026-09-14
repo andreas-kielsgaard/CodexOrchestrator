@@ -1,3 +1,4 @@
+import type { SessionExecutionTargetDto } from '../../application/executionTargets/contracts';
 import { sessionErrorMessage as errorMessage } from './sessionErrors';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
@@ -36,7 +37,9 @@ export interface AgentSessionWorkspaceController {
 }
 
 export interface UseAgentSessionOptions {
+  executionTarget?: SessionExecutionTargetDto | null;
   execution?: {
+    readonly target?: SessionExecutionTargetDto | null;
     readonly client: AgentSessionProfileClient;
     readonly selection: { readonly model: string | null; readonly reasoningMode: string | null };
     readonly setSelection?: ComposerQuickFeatures['setSelection'];
@@ -254,8 +257,12 @@ export function useAgentSession(
                   })
                 : await options.execution.client.startDirectUserSession({
                     submittedText,
-                    workingDirectory: workingDirectory.trim() || null,
+                    workingDirectory:
+                      options.execution.target?.path ?? (workingDirectory.trim() || null),
                     title: options.sessionTitle ?? null,
+                    ...(options.execution.target
+                      ? { executionTarget: options.execution.target }
+                      : {}),
                     ...options.execution.selection,
                     ...(options.folderTarget ? { folderTarget: options.folderTarget } : {}),
                   })
@@ -356,8 +363,11 @@ export function useAgentSession(
   }, [loadSelected, selectedSessionId, transcript?.activeInvocationId]);
 
   const quickFeaturesClient = options.execution?.client;
+  const quickExecutionTarget = selectedSessionId ? null : options.execution?.target;
   const quickContext =
-    details?.session.id === selectedSessionId ? details.session.workingDirectory : workingDirectory;
+    details?.session.id === selectedSessionId
+      ? details.session.workingDirectory
+      : (quickExecutionTarget?.path ?? workingDirectory);
   const quickFolderTarget = selectedSessionId ? null : options.folderTarget;
   const loadQuickFeatures = useCallback(() => {
     if (!quickFeaturesClient?.loadQuickFeatures)
@@ -366,8 +376,9 @@ export function useAgentSession(
       sessionId: selectedSessionId,
       workingDirectory: quickContext || null,
       ...(quickFolderTarget ? { folderTarget: quickFolderTarget } : {}),
+      ...(quickExecutionTarget ? { executionTarget: quickExecutionTarget } : {}),
     });
-  }, [quickFeaturesClient, selectedSessionId, quickContext, quickFolderTarget]);
+  }, [quickFeaturesClient, selectedSessionId, quickContext, quickFolderTarget, quickExecutionTarget]);
 
   return {
     quickFeatures:
@@ -377,6 +388,7 @@ export function useAgentSession(
               selectedSessionId ?? options.draftId,
               quickContext,
               quickFolderTarget,
+              quickExecutionTarget,
             ]),
             load: loadQuickFeatures,
             selection: options.execution.selection,

@@ -13,6 +13,7 @@ use std::{error::Error, fmt, sync::Arc};
 pub(crate) struct CapabilityProfileService {
     repository: Arc<dyn CapabilityProfileRepository>,
     runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
 }
 
 impl CapabilityProfileService {
@@ -51,7 +52,37 @@ impl CapabilityProfileService {
         Self {
             repository,
             runtime_profile_source,
+            endpoints: None,
         }
+    }
+
+    pub(crate) fn with_endpoints(
+        mut self,
+        endpoints: Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
+    ) -> Self {
+        self.endpoints = Some(endpoints);
+        self
+    }
+
+    pub(crate) fn runtime_for_binding(
+        &self,
+        binding: &crate::execution_targets::domain::ExecutionBinding,
+        cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, CapabilityProfileServiceError> {
+        if let Some(endpoints) = &self.endpoints {
+            return endpoints
+                .describe_runtime(binding, cwd)
+                .map(|runtime| runtime.runtime_profile)
+                .map_err(CapabilityProfileServiceError::RuntimeUnavailable);
+        }
+        if binding.is_remote() {
+            return Err(CapabilityProfileServiceError::RuntimeUnavailable(
+                "Remote execution endpoints are not configured".into(),
+            ));
+        }
+        self.runtime_profile_source
+            .selected_runtime_profile_at(cwd)
+            .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
     }
 
     /// Returns the one runtime profile currently available to Execution Configuration.
@@ -110,7 +141,25 @@ impl CapabilityProfileService {
         allowed_capabilities: CapabilitySet,
         defaults: super::RuntimeSelections,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        self.create_with_execution(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            defaults,
+            Default::default(),
+        )
+    }
+
+    pub(crate) fn create_with_execution(
+        &self,
+        capability_profile_id: String,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+        execution: crate::execution_targets::domain::ExecutionBinding,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
         let capability_profile = CapabilityProfile {
+            execution,
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults,
             capability_profile_id,
@@ -145,12 +194,31 @@ impl CapabilityProfileService {
         defaults: super::RuntimeSelections,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
         let current = self.read(capability_profile_id)?;
+        self.update_with_execution(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            defaults,
+            current.execution,
+        )
+    }
+
+    pub(crate) fn update_with_execution(
+        &self,
+        capability_profile_id: &str,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+        execution: crate::execution_targets::domain::ExecutionBinding,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        let current = self.read(capability_profile_id)?;
         let revision = current.revision.checked_add(1).ok_or_else(|| {
             CapabilityProfileServiceError::RevisionOverflow {
                 capability_profile_id: capability_profile_id.into(),
             }
         })?;
         let replacement = CapabilityProfile {
+            execution,
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults,
             capability_profile_id: current.capability_profile_id,
@@ -185,7 +253,7 @@ impl CapabilityProfileService {
         capability_profile
             .validate()
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
-        let runtime_profile = self.runtime_profile()?;
+        let runtime_profile = self.runtime_for_binding(&capability_profile.execution, None)?;
         if let Some(capability) = capability_profile
             .allowed_capabilities
             .first_capability_outside(&runtime_profile.exposure)

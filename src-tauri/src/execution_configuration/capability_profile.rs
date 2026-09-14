@@ -7,6 +7,8 @@ pub(crate) const CAPABILITY_PROFILE_CONTRACT_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CapabilityProfile {
     #[serde(default)]
+    pub(crate) execution: crate::execution_targets::domain::ExecutionBinding,
+    #[serde(default)]
     pub(crate) defaults: super::runtime_profile::RuntimeSelections,
     pub(crate) contract_version: u32,
     pub(crate) capability_profile_id: String,
@@ -17,6 +19,7 @@ pub(crate) struct CapabilityProfile {
 
 impl CapabilityProfile {
     pub(crate) fn validate(&self) -> Result<(), String> {
+        self.execution.validate()?;
         if self.contract_version != CAPABILITY_PROFILE_CONTRACT_VERSION {
             return Err(format!(
                 "Capability Profile contract version {} is unsupported",

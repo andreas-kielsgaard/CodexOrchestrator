@@ -1,3 +1,4 @@
+export { targetKey, sourceTarget, orderReviewTargets } from '../branches';
 import type {
   BuildOutputState,
   AssociationBaseline,
@@ -136,28 +137,6 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export function targetKey(target: ReviewTarget): string {
-  const source =
-    target.kind === 'branch'
-      ? target.branchRef
-      : target.kind === 'worktree'
-        ? target.worktreeId
-        : `${target.objectId}:${JSON.stringify(target.context)}`;
-  return `${target.repositoryId}:${target.kind}:${source}`;
-}
-
-export function orderReviewTargets(targets: readonly ReviewBranch[]): ReviewBranch[] {
-  const timestamp = (target: ReviewBranch) =>
-    Date.parse(target.activity?.changedAt ?? target.tip.committedAt) || 0;
-  return [...targets].sort(
-    (left, right) =>
-      Number(right.availableWorktreeCount > 0) - Number(left.availableWorktreeCount > 0) ||
-      timestamp(right) - timestamp(left) ||
-      left.displayName.localeCompare(right.displayName) ||
-      targetKey(left.target).localeCompare(targetKey(right.target)),
-  );
-}
-
 export function commitSourceContext(branch: ReviewBranch): CommitSourceContext {
   const target = branch.target;
   if (target.kind === 'commit') return target.context;
@@ -177,15 +156,4 @@ export function commitTarget(branch: ReviewBranch, objectId: string): ReviewTarg
 
 export function uniqueCommits(commits: readonly GitCommit[]): GitCommit[] {
   return [...new Map(commits.map((commit) => [commit.objectId, commit])).values()];
-}
-
-export function sourceTarget(target: ReviewTarget): ReviewTarget {
-  if (target.kind !== 'commit') return target;
-  return target.context.kind === 'branch'
-    ? { kind: 'branch', repositoryId: target.repositoryId, branchRef: target.context.branchRef }
-    : {
-        kind: 'worktree',
-        repositoryId: target.repositoryId,
-        worktreeId: target.context.worktreeId,
-      };
 }

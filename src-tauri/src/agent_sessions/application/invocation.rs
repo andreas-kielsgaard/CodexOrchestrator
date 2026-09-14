@@ -319,6 +319,26 @@ impl AgentSessionApplication {
                 "archived Agent Sessions cannot accept messages",
             ));
         }
+        if session.execution_target.is_some()
+            && command
+                .working_directory
+                .as_ref()
+                .is_some_and(|path| Some(path) != session.working_directory.as_ref())
+        {
+            return Err(AgentSessionApplicationError::conflict(
+                "The session worktree binding cannot change",
+            ));
+        }
+        if session
+            .execution_target
+            .as_ref()
+            .is_some_and(|target| target.execution.is_remote())
+            && input_provenance == AgentInvocationInputProvenance::Application
+        {
+            return Err(AgentSessionApplicationError::invalid(
+                "Remote execution is available for ordinary Agent Sessions only",
+            ));
+        }
         let session = self.repair_missing_runtime_binding(session)?;
 
         let requested_options = command
@@ -413,32 +433,27 @@ impl AgentSessionApplication {
             }
         };
 
-        let launch_extension = self.add_workspace_capabilities(launch_extension);
-        let launch_extension = match self.native_profile_launch_authority.as_ref() {
-            Some(authority) => match authority.prepare_launch(
-                &session.id,
-                &invocation.id,
-                session.runtime_binding.external_context_id.is_some(),
-                launch_extension,
-            ) {
-                Ok(extension) => Some(extension),
-                Err(message) => {
-                    self.finish_preflight_failure(
-                        &invocation,
-                        RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
-                    )?;
-                    return Ok(SendAgentSessionMessageLaunchResult {
-                        acknowledgement,
-                        launch_accepted: false,
-                    });
-                }
-            },
-            None => launch_extension,
-        };
-        let launch_extension = match self.session_harness_launch_authority.as_ref() {
-            Some(authority) => {
-                match authority.prepare_launch(&session.id, &invocation.id, launch_extension) {
-                    Ok(extension) => extension,
+        let remote = session
+            .execution_target
+            .as_ref()
+            .is_some_and(|target| target.execution.is_remote());
+        let launch_extension = if remote {
+            launch_extension
+        } else {
+            let launch_extension = self.add_workspace_capabilities(launch_extension);
+            let launch_extension = match self.native_profile_launch_authority.as_ref() {
+                Some(authority) => match authority.prepare_configured_launch(
+                    session
+                        .execution_target
+                        .as_ref()
+                        .map(|target| target.execution.configuration_ref.as_str())
+                        .unwrap_or("selected"),
+                    &session.id,
+                    &invocation.id,
+                    session.runtime_binding.external_context_id.is_some(),
+                    launch_extension,
+                ) {
+                    Ok(extension) => Some(extension),
                     Err(message) => {
                         self.finish_preflight_failure(
                             &invocation,
@@ -449,9 +464,29 @@ impl AgentSessionApplication {
                             launch_accepted: false,
                         });
                     }
+                },
+                None => launch_extension,
+            };
+            let launch_extension = match self.session_harness_launch_authority.as_ref() {
+                Some(authority) => {
+                    match authority.prepare_launch(&session.id, &invocation.id, launch_extension) {
+                        Ok(extension) => extension,
+                        Err(message) => {
+                            self.finish_preflight_failure(
+                                &invocation,
+                                RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                            )?;
+                            return Ok(SendAgentSessionMessageLaunchResult {
+                                acknowledgement,
+                                launch_accepted: false,
+                            });
+                        }
+                    }
                 }
-            }
-            None => launch_extension,
+                None => launch_extension,
+            };
+
+            launch_extension
         };
 
         let mode = if session.runtime_binding.external_context_id.is_some() {
@@ -459,7 +494,20 @@ impl AgentSessionApplication {
         } else {
             RuntimeInvocationMode::Start
         };
-        let preflight = match self.runtime.preflight_invocation(mode, &requested_options) {
+        let runtime = match self.session_runtime(&session) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                self.finish_preflight_failure(
+                    &invocation,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, error.to_string()),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        };
+        let preflight = match runtime.preflight_invocation(mode, &requested_options) {
             Ok(preflight) => preflight,
             Err(error) => {
                 self.finish_preflight_failure(&invocation, error)?;
@@ -507,10 +555,9 @@ impl AgentSessionApplication {
         ));
         let launch = match session.runtime_binding.external_context_id {
             Some(external_context_id) => {
-                self.runtime
-                    .resume_invocation(request, external_context_id, sink)
+                runtime.resume_invocation(request, external_context_id, sink)
             }
-            None => self.runtime.start_invocation(request, sink),
+            None => runtime.start_invocation(request, sink),
         };
         let launch_accepted = match launch {
             Ok(()) => match self
@@ -666,7 +713,10 @@ impl AgentSessionApplication {
         } else {
             None
         };
-        if let Err(cancel_error) = self.runtime.cancel_invocation(invocation_id) {
+        if let Err(cancel_error) = self
+            .runtime_for_invocation(invocation_id)?
+            .cancel_invocation(invocation_id)
+        {
             self.record_diagnostic(
                 invocation_id,
                 AgentDiagnosticSource::Runtime,

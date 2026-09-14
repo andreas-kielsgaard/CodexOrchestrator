@@ -1,4 +1,11 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import type { RepositoryBranchSource } from '../../application/branches';
+import {
+  localExecutionBinding,
+  type ExecutionTargetClient,
+  type ExecutionBindingDto,
+} from '../../application/executionTargets/contracts';
+import { RepositoryDeviceLocationEditor } from './RepositoryDeviceLocationEditor';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
@@ -15,6 +22,8 @@ import './mountedExecutionConfiguration.css';
 
 export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
+  readonly targetClient?: ExecutionTargetClient;
+  readonly branchSource?: RepositoryBranchSource;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
 }
 
@@ -38,6 +47,7 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     revision: profile.revision,
     allowedCapabilities: profile.allowedCapabilities,
     defaults: profile.defaults,
+    execution: profile.execution,
   };
 }
 
@@ -52,6 +62,8 @@ function newDraft(runtime: RuntimeProfileSnapshotDto): CapabilityProfileDraft {
 
 export function ExecutionConfigurationScreen({
   client,
+  targetClient,
+  branchSource,
   workspace: providedWorkspace,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
@@ -63,6 +75,11 @@ export function ExecutionConfigurationScreen({
   const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
   const selectedRef = useRef(selectedId);
   const editDraft = (next: CapabilityProfileDraft) => {
+    if (JSON.stringify(next.execution) !== JSON.stringify(draft.execution)) {
+      discoveryGeneration.current++;
+      setDiscovering(false);
+      setRuntime(EMPTY_RUNTIME);
+    }
     workspace.edit(selectedRef.current ?? '$new', next);
     setDraft(next);
   };
@@ -70,13 +87,34 @@ export function ExecutionConfigurationScreen({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const discoveryGeneration = useRef(0);
+  const discover = useCallback(
+    async (execution?: ExecutionBindingDto) => {
+      const generation = ++discoveryGeneration.current;
+      setDiscovering(true);
+      setRuntime(EMPTY_RUNTIME);
+      setError(null);
+      try {
+        const next = targetClient
+          ? (await targetClient.loadRuntime(execution ?? localExecutionBinding)).runtimeProfile
+          : await client.loadSelectedRuntimeProfile();
+        if (generation === discoveryGeneration.current) setRuntime(next);
+      } catch (cause) {
+        if (generation === discoveryGeneration.current) setError(errorMessage(cause));
+      } finally {
+        if (generation === discoveryGeneration.current) setDiscovering(false);
+      }
+    },
+    [client, targetClient],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [nextRuntime, nextProfiles, nextDefault] = await Promise.all([
-        client.loadSelectedRuntimeProfile(),
+        targetClient ? Promise.resolve(EMPTY_RUNTIME) : client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
         client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
       ]);
@@ -97,12 +135,16 @@ export function ExecutionConfigurationScreen({
           selected ? draftFromProfile(selected) : newDraft(nextRuntime),
         ),
       );
+      if (targetClient)
+        void discover(
+          workspace.read(selectedRef.current ?? '$new')?.execution ?? selected?.execution,
+        );
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [client, workspace]);
+  }, [client, workspace, targetClient, discover]);
 
   useEffect(() => {
     void load();
@@ -125,6 +167,8 @@ export function ExecutionConfigurationScreen({
     setSelectedId(profile.capabilityProfileId);
     setDraft(workspace.load(profile.capabilityProfileId, draftFromProfile(profile)));
     setError(null);
+    if (targetClient)
+      void discover(workspace.read(profile.capabilityProfileId)?.execution ?? profile.execution);
   };
 
   const save = async (next: CapabilityProfileDraft) => {
@@ -140,12 +184,14 @@ export function ExecutionConfigurationScreen({
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
+              ...(next.execution ? { execution: next.execution } : {}),
             })
           : await client.updateCapabilityProfile({
               capabilityProfileId: next.capabilityProfileId,
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
+              ...(next.execution ? { execution: next.execution } : {}),
             });
       const working = workspace.acceptSave(
         key,
@@ -223,6 +269,7 @@ export function ExecutionConfigurationScreen({
             setSelectedId(null);
             setDraft(workspace.load('$new', newDraft(runtime)));
             setError(null);
+            if (targetClient) void discover();
           }}
         >
           <Plus size={16} aria-hidden="true" />
@@ -246,17 +293,17 @@ export function ExecutionConfigurationScreen({
               }}
             >
               <option value="" disabled>
-                Choose a required default
+                Choose a default profile
               </option>
               {profiles.map((profile) => (
                 <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
                   {profile.name}
+                  {profile.execution?.connection.kind === 'ssh' ? ' · requires a worktree' : ''}
                 </option>
               ))}
             </select>
-            {!defaultProfileId && (
-              <p>A default is required before starting a standalone session.</p>
-            )}
+            {!defaultProfileId && <p>Choose a default for sessions without a target worktree.</p>}
+            <p>A selected worktree supplies its own Capability Profile.</p>
           </label>
         )}
         <nav aria-label="Saved Capability Profiles">
@@ -276,7 +323,17 @@ export function ExecutionConfigurationScreen({
         </nav>
       </aside>
       <section className="execution-configuration-screen__workspace">
-        <NativeCapabilityInventory client={client} />
+        <NativeCapabilityInventory
+          key={JSON.stringify(draft.execution)}
+          client={client}
+          loadInventory={
+            targetClient
+              ? async () =>
+                  (await targetClient.loadRuntime(draft.execution ?? localExecutionBinding))
+                    .nativeInventory
+              : undefined
+          }
+        />
         {selectedId && selectedId === defaultProfileId && (
           <p>Choose another default before deleting this profile.</p>
         )}
@@ -290,6 +347,39 @@ export function ExecutionConfigurationScreen({
           <>
             <CapabilityProfileEditor
               profile={draft}
+              connectionDetails={
+                targetClient ? (
+                  <>
+                    <div className="execution-connection-actions">
+                      <button
+                        type="button"
+                        disabled={discovering}
+                        onClick={() => void discover(draft.execution)}
+                      >
+                        {discovering ? 'Reading device capabilities…' : 'Read device capabilities'}
+                      </button>
+                      {runtime.profileRef !== 'unavailable' && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            editDraft({ ...draft, allowedCapabilities: runtime.exposure })
+                          }
+                        >
+                          Use discovered capabilities
+                        </button>
+                      )}
+                    </div>
+                    {branchSource && (
+                      <RepositoryDeviceLocationEditor
+                        key={draft.execution?.deviceId ?? 'local'}
+                        execution={draft.execution ?? localExecutionBinding}
+                        client={targetClient}
+                        source={branchSource}
+                      />
+                    )}
+                  </>
+                ) : undefined
+              }
               runtime={runtimeView}
               saving={saving}
               onChange={editDraft}

@@ -36,6 +36,10 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
 /// Application-owned authority for deriving the one native home used by a managed provider
 /// launch. Callers can supply invocation-specific extensions, but never profile authority.
 pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
+    fn prepare_configured_launch(
+        &self, _configuration_ref: &str, session_id: &AgentSessionId, invocation_id: &AgentInvocationId,
+        resuming: bool, extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String> { self.prepare_launch(session_id, invocation_id, resuming, extension) }
     fn prepare_launch(
         &self,
         session_id: &AgentSessionId,

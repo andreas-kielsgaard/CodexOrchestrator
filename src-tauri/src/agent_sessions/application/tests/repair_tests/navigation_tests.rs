@@ -112,7 +112,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
     ] {
         let before = navigation.load().unwrap();
         navigation
-            .load_quick_features(None, linked.to_str(), Some(&folder_target))
+            .load_quick_features(None, linked.to_str(), Some(&folder_target), None)
             .unwrap();
         assert_eq!(
             PathIdentity::of(std::path::Path::new(
@@ -134,6 +134,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         assert_eq!(navigation.load().unwrap().organization, before.organization);
         let result = navigation
             .start_session(StartSessionRequest {
+                execution_target: None,
                 submitted_text: "Ordinary notes".into(),
                 title: Some("Project notes".into()),
                 working_directory: Some(linked.to_string_lossy().into_owned()),
@@ -205,6 +206,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
                 Some(&SessionFolderTarget::Repository {
                     repository_id: "nonexistent-visual-folder".into(),
                 }),
+                None,
             )
             .unwrap();
         assert_eq!(

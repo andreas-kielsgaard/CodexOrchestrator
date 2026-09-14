@@ -17,7 +17,7 @@ export function RuntimeProfileInspector({
   return (
     <CollapsibleSection
       title="Runtime profile"
-      description="Observed from the globally selected native runtime. These values are inherited."
+      description="Observed from the Codex configuration on this profile's device. These values are inherited."
       defaultExpanded={defaultExpanded}
       className="execution-configuration__section"
       headerAccessory={<span className="execution-configuration__badge">Read only</span>}

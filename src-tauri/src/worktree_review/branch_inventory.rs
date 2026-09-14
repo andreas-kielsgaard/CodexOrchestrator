@@ -20,6 +20,7 @@ pub(super) fn inventory(
     database: &WorktreeReviewDatabase,
     activity: &WorktreeActivityService,
 ) -> Result<Vec<BranchView>, String> {
+    let targets = read_inventory(context, repository, database, activity)?;
     let now = Utc::now();
     let id = RepositoryId::new(repository.id.as_str()).map_err(|error| error.to_string())?;
     database
@@ -33,6 +34,30 @@ pub(super) fn inventory(
             last_seen_at: now,
         })
         .map_err(|error| error.to_string())?;
+    for target in &targets {
+        if let Some(branch_ref) = &target.branch_ref {
+            database
+                .repositories()
+                .save_branch(&ReviewBranch {
+                    repository_id: id.clone(),
+                    branch_ref: BranchRef::new(branch_ref).map_err(|error| error.to_string())?,
+                    observed_tip: GitObjectId::new(&target.tip.object_id)
+                        .map_err(|error| error.to_string())?,
+                    observed_at: now,
+                })
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(targets)
+}
+
+pub(super) fn read_inventory(
+    context: &RepositoryContext,
+    repository: &RepositoryIdentity,
+    database: &WorktreeReviewDatabase,
+    activity: &WorktreeActivityService,
+) -> Result<Vec<BranchView>, String> {
+    let id = RepositoryId::new(repository.id.as_str()).map_err(|error| error.to_string())?;
     let observations = context
         .worktrees()
         .list(&repository.id, repository.top_level.path())
@@ -51,17 +76,6 @@ pub(super) fn inventory(
         .map_err(|error| error.to_string())?;
     let mut targets = Vec::new();
     for summary in summaries {
-        database
-            .repositories()
-            .save_branch(&ReviewBranch {
-                repository_id: id.clone(),
-                branch_ref: BranchRef::new(summary.branch.full_name.as_str())
-                    .map_err(|error| error.to_string())?,
-                observed_tip: GitObjectId::new(summary.branch.object_id.as_str())
-                    .map_err(|error| error.to_string())?,
-                observed_at: now,
-            })
-            .map_err(|error| error.to_string())?;
         let related = associations
             .iter()
             .filter(|item| {

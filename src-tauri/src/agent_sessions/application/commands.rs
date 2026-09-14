@@ -23,6 +23,7 @@ pub(crate) struct CreateApplicationAgentSessionCommand {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AgentSessionOwnership {
+    pub(crate) execution_target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
     pub(crate) harness_version: Option<HarnessVersionRef>,
     pub(crate) assigned_identity: Option<AssignedAgentIdentity>,
     pub(crate) session_profile: Option<SessionCreationResolution>,

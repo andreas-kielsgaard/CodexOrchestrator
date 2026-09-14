@@ -34,6 +34,7 @@ pub(crate) struct CreateAgentSessionCommandDto {
 impl CreateAgentSessionCommandDto {
     pub(crate) fn ownership(&self) -> crate::agent_sessions::application::AgentSessionOwnership {
         crate::agent_sessions::application::AgentSessionOwnership {
+            execution_target: None,
             harness_version: self.harness_version.clone(),
             assigned_identity: self.assigned_identity.clone(),
             session_profile: None,
@@ -349,6 +350,7 @@ mod tests {
         let invocation_id = AgentInvocationId::new("invocation").unwrap();
         let dto = AgentSessionDetailsDto::from_history(AgentSessionHistory {
             session: AgentSession {
+                execution_target: None,
                 workspace_origin: None,
                 id: session_id.clone(),
                 title: "Session".into(),

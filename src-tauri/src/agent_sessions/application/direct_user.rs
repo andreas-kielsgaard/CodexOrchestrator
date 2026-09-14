@@ -9,8 +9,8 @@ use super::{
     CreateAgentSessionCommand, SendAgentSessionMessageCommand,
 };
 use crate::execution_configuration::{
-    DirectUserInvocationRequest, DirectUserInvocationResolution, SandboxMode,
-    SessionProfileResolver,
+    DirectUserInvocationRequest, DirectUserInvocationResolution, NodeProfile, SandboxMode,
+    SessionCreationRequest, SessionProfileResolver,
 };
 impl AgentSessionApplication {
     /// Standalone defaults are application-owned, not a hidden Workflow node. Resolve before
@@ -25,13 +25,95 @@ impl AgentSessionApplication {
         sandbox_mode: Option<SandboxMode>,
         placement: Option<crate::agent_sessions::organization::SessionPlacement>,
     ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
+        self.start_direct_user_session_with_target(
+            submitted_text,
+            title,
+            working_directory,
+            model,
+            reasoning_mode,
+            sandbox_mode,
+            None,
+            placement,
+        )
+    }
+
+    pub(crate) fn start_direct_user_session_with_target(
+        &self,
+        submitted_text: String,
+        title: Option<String>,
+        working_directory: Option<String>,
+        model: Option<String>,
+        reasoning_mode: Option<String>,
+        sandbox_mode: Option<SandboxMode>,
+        mut target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
+        placement: Option<crate::agent_sessions::organization::SessionPlacement>,
+    ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
         if submitted_text.trim().is_empty() {
             return Err(SessionConfigurationError::new(
                 SessionConfigurationErrorKind::InvalidInvocationSelection,
                 "A message must contain text",
             ));
         }
-        let (runtime, resolution) = self.resolve_default_creation(working_directory.as_deref())?;
+        let (runtime, resolution) = if let Some(target) = target.as_mut() {
+            let service = self.capability_profiles.as_ref().ok_or_else(|| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::MissingPinnedProfile,
+                    "Capability Profiles are unavailable",
+                )
+            })?;
+            let capability = service.read(&target.capability_profile_id).map_err(|e| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::InvalidInvocationSelection,
+                    e.to_string(),
+                )
+            })?;
+            if capability.revision != target.capability_profile_revision
+                || capability.execution != target.execution
+            {
+                return Err(SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::InvalidInvocationSelection,
+                    "The Capability Profile changed. Select the target again.",
+                ));
+            }
+            let endpoints = self.endpoints.as_ref().ok_or_else(|| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::InvalidInvocationSelection,
+                    "Execution endpoints are unavailable",
+                )
+            })?;
+            target.execution = endpoints
+                .freeze_binding(target.execution.clone())
+                .map_err(|e| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        e,
+                    )
+                })?;
+            let runtime = service
+                .runtime_for_binding(&target.execution, Some(&target.path))
+                .map_err(|e| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        e.to_string(),
+                    )
+                })?;
+            let resolution = SessionProfileResolver::resolve_snapshot(
+                runtime.clone(),
+                SessionCreationRequest {
+                    contract_version: 1,
+                    node_profile: NodeProfile {
+                        contract_version: 1,
+                        allowed_capabilities: capability.allowed_capabilities.clone(),
+                        pinned_defaults: Default::default(),
+                    },
+                    capability_profile: capability,
+                },
+            )
+            .map_err(SessionConfigurationError::resolution)?;
+            (runtime, resolution)
+        } else {
+            self.resolve_default_creation(working_directory.as_deref())?
+        };
         // Reject an invalid first-message selection before creating any Session.
         let invocation_resolution = SessionProfileResolver::resolve_direct_user_snapshot(
             runtime,
@@ -55,6 +137,7 @@ impl AgentSessionApplication {
                 },
                 self.ids.session_id(),
                 AgentSessionOwnership {
+                    execution_target: target,
                     session_profile: Some(resolution),
                     ..AgentSessionOwnership::default()
                 },
@@ -90,12 +173,29 @@ impl AgentSessionApplication {
         let history = self
             .load_session(&command.session_id)
             .map_err(SessionConfigurationError::agent_session)?;
-        let source = crate::execution_configuration::WorkingContextProfileSource {
-            source: self.profile_source()?,
-            cwd: history.session.working_directory.as_deref(),
+        let runtime = if let Some(target) = &history.session.execution_target {
+            self.capability_profiles
+                .as_ref()
+                .ok_or_else(|| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::MissingPinnedProfile,
+                        "Capability Profiles are unavailable",
+                    )
+                })?
+                .runtime_for_binding(&target.execution, Some(&target.path))
+                .map_err(|e| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        e.to_string(),
+                    )
+                })?
+        } else {
+            self.profile_source()?
+                .selected_runtime_profile_at(history.session.working_directory.as_deref())
+                .map_err(|e| SessionConfigurationError::resolution(e.into()))?
         };
-        let invocation_resolution = SessionProfileResolver::validate_direct_user_invocation(
-            &source,
+        let invocation_resolution = SessionProfileResolver::resolve_direct_user_snapshot(
+            runtime,
             &pinned.creation_resolution,
             DirectUserInvocationRequest {
                 contract_version: 1,

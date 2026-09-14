@@ -425,6 +425,7 @@ mod tests {
 
     fn profile() -> CapabilityProfile {
         CapabilityProfile {
+            execution: Default::default(),
             defaults: Default::default(),
             contract_version: crate::execution_configuration::CAPABILITY_PROFILE_CONTRACT_VERSION,
             capability_profile_id: "capability-default".into(),

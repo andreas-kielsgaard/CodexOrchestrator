@@ -155,6 +155,9 @@ impl SessionProfileResolver {
         request: SessionCreationRequest,
     ) -> Result<SessionCreationResolution, ResolutionError> {
         validate_creation_request(&request)?;
+        if request.capability_profile.execution.is_remote() {
+            return Err(ResolutionError::InvalidInput("Remote profiles require an ordinary Agent Session worktree target; Workflow execution is local-only".into()));
+        }
         let runtime_profile = source.selected_runtime_profile()?;
         Self::resolve_snapshot(runtime_profile, request)
     }

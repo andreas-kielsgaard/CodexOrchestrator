@@ -1,0 +1,79 @@
+.worktree-review__branch-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.worktree-review__branch-list li {
+  min-width: 0;
+}
+
+.worktree-review__branch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #39483f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.worktree-review__branch:hover {
+  border-color: #c6cdc6;
+  background: #f7f8f5;
+}
+
+.worktree-review__branch[aria-current='true'] {
+  border-color: #6f8b78;
+  background: #fffdf8;
+  box-shadow: inset 3px 0 #236b4b;
+  color: #17211b;
+}
+
+.worktree-review__branch strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.worktree-review__branch > span,
+.worktree-review__branch small {
+  color: #607068;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.worktree-review__branch small {
+  grid-column: 1 / -1;
+  font-family: inherit;
+}
+
+.branch-browser .worktree-review__branch-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 18px 0 10px;
+}
+.branch-browser h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.branch-browser .worktree-review__branch-heading > span {
+  font-size: 12px;
+  color: #647267;
+}
+.branch-browser .worktree-review__select-branch {
+  width: 100%;
+  margin-top: 12px;
+}
+.branch-browser .worktree-review__empty {
+  font-size: 13px;
+  color: #647267;
+}

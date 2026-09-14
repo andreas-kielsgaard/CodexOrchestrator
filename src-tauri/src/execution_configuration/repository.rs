@@ -417,6 +417,7 @@ mod tests {
 
     fn profile(id: &str, revision: u64) -> CapabilityProfile {
         CapabilityProfile {
+            execution: Default::default(),
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults: Default::default(),
             capability_profile_id: id.into(),

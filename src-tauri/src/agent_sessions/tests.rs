@@ -899,6 +899,7 @@ impl AgentRuntimeUpdateSink for CollectingUpdateSink {
 
 fn session(id: &str, external_context_id: Option<&str>) -> AgentSession {
     AgentSession {
+        execution_target: None,
         workspace_origin: None,
         id: session_id(id),
         title: "Agent session".to_string(),

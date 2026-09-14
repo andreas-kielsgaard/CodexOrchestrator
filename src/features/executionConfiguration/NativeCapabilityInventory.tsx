@@ -4,16 +4,22 @@ import type {
   NativeCapabilityInventoryDto,
 } from '../../application/executionConfiguration';
 
-export function NativeCapabilityInventory({ client }: { client: ExecutionConfigurationClient }) {
+export function NativeCapabilityInventory({
+  client,
+  loadInventory,
+}: {
+  client: ExecutionConfigurationClient;
+  loadInventory?: () => Promise<NativeCapabilityInventoryDto>;
+}) {
   const [inventory, setInventory] = useState<NativeCapabilityInventoryDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!client.loadNativeCapabilityInventory) return null;
+  if (!loadInventory && !client.loadNativeCapabilityInventory) return null;
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      setInventory(await client.loadNativeCapabilityInventory!());
+      setInventory(await (loadInventory ?? client.loadNativeCapabilityInventory!)());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

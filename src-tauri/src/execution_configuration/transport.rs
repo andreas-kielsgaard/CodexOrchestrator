@@ -22,6 +22,8 @@ pub(crate) struct CapabilityProfileIdInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateCapabilityProfileInput {
+    #[serde(default)]
+    execution: crate::execution_targets::domain::ExecutionBinding,
     capability_profile_id: String,
     name: String,
     allowed_capabilities: CapabilitySet,
@@ -32,6 +34,8 @@ pub(crate) struct CreateCapabilityProfileInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct UpdateCapabilityProfileInput {
+    #[serde(default)]
+    execution: crate::execution_targets::domain::ExecutionBinding,
     capability_profile_id: String,
     name: String,
     allowed_capabilities: CapabilitySet,
@@ -96,35 +100,45 @@ pub(crate) fn load_capability_profile(
 }
 
 #[tauri::command]
-pub(crate) fn create_capability_profile(
+pub(crate) async fn create_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: CreateCapabilityProfileInput,
 ) -> Result<CapabilityProfile, String> {
-    state
-        .service
-        .create_with_defaults(
-            input.capability_profile_id,
-            input.name,
-            input.allowed_capabilities,
-            input.defaults,
-        )
-        .map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .create_with_execution(
+                input.capability_profile_id,
+                input.name,
+                input.allowed_capabilities,
+                input.defaults,
+                input.execution,
+            )
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn update_capability_profile(
+pub(crate) async fn update_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: UpdateCapabilityProfileInput,
 ) -> Result<CapabilityProfile, String> {
-    state
-        .service
-        .update_with_defaults(
-            &input.capability_profile_id,
-            input.name,
-            input.allowed_capabilities,
-            input.defaults,
-        )
-        .map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .update_with_execution(
+                &input.capability_profile_id,
+                input.name,
+                input.allowed_capabilities,
+                input.defaults,
+                input.execution,
+            )
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

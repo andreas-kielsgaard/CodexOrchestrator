@@ -82,18 +82,25 @@ impl AgentSessionApplication {
         ownership: AgentSessionOwnership,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
         let now = self.clock.now();
-        let workspace_origin = if command
-            .working_directory
-            .as_ref()
-            .is_some_and(|p| !p.trim().is_empty())
+        let workspace_origin = if ownership.execution_target.is_some()
+            || command
+                .working_directory
+                .as_ref()
+                .is_some_and(|p| !p.trim().is_empty())
         {
             "explicit"
         } else {
             "allocated"
         };
-        let working_directory =
-            self.prepare_working_directory(&session_id, command.working_directory)?;
+        let working_directory = match &ownership.execution_target {
+            Some(target) if target.execution.is_remote() => Some(target.path.clone()),
+            Some(target) => {
+                self.prepare_working_directory(&session_id, Some(target.path.clone()))?
+            }
+            None => self.prepare_working_directory(&session_id, command.working_directory)?,
+        };
         Ok(AgentSession {
+            execution_target: ownership.execution_target,
             workspace_origin: self.workspaces.as_ref().map(|_| workspace_origin.into()),
             id: session_id,
             title: normalize_title(command.title.as_deref(), "Agent Session"),
@@ -116,6 +123,18 @@ impl AgentSessionApplication {
         &self,
         command: UpdateAgentSessionHarnessCommand,
     ) -> Result<AgentSession, AgentSessionApplicationError> {
+        if self
+            .load_session(&command.session_id)?
+            .session
+            .execution_target
+            .as_ref()
+            .is_some_and(|target| target.execution.is_remote())
+            && command.harness_version.is_some()
+        {
+            return Err(AgentSessionApplicationError::invalid(
+                "Harness workflow integration is unavailable for remote sessions in this prototype",
+            ));
+        }
         self.repository
             .update_harness_version(
                 &command.session_id,

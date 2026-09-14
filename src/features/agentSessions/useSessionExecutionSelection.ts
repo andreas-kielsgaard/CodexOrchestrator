@@ -12,6 +12,7 @@ export function useSessionExecutionSelection(
   client: AgentSessionProfileClient | undefined,
   sessionId: string | null,
   draftId?: string,
+  draftTargetKey?: string,
 ) {
   const [profile, setProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +36,7 @@ export function useSessionExecutionSelection(
     return () => {
       active = false;
     };
-  }, [client, sessionId, draftId]);
+  }, [client, sessionId, draftId, draftTargetKey]);
   const afterAccepted = () => {
     if (currentSession.current === (sessionId ?? draftId))
       setSelection((current) => (current === selection ? inherited() : current));

@@ -26,7 +26,10 @@ impl AgentSessionApplication {
         if !invocation.status.is_active() {
             return Ok(invocation);
         }
-        if let Err(error) = self.runtime.cancel_invocation(&command.invocation_id) {
+        if let Err(error) = self
+            .runtime_for_session_id(&invocation.session_id)?
+            .cancel_invocation(&command.invocation_id)
+        {
             self.record_diagnostic(
                 &command.invocation_id,
                 AgentDiagnosticSource::Runtime,
@@ -128,6 +131,11 @@ impl AgentSessionApplication {
     }
 
     pub(crate) fn shutdown_runtime(&self) -> Result<(), AgentSessionApplicationError> {
+        if let Some(endpoints) = &self.endpoints {
+            endpoints
+                .shutdown()
+                .map_err(AgentSessionApplicationError::invalid)?;
+        }
         self.runtime
             .shutdown()
             .map_err(AgentSessionApplicationError::runtime)

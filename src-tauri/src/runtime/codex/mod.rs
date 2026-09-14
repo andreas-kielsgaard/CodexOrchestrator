@@ -7,6 +7,7 @@ pub(crate) mod app_server;
 #[cfg(test)]
 mod arguments;
 mod capabilities;
+#[cfg(test)]
 mod protocol;
 #[cfg(test)]
 mod runtime;

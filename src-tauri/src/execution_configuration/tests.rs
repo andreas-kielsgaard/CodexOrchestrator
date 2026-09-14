@@ -72,6 +72,7 @@ fn runtime_profile() -> RuntimeProfileSnapshot {
 
 fn capability_profile() -> CapabilityProfile {
     CapabilityProfile {
+        execution: Default::default(),
         contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
         defaults: Default::default(),
         capability_profile_id: "implementation".into(),
@@ -408,6 +409,7 @@ fn required_default_profile_is_atomic_retained_and_cannot_be_deleted() {
     assert!(repository.default_profile().unwrap().is_none());
     assert!(repository.set_default_profile("missing").is_err());
     let first = super::CapabilityProfile {
+        execution: Default::default(),
         contract_version: 1,
         capability_profile_id: "first".into(),
         name: "First".into(),

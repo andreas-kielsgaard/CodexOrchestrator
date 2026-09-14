@@ -1,3 +1,4 @@
+import type { SessionExecutionTargetDto } from '../executionTargets/contracts';
 import type { HarnessVersionRef } from '../harnesses';
 import type { AssignedAgentIdentity } from '../identities';
 
@@ -31,6 +32,7 @@ export interface AgentRuntimeBindingDto {
 }
 
 export interface AgentSessionDto {
+  executionTarget?: SessionExecutionTargetDto | null;
   workspaceOrigin?: 'explicit' | 'allocated' | 'native_metadata' | null;
   id: AgentSessionIdDto;
   title: string;

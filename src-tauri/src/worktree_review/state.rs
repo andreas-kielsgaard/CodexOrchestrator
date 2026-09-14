@@ -376,6 +376,15 @@ impl WorktreeReviewApplication {
         self.verify_selection(&selection)
     }
 
+    pub(crate) fn registered_repository(
+        &self,
+        repository_id: &str,
+    ) -> Result<RepositoryIdentity, String> {
+        self.repository_catalog
+            .resolve_verified(repository_id)
+            .map(|(_, repository)| repository)
+    }
+
     pub(crate) fn repository_context(
         &self,
     ) -> Result<RepositoryContext, WorktreeReviewUnavailable> {

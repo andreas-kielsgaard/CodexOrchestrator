@@ -90,6 +90,18 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn quick_features_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        if reference != "selected" {
+            return Err(SelectedRuntimeProfileSourceError::unavailable(
+                "This provider does not expose quick features for named configurations.",
+            ));
+        }
+        self.quick_features_at(cwd)
+    }
     fn quick_features_at(
         &self,
         _cwd: Option<&str>,
@@ -97,6 +109,26 @@ pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
         Err(SelectedRuntimeProfileSourceError::unavailable(
             "This provider does not expose quick features.",
         ))
+    }
+    fn resolve_configuration_ref(
+        &self,
+        reference: &str,
+    ) -> Result<String, SelectedRuntimeProfileSourceError> {
+        Ok(reference.into())
+    }
+    fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.selected_runtime_profile_at(cwd)
+    }
+    fn inventory_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+        self.native_inventory()
     }
     fn native_inventory(
         &self,

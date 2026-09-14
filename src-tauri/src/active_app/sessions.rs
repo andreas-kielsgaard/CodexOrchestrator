@@ -18,6 +18,7 @@ pub(super) struct SessionServices {
     pub(super) imports: Arc<crate::agent_sessions::application::import::AgentSessionImportService>,
     pub(super) selected_runtime_profile: Arc<dyn SelectedRuntimeProfileSource>,
     pub(super) capability_profiles: Arc<CapabilityProfileService>,
+    pub(super) endpoints: Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
 }
 
 pub(super) fn compose(
@@ -30,13 +31,20 @@ pub(super) fn compose(
     notifier: Arc<dyn AgentSessionNotifier>,
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
-    let (selected_runtime_profile, capability_profiles) =
-        super::execution_configuration::compose(database, native_profiles.clone(), &workspaces)?;
+    let local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime> =
+        Arc::new(crate::runtime::codex::app_server::CodexAppServerRuntime::system("codex"));
+    let (selected_runtime_profile, capability_profiles, endpoints) =
+        super::execution_configuration::compose(
+            database,
+            native_profiles.clone(),
+            &workspaces,
+            local_runtime.clone(),
+        )?;
     let providers = Arc::new(SystemAgentSessionProviders);
     let application = Arc::new(
         AgentSessionApplication::new(
             repository.clone(),
-            Arc::new(crate::runtime::codex::app_server::CodexAppServerRuntime::system("codex")),
+            local_runtime,
             notifier,
             providers.clone(),
             providers,
@@ -44,6 +52,7 @@ pub(super) fn compose(
         )
         .with_profile_source(selected_runtime_profile.clone())
         .with_capability_profiles(capability_profiles.clone())
+        .with_execution_endpoints(endpoints.clone())
         .with_workspaces(workspaces)
         .with_native_profile_launch_authority(native_profiles.clone())
         .with_session_harness_version_resolver(Arc::new(harness_catalog))
@@ -70,5 +79,6 @@ pub(super) fn compose(
         application,
         selected_runtime_profile,
         capability_profiles,
+        endpoints,
     })
 }

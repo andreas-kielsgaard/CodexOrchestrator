@@ -6,6 +6,7 @@ storybook-static/
 .vite/
 .dev/
 src-tauri/target/
+crates/**/target/
 src-tauri/gen/
 .DS_Store
 *.local

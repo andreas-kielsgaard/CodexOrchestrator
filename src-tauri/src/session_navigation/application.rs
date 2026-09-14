@@ -38,6 +38,8 @@ pub(crate) struct SessionNavigationData {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct StartSessionRequest {
+    #[serde(default)]
+    pub(crate) execution_target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
     pub(crate) submitted_text: String,
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
@@ -234,8 +236,9 @@ impl SessionNavigationService {
         session_id: Option<&AgentSessionId>,
         working_directory: Option<&str>,
         folder_target: Option<&SessionFolderTarget>,
+        execution_target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
     ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, String> {
-        let folder_directory = if session_id.is_none() {
+        let folder_directory = if session_id.is_none() && execution_target.is_none() {
             folder_target
                 .map(|target| self.working_directory_for_folder(target))
                 .transpose()?
@@ -245,23 +248,29 @@ impl SessionNavigationService {
         self.sessions.load_quick_features(
             session_id,
             folder_directory.as_deref().or(working_directory),
+            execution_target,
         )
     }
     pub(crate) fn start_session(
         &self,
         mut request: StartSessionRequest,
     ) -> Result<SendDirectUserAgentSessionMessageResult, String> {
-        if let Some(target) = &request.folder_target {
+        if let Some(target) = request
+            .folder_target
+            .as_ref()
+            .filter(|_| request.execution_target.is_none())
+        {
             request.working_directory = Some(self.working_directory_for_folder(target)?);
         }
         self.sessions
-            .start_direct_user_session(
+            .start_direct_user_session_with_target(
                 request.submitted_text,
                 request.title,
                 request.working_directory,
                 request.model,
                 request.reasoning_mode,
                 request.sandbox_mode,
+                request.execution_target,
                 request.folder_target.map(Into::into),
             )
             .map_err(|e| e.to_string())

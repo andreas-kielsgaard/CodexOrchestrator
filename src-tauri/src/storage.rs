@@ -470,6 +470,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
 
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
     connection
+        .execute_batch(crate::repository_catalog::device_locations::DEVICE_LOCATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
         .execute_batch(
             "DROP TABLE IF EXISTS workflow_connection_activations;
              DROP TABLE IF EXISTS workflow_activations;
@@ -539,11 +542,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
     ).map(|count| count == 2).map_err(|e| e.to_string())?;
     let session_profile_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json','workspace_origin')",
+            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json','workspace_origin','execution_target_json')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|column_count| column_count == 4)
+        .map(|column_count| column_count == 5)
         .map_err(|error| format!("Unable to inspect Agent Session profile schema: {error}"))?;
     let harness_binding_schema_is_present = connection
         .query_row(
@@ -762,6 +765,7 @@ mod tests {
                 "proposal_revisions",
                 "registered_repositories",
                 "registered_repository_disclosures",
+                "repository_device_locations",
                 "session_event_deliveries",
                 "session_event_groups",
                 "session_harness_bindings",

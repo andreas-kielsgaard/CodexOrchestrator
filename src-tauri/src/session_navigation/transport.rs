@@ -64,9 +64,12 @@ pub(crate) fn reorder_session_navigation(
     state.0.reorder(scope, ordered_ids)
 }
 #[tauri::command]
-pub(crate) fn start_direct_user_agent_session(
+pub(crate) async fn start_direct_user_agent_session(
     state: State<'_, SessionNavigationTauriState>,
     input: StartSessionRequest,
 ) -> Result<SendDirectUserAgentSessionMessageResultDto, String> {
-    state.0.start_session(input).map(Into::into)
+    let application = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || application.start_session(input).map(Into::into))
+        .await
+        .map_err(|error| error.to_string())?
 }

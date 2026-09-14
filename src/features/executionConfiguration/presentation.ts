@@ -25,7 +25,7 @@ function availableCatalog<T extends string>(
 export function runtimeProfileViewModel(
   runtime: RuntimeProfileSnapshotDto,
 ): RuntimeProfileViewModel {
-  const sourceLabel = 'Selected native runtime';
+  const sourceLabel = 'Profile device runtime';
   const mcpTools = Object.entries(runtime.exposure.mcpTools).flatMap(([connectionId, tools]) =>
     tools.map((toolId) => ({
       value: mcpToolCatalogValue(connectionId, toolId),
@@ -36,7 +36,7 @@ export function runtimeProfileViewModel(
     availability: 'unavailable',
     options: [],
     sourceLabel,
-    reason: `${label} are inherited from the selected runtime in this build.`,
+    reason: `${label} are inherited from the configured device runtime.`,
   });
 
   const catalogs: RuntimeCapabilityCatalogs = {
@@ -77,7 +77,7 @@ export function runtimeProfileViewModel(
     },
     lockedSelections: runtime.locked,
     notes: [
-      'Provider connections remain managed separately; this profile selects from the one active native runtime.',
+      'Capabilities come from the Codex configuration on this profile’s device. Session creation also reads the selected worktree’s configuration.',
     ],
   };
 }

@@ -381,6 +381,7 @@ mod tests {
             SessionCreationRequest {
                 contract_version: 1,
                 capability_profile: CapabilityProfile {
+                    execution: Default::default(),
                     contract_version: 1,
                     defaults: Default::default(),
                     capability_profile_id: "profile".into(),

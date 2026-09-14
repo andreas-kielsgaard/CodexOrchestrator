@@ -8,6 +8,7 @@ use super::{
 };
 mod import_tests;
 mod repair_tests;
+mod target_tests;
 
 #[test]
 fn addressed_creation_retry_uses_its_original_native_evidence() {
@@ -452,6 +453,7 @@ fn test_session_creation_request() -> SessionCreationRequest {
     SessionCreationRequest {
         contract_version: 1,
         capability_profile: CapabilityProfile {
+            execution: Default::default(),
             contract_version: 1,
             defaults: Default::default(),
             capability_profile_id: "test-capabilities".into(),
@@ -515,6 +517,7 @@ fn application_creates_and_updates_session_owned_harness_and_identity() {
                 },
             },
             AgentSessionOwnership {
+                execution_target: None,
                 harness_version: Some(first_ref),
                 assigned_identity: Some(first_identity),
                 session_profile: None,
@@ -1837,6 +1840,7 @@ fn create_harness_owned_session(
                 requested_options: AgentRuntimeOptions::default(),
             },
             AgentSessionOwnership {
+                execution_target: None,
                 harness_version: Some(harness_version),
                 assigned_identity: None,
                 session_profile: None,

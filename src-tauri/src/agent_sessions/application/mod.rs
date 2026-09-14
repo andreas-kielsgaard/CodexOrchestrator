@@ -18,6 +18,7 @@ pub(crate) mod observation;
 mod quick_features;
 mod update_sink;
 mod workspaces;
+mod targets;
 pub(crate) use crate::agent_sessions::interactions::{project_interactions, SessionInteraction};
 pub(crate) use crate::agent_sessions::workspace::SessionWorkspaces;
 pub(crate) use interactions::{RespondToRuntimeRequestCommand, SteerAgentSessionCommand};
@@ -57,6 +58,7 @@ pub(crate) struct AgentSessionApplication {
     profile_source: Option<Arc<dyn crate::execution_configuration::SelectedRuntimeProfileSource>>,
     interaction_lanes: Arc<interactions::InteractionLanes>,
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,
+    endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
 }
 
 impl AgentSessionApplication {
@@ -83,6 +85,7 @@ impl AgentSessionApplication {
             profile_source: None,
             interaction_lanes: Arc::new(interactions::InteractionLanes::default()),
             capability_profiles: None,
+            endpoints: None,
         }
     }
 

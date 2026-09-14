@@ -1,3 +1,4 @@
+import { SessionTargetControl, type SessionTargetControlProps } from './SessionTargetControl';
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AgentIdentity } from '../../application/agentSessions';
@@ -32,6 +33,7 @@ export interface AgentSessionPresentation {
 
 export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
+  readonly targetControl?: SessionTargetControlProps;
   readonly sendUnavailableReason?: string;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
@@ -64,6 +66,7 @@ export function AgentSessionHeaderActionsProvider({
 
 export function AgentSessionWorkspace({
   controller,
+  targetControl,
   sendUnavailableReason,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
@@ -127,7 +130,7 @@ export function AgentSessionWorkspace({
     <section
       className={`agent-session-workspace${
         showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
-      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
+      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}${targetControl ? ' agent-session-workspace--with-target' : ''}`}
       aria-label={presentation.ariaLabel ?? title}
     >
       {identityHeader ? (
@@ -176,6 +179,7 @@ export function AgentSessionWorkspace({
           {activityStatus}
         </div>
       )}
+      {targetControl && <SessionTargetControl {...targetControl} />}
       {contextualChrome.settings && (
         <div className="agent-session-settings">{contextualChrome.settings}</div>
       )}

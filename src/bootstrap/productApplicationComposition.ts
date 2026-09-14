@@ -2,6 +2,8 @@ import { tauriAgentSessionImportClient } from '../infrastructure/agentSessions/t
 import { tauriSessionNavigationAgent } from '../infrastructure/agentSessions/tauriSessionNavigationAgent';
 import { tauriSessionNavigationClient } from '../infrastructure/agentSessions/tauriSessionNavigationClient';
 import { tauriSessionDeepLinks } from '../infrastructure/agentSessions/tauriSessionDeepLinks';
+import { tauriExecutionTargetClient } from '../infrastructure/executionTargets/tauriExecutionTargetClient';
+import { worktreeReviewBranchSource } from '../infrastructure/branches/worktreeReviewBranchSource';
 import {
   createEpicInitiationCapability,
   unsupportedArtifactAccessController,
@@ -53,6 +55,8 @@ export function createProductApplicationComposition(): AppProps {
     workflowInstanceClient: tauriWorkflowInstanceClient,
     draftCloseGuard: tauriDraftCloseGuard,
     executionConfigurationClient: tauriExecutionConfigurationClient,
+    executionTargetClient: tauriExecutionTargetClient,
+    branchSource: worktreeReviewBranchSource(tauriWorktreeReview),
     identityManagementClient: tauriIdentityManagementClient,
     agentSessionProfileClient: tauriAgentSessionClient,
     sessionEventQueryClient: tauriSessionEventQueryClient,

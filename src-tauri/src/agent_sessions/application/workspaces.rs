@@ -28,6 +28,7 @@ impl AgentSessionApplication {
             ));
         }
         let history = self.load_session(id)?;
+        if history.session.execution_target.is_some() { return Err(AgentSessionApplicationError::conflict("This session is bound to its selected worktree")); }
         if history
             .invocations
             .iter()

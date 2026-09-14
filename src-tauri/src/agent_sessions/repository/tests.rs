@@ -609,6 +609,7 @@ fn temporary_database_path() -> PathBuf {
 
 fn test_session(id: &str, created_at: DateTime<Utc>) -> AgentSession {
     AgentSession {
+        execution_target: None,
         workspace_origin: None,
         id: AgentSessionId::new(id).expect("session ID"),
         title: format!("Session {id}"),

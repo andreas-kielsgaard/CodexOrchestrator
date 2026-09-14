@@ -1,0 +1,44 @@
+.technical-settings {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.technical-settings > header {
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 22px;
+  border-bottom: 1px solid #d7dfd3;
+  background: #f9fbf6;
+}
+.technical-settings > header h1 {
+  font-size: 19px;
+  margin: 0;
+}
+.technical-settings > header > nav {
+  display: flex;
+  gap: 8px;
+}
+.technical-settings > header > nav button {
+  padding: 8px 12px;
+  border: 1px solid #cbd5c7;
+  border-radius: 6px;
+  background: white;
+  color: #475d40;
+}
+.technical-settings > header > nav button[aria-pressed='true'] {
+  background: #eaf1e3;
+  border-color: #879f79;
+}
+.technical-settings__content {
+  min-height: 0;
+}
+@media (max-width: 750px) {
+  .technical-settings > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+}

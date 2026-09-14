@@ -1,6 +1,7 @@
 mod application;
 mod domain;
-mod repository;
+pub(crate) mod repository;
+pub(crate) mod device_locations;
 pub(crate) mod transport;
 
 pub(crate) use application::RepositoryCatalog;

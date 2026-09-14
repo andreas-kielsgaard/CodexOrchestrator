@@ -152,3 +152,48 @@
     overflow-x: auto;
   }
 }
+
+.execution-connection-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.execution-connection-fields .execution-configuration__field {
+  margin: 0;
+}
+.execution-connection-fields input,
+.execution-connection-fields select {
+  width: 100%;
+}
+.execution-connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+.execution-connection-actions button,
+.repository-device-location button {
+  padding: 8px 12px;
+  border: 1px solid #b9cbb7;
+  border-radius: 6px;
+  color: #365631;
+  background: #f7faf4;
+}
+.repository-device-location {
+  border-top: 1px solid #dce3d7;
+  padding-top: 14px;
+}
+.repository-device-location h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.repository-device-location p {
+  color: #64735e;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .execution-connection-fields {
+    grid-template-columns: 1fr;
+  }
+}

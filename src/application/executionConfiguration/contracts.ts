@@ -1,3 +1,4 @@
+import type { ExecutionBindingDto } from '../executionTargets/contracts';
 export type SandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
 
 /** Capabilities exposed or permitted at one execution-configuration boundary. */
@@ -15,7 +16,7 @@ export interface RuntimeSelectionsDto {
   readonly sandboxMode: SandboxModeDto | null;
 }
 
-/** Read-only facts observed from the currently selected native runtime. */
+/** Read-only facts observed from the profile's configured device runtime. */
 export interface RuntimeProfileSnapshotDto {
   readonly contractVersion: 1;
   readonly profileRef: string;
@@ -25,6 +26,7 @@ export interface RuntimeProfileSnapshotDto {
 
 /** Reusable capability ceiling selected by a Workflow node. */
 export interface CapabilityProfileDto {
+  readonly execution?: ExecutionBindingDto;
   readonly defaults?: RuntimeSelectionsDto;
   readonly contractVersion: 1;
   readonly capabilityProfileId: string;
@@ -65,6 +67,7 @@ export interface DirectUserInvocationResolutionDto {
 }
 
 export interface CreateCapabilityProfileInput {
+  readonly execution?: ExecutionBindingDto;
   readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;
@@ -72,6 +75,7 @@ export interface CreateCapabilityProfileInput {
 }
 
 export interface UpdateCapabilityProfileInput {
+  readonly execution?: ExecutionBindingDto;
   readonly defaults?: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly name: string;

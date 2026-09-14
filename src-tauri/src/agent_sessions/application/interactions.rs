@@ -88,12 +88,12 @@ impl AgentSessionApplication {
             return Ok(existing);
         }
         self.require_active_interaction(&command.session_id, &command.invocation_id)?;
-        let target = self
-            .runtime
+        let runtime = self.runtime_for_session_id(&command.session_id)?;
+        let target = runtime
             .active_turn(&command.invocation_id)
             .map_err(AgentSessionApplicationError::runtime)?;
         self.record_interaction(&command.invocation_id, json!({"kind":"session_steering_pending","inputId":command.input_id,"text":command.text,"target":target}))?;
-        let result = self.runtime.steer(
+        let result = runtime.steer(
             &command.invocation_id,
             &target,
             &command.input_id,
@@ -145,7 +145,7 @@ impl AgentSessionApplication {
             &command.invocation_id,
             json!({"kind":"runtime_request_response","id":command.request_id,"state":"responding"}),
         )?;
-        let result = self.runtime.respond(
+        let result = self.runtime_for_session_id(&command.session_id)?.respond(
             &command.invocation_id,
             &command.request_id,
             command.response,

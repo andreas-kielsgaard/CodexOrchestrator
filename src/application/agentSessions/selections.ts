@@ -1,4 +1,5 @@
 import type { SessionFolderTarget } from './organization';
+import type { SessionExecutionTargetDto } from '../executionTargets/contracts';
 import type {
   DirectUserInvocationResolutionDto,
   SessionCreationResolutionDto,
@@ -32,6 +33,7 @@ export interface StartDirectUserAgentSessionInput extends Omit<
   readonly title: string | null;
   readonly workingDirectory: string | null;
   readonly folderTarget?: SessionFolderTarget | null;
+  readonly executionTarget?: SessionExecutionTargetDto;
 }
 export interface AgentSessionProfileClient {
   loadQuickFeatures?(

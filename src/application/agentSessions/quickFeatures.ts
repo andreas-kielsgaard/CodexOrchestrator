@@ -21,6 +21,7 @@ export interface AgentSessionQuickFeatures {
 }
 
 export interface LoadAgentSessionQuickFeaturesInput {
+  readonly executionTarget?: import('../executionTargets/contracts').SessionExecutionTargetDto;
   readonly sessionId: string | null;
   readonly workingDirectory: string | null;
   readonly folderTarget?: SessionFolderTarget;

@@ -324,11 +324,16 @@ impl BranchFirstReviewService {
         limit: usize,
         snapshot_id: Option<&str>,
     ) -> Result<super::branch_graph::BranchGraphView, String> {
-        let repository = self.repository(repository_id)?;
+        let repository = self.application.registered_repository(repository_id)?;
         let context = self.context()?;
         self.history
             .graph(&context, &repository, limit, snapshot_id, || {
-                self.branches(&context, &repository)
+                super::branch_inventory::read_inventory(
+                    &context,
+                    &repository,
+                    &self.database,
+                    &self.activity,
+                )
             })
     }
 

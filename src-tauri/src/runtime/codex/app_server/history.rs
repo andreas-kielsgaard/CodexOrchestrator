@@ -1,5 +1,5 @@
 //! Stored Codex history and native forks; never starts a model turn.
-use super::{client, items};
+use orchid_engine::codex::app_server::{history as native_history, items};
 use crate::agent_sessions::{domain::*, imports::*, ports::CodexHistorySource};
 use crate::runtime::codex::protocol::CodexJsonlProtocol;
 use serde_json::{json, Value};
@@ -8,10 +8,8 @@ use std::path::PathBuf;
 pub(crate) struct CodexHistoryReader(pub String);
 impl CodexHistorySource for CodexHistoryReader {
     fn read(&self, home: &ImportHome, id: &str) -> Result<ImportedThread, String> {
-        let result = client::with_connection(&self.0, PathBuf::from(&home.path), None, |rpc| {
-            rpc.call("thread/read", json!({"threadId":id,"includeTurns":true}))
-        })
-        .map_err(|e| e.to_string())?;
+        let result = native_history::read_thread(&self.0, PathBuf::from(&home.path), id)
+            .map_err(|e| e.to_string())?;
         decode(&result["thread"])
     }
     fn fork(
@@ -21,18 +19,8 @@ impl CodexHistorySource for CodexHistoryReader {
         last: &str,
         cwd: &str,
     ) -> Result<ImportedThread, String> {
-        let result = client::with_connection(
-            &self.0,
-            PathBuf::from(&home.path),
-            Some(PathBuf::from(cwd)),
-            |rpc| {
-                rpc.call(
-                    "thread/fork",
-                    json!({"threadId":id,"lastTurnId":last,"cwd":cwd}),
-                )
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let result = native_history::fork_thread(&self.0, PathBuf::from(&home.path), id, last, cwd)
+            .map_err(|e| e.to_string())?;
         decode(&result["thread"])
     }
 }
