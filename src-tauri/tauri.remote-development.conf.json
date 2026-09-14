@@ -1,4 +1,5 @@
 {
+  "identifier": "dev.codex-orchestrator.remote-development",
   "build": {
     "devUrl": "http://127.0.0.1:1430",
     "beforeDevCommand": "npm run dev -- --port 1430"

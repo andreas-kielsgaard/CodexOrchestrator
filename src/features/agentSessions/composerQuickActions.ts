@@ -1,5 +1,6 @@
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import type { ComposerQuickAction } from './composerQuickMenuTypes';
 
 export interface ComposerQuickFeatures {
   readonly contextKey: string;
@@ -7,24 +8,6 @@ export interface ComposerQuickFeatures {
   readonly selection: PerMessageRuntimeSelection;
   readonly setSelection: (selection: PerMessageRuntimeSelection) => void;
 }
-
-/** A command either opens choices or performs a local draft action. */
-interface ComposerQuickActionDetails {
-  readonly id: string;
-  readonly label: string;
-  readonly description: string;
-  readonly keywords?: readonly string[];
-  readonly disabledReason?: string;
-  readonly selected?: boolean;
-}
-export type ComposerQuickAction = ComposerQuickActionDetails &
-  (
-    | { readonly children: readonly ComposerQuickAction[]; readonly run?: never }
-    | {
-        readonly children?: never;
-        readonly run: () => { readonly replacement: string; readonly notice: string };
-      }
-  );
 
 export function sessionQuickActions(
   capabilities: AgentSessionQuickFeatures,

@@ -167,9 +167,9 @@ it('handles arrows, Tab, Backspace, Shift+Enter, and IME composition separately 
   await user.keyboard('{ArrowDown}{Tab}');
   expect(screen.getByRole('listbox', { name: 'Reasoning' })).toBeVisible();
   await user.keyboard('{Backspace}');
-  expect(input).toHaveValue('/reasoning');
+  expect(input).toHaveValue('/');
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
-  expect(input).toHaveValue('/reasoning');
+  expect(input).toHaveValue('/');
   expect(send).not.toHaveBeenCalled();
   await user.clear(input);
   await user.type(input, 'First{Shift>}{Enter}{/Shift}Second');

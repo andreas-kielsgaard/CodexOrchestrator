@@ -31,30 +31,28 @@ export function ComposerQuickMenu({
         </button>
       </div>
       <div id={id} role="listbox" aria-label={menu.title} aria-busy={menu.loading} ref={list}>
-        {!menu.loading &&
-          !menu.error &&
-          menu.items.map((item, index) => (
-            <div
-              key={item.id}
-              id={`${id}-${index}`}
-              role="option"
-              aria-selected={index === menu.selectedIndex}
-              aria-disabled={Boolean(item.disabledReason || menu.unavailableReason)}
-              data-highlighted={index === menu.selectedIndex}
-              className="composer-quick-menu__option"
-              onMouseMove={() => menu.setHighlight(index)}
-              onClick={() => menu.choose(item)}
-            >
-              <span className="composer-quick-menu__check">
-                {item.selected && <Check size={15} aria-label="Current choice" />}
-              </span>
-              <span>
-                <strong>{item.label}</strong>
-                <small>{item.disabledReason ?? item.description}</small>
-              </span>
-              {item.children && <ChevronRight size={15} aria-hidden="true" />}
-            </div>
-          ))}
+        {menu.items.map((item, index) => (
+          <div
+            key={item.id}
+            id={`${id}-${index}`}
+            role="option"
+            aria-selected={index === menu.selectedIndex}
+            aria-disabled={Boolean(item.disabledReason || menu.unavailableReason)}
+            data-highlighted={index === menu.selectedIndex}
+            className="composer-quick-menu__option"
+            onMouseMove={() => menu.setHighlight(index)}
+            onClick={() => menu.choose(item)}
+          >
+            <span className="composer-quick-menu__check">
+              {item.selected && <Check size={15} aria-label="Current choice" />}
+            </span>
+            <span>
+              <strong>{item.label}</strong>
+              <small>{item.disabledReason ?? item.description}</small>
+            </span>
+            {(item.children || item.loadChildren) && <ChevronRight size={15} aria-hidden="true" />}
+          </div>
+        ))}
       </div>
       {menu.loading && <p role="status">Loading available choices…</p>}
       {menu.error && (
@@ -66,7 +64,7 @@ export function ComposerQuickMenu({
         </div>
       )}
       {!menu.loading && !menu.error && !menu.items.length && (
-        <p role="status">No matching choices</p>
+        <p role="status">{menu.emptyMessage}</p>
       )}
       {menu.unavailableReason && <p role="status">{menu.unavailableReason}</p>}
       {menu.limitations.map((limitation) => (

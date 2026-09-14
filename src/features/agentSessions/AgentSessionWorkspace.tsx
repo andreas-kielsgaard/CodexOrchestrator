@@ -1,4 +1,5 @@
 import { SessionTargetControl, type SessionTargetControlProps } from './SessionTargetControl';
+import type { ComposerTargetSource } from './composerTargetActions';
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AgentIdentity } from '../../application/agentSessions';
@@ -34,6 +35,7 @@ export interface AgentSessionPresentation {
 export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
   readonly targetControl?: SessionTargetControlProps;
+  readonly targetSource?: ComposerTargetSource;
   readonly sendUnavailableReason?: string;
   readonly presentation?: AgentSessionPresentation;
   readonly clipboard?: AgentSessionClipboard;
@@ -67,6 +69,7 @@ export function AgentSessionHeaderActionsProvider({
 export function AgentSessionWorkspace({
   controller,
   targetControl,
+  targetSource,
   sendUnavailableReason,
   presentation = {},
   clipboard = browserAgentSessionClipboard,
@@ -221,6 +224,7 @@ export function AgentSessionWorkspace({
           }
           composerTarget={{
             quickFeatures: controller.quickFeatures,
+            targetSource,
             steeringAvailable: controller.steeringAvailable,
             needsWorkingDirectory: Boolean(
               controller.details && !controller.details.session.workingDirectory,

@@ -19,6 +19,24 @@ pub(crate) struct RuntimeQuery {
 }
 
 #[tauri::command]
+pub(crate) fn list_execution_target_devices(
+    state: State<'_, ExecutionTargetTauriState>,
+) -> Result<Vec<ConfiguredExecutionDevice>, String> {
+    state.0.devices()
+}
+
+#[tauri::command]
+pub(crate) async fn list_execution_worktree_choices(
+    state: State<'_, ExecutionTargetTauriState>,
+    scope: WorktreeChoiceScope,
+) -> Result<Vec<RepositoryWorktreeChoices>, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || service.worktree_choices(&scope))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn list_session_execution_targets(
     state: State<'_, ExecutionTargetTauriState>,
     input: TargetQuery,

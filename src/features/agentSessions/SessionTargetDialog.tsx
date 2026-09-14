@@ -14,6 +14,7 @@ import type {
   ExecutionTargetDeviceDto,
   SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
+import { toSessionExecutionTarget } from '../../application/executionTargets/presentation';
 import '../worktreeReview/worktreeReview.css';
 export function SessionTargetDialog({
   client,
@@ -273,13 +274,7 @@ export function SessionTargetDialog({
                             className="session-target-instance"
                             aria-pressed={active}
                             onClick={() =>
-                              setCandidate({
-                                capabilityProfileId: profile.capabilityProfileId,
-                                capabilityProfileRevision: profile.capabilityProfileRevision,
-                                execution: profile.execution,
-                                repositoryId,
-                                ...instance,
-                              })
+                              setCandidate(toSessionExecutionTarget(repositoryId, profile, instance))
                             }
                           >
                             <span>

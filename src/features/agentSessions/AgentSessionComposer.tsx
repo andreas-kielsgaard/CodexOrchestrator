@@ -1,11 +1,13 @@
 import { Send, Square } from 'lucide-react';
 import { useId, type FormEvent, type KeyboardEvent } from 'react';
 import type { ComposerQuickFeatures } from './composerQuickActions';
+import type { ComposerTargetSource } from './composerTargetActions';
 import { useComposerQuickMenu } from './useComposerQuickMenu';
 import { ComposerQuickMenu } from './ComposerQuickMenu';
 
 export interface AgentSessionComposerProps {
   quickFeatures?: ComposerQuickFeatures;
+  targetSource?: ComposerTargetSource;
   draft: string;
   workingDirectory: string;
   isNewSession: boolean;
@@ -39,6 +41,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     props.quickFeatures,
     props.active,
     inputDisabled,
+    props.targetSource,
   );
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
@@ -83,8 +86,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         <textarea
           ref={menu.textarea}
           aria-controls={menu.open ? menuId : undefined}
-          aria-haspopup={props.quickFeatures ? 'listbox' : undefined}
-          aria-autocomplete={props.quickFeatures ? 'list' : undefined}
+          aria-haspopup={props.quickFeatures || props.targetSource ? 'listbox' : undefined}
+          aria-autocomplete={props.quickFeatures || props.targetSource ? 'list' : undefined}
           aria-activedescendant={
             menu.open && menu.items.length ? `${menuId}-${menu.selectedIndex}` : undefined
           }
@@ -129,8 +132,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                   id="composer-keyboard-hint"
                   role="tooltip"
                 >
-                  {props.quickFeatures ? '/ for quick features. ' : ''}Enter to send. Shift+Enter
-                  adds a new line.
+                  {props.quickFeatures || props.targetSource ? '/ for quick features. ' : ''}Enter
+                  to send. Shift+Enter adds a new line.
                 </span>
               )}
             </span>
@@ -138,10 +141,13 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         </div>
       </div>
       <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
-      {props.quickFeatures && (
+      {(props.quickFeatures || props.targetSource) && (
         <p className="composer-quick-notice" role="status">
-          {(selectedOptions ? `Next message: ${selectedOptions}` : menu.notice) ||
-            'Type / for model, reasoning, and skills'}
+          {menu.notice ||
+            (selectedOptions ? `Next message: ${selectedOptions}` : '') ||
+            (props.targetSource
+              ? 'Type /worktree or /device to choose a target. Use / for all quick features.'
+              : 'Type / for model, reasoning, and skills')}
         </p>
       )}
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}

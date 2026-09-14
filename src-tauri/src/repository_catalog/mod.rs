@@ -6,6 +6,7 @@ pub(crate) mod transport;
 
 pub(crate) use application::RepositoryCatalog;
 pub(crate) use domain::{
+    RegisteredRepository,
     ResolvedBranchTarget, ResolvedRepoBranchWorktreeTarget, ResolvedRepositoryTarget,
     ResolvedWorktreeTarget,
 };

@@ -90,6 +90,20 @@ export function sessionTargetFixtures() {
     },
   ];
   const client: ExecutionTargetClient = {
+    listDevices: vi.fn(async () => devices),
+    listWorktreeChoices: vi.fn(async (scope) => [
+      {
+        repositoryId: 'repository-one',
+        repositoryName: 'Codex Orchestrator',
+        profiles: devices
+          .flatMap((device) => device.profiles)
+          .filter((profile) =>
+            scope.kind === 'local'
+              ? profile.execution.connection.kind === 'local'
+              : profile.execution.deviceId === scope.deviceId,
+          ),
+      },
+    ]),
     listTargets: vi.fn(async () => devices),
     loadRuntime: vi.fn(async () => ({
       runtimeProfile: repairRuntime,

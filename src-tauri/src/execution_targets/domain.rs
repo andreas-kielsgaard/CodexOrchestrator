@@ -90,12 +90,19 @@ pub(crate) struct TargetWorktree {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProfileWorktreeTargets {
+    #[serde(flatten)]
+    pub(crate) profile: ExecutionTargetProfile,
+    pub(crate) instances: Vec<TargetWorktree>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExecutionTargetProfile {
     pub(crate) capability_profile_id: String,
     pub(crate) capability_profile_revision: u64,
     pub(crate) capability_profile_name: String,
     pub(crate) execution: ExecutionBinding,
-    pub(crate) instances: Vec<TargetWorktree>,
-    pub(crate) error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,6 +110,33 @@ pub(crate) struct ProfileWorktreeTargets {
 pub(crate) struct DeviceWorktreeTargets {
     pub(crate) device_id: String,
     pub(crate) device_name: String,
+    pub(crate) profiles: Vec<ProfileWorktreeTargets>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConfiguredExecutionDevice {
+    pub(crate) device_id: String,
+    pub(crate) device_name: String,
+    pub(crate) profiles: Vec<ExecutionTargetProfile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum WorktreeChoiceScope {
+    Local,
+    Device { device_id: String },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RepositoryWorktreeChoices {
+    pub(crate) repository_id: String,
+    pub(crate) repository_name: String,
     pub(crate) profiles: Vec<ProfileWorktreeTargets>,
 }
 

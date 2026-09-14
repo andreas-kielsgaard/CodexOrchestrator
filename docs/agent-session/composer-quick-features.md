@@ -4,13 +4,20 @@ Typing `/` at the start of an otherwise empty message opens quick features. `/mo
 
 `/skills` opens the skill list. Skills are also searchable directly from the root menu. Selecting one inserts its provider-specific invocation text and leaves the draft ready for a request. It does not send a message.
 
+For a new ordinary Session, `/worktree` opens existing worktrees on this laptop. `/device` opens configured devices, then the chosen device's worktrees. Each stage replaces the query with `/`; type part of a device or worktree name and use Enter or Tab to select. Branch names containing `/` can be searched inside the worktree picker. Worktree choices identify the branch and directory, with repository, Capability Profile, path, and instance ID for disambiguation.
+
+The quick route spans registered repositories. Remote repositories need their device paths configured in Technical Settings. It lists existing branch-backed checkouts; it does not create worktrees. Selecting a device alone leaves the target unchanged. Selecting a worktree applies the same target as the modal and clears the command without sending a prompt. Back or Escape can abandon the choice. Once a Session exists, its target is fixed, including after a failed first invocation.
+
+Target commands are product-owned and work independently of native model/skill discovery. Remote native quick-feature discovery remains unavailable; that does not prevent selecting another device or a local worktree.
+
 Arrow keys navigate, Enter or Tab selects, Backspace at `/` returns to the parent, and Escape returns or closes. Shift+Enter remains a newline; IME confirmation does not send. Unmatched commands, discovery failures, and loading states do not submit. Escape closes the picker when the user intends to send literal slash-prefixed text. Paths containing another slash and ordinary prose remain message text.
 
 Model and reasoning choices use the existing message-local selection state, shared with the configuration controls, and reset after acceptance. They do not change pinned Session defaults or an active turn. Changing models replaces an incompatible effort with the model's advertised default. Skills remain available for steering.
 
 ## Ownership
 
-- `src/features/agentSessions/composerQuickActions.ts` defines local commands and choice actions. A command opens child choices or updates the draft/selection. Add future quick tools here with their required application callbacks.
+- `src/features/agentSessions/composerQuickActions.ts` defines model, reasoning, and skill choices from native discovery. A choice opens child options or updates the draft/selection.
+- `composerTargetActions.ts` defines device/worktree menu actions using the execution-target client and the screen's existing target-selection callback. `src/application/executionTargets/presentation.ts` shares target construction and labels between these actions and the target modal.
 - `useComposerQuickMenu.ts` owns navigation, filtering, keyboard handling, asynchronous discovery, and stale-context rejection. `ComposerQuickMenu.tsx` renders the accessible choice list above the shared composer.
 - `src/application/agentSessions/quickFeatures.ts` is the serializable discovery contract. No provider request method or filesystem parser belongs in the composer.
 - `src-tauri/src/agent_sessions/application/quick_features.rs` resolves the Session's working directory and inherited defaults. Existing Sessions must retain their attached runtime identity; a first-message preview uses the default Capability Profile without creating a Session.

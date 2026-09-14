@@ -89,11 +89,12 @@ impl ExecutionEndpoints {
         &self,
         binding: &ExecutionBinding,
         root: &str,
-        branch: &str,
-    ) -> Result<Vec<TargetWorktree>, String> {
-        let instances: Vec<WorktreeInstance> = match &binding.connection {
-            ExecutionConnection::Local => orchid_engine::host::list_worktrees(root, Some(branch))
-                .map_err(|e| e.to_string())?,
+        branch: Option<&str>,
+    ) -> Result<Vec<WorktreeInstance>, String> {
+        Ok(match &binding.connection {
+            ExecutionConnection::Local => {
+                orchid_engine::host::list_worktrees(root, branch).map_err(|e| e.to_string())?
+            }
             ExecutionConnection::Ssh {
                 target,
                 host_executable,
@@ -101,20 +102,10 @@ impl ExecutionEndpoints {
                 .map_err(|e| e.to_string())?
                 .request(HostCommand::ListWorktrees {
                     repository_root: root.into(),
-                    branch_ref: Some(branch.into()),
+                    branch_ref: branch.map(str::to_owned),
                 })
                 .map_err(|e| e.to_string())?,
-        };
-        Ok(instances
-            .into_iter()
-            .filter(|i| i.branch_ref.as_deref() == Some(branch))
-            .map(|i| TargetWorktree {
-                worktree_id: i.handle,
-                path: i.path,
-                head: i.head,
-                branch_ref: branch.into(),
-            })
-            .collect())
+        })
     }
     pub(crate) fn runtime(
         &self,

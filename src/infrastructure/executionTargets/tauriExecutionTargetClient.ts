@@ -4,6 +4,8 @@ export function createTauriExecutionTargetClient(
   invokeCommand: typeof invoke = invoke,
 ): ExecutionTargetClient {
   return {
+    listDevices: () => invokeCommand('list_execution_target_devices'),
+    listWorktreeChoices: (scope) => invokeCommand('list_execution_worktree_choices', { scope }),
     listTargets: (repositoryId, branchRef) =>
       invokeCommand('list_session_execution_targets', { input: { repositoryId, branchRef } }),
     loadRuntime: (execution, workingDirectory) =>

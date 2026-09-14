@@ -1,6 +1,7 @@
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
+import type { ComposerTargetSource } from './composerTargetActions';
 import type { SessionInteractionDto } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
@@ -22,6 +23,7 @@ export interface ConversationViewportSegment {
 
 export interface ConversationViewportComposerTarget {
   quickFeatures?: ComposerQuickFeatures;
+  targetSource?: ComposerTargetSource;
   steeringAvailable?: boolean;
   needsWorkingDirectory?: boolean;
   interactions?: readonly SessionInteractionDto[];
@@ -162,6 +164,7 @@ export function ConversationViewport({
         <AgentSessionComposer
           key={composerTarget.sessionId ?? 'new-session'}
           quickFeatures={composerTarget.quickFeatures}
+          targetSource={composerTarget.targetSource}
           draft={composerTarget.draft}
           workingDirectory={composerTarget.workingDirectory}
           isNewSession={!composerTarget.sessionId}

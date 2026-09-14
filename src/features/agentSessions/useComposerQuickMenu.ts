@@ -3,9 +3,21 @@ import type { AgentSessionQuickFeatures } from '../../application/agentSessions/
 import {
   filterQuickActions,
   sessionQuickActions,
-  type ComposerQuickAction,
   type ComposerQuickFeatures,
 } from './composerQuickActions';
+import type { ComposerQuickAction, ComposerQuickPage } from './composerQuickMenuTypes';
+import { composerTargetActions, type ComposerTargetSource } from './composerTargetActions';
+
+interface NavigationFrame {
+  readonly id: string;
+  readonly query: string;
+  readonly token: number;
+  readonly acceptsSlash?: boolean;
+  readonly load?: () => Promise<ComposerQuickPage>;
+  readonly page?: ComposerQuickPage;
+  readonly loading?: boolean;
+  readonly error?: string;
+}
 
 export function useComposerQuickMenu(
   draft: string,
@@ -13,120 +25,183 @@ export function useComposerQuickMenu(
   source: ComposerQuickFeatures | undefined,
   active: boolean,
   disabled: boolean,
+  targets?: ComposerTargetSource,
 ) {
-  const [path, setPath] = useState<string[]>([]);
+  const [frames, setFrames] = useState<readonly NavigationFrame[]>([]);
+  const sequence = useRef(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{
     context: string;
     data: AgentSessionQuickFeatures;
   } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [nativeError, setNativeError] = useState<string | null>(null);
+  const [nativeLoading, setNativeLoading] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const query = /^\/([^/\r\n]*)$/.exec(draft)?.[1];
-  const open = Boolean(source && !disabled && query !== undefined && dismissed !== draft);
-  const context = source?.contextKey;
+  const context = JSON.stringify([source?.contextKey, targets?.contextKey]);
+  const [navigationContext, setNavigationContext] = useState(context);
+  const currentFrames = navigationContext === context ? frames : [];
+  const frame = currentFrames.at(-1);
+  const query = (frame?.acceptsSlash ? /^\/([^\r\n]*)$/ : /^\/([^/\r\n]*)$/).exec(draft)?.[1];
+  const open = Boolean(
+    (source || targets) && !disabled && query !== undefined && dismissed !== draft,
+  );
   const load = source?.load;
+  const nativeContext = source?.contextKey;
+  const noticeContext = targets?.contextKey ?? nativeContext;
 
   useEffect(() => {
-    setPath([]);
+    setFrames([]);
+    setNavigationContext(context);
     setDismissed(null);
-    setNotice('');
     setCatalog(null);
+    setNativeError(null);
   }, [context]);
+  useEffect(() => {
+    setNotice('');
+  }, [noticeContext]);
 
   useEffect(() => {
-    if (!open || !load || context === undefined) return;
+    if (!open || !load || nativeContext === undefined) return;
     let current = true;
-    setLoading(true);
-    setError(null);
+    setNativeLoading(true);
+    setNativeError(null);
     setCatalog(null);
     void load()
       .then(
         (data) => {
-          if (current) setCatalog({ context, data });
+          if (current) setCatalog({ context: nativeContext, data });
         },
         (cause) => {
-          if (current) setError(cause instanceof Error ? cause.message : String(cause));
+          if (current) setNativeError(cause instanceof Error ? cause.message : String(cause));
         },
       )
       .finally(() => {
-        if (current) setLoading(false);
+        if (current) setNativeLoading(false);
       });
     return () => {
       current = false;
     };
-  }, [open, load, context, refresh]);
+  }, [open, load, nativeContext, refresh]);
+
+  const frameToken = frame?.token;
+  const pageLoader = frame?.load;
+  const pageReady = Boolean(frame?.page);
+  useEffect(() => {
+    if (!open || !pageLoader || pageReady || frameToken === undefined) return;
+    let current = true;
+    const update = (change: Partial<NavigationFrame>) => {
+      if (!current) return;
+      setFrames((previous) =>
+        previous.at(-1)?.token === frameToken
+          ? [...previous.slice(0, -1), { ...previous[previous.length - 1], ...change }]
+          : previous,
+      );
+    };
+    update({ loading: true, error: undefined });
+    void pageLoader().then(
+      (page) => update({ page, loading: false }),
+      (cause) =>
+        update({ error: cause instanceof Error ? cause.message : String(cause), loading: false }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [open, pageLoader, pageReady, frameToken, context]);
 
   useEffect(() => {
     if (query === undefined) {
-      setPath([]);
+      setFrames([]);
       setDismissed(null);
     }
   }, [query]);
   useEffect(() => {
     setHighlight(0);
-  }, [query, path, catalog]);
-  useEffect(() => {
-    if (!draft) setNotice('');
-  }, [draft]);
+  }, [query, frameToken, frame?.page, catalog]);
   useEffect(() => {
     if (!open) return;
     const dismissOutside = (event: PointerEvent) => {
       if (
         event.target instanceof Node &&
         !textarea.current?.closest('form')?.contains(event.target)
-      )
+      ) {
         setDismissed(draft);
+        setFrames([]);
+      }
     };
     document.addEventListener('pointerdown', dismissOutside);
     return () => document.removeEventListener('pointerdown', dismissOutside);
   }, [open, draft]);
 
-  const data = catalog?.context === context ? catalog?.data : undefined;
-  let actions = data && source ? sessionQuickActions(data, source, active) : [];
+  const data = catalog && catalog.context === nativeContext ? catalog.data : undefined;
+  let actions: readonly ComposerQuickAction[] = [
+    ...(targets ? composerTargetActions(targets) : []),
+    ...(data && source ? sessionQuickActions(data, source, active) : []),
+  ];
   let title = 'Quick features';
-  let parent: ComposerQuickAction | undefined;
-  for (const id of path) {
-    parent = actions.find((item) => item.id === id);
-    actions = parent?.children ?? [];
-    title = parent?.label ?? title;
+  let unavailableReason: string | undefined;
+  for (const step of currentFrames) {
+    const parent = actions.find((item) => item.id === step.id);
+    unavailableReason = unavailableReason ?? parent?.disabledReason;
+    title = step.page?.title ?? parent?.label ?? title;
+    actions = step.load ? (step.page?.items ?? []) : (parent?.children ?? []);
   }
   const items = filterQuickActions(actions, query ?? '');
   const selectedIndex = Math.min(highlight, Math.max(0, items.length - 1));
+  const loading = frame ? Boolean(frame.loading) : Boolean(source && nativeLoading);
+  const error = frame ? frame.error : nativeError;
   const choose = (item: ComposerQuickAction | undefined) => {
-    if (!item || loading || error || disabled || parent?.disabledReason || item.disabledReason)
+    if (
+      !item ||
+      disabled ||
+      unavailableReason ||
+      item.disabledReason ||
+      (frame && (loading || error))
+    )
       return;
-    if (item.children) {
-      setPath([...path, item.id]);
+    if (item.children || item.loadChildren) {
+      setFrames([
+        ...currentFrames,
+        {
+          id: item.id,
+          query: draft,
+          token: ++sequence.current,
+          acceptsSlash: item.acceptsSlash,
+          load: item.loadChildren,
+          loading: Boolean(item.loadChildren),
+        },
+      ]);
       onDraftChange('/');
     } else if (item.run) {
       const result = item.run();
       onDraftChange(result.replacement);
       setNotice(result.notice);
-      setPath([]);
+      setFrames([]);
     }
     setHighlight(0);
     textarea.current?.focus();
   };
   const back = () => {
-    const previous = path[path.length - 1];
-    setPath(path.slice(0, -1));
-    onDraftChange(`/${previous ?? ''}`);
+    setFrames(currentFrames.slice(0, -1));
+    onDraftChange(frame?.query ?? '/');
+    textarea.current?.focus();
+  };
+  const dismiss = () => {
+    setDismissed(draft);
+    setFrames([]);
     textarea.current?.focus();
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (!open || event.nativeEvent.isComposing || event.keyCode === 229) return false;
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (path.length) back();
-      else setDismissed(draft);
+      if (currentFrames.length) back();
+      else dismiss();
       return true;
     }
-    if (event.key === 'Backspace' && draft === '/' && path.length) {
+    if (event.key === 'Backspace' && draft === '/' && currentFrames.length) {
       event.preventDefault();
       back();
       return true;
@@ -158,11 +233,21 @@ export function useComposerQuickMenu(
     choose,
     back,
     keyDown,
-    nested: path.length > 0,
-    unavailableReason: parent?.disabledReason,
-    limitations: data?.limitations ?? [],
-    retry: () => setRefresh((value) => value + 1),
-    dismiss: () => setDismissed(draft),
+    nested: currentFrames.length > 0,
+    unavailableReason,
+    emptyMessage: query?.trim()
+      ? 'No matching choices'
+      : (frame?.page?.emptyMessage ?? 'No matching choices'),
+    limitations: frame ? (frame.page?.limitations ?? []) : (data?.limitations ?? []),
+    retry: () => {
+      if (frame?.load)
+        setFrames([
+          ...currentFrames.slice(0, -1),
+          { ...frame, token: ++sequence.current, page: undefined, error: undefined, loading: true },
+        ]);
+      else setRefresh((value) => value + 1);
+    },
+    dismiss,
     accept: () => {
       textarea.current?.focus();
       choose(items[selectedIndex]);

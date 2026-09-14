@@ -1166,6 +1166,234 @@ export function App({
         />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
+          importClient={agentSessionImportClient}
           executionTargetClient={executionTargetClient}
           executionConfigurationClient={executionConfigurationClient}
           branchSource={branchSource}
+          client={agentSessionClient}
+          harnessManagementSource={agentSessionHarnessManagementSource}
+          profileClient={agentSessionProfileClient}
+          sessionEventQueryClient={sessionEventQueryClient}
+          agentIdentityForSession={agentIdentityForSession}
+          navigationClient={sessionNavigationClient}
+          onOpenWorkflow={
+            workflowAuthoringClient && workflowInstanceClient && executionConfigurationClient
+              ? (target) => {
+                  productNavigationEpoch.current += 1;
+                  dispatchProductNavigation({
+                    type: 'navigate',
+                    intent: 'push',
+                    destination: {
+                      kind: 'workflow',
+                      workflowTypeId: null,
+                      workflowInstanceId: target.instanceId,
+                      session: target.session,
+                    },
+                  });
+                }
+              : undefined
+          }
+          agentRequest={navigationAgent.request}
+          onAgentComplete={navigationAgent.complete}
+          selection={agentSessionSelection}
+          focusInvocationId={focusedAgentSessionInvocationId}
+          focusEvidence={focusedAgentSessionEvidence}
+          onSelectionChange={(() => {
+            const renderEpoch = productNavigationEpoch.current;
+            return (selection: SessionNavigationSelection) => {
+              if (currentProductDestination.kind !== 'agent_sessions') return;
+              if (renderEpoch !== productNavigationEpoch.current) return;
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'replace',
+                destination: {
+                  kind: 'agent_sessions',
+                  selection,
+                  focusedInvocationId: null,
+                },
+              });
+            };
+          })()}
+        />
+      ) : surface === 'native-settings' && nativeProfileClient ? (
+        <TechnicalSettingsScreen
+          nativeClient={nativeProfileClient}
+          executionClient={executionConfigurationClient}
+          targetClient={executionTargetClient}
+          branchSource={branchSource}
+          workspace={capabilityDrafts}
+        />
+      ) : (
+        harnessManagementPreviewSurface
+      )}
+    </div>
+  );
+  return (
+    <AgentSessionRuntimeGuidanceProvider
+      consumer={nativeProfileApplicationConsumer}
+      onOpenTechnicalSettings={
+        nativeProfileClient ? () => setSurface('native-settings') : undefined
+      }
+    >
+      {appShell}
+    </AgentSessionRuntimeGuidanceProvider>
+  );
+}
+
+function OrchestrationSurface({
+  load,
+  presentation,
+  agentSessionComposition,
+  artifactAccessController,
+  sprintAutomaticContinuationPolicyController,
+  epicAutomaticContinuationPolicyController,
+  onPlanEpic,
+  planningDrafts,
+  onOpenDraft,
+  requestedLocation,
+  onProductLocationChange,
+  onOpenAgentSession,
+  onOpenWorkUnitActivitySession,
+  onRequestFileReview,
+  onOpenFileEvidence,
+  globalBackAvailable,
+  epicProductDecisionSource,
+  productDecisionClient,
+  productDecisionCorrectionClient,
+  onOpenProductDecisionEvidence,
+  onOpenProductiveDecisionEvidence,
+  onPublishProductDecision,
+}: {
+  readonly load: ReturnType<typeof useOrchestrationLoad>;
+  readonly presentation: OrchestrationPresentationAdapter;
+  readonly agentSessionComposition: EmbeddedAgentSessionComposition;
+  readonly artifactAccessController: ArtifactAccessController;
+  readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
+  readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+  readonly onPlanEpic: () => void;
+  readonly planningDrafts: readonly EpicPlanningDraftSummary[];
+  readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
+  readonly requestedLocation: AgentSessionProductLocation | null;
+  readonly onProductLocationChange: (
+    location: AgentSessionProductLocation | null,
+    intent: OrchestrationNavigationChangeIntent,
+  ) => void;
+  readonly onOpenAgentSession: (origin: AgentSessionProductOrigin) => void;
+  readonly onOpenWorkUnitActivitySession: (
+    target: WorkUnitActivitySessionTarget,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onRequestFileReview?: (
+    sprintId: string,
+    returnLocation?: AgentSessionProductLocation,
+  ) => Promise<ContextualFileReviewResult>;
+  readonly onOpenFileEvidence?: (
+    target: {
+      readonly reviewId: string;
+      readonly changedFileId: string;
+    },
+    returnLocation?: AgentSessionProductLocation,
+  ) => void;
+  readonly globalBackAvailable: boolean;
+  readonly epicProductDecisionSource?: EpicProductDecisionSource;
+  readonly productDecisionClient?: ProductDecisionClient;
+  readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
+  readonly onOpenProductDecisionEvidence: (
+    request: ProductDecisionEvidenceNavigationRequest,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onOpenProductiveDecisionEvidence: (
+    destination: ProductDecisionEvidenceDestination,
+    origin: AgentSessionProductOrigin,
+  ) => void;
+  readonly onPublishProductDecision: (target: ProductDecisionPublishTarget) => void;
+}) {
+  if (load.kind === 'ready')
+    return (
+      <OrchestrationSection
+        view={presentation.present(load.readModels)}
+        agentSessionComposition={agentSessionComposition}
+        artifactAccessController={artifactAccessController}
+        sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
+        epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+        onPlanEpic={onPlanEpic}
+        planningDrafts={planningDrafts}
+        onOpenPlanningDraft={onOpenDraft}
+        requestedLocation={requestedLocation}
+        onProductLocationChange={onProductLocationChange}
+        onOpenAgentSession={onOpenAgentSession}
+        onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
+        onRequestFileReview={onRequestFileReview}
+        onOpenFileEvidence={onOpenFileEvidence}
+        globalBackAvailable={globalBackAvailable}
+        epicProductDecisionSource={epicProductDecisionSource}
+        productDecisionClient={productDecisionClient}
+        productDecisionCorrectionClient={productDecisionCorrectionClient}
+        onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
+        onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
+        onPublishProductDecision={onPublishProductDecision}
+      />
+    );
+  const copy =
+    load.kind === 'loading'
+      ? 'Loading orchestration data…'
+      : load.kind === 'failed'
+        ? load.message
+        : load.reason;
+  return (
+    <main
+      className="orchestration-section"
+      aria-label="Orchestration"
+      aria-busy={load.kind === 'loading'}
+    >
+      <header className="orchestration-page-header">
+        <p className="eyebrow">Orchestration</p>
+        <h1>
+          {load.kind === 'unavailable'
+            ? 'Orchestration data unavailable'
+            : 'Orchestration overview'}
+        </h1>
+        <p role={load.kind === 'loading' ? 'status' : 'alert'}>{copy}</p>
+        <button className="orchestration-page-header__plan" type="button" onClick={onPlanEpic}>
+          Plan an Epic
+        </button>
+      </header>
+      {planningDrafts.length > 0 && (
+        <section className="orchestration-list" aria-label="Active Epic planning drafts">
+          <table>
+            <tbody>
+              {planningDrafts.map((draft) => (
+                <tr key={draft.epicPlanningDraftId}>
+                  <td>
+                    <button
+                      className="orchestration-list__open"
+                      type="button"
+                      onClick={() => onOpenDraft(draft)}
+                    >
+                      <strong>{draft.title ?? 'Untitled Epic draft'}</strong>
+                      <small>Pre-initiation planning draft</small>
+                    </button>
+                  </td>
+                  <td>Planning</td>
+                  <td>Draft</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function fileReviewTarget(
+  origin: FileReviewProductOrigin,
+): Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }> {
+  return origin.launchKind === 'contextual_sprint'
+    ? { kind: 'contextual_sprint', sprintId: origin.sprintId }
+    : {
+        kind: 'file_evidence',
+        reviewId: origin.reviewId,
+        changedFileId: origin.changedFileId,
+      };
+}

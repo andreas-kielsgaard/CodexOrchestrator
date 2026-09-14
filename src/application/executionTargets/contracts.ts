@@ -29,22 +29,36 @@ export interface SessionExecutionTargetDto {
   readonly path: string;
   readonly head: string | null;
 }
-export interface ExecutionTargetDeviceDto {
+export interface ExecutionTargetProfileDto {
+  readonly capabilityProfileId: string;
+  readonly capabilityProfileRevision: number;
+  readonly capabilityProfileName: string;
+  readonly execution: ExecutionBindingDto;
+}
+export interface TargetWorktreeDto {
+  readonly worktreeId: string;
+  readonly path: string;
+  readonly head: string | null;
+  readonly branchRef: string;
+}
+export interface ProfileWorktreeTargetsDto extends ExecutionTargetProfileDto {
+  readonly instances: readonly TargetWorktreeDto[];
+  readonly error: string | null;
+}
+export interface ConfiguredExecutionDeviceDto {
   readonly deviceId: string;
   readonly deviceName: string;
-  readonly profiles: readonly {
-    readonly capabilityProfileId: string;
-    readonly capabilityProfileRevision: number;
-    readonly capabilityProfileName: string;
-    readonly execution: ExecutionBindingDto;
-    readonly instances: readonly {
-      readonly worktreeId: string;
-      readonly path: string;
-      readonly head: string | null;
-      readonly branchRef: string;
-    }[];
-    readonly error: string | null;
-  }[];
+  readonly profiles: readonly ExecutionTargetProfileDto[];
+}
+export interface ExecutionTargetDeviceDto extends ConfiguredExecutionDeviceDto {
+  readonly profiles: readonly ProfileWorktreeTargetsDto[];
+}
+export type WorktreeChoiceScopeDto =
+  { readonly kind: 'local' } | { readonly kind: 'device'; readonly deviceId: string };
+export interface RepositoryWorktreeChoicesDto {
+  readonly repositoryId: string;
+  readonly repositoryName: string;
+  readonly profiles: readonly ProfileWorktreeTargetsDto[];
 }
 export interface RepositoryDeviceLocationDto {
   readonly repositoryId: string;
@@ -56,6 +70,10 @@ export interface ExecutionTargetRuntimeDto {
   readonly nativeInventory: NativeCapabilityInventoryDto;
 }
 export interface ExecutionTargetClient {
+  listDevices(): Promise<readonly ConfiguredExecutionDeviceDto[]>;
+  listWorktreeChoices(
+    scope: WorktreeChoiceScopeDto,
+  ): Promise<readonly RepositoryWorktreeChoicesDto[]>;
   listTargets(
     repositoryId: string,
     branchRef: string,

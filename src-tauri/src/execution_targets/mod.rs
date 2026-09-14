@@ -1,5 +1,6 @@
 pub(crate) mod domain;
 pub(crate) mod endpoints;
+mod inventory;
 mod remote_runtime;
 mod ssh_connection;
 pub(crate) mod transport;
@@ -43,48 +44,31 @@ impl ExecutionTargetService {
             .repositories
             .find(repository_id)?
             .ok_or("Registered repository was not found")?;
-        let locations = self.locations.list()?;
-        let mut devices: Vec<DeviceWorktreeTargets> = Vec::new();
-        for profile in self.profiles.list().map_err(|e| e.to_string())? {
-            let execution = profile.execution.clone();
-            let root = if execution.is_remote() {
-                locations
-                    .iter()
-                    .find(|l| {
-                        l.repository_id == repository_id && l.device_id == execution.device_id
-                    })
-                    .map(|l| l.repository_root.clone())
-                    .ok_or_else(|| "No repository path is configured on this device".to_owned())
-            } else {
-                Ok(repository.anchor_root.to_string_lossy().into_owned())
-            };
-            let discovery =
-                root.and_then(|root| self.endpoints.worktrees(&execution, &root, branch));
-            let (instances, error) = match discovery {
-                Ok(items) => (items, None),
-                Err(error) => (Vec::new(), Some(error)),
-            };
-            let entry = ProfileWorktreeTargets {
-                capability_profile_id: profile.capability_profile_id,
-                capability_profile_revision: profile.revision,
-                capability_profile_name: profile.name,
-                execution: execution.clone(),
-                instances,
-                error,
-            };
-            if let Some(device) = devices
-                .iter_mut()
-                .find(|device| device.device_id == execution.device_id)
-            {
-                device.profiles.push(entry);
-            } else {
-                devices.push(DeviceWorktreeTargets {
-                    device_id: execution.device_id,
-                    device_name: execution.device_name,
-                    profiles: vec![entry],
-                });
-            }
-        }
-        Ok(devices)
+        Ok(inventory::targets(
+            &self.profiles.list().map_err(|e| e.to_string())?,
+            &repository,
+            &self.locations.list()?,
+            branch,
+            |execution, root, branch| self.endpoints.worktrees(execution, root, branch),
+        ))
+    }
+
+    pub(crate) fn devices(&self) -> Result<Vec<ConfiguredExecutionDevice>, String> {
+        Ok(inventory::configured_devices(
+            &self.profiles.list().map_err(|e| e.to_string())?,
+        ))
+    }
+
+    pub(crate) fn worktree_choices(
+        &self,
+        scope: &WorktreeChoiceScope,
+    ) -> Result<Vec<RepositoryWorktreeChoices>, String> {
+        Ok(inventory::worktree_choices(
+            &self.profiles.list().map_err(|e| e.to_string())?,
+            &self.repositories.list()?,
+            &self.locations.list()?,
+            scope,
+            |execution, root, branch| self.endpoints.worktrees(execution, root, branch),
+        ))
     }
 }
