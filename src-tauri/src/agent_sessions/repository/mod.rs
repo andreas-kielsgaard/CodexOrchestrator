@@ -6,8 +6,8 @@ mod schema;
 mod tests;
 
 pub(crate) use schema::{
-    ensure_agent_session_ownership_schema, quarantine_archived_prototype_tables,
-    AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA, AGENT_SESSION_SCHEMA,
+    ensure_agent_session_ownership_schema, AGENT_SESSION_LAUNCH_ACCEPTANCE_SCHEMA,
+    AGENT_SESSION_SCHEMA,
 };
 
 use self::mapping::*;

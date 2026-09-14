@@ -54,5 +54,24 @@ Files & diffs through their sidebar controls. No route-navigation change was mad
 ## Validation boundaries
 
 Installer, optional installed Codex/browser contract commands, and live-provider execution are
-outside this validation run. Main's existing dirty documents were preserved; no merge or push was
-performed.
+outside the original branch validation run above. That run preceded integration and did not merge
+or push changes.
+
+## Main integration
+
+Reconciled with main `2e2b6f0` on 2026-09-14. Preserved the consolidated documentation structure,
+resolved three README conflicts, and updated the development guide and indexes for npm setup,
+renamed validation commands, App Inspector checks and Session simulator retirement.
+
+- The reconciled tree passed `npm test`: 121 files, 670 tests. The lower count reflects main's
+  separately integrated legacy Task retirement; unrelated React act warnings remain.
+- `npm run build` passed TypeScript and Vite compilation; the existing large-bundle warning remains.
+- `npm run lint` passed with no errors and the existing Fast Refresh warning noted above.
+- Updated guides' npm script names and local link targets were checked against the merged tree.
+- Application source, native source and build configuration match the combined tree already checked
+  against main `60c3798`; the subsequent consolidation and conflict resolutions affect documentation.
+  Native/release/provider checks were not repeated for this integration.
+
+Existing main work was preserved. The older untracked cleanup plan was retained under
+`.dev/merge-backups/tooling-build-residue/tooling-build-cleanup-plan.md` before the tracked plan
+was installed. Integration is local; no push was performed.

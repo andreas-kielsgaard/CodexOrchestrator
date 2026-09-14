@@ -1,109 +1,28 @@
 # Codex Orchestrator
 
-Codex Orchestrator is a local-first desktop surface for doing work with agents. Its current core is
-a durable Agent Session: a text interaction context that can stream Codex CLI work, preserve the
-technical record, reopen after an app restart, and continue the same external Codex thread. The
-older task/dashboard implementation remains in the repository for migration compatibility and
-isolated tests, but it is quarantined from the mounted UI and its Tauri commands fail closed.
+A local desktop application for working with related agent conversations, configuring their execution, and coordinating work through Workflows. React presents the product; Rust and Tauri own native application operations, persistence and the Codex app-server connection.
 
-## Prerequisites
+The main surfaces are Agent Sessions, Workflow authoring and instances, execution configuration, repository selection and Worktree Review. Product Decisions supports reasoning about work. File Review provides the contextual viewer and scoped loader, with a [remaining native startup limitation](docs/file-review.md). The retained Epic/Sprint system is documented separately because its implementation and its current strategic priority are different facts.
 
-- Node.js 24+
-- npm 11+
-- Rust and Cargo for Tauri desktop commands and packaging
+## Start development
 
-Rust is required for `npm run dev:tauri` and `npm run build:tauri`. The frontend-only app can run with Node/npm.
+On Windows, install Node.js 24 or newer with npm, Rust with the MSVC toolchain, Visual Studio C++ build tools and WebView2. Native Session execution also needs a usable Codex installation and selected native profile.
 
-## Setup
+From the repository root:
 
-```bash
-npm ci --include=dev
-npm run dev
+```powershell
+.\launch-dev.bat
 ```
 
-The Vite dev server runs on `http://localhost:1420`.
+The launcher restores npm development dependencies when its local Vite/Tauri commands are missing and starts Tauri with Vite. See [development](docs/development.md) for direct commands, build outputs and optional validation.
 
-npm is the supported package manager. Commit dependency changes in `package.json` and
-`package-lock.json` together. `npm run install:app` performs the same clean installation above,
-including the development tools required to build and launch the app.
+## Documentation
 
-For the desktop development loop on Windows, run the launcher from the repo root:
+Start with the [documentation index](docs/README.md). It routes to current behavior and source ownership, important decisions, and dated validation evidence.
 
-```bat
-launch-dev.bat
-```
+- [Architecture](docs/architecture.md)
+- [Agent Sessions](docs/agent-session/README.md)
+- [Workflows](docs/workflows.md) and [execution configuration](docs/execution-configuration.md)
+- [Repository and Worktree Review](docs/worktree-review.md)
 
-The launcher prepares the local Cargo/MSVC/Codex paths, starts the runtime status server, clears any
-old stale marker, and then starts `npm run dev:tauri`. The app shows a loading screen until the
-Tauri command backend responds.
-
-## Scripts
-
-- `npm run dev`: start the React/Vite app.
-- `npm run dev:status`: start the local runtime status server used by the stale-state banner.
-- `npm run dev:tauri`: start the Tauri desktop shell.
-- `npm run mark:stale -- --target backend --reason "Rust command changed"`: mark app,
-  frontend, or backend state stale so the running UI offers a refresh.
-- `npm run clear:stale`: clear the runtime stale marker.
-- `npm run build`: type-check and build the frontend.
-- `npm run build:tauri`: build the desktop app.
-- `npm run lint`: run ESLint.
-- `npm run format:check`: check Prettier formatting.
-- `npm run test`: run Vitest.
-- `npm run validate:worktree-review`: build the frontend, run the Worktree Review frontend and
-  Rust tests, and check Rust compilation.
-- `npm run validate:release-build`: build the native release executable without bundling an
-  installer. Tauri runs the frontend prerequisite once. This checks compilation, not application
-  behavior or installer operation.
-- `npm run check:rust:release`: check release-profile Rust compilation independently.
-
-See [Rust developer validation](docs/orchestration/rust-test-developer-validation.md) for the
-fast/full Rust profiles and optional PowerShell helpers.
-
-Optional tool checks run separately from frontend and Worktree Review validation:
-
-- `npm run test:app-inspector`: Node tests for the review companion, including Windows PowerShell
-  adapter checks. Requires Windows and `powershell.exe`; does not launch a browser.
-- `npm run test:app-inspector:browser`: launches an installed Microsoft Edge using a disposable
-  profile. See [App Inspector](review-tools/app-inspector/README.md).
-- `npm run test:codex-app-server`: checks an installed native Codex executable against a local
-  fixture provider. Set `CODEX_APP_SERVER_CONTRACT_PROGRAM` to that executable's absolute path.
-  Uses a disposable Codex home; does not make paid-provider calls. A skipped test does not
-  establish executable compatibility.
-
-## Project Layout
-
-```text
-src/
-  app/                 React application shell
-  application/         Browser-safe client contracts
-  domain/              Domain types, seed records, and dashboard projection
-  features/            Mounted Agent Session screen and quarantined legacy task components
-  infrastructure/      Tauri command adapters
-  test/                Test setup
-src-tauri/
-  src/agent_sessions/  Durable domain, repository, lifecycle, and transport
-  src/runtime/         Codex adapter and operating-system process supervisor
-docs/
-  architecture.md      Stack and boundary notes
-  agent-session/       Agent Session decisions, implementation evidence, and execution ledger
-  task-logs/           Worker completion logs
-```
-
-## Agent Session Architecture
-
-The implemented vertical slice and its deliberate boundaries are documented in
-[`docs/agent-session/README.md`](docs/agent-session/README.md). The earlier integrated prototype
-remains on archive branches only as evidence; it was not merged wholesale.
-
-## Runtime Status
-
-The runtime status server stores its local state in `.dev/runtime-status.json`. It is intentionally
-ignored by Git. When a running dev app should refresh after code changes, call:
-
-```bash
-npm run mark:stale -- --target frontend
-npm run mark:stale -- --target backend --reason "Tauri command changed"
-```
-
-Valid targets are `app`, `frontend`, and `backend`.
+The guides were researched at `e2bfc6c`, reconciled with main `60c3798`, and updated for the integrated tooling cleanup. Changes implemented on separate branches are identified as separate work; historical screenshots and test results retain their original scope.

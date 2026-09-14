@@ -1,6 +1,6 @@
 # Tooling and build cleanup
 
-Status: implemented and validated on `cleanup/tooling-build-residue`; not merged or pushed.
+Status: implemented and validated on `cleanup/tooling-build-residue`, integrated into local main; not pushed.
 Baseline inspected: `e2bfc6c`, 2026-09-14.
 Implementation evidence: [validation record](./tooling-build-cleanup-validation.md).
 

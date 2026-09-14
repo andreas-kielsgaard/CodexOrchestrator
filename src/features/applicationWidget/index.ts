@@ -1,1 +1,0 @@
-export { ApplicationWidget } from './ApplicationWidget';

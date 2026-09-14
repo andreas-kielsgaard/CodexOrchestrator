@@ -1,176 +1,95 @@
-# Agent Session Recovery Plan
+# Agent Sessions
 
-Status: recovery baseline implemented; deterministic verification harness and non-live gate
-complete; live Codex lifecycle proof pending an independently authorized account with available usage
+An Agent Session is a durable interaction context: a conversation, its working directory, its configuration references, and the provider context needed to continue the work. Its visible transcript is one view of that context.
 
-Created: 2026-07-10
+This guide describes main `60c3798` (14 September 2026). [Execution configuration](../execution-configuration.md) explains profiles and native settings; [Workflows](../workflows.md) explains application-directed delivery between sessions.
 
-Working branch: `codex/agent-session-reset`
+## Start and continue a session
 
-## Purpose
+1. Select a native Codex home in **Technical Settings**, then save and choose a default Capability Profile in **Capabilities**.
+2. Open **Agent Sessions** and choose **New session**. Supply an existing absolute working directory if the work belongs in one.
+3. Submit a message. The application validates the first message's configuration, creates the session, persists the invocation, and launches Codex.
+4. While it works, inspect processing activity, answer a supported provider request, steer the active turn, or cancel it.
+5. Reopen the session later and send another message to continue its retained provider context.
 
-This directory is the durable reasoning and implementation record for the Agent Session vertical
-slice rebuilt on the cleaned workspace baseline.
+A blank working-directory choice allocates an initially empty directory beneath `~/.codex-orchestrator/workspaces/<session-id>`. The directory and its ownership marker are retained across turns and app restarts. This gives an ordinary conversation an intentional working context instead of accidentally using the app's checkout. An explicitly selected directory remains the caller's directory; allocation does not copy a repository into it.
 
-An Agent Session is a durable interaction context for doing work through a text interface. The
-first runtime is Codex CLI. The visible conversation is a projection of that context rather than
-the complete technical record.
+The composer offers model and reasoning choices for the next human message. These choices do not edit the Session Profile or later Workflow defaults. A default Capability Profile is required for a new ordinary session; an older session without a pinned profile remains readable but cannot use the current profiled send route. See [birth and continuation](../execution-configuration.md#birth-and-continuation) for the exact lifetimes.
 
-This plan supersedes Agent Session implementation assumptions found in the archived integrated
-overlay. It does not adopt the old task dashboard or orchestration models as prerequisites.
+Session settings show the assigned identity and offer **Set identity** or **Edit identity** independently of the pinned execution policy. **Session Event deliveries** shows recorded Workflow deliveries, exposes read errors and provides **Refresh deliveries**. The shared pane wires both features for existing sessions.
 
-The current Agent Session-to-runtime contract and Sprint 3 capability-discovery extension protocol
-are recorded in [agent-access-boundary.md](./agent-access-boundary.md).
+The current sidebar groups typed Epic-related and independent sessions. Opening a related product view follows recorded associations; titles, transcript text, working directories, and display labels do not establish product ownership.
 
-## Implemented Baseline
+## Identity and lifecycle
 
-1. The structural baseline was recovered selectively without merging either archive wholesale.
-2. Stable Agent Session, runtime binding, invocation, event, repository, and runtime contracts are
-   implemented in Rust with a browser-safe TypeScript client contract.
-3. SQLite persistence and restart-safe ordered history queries exist before runtime launch.
-4. A real Rust supervisor owns direct child processes, output readers, cancellation, and shutdown.
-5. The Codex-specific adapter starts and resumes the separate external Codex thread identity.
-6. The application lifecycle persists before notification and reconciles missed events by query.
-7. The independent UI shows live work, collapses completed processing, and keeps the final response
-   prominent with safe Markdown rendering.
-8. Default boundary tests prove continuation, persistence, cancellation, restart recovery, and
-   migration compatibility. Installed CLI help compatibility is a feature-gated, ignored manual
-   probe rather than current default-test proof.
-9. The production app mounts only Agent Sessions. Legacy task handlers fail closed before database
-   or process work, while their migration compatibility and isolated component tests remain.
-10. Startup does not probe Codex. The retained SQLite connection uses an explicit foreign-key,
-    five-second busy-timeout, WAL, and full-synchronous policy.
+| Identity or state    | Meaning                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| Local Session ID     | Stable application identity used to load the conversation and relate it to product records.              |
+| Invocation ID        | One submitted turn and its lifecycle. A session can contain many invocations.                            |
+| Provider context ID  | Codex's external thread identity, recorded separately and used for continuation.                         |
+| Session availability | Whether the session can accept work; completing a turn does not close the session.                       |
+| Invocation status    | Pending, running, completed, failed, canceled, or interrupted.                                           |
+| Runtime interaction  | A steering input or provider request correlated to the active invocation, with its own recorded outcome. |
 
-The implemented completion target remains deliberately narrow:
+Only one invocation can be active in a session. Separate sessions can run concurrently. A follow-up resumes the external provider context when one exists; neither the local Session ID nor the invocation ID is a substitute for it.
 
-> Create or open a session, send text, watch Codex work, see the final response, restart the app,
-> reopen the session, and continue the same Codex thread.
+Production uses **Codex app-server**, behind the provider-neutral `AgentRuntime` port. The adapter owns executable resolution, provider messages, start/resume, steering, requests, and interruption. The older `codex exec` adapter is retained in test-only modules.
 
-The remaining provider-dependent gate is one successful disposable live lifecycle. A 2026-07-12
-desktop retry observed live working state, technical streaming, durable failed terminal state, and
-restart/reopen history, but Codex rejected it at its usage limit before it created a provider
-thread. The deterministic tests cover the presentation and durable-reload cases without making
-a provider-determinism claim.
+Each invocation has a supervised app-server process. The supervisor owns process handles, input/output, terminal observation, and shutdown. On Windows, the factories launch suspended children and attach a kill-on-close Job Object before resuming them. The old July recovery evidence's direct-child-only limit belongs to that older checkpoint.
 
-## Verification Surfaces
+Cancel requests interruption of the active invocation. Closing or navigating away from a view is a different action. On startup, reconciliation applies recoverable terminal evidence first, then marks remaining active records interrupted because their in-process owner did not survive. It does not silently resend the prompt or claim to reattach an unknown process.
 
-- Rust unit/integration coverage exercises the repository, lifecycle, supervisor, Codex argument
-  construction, persisted Tauri notifications, and the test-only live-smoke foundations.
-- `AgentSessionScreen.test.tsx` covers update routing, history reload, and collection errors.
-  Transcript, Markdown, controller, and profile tests cover their respective behavior using
-  application DTOs and explicit client responses.
-- The obsolete standalone recorded Session page and its simulator have been removed. The normal
-  application is the only production HTML entry. Other recorded developer previews retain fixed
-  Session histories for inspection; Session creation, sending, and cancellation are unsupported.
+## Durable conversation and live interaction
 
-### Deterministic commands
+The application stores submitted text, ordered invocations, normalized runtime events, raw provider payloads, and diagnostics. Runtime updates are persisted before UI notifications. The frontend subscribes before sending and can reload durable history when notifications are missed. Notifications make the view responsive; they are not the sole record of completion.
 
-For a short implementation check, use the reduced-debug lane with the narrowest relevant filter:
+The transcript intentionally shows processing and tool activity while a turn runs. After completion, processing collapses into an expandable disclosure and the final response remains prominent. Reopening reconstructs all invocations and their events, rather than only the latest provider log. Technical payloads stay available through secondary inspection.
 
-```powershell
-npm run test:rust:fast -- agent_sessions::
-```
+Steering addresses the current provider turn. The application records an input identity, pending state, and accepted/rejected/uncertain result. Repeating the same input identity and content returns the recorded result; reusing that identity for different content is rejected. Accepted steering is a distinct Session notification and does not trigger Workflow connection delivery.
 
-The filter reduces executed tests but Rust still compiles the library test harness. Use the
-default-debug deterministic lane at a Slice or integration boundary:
+Supported provider approvals, permission requests, and questions appear with their supplied choices or input fields. Responses are tied to the still-pending request and active invocation. Invalid responses can leave a request pending; uncertain transport outcomes remain uncertain. Unsupported requests are displayed as unsupported. This describes the implemented interaction surface, not complete parity with every Codex client feature.
 
-```powershell
-npm run format:check
-npm run lint
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-npm run test:rust:full
-```
+Runtime outcome, persistence failure, notification failure, and downstream product processing are separate facts. A failed Workflow handoff must not turn the sender's completed invocation into a provider failure. Durable diagnostics retain failures at their actual boundary.
 
-For focused frontend validation:
+## Product-owned sessions and shared presentation
 
-```powershell
-npm test -- src/features/agentSessions
-```
+Ordinary sessions need no Epic, Workflow, or task association. Product services can create sessions with explicit ownership, an initial prompt contribution, or an application-owned invocation identity. The service that owns the product relationship also owns its authorization and transition rules.
 
-### Explicit live or paid proofs
+Workflow node conversations reuse `ProfiledSessionPane` and `AgentSessionWorkspace`. Epic/Plan Builder and other retained product hosts also consume the shared conversation behavior. A host supplies context and navigation; it does not need a second transcript, composer, cancellation implementation, or provider adapter. Session functionality is independently composed; the retired Task stack is absent from current startup.
 
-The ignored driver can launch up to four real Codex invocations. Do not run it unless a human has
-explicitly authorized the cost/quota exposure and the account has usable capacity.
+Session history is not an orchestration event store. A model's prose, final response, or visible skill reference does not by itself accept a plan, settle a Work Unit, or mutate structured product state. Those effects require the owning application's semantic command. [Retained orchestration](../orchestration/README.md) describes that separate system.
 
-First compile the feature and run only its deterministic harness checks:
+## Implementation ownership
 
-```powershell
-cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib agent_sessions::live_smoke::tests::
-```
+| Responsibility                                             | Current source                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain, runtime and repository contracts                   | [`agent_sessions/domain.rs`](../../src-tauri/src/agent_sessions/domain.rs), [`ports/`](../../src-tauri/src/agent_sessions/ports/)                                                                                |
+| Creation, invocation, updates, requests and reconciliation | [`agent_sessions/application/`](../../src-tauri/src/agent_sessions/application/)                                                                                                                                 |
+| Ordered history, profiles and logical addresses            | [`agent_sessions/repository/`](../../src-tauri/src/agent_sessions/repository/)                                                                                                                                   |
+| Retained workspace allocation                              | [`agent_sessions/workspace.rs`](../../src-tauri/src/agent_sessions/workspace.rs)                                                                                                                                 |
+| Codex protocol and process ownership                       | [`runtime/codex/app_server/`](../../src-tauri/src/runtime/codex/app_server/), [`runtime/processes/`](../../src-tauri/src/runtime/processes/)                                                                     |
+| Production selection and notification fan-out              | [`active_app/sessions.rs`](../../src-tauri/src/active_app/sessions.rs), [`session_notifications.rs`](../../src-tauri/src/active_app/session_notifications.rs)                                                    |
+| Frontend clients, collection, conversation and projection  | [`application/agentSessions/`](../../src/application/agentSessions/), [`infrastructure/agentSessions/`](../../src/infrastructure/agentSessions/), [`features/agentSessions/`](../../src/features/agentSessions/) |
 
-Then, after explicit authorization, run the ignored live driver:
+At this checkpoint, `useAgentSessionCollection.ts` exists alongside `useAgentSessionController.ts`; the latter still contains combined responsibilities used by current callers. A further hook split belongs to the separate navigation implementation. The [architecture guide](../architecture.md) and [ActiveDatabase reference](../architecture/active-database.md) own composition and transaction rules.
 
-```powershell
-$env:CODEX_AGENT_SESSION_LIVE_SMOKE = 'true'
-$env:CODEX_AGENT_SESSION_LIVE_SMOKE_TIMEOUT_SECS = '180' # optional; per-wait limit, 1-300 seconds
-cargo test --manifest-path src-tauri/Cargo.toml --features live-tests --lib agent_sessions::live_smoke::agent_session_live_smoke_driver -- --ignored --exact --nocapture
-```
+## Why these boundaries exist
 
-Live and paid proofs are absent from the default Rust test compilation and remain ignored after
-enabling `live-tests`. Without `CODEX_AGENT_SESSION_LIVE_SMOKE=true`, the driver refuses before
-capability discovery or any agent launch. Each polling wait defaults to 180 seconds and may be configured up to 300.
-Runtime shutdown first allows supervised children a two-second grace period, then requests
-termination and retains ownership until every direct child has been reaped. That authoritative
-cleanup is intentionally not misrepresented as a time-bounded operation. The driver writes
-its temporary database, workspace, and `agent-session-live-smoke-evidence.json` inside its owned
-temporary root; that root is deleted when the test exits. With `--nocapture`, it also prints one
-redacted durable report prefixed `AGENT_SESSION_LIVE_SMOKE_EVIDENCE=`. Its `passed` or `failed`
-outcome reports the four-invocation budget, phase results, hashed IDs, final durable statuses,
-direct-child cleanup, cancellation state, and stated limitations. A quota/rate-limit result is not
-retried and does not prove provider completion, resume, concurrency, or cancellation.
+The recovery review found that local IDs were being used as provider continuation IDs, frontend memory was being treated as durable storage, only the newest log was reloaded, and objects named as process owners had no process handle. The rebuilt model separated identity, invocation, persistence, provider access, and presentation so each could be tested at its real boundary. Final-first display was an explicit user choice.
 
-Historical verification: the cleanup continuation passed the full non-live matrix on 2026-07-12
-(339 frontend tests; 84 Rust tests; two intentional Rust ignores). This is not a claim about the
-current full matrix. Recorded-harness manual responsive checks previously passed at 1280x800,
-860x800, and 390x844. Live Codex lifecycle remains pending and was not run during cleanup.
+Later work moved production to app-server for interactive steering and requests, retained empty workspaces for ordinary sessions, and integrated that bounded Session implementation into main without importing OTP. Historical test counts, native/provider fixture results, and residuals belong in [validation evidence](../validation-evidence.md); current source inspection is not a new live validation run.
 
-## Documents
+Original references:
 
-- [Architecture and decisions](./architecture-and-decisions.md): product meaning, ownership
-  boundaries, data model, and important decisions.
-- [Evidence record](./evidence.md): findings from the archived implementation and local Codex CLI
-  verification that justify the changes.
-- [Implementation plan](./implementation-plan.md): phased work, dependencies, acceptance criteria,
-  validation, and stop conditions.
-- [Execution ledger](./execution-ledger.md): work-thread ownership, dependency gates, integration
-  state, commit references, and validation outcomes.
-- [Prototype database procedure](./prototype-database.md): read-only audit, non-destructive reset,
-  and retained-data upgrade rules for archived migration records.
+- **“Review agent session view merge”**, task `019f48bb-85b0-7451-bf2c-5483a36a18ff`: original rollout `rollout-2026-07-09T23-14-44-019f48bb-85b0-7451-bf2c-5483a36a18ff.jsonl`, user messages at lines 424, 645 and 823 establish the interaction-context model, recovery boundary, and presentation intent. The historical failure record is `e2bfc6c:docs/agent-session/evidence.md`.
+- **“Codex Feature Parity”**, task `01a0815c-71b3-7423-857e-07009d705763`: original rollout `rollout-2026-09-08T16-11-54-01a0815c-71b3-7423-857e-07009d705763.jsonl`, user messages at lines 109 and 316 establish workspace/default/interaction direction. Turn `01a08589-3ce2-7f51-990c-7491a340874f` records integration at `e914a9e`; turn `01a0858d-2d71-7a80-bcf5-db7d3da60fc8` records main publication alongside `ac22f01`. The bounded implementation evidence is `e2bfc6c:docs/agent-session/session-main-integration.md`.
 
-## Scope Boundaries
+## Frontend checks and recorded previews
 
-Included now:
+The tooling cleanup retired the standalone recorded Session page and its simulator. `AgentSessionScreen.test.tsx` checks update routing, durable history reload and collection errors with explicit client responses; transcript, Markdown, controller and profile suites retain their focused coverage. Run `npm test -- src/features/agentSessions` for the focused frontend suite. Other [developer previews](../development.md#recorded-review-routes) retain fixed histories with unsupported Session mutations. See the [cleanup validation record](../cleanup/tooling-build-cleanup-validation.md) for executed checks.
 
-- durable Agent Session identity and history
-- one active invocation per session
-- Codex CLI start and resume
-- streamed runtime events with durable recovery
-- actual process cancellation and application shutdown handling
-- final-first conversation presentation with expandable execution details
-- optional working directory and runtime configuration actually used
+## Separate development work
 
-Explicitly deferred:
+The [repository navigation plan](repository-session-navigation-plan.md) is retained planning text. The later task implemented folder placement, pins and deeplinks on the unmerged `99912ce` branch; the plan's older status is not the latest implementation status. Its central decision is that organization must not change workspace or Workflow ownership.
 
-- task, goal, repo, and orchestration relationships
-- session branching and inherited-context visibility policies
-- API prompt-cache management
-- generalized multi-provider UI
-- process scheduling, quotas, and prioritization beyond safe concurrent supervision
-- attachments and file upload
-- context-library and pruning systems
-- orchestration-specific conversation views
-
-The deferred features may later relate to Agent Sessions. They must not be required for the first
-slice to function.
-
-## Source References
-
-The previous work is preserved for inspection:
-
-- `codex/archive-main-overlay-20260709` — integrated Agent Session and orchestration overlay
-- `codex/archive-frontend-refactor-75d0-20260709` — frontend and modular-backend cleanup archive
-- `codex/archive-tauri-refactor-e95b-20260709` — isolated Rust/Tauri modularization archive
-
-These branches are evidence and selective source material. They are not merge targets by default.
+The separate remote implementation at `ab220ff` targets ordinary Codex sessions on existing local/remote worktrees. Its plan and setup record are available as `ab220ff:docs/agent-session/remote-worktree-session-plan.md` and `ab220ff:docs/agent-session/remote-worktree-server-setup.md`. The original checkout's untracked plans remain with their owning task. Neither that target picker nor repository-based sidebar navigation is part of main above; see [work outside this checkpoint](../README.md#work-outside-this-checkpoint).
