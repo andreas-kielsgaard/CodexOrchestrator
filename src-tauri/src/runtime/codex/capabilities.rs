@@ -197,26 +197,33 @@ pub(crate) fn resolve_program(program: String) -> Result<String, String> {
         if !program.contains('/') && !program.contains('\\') {
             if let Some(path) = std::env::var_os("PATH") {
                 let directories = std::env::split_paths(&path).collect::<Vec<_>>();
-                if program == "codex" {
-                    for directory in &directories {
-                        if directory.join("codex.cmd").is_file() {
-                            if let Some(native) = npm_codex_native_binary(directory) {
-                                return Ok(native.to_string_lossy().into_owned());
-                            }
-                        }
-                    }
-                }
-                if let Some(path) = directories
-                    .into_iter()
-                    .map(|directory| directory.join(format!("{program}.exe")))
-                    .find(|candidate| candidate.is_file())
-                {
+                if let Some(path) = resolve_on_path(&program, &directories) {
                     return Ok(path.to_string_lossy().into_owned());
                 }
             }
         }
     }
     Ok(program)
+}
+
+/// Follow PATH order while translating an npm shim to its native executable.
+#[cfg(windows)]
+pub(super) fn resolve_on_path(
+    program: &str,
+    directories: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    for directory in directories {
+        let executable = directory.join(format!("{program}.exe"));
+        if executable.is_file() {
+            return Some(executable);
+        }
+        if program == "codex" && directory.join("codex.cmd").is_file() {
+            if let Some(native) = npm_codex_native_binary(directory) {
+                return Some(native);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(windows)]

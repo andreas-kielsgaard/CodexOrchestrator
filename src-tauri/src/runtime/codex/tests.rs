@@ -1237,3 +1237,25 @@ fn installed_codex_help_is_compatible_without_running_an_agent_prompt() {
     assert_eq!(discovered.exec_sandbox, Some(true));
     assert_eq!(discovered.resume_sandbox, Some(true));
 }
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn executable_path_order_keeps_desktop_codex_ahead_of_older_npm_installation() {
+    let root = tempfile::tempdir().unwrap();
+    let desktop = root.path().join("desktop");
+    let npm = root.path().join("npm");
+    let native = npm.join("node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe");
+    std::fs::create_dir_all(&desktop).unwrap();
+    std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+    std::fs::write(desktop.join("codex.exe"), "desktop").unwrap();
+    std::fs::write(npm.join("codex.cmd"), "shim").unwrap();
+    std::fs::write(&native, "npm").unwrap();
+    assert_eq!(
+        super::capabilities::resolve_on_path("codex", &[desktop.clone(), npm.clone()]),
+        Some(desktop.join("codex.exe"))
+    );
+    assert_eq!(
+        super::capabilities::resolve_on_path("codex", &[npm, desktop]),
+        Some(native)
+    );
+}
