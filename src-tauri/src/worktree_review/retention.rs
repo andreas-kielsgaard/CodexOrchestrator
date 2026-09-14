@@ -102,6 +102,7 @@ mod tests {
         let now = Utc::now() - Duration::minutes(age_minutes);
         let workspace_id = WorkspaceId::new(format!("workspace-{id}")).unwrap();
         ReviewBuild {
+            profile: None,
             id: ReviewBuildId::new(id).unwrap(),
             name: ReviewBuildName::new(format!("Build {id}")).unwrap(),
             source: SourceBinding {

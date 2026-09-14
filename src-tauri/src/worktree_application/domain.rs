@@ -6,6 +6,29 @@ use std::{
     path::PathBuf,
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ApplicationBuildProfile {
+    #[default]
+    Release,
+    Debug,
+}
+impl ApplicationBuildProfile {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Debug => "debug",
+        }
+    }
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "release" => Some(Self::Release),
+            "debug" => Some(Self::Debug),
+            _ => None,
+        }
+    }
+}
+
 const MAX_LAUNCH_ENVIRONMENT_ENTRIES: usize = 16;
 const MAX_LAUNCH_ENVIRONMENT_UNITS: usize = 16 * 1024;
 const MAX_GIT_ID_UNITS: usize = 128;
@@ -159,6 +182,7 @@ pub(crate) enum PhysicalWorktreeDependencyPolicy {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalWorktreeBuildRequest {
+    pub(crate) profile: ApplicationBuildProfile,
     pub(crate) worktree_root: PathBuf,
     pub(crate) attempt_root: PathBuf,
     pub(crate) dependency_policy: PhysicalWorktreeDependencyPolicy,
@@ -201,6 +225,7 @@ impl PhysicalWorktreeBuildRequest {
             worktree_root,
             attempt_root,
             dependency_policy,
+            profile: ApplicationBuildProfile::Release,
             cargo_binary_name,
         })
     }

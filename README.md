@@ -16,6 +16,8 @@ From the repository root:
 
 The launcher restores npm development dependencies when its local Vite/Tauri commands are missing and starts Tauri with Vite. See [development](docs/development.md) for direct commands, build outputs and optional validation.
 
+Build a standalone application with `npm run build`, then launch the printed executable separately. Use `npm run build -- --debug` when debugging is needed. Native build/check/test commands accept `--cache=auto|local|shared`; auto reuses the worktree's local profile artifacts or uses shared caching for a fresh target. `npm run build:frontend` compiles only the frontend.
+
 ## Documentation
 
 Start with the [documentation index](docs/README.md). It routes to current behavior and source ownership, important decisions, and dated validation evidence.

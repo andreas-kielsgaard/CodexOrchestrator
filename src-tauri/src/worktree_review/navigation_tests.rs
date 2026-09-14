@@ -294,6 +294,7 @@ fn worktree_exact_commit_materializes_and_persists_without_a_surviving_branch() 
     );
     let now = Utc::now();
     let build = ReviewBuild {
+        profile: None,
         id: build_id.clone(),
         name: ReviewBuildName::new("Detached historical build").unwrap(),
         source: prepared.source().clone(),

@@ -34,6 +34,7 @@ export function buildRequest(
   draft: BuildDraft,
 ): CreateBuildRequest | null {
   const common = {
+    profile: 'release' as const,
     repositoryId: detail.branch.repositoryId,
     branchRef: detail.branch.branchRef,
     name: draft.name.trim(),

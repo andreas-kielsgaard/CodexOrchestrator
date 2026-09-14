@@ -814,6 +814,7 @@ mod tests {
         };
         database.workspaces().save(&workspace).unwrap();
         let build = ReviewBuild {
+            profile: None,
             id,
             name: ReviewBuildName::new(format!("Build {suffix}")).unwrap(),
             source: SourceBinding {

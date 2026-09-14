@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateBuildInput {
+    #[serde(default)]
+    pub(crate) profile: crate::worktree_application::ApplicationBuildProfile,
     pub(crate) repository_id: String,
     pub(crate) branch_ref: Option<String>,
     pub(crate) name: String,
@@ -117,6 +119,7 @@ pub(crate) enum ReviewBuildSourceView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReviewBuildView {
+    pub(crate) profile: Option<crate::worktree_application::ApplicationBuildProfile>,
     pub(crate) build_id: String,
     pub(crate) name: String,
     pub(crate) branch_ref: Option<String>,
@@ -233,6 +236,7 @@ pub(super) fn review_build_view(
     attention: Option<BuildAttention>,
 ) -> ReviewBuildView {
     ReviewBuildView {
+        profile: build.profile,
         build_id: build.id.as_str().to_owned(),
         name: build.name.as_str().to_owned(),
         branch_ref: build

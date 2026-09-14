@@ -416,6 +416,7 @@ mod tests {
             workspace_id: workspace.id.clone(),
         };
         let build = ReviewBuild {
+            profile: Some(crate::worktree_application::ApplicationBuildProfile::Debug),
             id: build_id,
             name: ReviewBuildName::new("Snapshot review").unwrap(),
             source,
@@ -469,6 +470,7 @@ mod tests {
 
         let loaded_build = database.builds().find(&build.id).unwrap().unwrap();
         assert_eq!(loaded_build.name, build.name);
+        assert_eq!(loaded_build.profile, build.profile);
         assert_eq!(loaded_build.current_output_id, Some(output.id.clone()));
         assert_eq!(
             database.attempts().find(&attempt.id).unwrap(),
@@ -493,6 +495,45 @@ mod tests {
             database.builds().find(&build.id).unwrap().unwrap().name,
             ReviewBuildName::new("Snapshot review").unwrap()
         );
+    }
+
+    #[test]
+    fn build_profile_is_immutable_request_data() {
+        let database = WorktreeReviewDatabase::open_in_memory().unwrap();
+        let (mut build, _, _) = database
+            .transaction(|transaction| build_graph(transaction, Utc::now()))
+            .unwrap();
+        build.profile = Some(crate::worktree_application::ApplicationBuildProfile::Release);
+        assert_eq!(
+            database.builds().save(&build).unwrap_err().kind,
+            StorageErrorKind::Conflict
+        );
+        assert_eq!(
+            database.builds().find(&build.id).unwrap().unwrap().profile,
+            Some(crate::worktree_application::ApplicationBuildProfile::Debug)
+        );
+    }
+
+    #[test]
+    fn profile_migration_keeps_existing_outputs_and_leaves_old_mode_unspecified() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("review.sqlite");
+        let database = WorktreeReviewDatabase::open(&path).unwrap();
+        let (build, _, output) = database
+            .transaction(|transaction| build_graph(transaction, Utc::now()))
+            .unwrap();
+        database.with_connection(|connection| {
+            connection.execute_batch("ALTER TABLE review_builds DROP COLUMN profile; DELETE FROM worktree_review_schema_migrations WHERE version = 8;")
+                .map_err(sql_error("prepare previous profile schema"))?;
+            Ok(())
+        }).unwrap();
+        drop(database);
+        let reopened = WorktreeReviewDatabase::open(&path).unwrap();
+        let loaded = reopened.builds().find(&build.id).unwrap().unwrap();
+        assert_eq!(loaded.profile, None);
+        assert_eq!(loaded.current_output_id, Some(output.id.clone()));
+        assert_eq!(reopened.outputs().find(&output.id).unwrap(), Some(output));
+        reopened.builds().save(&loaded).unwrap();
     }
 
     #[test]
@@ -574,12 +615,12 @@ mod tests {
                 let count: u32 = connection
                     .query_row(
                         "SELECT COUNT(*) FROM worktree_review_schema_migrations
-                         WHERE version IN (1, 2, 3, 4, 5, 6)",
+                         WHERE version IN (1, 2, 3, 4, 5, 6, 7, 8)",
                         [],
                         |row| row.get(0),
                     )
                     .map_err(sql_error("verify serialized worktree review migrations"))?;
-                assert_eq!(count, 6);
+                assert_eq!(count, 8);
                 Ok(())
             })
             .unwrap();

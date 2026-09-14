@@ -97,6 +97,7 @@ impl ReviewBuildCoordinator {
         )?;
         let now = Utc::now();
         let build = ReviewBuild {
+            profile: Some(input.profile),
             id: build_id.clone(),
             name: ReviewBuildName::new(input.name).map_err(|error| error.to_string())?,
             source: prepared.source().clone(),
@@ -198,7 +199,12 @@ impl ReviewBuildCoordinator {
 
         let executor = ReviewBuildExecutor::open(self.application.review_root(), &repository);
         let execution = executor.and_then(|executor| {
-            executor.execute(&build.id, &attempt.id, materialized.workspace())
+            executor.execute(
+                &build.id,
+                &attempt.id,
+                materialized.workspace(),
+                input.profile,
+            )
         });
         match execution {
             Ok(output) => {

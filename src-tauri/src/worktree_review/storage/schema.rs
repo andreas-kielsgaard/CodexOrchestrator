@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS review_builds (
   source_binding_json TEXT NOT NULL,
   retention_key TEXT NOT NULL,
   current_output_id TEXT,
+  profile TEXT CHECK (profile IN ('release', 'debug')),
   data_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (data_contract_version IN (1, 2)),
   lifecycle TEXT NOT NULL CHECK (lifecycle IN (
     'active', 'superseded', 'cleanup_pending', 'cleaned', 'unverified_legacy'
@@ -280,6 +281,11 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
         )
         .map_err(sql_error("record minimal review operation schema"))?;
     let build_columns = table_columns(connection, "review_builds")?;
+    if !build_columns.iter().any(|column| column == "profile") {
+        connection.execute("ALTER TABLE review_builds ADD COLUMN profile TEXT CHECK (profile IN ('release', 'debug'))", [])
+            .map_err(sql_error("add application build profile"))?;
+    }
+
     if !build_columns
         .iter()
         .any(|column| column == "current_output_id")
@@ -302,6 +308,8 @@ fn initialize_locked(connection: &Connection) -> StorageResult<()> {
             )
             .map_err(sql_error("isolate legacy review build contracts"))?;
     }
+    connection.execute("INSERT OR IGNORE INTO worktree_review_schema_migrations(version, applied_at) VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", [])
+        .map_err(sql_error("record application build profile schema"))?;
     let cleanup_columns = table_columns(connection, "review_cleanup_jobs")?;
     if !cleanup_columns
         .iter()
