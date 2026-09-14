@@ -17,11 +17,15 @@ Rust is required for `npm run dev:tauri` and `npm run build:tauri`. The frontend
 ## Setup
 
 ```bash
-npm install
+npm ci --include=dev
 npm run dev
 ```
 
 The Vite dev server runs on `http://localhost:1420`.
+
+npm is the supported package manager. Commit dependency changes in `package.json` and
+`package-lock.json` together. `npm run install:app` performs the same clean installation above,
+including the development tools required to build and launch the app.
 
 For the desktop development loop on Windows, run the launcher from the repo root:
 
@@ -46,6 +50,26 @@ Tauri command backend responds.
 - `npm run lint`: run ESLint.
 - `npm run format:check`: check Prettier formatting.
 - `npm run test`: run Vitest.
+- `npm run validate:worktree-review`: build the frontend, run the Worktree Review frontend and
+  Rust tests, and check Rust compilation.
+- `npm run validate:release-build`: build the native release executable without bundling an
+  installer. Tauri runs the frontend prerequisite once. This checks compilation, not application
+  behavior or installer operation.
+- `npm run check:rust:release`: check release-profile Rust compilation independently.
+
+See [Rust developer validation](docs/orchestration/rust-test-developer-validation.md) for the
+fast/full Rust profiles and optional PowerShell helpers.
+
+Optional tool checks run separately from frontend and Worktree Review validation:
+
+- `npm run test:app-inspector`: Node tests for the review companion, including Windows PowerShell
+  adapter checks. Requires Windows and `powershell.exe`; does not launch a browser.
+- `npm run test:app-inspector:browser`: launches an installed Microsoft Edge using a disposable
+  profile. See [App Inspector](review-tools/app-inspector/README.md).
+- `npm run test:codex-app-server`: checks an installed native Codex executable against a local
+  fixture provider. Set `CODEX_APP_SERVER_CONTRACT_PROGRAM` to that executable's absolute path.
+  Uses a disposable Codex home; does not make paid-provider calls. A skipped test does not
+  establish executable compatibility.
 
 ## Project Layout
 

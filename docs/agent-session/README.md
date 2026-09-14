@@ -49,19 +49,19 @@ The implemented completion target remains deliberately narrow:
 The remaining provider-dependent gate is one successful disposable live lifecycle. A 2026-07-12
 desktop retry observed live working state, technical streaming, durable failed terminal state, and
 restart/reopen history, but Codex rejected it at its usage limit before it created a provider
-thread. The deterministic harness covers the presentation and durable-reload cases without making
+thread. The deterministic tests cover the presentation and durable-reload cases without making
 a provider-determinism claim.
 
 ## Verification Surfaces
 
 - Rust unit/integration coverage exercises the repository, lifecycle, supervisor, Codex argument
   construction, persisted Tauri notifications, and the test-only live-smoke foundations.
-- `agent-session-harness.html` is a separate Vite entry with recorded application DTO scenarios.
-  It imports neither Tauri IPC nor normal app data, and `src/main.tsx` remains the production app
-  entry point.
-- The harness deliberately treats `rawPayload` as opaque fixture data; it does not reproduce Codex
-  JSONL or Rust evidence records. It has no Playwright dependency. Browser checks are manual,
-  lightweight inspection rather than focus-sensitive desktop automation.
+- `AgentSessionScreen.test.tsx` covers update routing, history reload, and collection errors.
+  Transcript, Markdown, controller, and profile tests cover their respective behavior using
+  application DTOs and explicit client responses.
+- The obsolete standalone recorded Session page and its simulator have been removed. The normal
+  application is the only production HTML entry. Other recorded developer previews retain fixed
+  Session histories for inspection; Session creation, sending, and cancellation are unsupported.
 
 ### Deterministic commands
 
@@ -83,9 +83,11 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 npm run test:rust:full
 ```
 
-For the browser harness, run `npm run dev` and open
-`http://localhost:1420/agent-session-harness.html`. The production build must contain both
-`dist/index.html` and `dist/agent-session-harness.html`.
+For focused frontend validation:
+
+```powershell
+npm test -- src/features/agentSessions
+```
 
 ### Explicit live or paid proofs
 

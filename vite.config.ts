@@ -12,12 +12,6 @@ export default defineConfig({
   ...(runtimeRoot ? { cacheDir: path.join(runtimeRoot, 'vite-cache') } : {}),
   build: {
     ...(runtimeRoot ? { outDir: path.join(runtimeRoot, 'dist') } : {}),
-    rollupOptions: {
-      input: {
-        app: 'index.html',
-        agentSessionHarness: 'agent-session-harness.html',
-      },
-    },
   },
   server: {
     host: '127.0.0.1',

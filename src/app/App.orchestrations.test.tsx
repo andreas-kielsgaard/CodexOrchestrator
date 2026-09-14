@@ -11,7 +11,6 @@ import type {
   OrchestrationApplicationClient,
   ProductReadModelsV1,
 } from '../application/orchestrations';
-import { createRecordedAgentSessionClient } from '../dev/agentSessions';
 import { createMutableRecordedEpicPlanProposalSource } from '../dev/orchestrationSection/recordedEpicPlanProposalSource';
 import {
   createRecordedDevelopmentApplicationComposition,
@@ -466,6 +465,10 @@ describe('App orchestration loading', () => {
 
   it('lists an active durable planning draft and reopens its bound Agent Session', async () => {
     const composition = createRecordedDevelopmentApplicationComposition();
+    const client = agentClient();
+    vi.mocked(client.loadSession).mockResolvedValue(
+      discussionDetails('Restored discussion', 'canceled'),
+    );
     const invoke = vi.fn();
     const lifecycle = createTauriEpicPlanningDraftLifecycleClient(invoke, {
       load: vi.fn().mockResolvedValue({
@@ -484,8 +487,16 @@ describe('App orchestration loading', () => {
         ],
       }),
     } as never);
-    render(<App {...composition} epicPlanningDraftLifecycleClient={lifecycle} />);
+    render(
+      <App
+        {...composition}
+        agentSessionClient={client}
+        epicPlanningDraftLifecycleClient={lifecycle}
+      />,
+    );
     fireEvent.click(await screen.findByRole('button', { name: /Restartable plan/ }));
+    expect(await screen.findByText('Restored discussion')).toBeVisible();
+    expect(client.loadSession).toHaveBeenCalledWith({ sessionId: 'session-1' });
     expect(screen.getByRole('main', { name: 'Plan an Epic' })).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Epic name' })).toHaveValue('Restartable plan');
     expect(invoke).not.toHaveBeenCalledWith(
@@ -495,10 +506,13 @@ describe('App orchestration loading', () => {
   });
 
   it('opens an empty Plan Builder first, then binds the draft created by its first send', async () => {
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
+    const firstTurn = discussionDetails('First durable discussion turn');
+    vi.mocked(client.loadSession).mockResolvedValue(firstTurn);
+    vi.mocked(client.reloadSession).mockResolvedValue(firstTurn);
     const reconcile = vi.fn().mockResolvedValue({
       draftId: 'draft-created-after-send',
-      sessionId: 'recorded-session-1',
+      sessionId: 'session-1',
       title: 'Local title before send',
     });
     const updateTitle = vi.fn().mockResolvedValue(undefined);
@@ -519,7 +533,8 @@ describe('App orchestration loading', () => {
 
     await screen.findByRole('alert');
     fireEvent.click(screen.getByRole('button', { name: 'Plan an Epic' }));
-    expect(client.store.sessions.size).toBe(0);
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Cancel draft' })).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: 'Epic name' }), {
@@ -535,13 +550,18 @@ describe('App orchestration loading', () => {
     await screen.findByText('First durable discussion turn');
     await waitFor(() =>
       expect(reconcile).toHaveBeenCalledWith(
-        'recorded-session-1',
+        'session-1',
         'Epic builder session for Local title before send',
       ),
     );
     expect(await screen.findByRole('button', { name: 'Cancel draft' })).toBeVisible();
 
+    vi.mocked(client.reloadSession).mockResolvedValue(
+      discussionDetails('First durable discussion turn', 'canceled'),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull());
+    vi.mocked(client.reloadSession).mockResolvedValue(discussionDetails('A later discussion turn'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe what we are working on' }), {
       target: { value: 'A later discussion turn' },
     });
@@ -549,12 +569,16 @@ describe('App orchestration loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('A later discussion turn');
     expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).toHaveBeenNthCalledWith(2, {
+      sessionId: 'session-1',
+      submittedText: 'A later discussion turn',
+    });
     fireEvent.blur(screen.getByRole('textbox', { name: 'Epic name' }));
     await waitFor(() =>
       expect(updateTitle).toHaveBeenCalledWith(
         {
           draftId: 'draft-created-after-send',
-          sessionId: 'recorded-session-1',
+          sessionId: 'session-1',
           title: 'Local title before send',
         },
         'Local title before send',
@@ -563,7 +587,7 @@ describe('App orchestration loading', () => {
   });
 
   it('backs out of an empty Plan Builder without a session or durable draft', async () => {
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
     const reconcile = vi.fn();
     render(
       <App
@@ -584,12 +608,13 @@ describe('App orchestration loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Plan an Epic' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to orchestration overview' }));
     expect(await screen.findByRole('button', { name: 'Plan an Epic' })).toBeVisible();
-    expect(client.store.sessions.size).toBe(0);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(client.createSession).not.toHaveBeenCalled();
     expect(reconcile).not.toHaveBeenCalled();
   });
 
   it('does not reconcile a durable draft when the first normal send fails', async () => {
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
     client.sendMessage = vi.fn().mockRejectedValue(new Error('managed send unavailable'));
     const reconcile = vi.fn();
     render(
@@ -615,7 +640,7 @@ describe('App orchestration loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('managed send unavailable')).toBeVisible();
     expect(reconcile).not.toHaveBeenCalled();
-    expect(client.store.sessions.size).toBe(0);
+    expect(client.createSession).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Cancel draft' })).toBeNull();
   });
   it('does not retain or invent planning drafts when the durable draft catalog fails', async () => {
@@ -657,7 +682,10 @@ describe('App orchestration loading', () => {
         },
       ],
     });
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
+    const firstTurn = discussionDetails('First intake message');
+    vi.mocked(client.loadSession).mockResolvedValue(firstTurn);
+    vi.mocked(client.reloadSession).mockResolvedValue(firstTurn);
     const sent: SendAgentSessionMessageCommandDto[] = [];
     const sendMessage = client.sendMessage.bind(client);
     client.sendMessage = async (command) => {
@@ -756,28 +784,27 @@ describe('App orchestration loading', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Enter to send');
     fireEvent.click(send);
     expect(await screen.findByText('First intake message')).toBeVisible();
-    expect([...client.store.sessions.values()][0].session.title).toBe(
-      'Epic builder session for User named Epic',
-    );
+    expect(sent[0]).toEqual({
+      submittedText: 'First intake message',
+      title: 'Epic builder session for User named Epic',
+    });
     fireEvent.change(screen.getByRole('textbox', { name: 'Epic name' }), {
       target: { value: 'Renamed after creation' },
     });
+    vi.mocked(client.reloadSession).mockResolvedValue(
+      discussionDetails('First intake message', 'canceled'),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeVisible());
+    vi.mocked(client.reloadSession).mockResolvedValue(discussionDetails('Continue the same plan'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe what we are working on' }), {
       target: { value: 'Continue the same plan' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Continue the same plan')).toBeVisible();
-    const planBuilderSession = [...client.store.sessions.values()][0];
-    expect(planBuilderSession.invocations).toHaveLength(2);
-    expect(
-      new Set(planBuilderSession.invocations.map(({ invocation }) => invocation.sessionId)),
-    ).toEqual(new Set([planBuilderSession.session.id]));
-    expect(planBuilderSession.session.title).toBe('Epic builder session for User named Epic');
     expect(sent).toEqual([
       { submittedText: 'First intake message', title: 'Epic builder session for User named Epic' },
-      { sessionId: planBuilderSession.session.id, submittedText: 'Continue the same plan' },
+      { sessionId: 'session-1', submittedText: 'Continue the same plan' },
     ]);
     expect(screen.getByText('First predicted Sprint')).toBeVisible();
 
@@ -805,7 +832,10 @@ describe('App orchestration loading', () => {
 
   it('gates Plan and Rebuild actions on conversation evidence and sends the exact build prompt', async () => {
     const proposalSource = createMutableRecordedEpicPlanProposalSource({ kind: 'unavailable' });
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
+    const firstTurn = discussionDetails('Discuss the product boundary first');
+    vi.mocked(client.loadSession).mockResolvedValue(firstTurn);
+    vi.mocked(client.reloadSession).mockResolvedValue(firstTurn);
     const sent: SendAgentSessionMessageCommandDto[] = [];
     const sendMessage = client.sendMessage.bind(client);
     client.sendMessage = async (command) => {
@@ -835,9 +865,13 @@ describe('App orchestration loading', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Discuss the product boundary first');
+    vi.mocked(client.reloadSession).mockResolvedValue(
+      discussionDetails('Discuss the product boundary first', 'canceled'),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Plan Epic' })).toBeEnabled());
 
+    vi.mocked(client.reloadSession).mockResolvedValue(discussionDetails(BUILD_EPIC_PLAN_PROMPT));
     fireEvent.click(screen.getByRole('button', { name: 'Plan Epic' }));
     await waitFor(() => expect(sent.at(-1)?.submittedText).toBe(BUILD_EPIC_PLAN_PROMPT));
     expect(screen.getByRole('button', { name: 'Plan Epic' })).toBeDisabled();
@@ -868,7 +902,7 @@ describe('App orchestration loading', () => {
     ],
     [{ kind: 'unavailable' as const }, 'Epic builder session'],
   ])('captures %o as the first-session title', async (initialProposal, expectedTitle) => {
-    const client = createRecordedAgentSessionClient();
+    const client = agentClient();
     render(
       <App
         agentSessionClient={client}
@@ -885,8 +919,15 @@ describe('App orchestration loading', () => {
       target: { value: 'First intake message' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await screen.findByText('First intake message');
-    expect([...client.store.sessions.values()][0].session.title).toBe(expectedTitle);
+    await waitFor(() =>
+      expect(client.sendMessage).toHaveBeenCalledWith({
+        submittedText: 'First intake message',
+        title: expectedTitle,
+      }),
+    );
+    await waitFor(() =>
+      expect(client.reloadSession).toHaveBeenCalledWith({ sessionId: 'session-1' }),
+    );
   });
 
   it('keeps an unavailable product proposal as an honest before-plan state', async () => {
@@ -1188,13 +1229,21 @@ function label(status: 'pending' | 'unavailable' | 'unsupported') {
 
 function agentClient(): AgentSessionClient {
   return {
-    createSession: async () => sessionDetails().session,
+    createSession: vi.fn().mockResolvedValue(sessionDetails().session),
     listSessions: async () => [],
-    loadSession: async () => sessionDetails(),
-    reloadSession: async () => sessionDetails(),
+    loadSession: vi.fn().mockResolvedValue(sessionDetails()),
+    reloadSession: vi.fn().mockResolvedValue(sessionDetails()),
     subscribeUpdates: async () => () => undefined,
-    sendMessage: async () => ({ sessionId: 'session-1', invocationId: 'invocation-1' }),
+    sendMessage: vi
+      .fn()
+      .mockResolvedValue({ sessionId: 'session-1', invocationId: 'invocation-1' }),
     cancelInvocation: async () => sessionDetails('canceled').invocations[0].invocation,
     disconnectUpdates: async () => undefined,
   };
+}
+
+function discussionDetails(text: string, status: 'running' | 'canceled' = 'running') {
+  const details = sessionDetails(status);
+  details.invocations[0].invocation.submittedText = text;
+  return details;
 }

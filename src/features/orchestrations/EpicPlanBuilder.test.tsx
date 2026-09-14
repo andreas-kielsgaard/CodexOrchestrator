@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
 import type {
   AgentInvocationDto,
@@ -102,7 +102,9 @@ describe('EpicPlanBuilder', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Plan Epic' }));
+    const plan = await screen.findByRole('button', { name: 'Plan Epic' });
+    await waitFor(() => expect(plan).toBeEnabled());
+    fireEvent.click(plan);
     expect(await screen.findByText(BUILD_EPIC_PLAN_PROMPT)).toBeVisible();
     expect(screen.getByText('Plan Builder / Application')).toBeVisible();
     expect(client.requestPlanCalls).toBe(1);

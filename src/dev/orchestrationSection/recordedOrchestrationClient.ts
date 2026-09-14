@@ -14,11 +14,7 @@ import {
   unsupportedProductEpicAutomaticContinuationPolicyController,
 } from '../../application/orchestrations';
 import type { AppProps } from '../../app/App';
-import type { AgentIdentity } from '../../application/agentSessions';
-import {
-  createRecordedAgentSessionClient,
-  createRecordedAgentSessionStore,
-} from '../agentSessions';
+import type { AgentIdentity, AgentSessionClient } from '../../application/agentSessions';
 import { recordedLocalEpicPlanProposalSource } from './recordedEpicPlanProposalSource';
 import {
   createRecordedHarnessManagementSource,
@@ -39,13 +35,45 @@ export const recordedDevelopmentOrchestrationClient = recordedOrchestrationClien
   recordedProductReadCompositionInput,
 );
 
-/** Deterministic Agent Session client for the same embedded component tree in recorded mode. */
-export const recordedDevelopmentAgentSessionClient = createRecordedAgentSessionClient({
-  store: createRecordedAgentSessionStore([
-    ...recordedAgentSessionDetails,
-    recordedHarnessInspectorSessionDetails,
-  ]),
-});
+const previewSessions = [...recordedAgentSessionDetails, recordedHarnessInspectorSessionDetails];
+
+const loadPreviewSession: AgentSessionClient['loadSession'] = async ({ sessionId }) => {
+  const details = previewSessions.find(({ session }) => session.id === sessionId);
+  if (!details) throw new Error(`Recorded preview Session not found: ${sessionId}`);
+  return details;
+};
+
+const unsupportedSessionMutation = async (): Promise<never> => {
+  throw new Error(
+    'Recorded previews support Session inspection only. Session changes are unavailable.',
+  );
+};
+
+export const recordedDevelopmentAgentSessionClient: AgentSessionClient = {
+  listSessions: async ({ availability, limit } = {}) =>
+    previewSessions
+      .filter(({ session }) => !availability || session.availability === availability)
+      .slice(0, limit)
+      .map(({ session, invocations }) => ({
+        id: session.id,
+        title: session.title,
+        availability: session.availability,
+        pendingRequestCount: 0,
+        hasActiveInvocation: invocations.some(({ invocation }) =>
+          ['pending', 'running'].includes(invocation.status),
+        ),
+        latestInvocationStatus: invocations.at(-1)?.invocation.status ?? null,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+      })),
+  loadSession: loadPreviewSession,
+  reloadSession: loadPreviewSession,
+  subscribeUpdates: async () => () => undefined,
+  disconnectUpdates: async () => undefined,
+  createSession: unsupportedSessionMutation,
+  sendMessage: unsupportedSessionMutation,
+  cancelInvocation: unsupportedSessionMutation,
+};
 
 /** Stable development identity for visual review; it is not a durable product assignment. */
 export const recordedPlanBuilderAgentIdentity: AgentIdentity = {

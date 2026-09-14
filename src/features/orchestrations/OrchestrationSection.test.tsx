@@ -8,10 +8,8 @@ import { presentProductOrchestrations } from '../../app/orchestrationPresentatio
 import { recordedPresentationAdjunct } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
 import { recordedProductReadCompositionInput } from '../../dev/orchestrationSection/recordedProductReadCompositionInput';
 import { recordedAgentSessionDetails } from '../../dev/orchestrationSection/recordedPresentationAdjunct';
-import {
-  createRecordedAgentSessionClient,
-  createRecordedAgentSessionStore,
-} from '../../dev/agentSessions';
+import type { AgentSessionClient } from '../../application/agentSessions';
+import { sessionDetails } from '../agentSessions/testFixtures';
 import { movementLabel, type OrchestrationSectionView } from './orchestrationModel';
 import { OrchestrationSection } from './OrchestrationSection';
 
@@ -149,10 +147,22 @@ describe('OrchestrationSection', () => {
   }, 10_000);
 
   it('keeps the Sprint Agent Session in the reusable vertical split', async () => {
+    const composition = recordedComposition();
+    const sprintSession = recordedAgentSessionDetails.find(
+      ({ session }) => session.title === 'Sprint control surface discovery',
+    )!;
+    const afterSend = sessionDetails('running');
+    afterSend.session = sprintSession.session;
+    afterSend.invocations[0].invocation.sessionId = sprintSession.session.id;
+    afterSend.invocations[0].invocation.submittedText = 'Record Sprint feedback';
+    composition.client.reloadSession = vi.fn().mockResolvedValue(afterSend);
+    composition.client.sendMessage = vi
+      .fn()
+      .mockResolvedValue({ sessionId: sprintSession.session.id, invocationId: 'invocation-1' });
     render(
       <OrchestrationSection
         view={disposableRecordedOrchestrationView}
-        agentSessionComposition={recordedComposition()}
+        agentSessionComposition={composition}
       />,
     );
     fireEvent.click(
@@ -176,6 +186,10 @@ describe('OrchestrationSection', () => {
     fireEvent.change(message, { target: { value: 'Record Sprint feedback' } });
     fireEvent.click(within(session).getByRole('button', { name: 'Send' }));
     expect(await within(session).findByText('Record Sprint feedback')).toBeVisible();
+    expect(composition.client.sendMessage).toHaveBeenCalledWith({
+      sessionId: sprintSession.session.id,
+      submittedText: 'Record Sprint feedback',
+    });
     expect(within(session).queryByText(/No live agent was invoked/)).toBeNull();
     expect(within(session).queryByRole('button', { name: /Collapse/ })).toBeNull();
   });
@@ -880,11 +894,23 @@ describe('OrchestrationSection', () => {
     expect(screen.queryByRole('columnheader', { name: /blocker|attention/i })).toBeNull();
   });
 
-  it('expands the latest turn into the reused writable recorded conversation', async () => {
+  it('expands the latest turn into the writable conversation and sends to that Session', async () => {
+    const composition = recordedComposition();
+    const sessionId = disposableRecordedOrchestrationView.epics[0].epicRunnerSession!.sessionId;
+    const afterSend = sessionDetails('running');
+    afterSend.session = recordedAgentSessionDetails.find(
+      ({ session }) => session.id === sessionId,
+    )!.session;
+    afterSend.invocations[0].invocation.sessionId = sessionId;
+    afterSend.invocations[0].invocation.submittedText = 'Record this fixture message';
+    composition.client.reloadSession = vi.fn().mockResolvedValue(afterSend);
+    composition.client.sendMessage = vi
+      .fn()
+      .mockResolvedValue({ sessionId, invocationId: 'invocation-1' });
     render(
       <OrchestrationSection
         view={disposableRecordedOrchestrationView}
-        agentSessionComposition={recordedComposition()}
+        agentSessionComposition={composition}
       />,
     );
     fireEvent.click(
@@ -907,6 +933,10 @@ describe('OrchestrationSection', () => {
     fireEvent.change(message, { target: { value: 'Record this fixture message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Record this fixture message')).toBeVisible();
+    expect(composition.client.sendMessage).toHaveBeenCalledWith({
+      sessionId,
+      submittedText: 'Record this fixture message',
+    });
     expect(screen.queryByText(/No live agent was invoked/)).toBeNull();
   });
 
@@ -1109,10 +1139,23 @@ function sessionInputText() {
 }
 
 function recordedComposition() {
+  const load: AgentSessionClient['loadSession'] = async ({ sessionId }) => {
+    const details = recordedAgentSessionDetails.find(({ session }) => session.id === sessionId);
+    if (!details) throw new Error('Session unavailable');
+    return details;
+  };
+  const client: AgentSessionClient = {
+    createSession: vi.fn(),
+    listSessions: async () => [],
+    loadSession: load,
+    reloadSession: load,
+    subscribeUpdates: async () => () => undefined,
+    disconnectUpdates: async () => undefined,
+    sendMessage: vi.fn(),
+    cancelInvocation: vi.fn(),
+  };
   return {
-    client: createRecordedAgentSessionClient({
-      store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
-    }),
+    client,
     writableSessionIds: new Set(recordedAgentSessionDetails.map(({ session }) => session.id)),
   };
 }

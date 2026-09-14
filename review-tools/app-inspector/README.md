@@ -3,6 +3,17 @@
 This development/review-only CLI observes an explicitly identified Codex Orchestrator instance. It
 does not add a Tauri command, production route, driver permission, or orchestration action.
 
+## Tests
+
+From the repository root, `npm run test:app-inspector` runs the eight Node test files for framing,
+launch paths, rendered state, comparison, waiting, WebView control, and Windows ownership checks.
+Use Node.js 24+ on Windows with `powershell.exe`. These checks do not launch a browser and are
+separate from Vitest and Worktree Review validation.
+
+`npm run test:app-inspector:browser` separately runs `webview-control-live.test.mjs`, which launches
+an installed Microsoft Edge with a disposable profile and a local fixture page. It skips when
+Edge is unavailable; a skip does not verify browser behavior.
+
 ## Explicit desktop interaction companion
 
 `interact-app.mjs` is a separate development-only click transport for a named Windows instance.

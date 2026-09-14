@@ -1,13 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import {
-  createRecordedAgentSessionClient,
-  createRecordedAgentSessionStore,
-} from '../../../dev/agentSessions';
 import type {
   AgentSessionClient,
   AgentSessionDetailsDto,
 } from '../../../application/agentSessions';
-import { recordedAgentSessionDetails } from '../../../dev/orchestrationSection/recordedPresentationAdjunct';
 import { projectAgentSessionTranscript } from '../../agentSessions';
 import { runtimeEvent, sessionDetails } from '../../agentSessions/testFixtures';
 import {
@@ -15,7 +10,7 @@ import {
   type SharedAgentSessionPresentation,
 } from './SharedAgentSessionPanel';
 
-const recordedSession = recordedAgentSessionDetails[0];
+const recordedSession = namedSession('session-1', 'Completed session', 'Final response');
 const presentation: SharedAgentSessionPresentation = {
   sessionId: recordedSession.session.id,
   title: recordedSession.session.title,
@@ -24,9 +19,7 @@ const presentation: SharedAgentSessionPresentation = {
 
 describe('SharedAgentSessionPanel controller composition', () => {
   it('uses the injected client/controller path and requires explicit writability for a composer', async () => {
-    const client = createRecordedAgentSessionClient({
-      store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
-    });
+    const client = sessionClient();
     const { rerender } = render(
       <SharedAgentSessionPanel
         ariaLabel="Embedded session"
@@ -37,9 +30,7 @@ describe('SharedAgentSessionPanel controller composition', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Agent Session' }));
-    await waitFor(() =>
-      expect(screen.getByText(/Recorded development presentation only/)).toBeVisible(),
-    );
+    await waitFor(() => expect(screen.getByText('Final response')).toBeVisible());
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
 
     rerender(
@@ -54,7 +45,12 @@ describe('SharedAgentSessionPanel controller composition', () => {
   });
 
   it('does not fall back to recorded transcript or composer when the injected client cannot load', async () => {
-    const client = createRecordedAgentSessionClient();
+    const client = {
+      ...sessionClient(),
+      loadSession: async () => {
+        throw new Error('Session unavailable');
+      },
+    };
     const missing: SharedAgentSessionPresentation = {
       sessionId: 'missing-session',
       title: 'Missing session',
@@ -70,7 +66,7 @@ describe('SharedAgentSessionPanel controller composition', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Agent Session' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Recorded session not found');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session unavailable');
     expect(screen.queryByText('Do the work')).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
     expect(within(screen.getByLabelText('Missing conversation')).queryByRole('list')).toBeNull();
@@ -117,9 +113,7 @@ describe('SharedAgentSessionPanel controller composition', () => {
   });
 
   it('keeps inspection read-only even when the underlying Session is writable', async () => {
-    const client = createRecordedAgentSessionClient({
-      store: createRecordedAgentSessionStore(recordedAgentSessionDetails),
-    });
+    const client = sessionClient();
     render(
       <SharedAgentSessionPanel
         ariaLabel="Inspection session"
@@ -179,5 +173,18 @@ function deferredClient(detailsById: Record<string, AgentSessionDetailsDto>) {
       pending.get(id)?.(detailsById[id]);
       pending.delete(id);
     },
+  };
+}
+
+function sessionClient(): AgentSessionClient {
+  return {
+    createSession: vi.fn(),
+    listSessions: async () => [],
+    loadSession: async () => recordedSession,
+    reloadSession: async () => recordedSession,
+    subscribeUpdates: async () => () => undefined,
+    disconnectUpdates: async () => undefined,
+    sendMessage: vi.fn(),
+    cancelInvocation: vi.fn(),
   };
 }
