@@ -3786,6 +3786,19 @@ pub(crate) struct ResolvedNativeCodexHome {
 }
 
 impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
+    fn bound_configuration_ref(&self, session_id: &crate::agent_sessions::domain::AgentSessionId) -> Result<Option<String>,String> {
+        self.read("read Session native configuration", |c| c.query_row("SELECT profile_id FROM agent_session_native_profile_bindings WHERE session_id=?1",[session_id.as_str()],|r|r.get(0)).optional().map_err(|e|e.to_string()))
+    }
+    fn prepare_destination_launch(&self, reference: &str, session_id: &crate::agent_sessions::domain::AgentSessionId, invocation_id: &crate::agent_sessions::domain::AgentInvocationId, resuming: bool, extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension,String> {
+        self.prepare_destination_native_launch(reference,session_id.as_str(),invocation_id.as_str(),resuming,extension)
+    }
+    fn commit_destination(&self, reference: &str, session_id: &crate::agent_sessions::domain::AgentSessionId) -> Result<(),String> {
+        let home=self.resolve_configuration_home(reference)?;
+        self.write("commit Session native destination",|tx| {
+            tx.execute("INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES(?1,?2,?3,?4) ON CONFLICT(session_id) DO UPDATE SET profile_id=excluded.profile_id,filesystem_identity=excluded.filesystem_identity,bound_at=excluded.bound_at",params![session_id.as_str(),home.profile_id,home.filesystem_identity,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;Ok(())
+        })
+    }
+
     fn prepare_configured_launch(
         &self, configuration_ref: &str, session_id: &crate::agent_sessions::domain::AgentSessionId,
         invocation_id: &crate::agent_sessions::domain::AgentInvocationId, resuming: bool,

@@ -13,6 +13,7 @@ export interface ComposerTargetSource {
   readonly client: Pick<ExecutionTargetClient, 'listDevices' | 'listWorktreeChoices'>;
   readonly target: SessionExecutionTargetDto | null;
   readonly disabledReason?: string;
+  onBrowseBranches?(deviceId?: string): void;
   onSelectTarget(target: SessionExecutionTargetDto): void;
 }
 
@@ -53,6 +54,16 @@ export function composerTargetActions(
         });
       }),
     );
+    if (source.onBrowseBranches)
+      items.push({
+        id: 'browse-branches',
+        label: 'Browse branches…',
+        description: 'Choose a branch or confirm a new worktree',
+        run: () => {
+          source.onBrowseBranches?.(scope.kind === 'device' ? scope.deviceId : 'local');
+          return { replacement: '', notice: '' };
+        },
+      });
     return {
       title,
       items,

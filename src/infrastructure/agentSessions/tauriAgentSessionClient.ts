@@ -61,6 +61,18 @@ export function createTauriAgentSessionClient(
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
   return {
+    loadCurrentProfile: (sessionId) =>
+      invokeCommand('load_current_agent_session_profile', { input: { sessionId } }),
+    sendPreparedMessage: async (input) => {
+      await ensureUpdateBridge();
+      return invokeCommand('send_prepared_agent_session_message', { input });
+    },
+    loadPreparation: (sessionId) =>
+      invokeCommand('load_agent_session_preparation', { input: { sessionId } }),
+    cancelPreparation: (invocationId) =>
+      invokeCommand('cancel_agent_session_preparation', { input: { invocationId } }),
+    retryPreparation: (invocationId) =>
+      invokeCommand('retry_agent_session_preparation', { input: { invocationId } }),
     loadQuickFeatures: (input) => invokeCommand('load_agent_session_quick_features', { input }),
     startDirectUserSession: async (input) => {
       await ensureUpdateBridge();

@@ -7,7 +7,7 @@ import { repairSessionClients } from './profileTestFixtures';
 import { repairClients } from '../workflowAuthoring/testFixtures';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
 import { sessionDetails } from './testFixtures';
-it('preserves the prompt while choosing a remote worktree and binds only the first profiled send', async () => {
+it('preserves the prompt while choosing a remote worktree and uses the shared target selection for the profiled send', async () => {
   const user = userEvent.setup();
   const sessions = repairSessionClients(false);
   const config = repairClients();
@@ -35,6 +35,9 @@ it('preserves the prompt while choosing a remote worktree and binds only the fir
     await screen.findByRole('textbox', { name: 'Message' }),
     'Work on the remote checkout',
   );
+  fireEvent.change(screen.getByRole('combobox', { name: 'Device' }), {
+    target: { value: 'remote' },
+  });
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {
@@ -64,8 +67,8 @@ it('preserves the prompt while choosing a remote worktree and binds only the fir
     ),
   );
   expect(
-    await screen.findByRole('button', { name: /codex\/durable-review · Remote server/ }),
-  ).toBeDisabled();
+    await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
+  ).toBeEnabled();
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Continue there' },
   });
@@ -122,7 +125,7 @@ it('uses the device command to select the same target as the modal and retains d
   expect(start).not.toHaveBeenCalled();
   await user.type(input, 'codex/durable-review{Enter}');
   expect(
-    await screen.findByRole('button', { name: /codex\/durable-review · Remote server/ }),
+    await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
   await waitFor(() =>
     expect(targets.client.loadRuntime).toHaveBeenCalledWith(
@@ -146,15 +149,15 @@ it('uses the device command to select the same target as the modal and retains d
     ),
   );
   expect(
-    await screen.findByRole('button', { name: /codex\/durable-review · Remote server/ }),
-  ).toBeDisabled();
+    await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
+  ).toBeEnabled();
   await user.type(screen.getByRole('textbox', { name: 'Message' }), '/worktree');
   expect(await screen.findByRole('option', { name: /^Worktree / })).toHaveAttribute(
     'aria-disabled',
-    'true',
+    'false',
   );
   await user.keyboard('{Enter}');
-  expect(targets.client.listWorktreeChoices).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(targets.client.listWorktreeChoices).toHaveBeenCalledTimes(2));
   expect(start).toHaveBeenCalledTimes(1);
 });
 
@@ -189,6 +192,9 @@ it('keeps New session and its remote target draft open while existing history re
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Preserve this remote prompt' },
   });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Device' }), {
+    target: { value: 'remote' },
+  });
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {
@@ -202,7 +208,7 @@ it('keeps New session and its remote target draft open while existing history re
   await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(previousCalls));
   expect(screen.getByRole('heading', { name: 'New Agent Session' })).toBeVisible();
   expect(
-    screen.getByRole('button', { name: /codex\/durable-review · Remote server/ }),
+    screen.getByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
     'Preserve this remote prompt',
@@ -214,7 +220,7 @@ it('keeps New session and its remote target draft open while existing history re
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
 });
 
-it('keeps a failed existing Session target fixed in the command menu', async () => {
+it('allows a failed existing Session to choose a new target in the command menu', async () => {
   const sessions = repairSessionClients(true);
   sessions.details.invocations = sessionDetails('failed').invocations;
   sessions.details.session.executionTarget = remoteTarget;
@@ -235,15 +241,16 @@ it('keeps a failed existing Session target fixed in the command menu', async () 
   await user.type(input, '/device');
   expect(await screen.findByRole('option', { name: /^Device / })).toHaveAttribute(
     'aria-disabled',
-    'true',
+    'false',
   );
   await user.keyboard('{Enter}');
+  await user.keyboard('{Escape}');
   fireEvent.change(input, { target: { value: '/worktree' } });
   expect(await screen.findByRole('option', { name: /^Worktree / })).toHaveAttribute(
     'aria-disabled',
-    'true',
+    'false',
   );
   await user.keyboard('{Enter}');
-  expect(targets.client.listDevices).not.toHaveBeenCalled();
-  expect(targets.client.listWorktreeChoices).not.toHaveBeenCalled();
+  expect(targets.client.listDevices).toHaveBeenCalled();
+  await waitFor(() => expect(targets.client.listWorktreeChoices).toHaveBeenCalled());
 });

@@ -22,6 +22,35 @@ pub struct HostRequest {
 )]
 pub enum HostCommand {
     Describe,
+    PublishedCommit {
+        repository_root: String,
+        branch_ref: String,
+    },
+    MaterializeWorktree {
+        repository_root: String,
+        branch_ref: String,
+        commit: String,
+        instance_id: String,
+    },
+    AuxiliaryWorkspace {
+        session_id: String,
+    },
+    ExportContinuation {
+        configuration_ref: String,
+        external_context_id: ExternalRuntimeContextId,
+    },
+    InstallContinuation {
+        configuration_ref: String,
+        continuation: crate::codex::app_server::continuation::CodexContinuation,
+    },
+    PrepareInvocation {
+        configuration_ref: String,
+        request: RuntimeInvocationRequest,
+        external_context_id: Option<ExternalRuntimeContextId>,
+    },
+    DeliverPreparedInvocation {
+        invocation_id: AgentInvocationId,
+    },
     ListWorktrees {
         repository_root: String,
         branch_ref: Option<String>,

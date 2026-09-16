@@ -12,6 +12,7 @@ import {
 } from './PerMessageRuntimeControls';
 
 export interface AgentSessionExecutionSettingsProps {
+  readonly showMessageControls?: boolean;
   readonly profile: PinnedAgentSessionProfileDto | null;
   readonly profileError: string | null;
   readonly identity?: AssignedAgentIdentity | null;
@@ -27,6 +28,7 @@ export interface AgentSessionExecutionSettingsProps {
 /** Session-facing projection of pinned creation truth and message-local user authority. */
 export function AgentSessionExecutionSettings({
   profile,
+  showMessageControls = true,
   profileError,
   deliveries,
   selection,
@@ -73,33 +75,37 @@ export function AgentSessionExecutionSettings({
       ) : null}
       {profile && resolved ? (
         <CollapsibleSection title="Message and Session configuration" defaultExpanded={false}>
-          <p>
-            Model and reasoning choices apply to your next message. Other settings come from the
-            Session Profile.
-          </p>
-          <PerMessageRuntimeControls
-            value={selection}
-            models={resolved.attachedRuntimeCapabilities.models.map((model) => ({
-              value: model,
-              label: model,
-            }))}
-            reasoningModes={resolved.attachedRuntimeCapabilities.reasoningModes.map((mode) => ({
-              value: mode,
-              label: mode,
-            }))}
-            defaultModelLabel={
-              resolved.pinnedDefaults.model
-                ? `Use Session default · ${resolved.pinnedDefaults.model}`
-                : 'Use Session default'
-            }
-            defaultReasoningLabel={
-              resolved.pinnedDefaults.reasoningMode
-                ? `Use Session default · ${resolved.pinnedDefaults.reasoningMode}`
-                : 'Use Session default'
-            }
-            disabled={disabled}
-            onChange={onSelectionChange}
-          />
+          {showMessageControls && (
+            <>
+              <p>
+                Model and reasoning choices apply to your next message. Other settings come from the
+                Session Profile.
+              </p>
+              <PerMessageRuntimeControls
+                value={selection}
+                models={resolved.attachedRuntimeCapabilities.models.map((model) => ({
+                  value: model,
+                  label: model,
+                }))}
+                reasoningModes={resolved.attachedRuntimeCapabilities.reasoningModes.map((mode) => ({
+                  value: mode,
+                  label: mode,
+                }))}
+                defaultModelLabel={
+                  resolved.pinnedDefaults.model
+                    ? `Use Session default · ${resolved.pinnedDefaults.model}`
+                    : 'Use Session default'
+                }
+                defaultReasoningLabel={
+                  resolved.pinnedDefaults.reasoningMode
+                    ? `Use Session default · ${resolved.pinnedDefaults.reasoningMode}`
+                    : 'Use Session default'
+                }
+                disabled={disabled}
+                onChange={onSelectionChange}
+              />
+            </>
+          )}
           <SessionProfileInspector profile={sessionProfileViewModel(profile.creationResolution)} />
           <CollapsibleSection
             title="Session Event deliveries"

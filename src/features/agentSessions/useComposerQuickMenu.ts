@@ -23,7 +23,6 @@ export function useComposerQuickMenu(
   draft: string,
   onDraftChange: (value: string) => void,
   source: ComposerQuickFeatures | undefined,
-  active: boolean,
   disabled: boolean,
   targets?: ComposerTargetSource,
 ) {
@@ -138,7 +137,7 @@ export function useComposerQuickMenu(
   const data = catalog && catalog.context === nativeContext ? catalog.data : undefined;
   let actions: readonly ComposerQuickAction[] = [
     ...(targets ? composerTargetActions(targets) : []),
-    ...(data && source ? sessionQuickActions(data, source, active) : []),
+    ...(data && source ? sessionQuickActions(data, source) : []),
   ];
   let title = 'Quick features';
   let unavailableReason: string | undefined;

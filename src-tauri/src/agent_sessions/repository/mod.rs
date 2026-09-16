@@ -1,3 +1,5 @@
+mod preparation;
+pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
 mod addressing;
 mod mapping;
 mod organization;
@@ -175,6 +177,20 @@ impl SqliteAgentSessionRepository {
 }
 
 impl AgentSessionRepository for SqliteAgentSessionRepository {
+    fn current_execution_resolution(&self, id: &AgentSessionId) -> Result<Option<crate::execution_configuration::SessionCreationResolution>,RepositoryError> {
+        self.read("read current execution resolution",|c| {
+            let json:Option<String>=c.query_row("SELECT resolution_json FROM agent_session_current_execution WHERE session_id=?1",[id.as_str()],|row|row.get(0)).optional().map_err(sql_unavailable("read current resolution"))?;
+            json.map(|j|serde_json::from_str(&j).map_err(|e|RepositoryError::new(RepositoryErrorKind::InvalidState,e.to_string()))).transpose()
+        })
+    }
+
+    fn accept_preparation(&self, session: Option<(AgentSession, Option<crate::agent_sessions::organization::SessionPlacement>)>, invocation: AgentInvocation, preparation: super::preparation::SessionPreparation) -> Result<(), RepositoryError> { self.accept_preparation_record(session, invocation, preparation) }
+    fn preparation(&self, id: &AgentInvocationId) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> { self.read_preparation(id) }
+    fn latest_preparation(&self, id: &AgentSessionId) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> { self.read_latest_preparation(id) }
+    fn save_preparation(&self, preparation: &super::preparation::SessionPreparation) -> Result<(), RepositoryError> { self.save_preparation_record(preparation) }
+    fn commit_prepared_binding(&self, preparation: &super::preparation::SessionPreparation, binding: AgentRuntimeBinding, at: DateTime<Utc>) -> Result<AgentSession, RepositoryError> { self.commit_prepared_binding_record(preparation, binding, at) }
+    fn retry_preparation(&self, id: &AgentInvocationId, at: DateTime<Utc>) -> Result<(), RepositoryError> { self.retry_preparation_record(id, at) }
+
     fn create_session_with_placement(
         &self,
         session: AgentSession,
@@ -571,6 +587,7 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .execute_batch(AGENT_SESSION_SCHEMA)
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
+    connection.execute_batch(PREPARATION_SCHEMA).map_err(|e| e.to_string())?;
     ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(IMPORT_SCHEMA)

@@ -1,11 +1,12 @@
 import { Send, Square } from 'lucide-react';
-import { useId, type FormEvent, type KeyboardEvent } from 'react';
+import { useId, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { useComposerQuickMenu } from './useComposerQuickMenu';
 import { ComposerQuickMenu } from './ComposerQuickMenu';
 
 export interface AgentSessionComposerProps {
+  toolbar?: ReactNode;
   quickFeatures?: ComposerQuickFeatures;
   targetSource?: ComposerTargetSource;
   draft: string;
@@ -29,17 +30,11 @@ export interface AgentSessionComposerProps {
 
 export function AgentSessionComposer(props: AgentSessionComposerProps) {
   const menuId = useId();
-  const selectedOptions = props.quickFeatures
-    ? [props.quickFeatures.selection.model, props.quickFeatures.selection.reasoningMode]
-        .filter(Boolean)
-        .join(' · ')
-    : '';
-  const inputDisabled = (props.active && !props.steeringAvailable) || props.sending;
+  const inputDisabled = false;
   const menu = useComposerQuickMenu(
     props.draft,
     props.onDraftChange,
     props.quickFeatures,
-    props.active,
     inputDisabled,
     props.targetSource,
   );
@@ -99,6 +94,9 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           disabled={inputDisabled}
           rows={4}
         />
+      </div>
+      <div className={props.toolbar ? 'session-composer-toolbar' : 'composer-actions-row'}>
+        {props.toolbar}
         <div className="composer-actions">
           {props.active && (
             <button
@@ -111,20 +109,27 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
               {props.canceling ? 'Canceling…' : 'Cancel'}
             </button>
           )}
-          {(!props.active || props.steeringAvailable) && (
+          {
             <span className="composer-send-action">
               <button
                 className="send-agent-button"
                 type="submit"
                 disabled={
-                  !props.draft.trim() || props.sending || Boolean(props.sendUnavailableReason)
+                  !props.draft.trim() ||
+                  props.sending ||
+                  (props.active && !props.steeringAvailable) ||
+                  Boolean(props.sendUnavailableReason)
                 }
                 aria-describedby={
                   props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
                 }
               >
                 <Send size={16} aria-hidden="true" />
-                {props.sending ? 'Sending…' : props.active ? 'Steer' : 'Send'}
+                {props.sending
+                  ? 'Sending…'
+                  : props.active && props.steeringAvailable
+                    ? 'Steer'
+                    : 'Send'}
               </button>
               {props.keyboardHint === 'tooltip' && (
                 <span
@@ -137,17 +142,12 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 </span>
               )}
             </span>
-          )}
+          }
         </div>
       </div>
-      <p className="composer-hint">Enter to send · Shift+Enter for a new line</p>
-      {(props.quickFeatures || props.targetSource) && (
+      {menu.notice && (
         <p className="composer-quick-notice" role="status">
-          {menu.notice ||
-            (selectedOptions ? `Next message: ${selectedOptions}` : '') ||
-            (props.targetSource
-              ? 'Type /worktree or /device to choose a target. Use / for all quick features.'
-              : 'Type / for model, reasoning, and skills')}
+          {menu.notice}
         </p>
       )}
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}

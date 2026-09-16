@@ -88,7 +88,11 @@ impl AgentSessionApplication {
             return Ok(existing);
         }
         self.require_active_interaction(&command.session_id, &command.invocation_id)?;
-        let runtime = self.runtime_for_session_id(&command.session_id)?;
+        if self.repository.preparation(&command.invocation_id).map_err(AgentSessionApplicationError::repository)?.is_some_and(|p| !p.delivery_started) {
+            return Err(AgentSessionApplicationError::conflict("The submitted prompt is still preparing"));
+        }
+
+        let runtime = self.runtime_for_invocation(&command.invocation_id)?;
         let target = runtime
             .active_turn(&command.invocation_id)
             .map_err(AgentSessionApplicationError::runtime)?;
@@ -127,6 +131,10 @@ impl AgentSessionApplication {
             AgentSessionApplicationError::conflict("Interaction lane is unavailable")
         })?;
         self.require_active_interaction(&command.session_id, &command.invocation_id)?;
+        if self.repository.preparation(&command.invocation_id).map_err(AgentSessionApplicationError::repository)?.is_some_and(|p| !p.delivery_started) {
+            return Err(AgentSessionApplicationError::conflict("The submitted prompt is still preparing"));
+        }
+
         let pending = self
             .session_interactions(&command.session_id)?
             .into_iter()
@@ -145,7 +153,7 @@ impl AgentSessionApplication {
             &command.invocation_id,
             json!({"kind":"runtime_request_response","id":command.request_id,"state":"responding"}),
         )?;
-        let result = self.runtime_for_session_id(&command.session_id)?.respond(
+        let result = self.runtime_for_invocation(&command.invocation_id)?.respond(
             &command.invocation_id,
             &command.request_id,
             command.response,

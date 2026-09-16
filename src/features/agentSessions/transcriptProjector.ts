@@ -1,3 +1,7 @@
+import {
+  isSessionPreparing,
+  type SessionPreparationDto,
+} from '../../application/agentSessions/preparation';
 import { importedTranscript, type ImportedTranscript } from './importedTranscript';
 import type { SessionInteractionDto } from '../../application/agentSessions';
 import type {
@@ -76,6 +80,7 @@ export interface TranscriptAnchorRange {
 }
 
 export interface ProjectedInvocation {
+  preparing?: boolean;
   imported?: ImportedTranscript;
   interactions?: readonly SessionInteractionDto[];
   id: string;
@@ -104,6 +109,7 @@ const activeStatuses = new Set<AgentInvocationStatusDto>(['pending', 'running'])
 
 export function projectAgentSessionTranscript(
   details: AgentSessionDetailsDto,
+  preparation?: SessionPreparationDto | null,
 ): ProjectedTranscript {
   const invocations = details.invocations
     .map((entry) => ({ ...entry, imported: importedTranscript(entry.events) }))
@@ -144,6 +150,7 @@ export function projectAgentSessionTranscript(
       }
 
       return {
+        preparing: preparation?.invocationId === invocation.id && isSessionPreparing(preparation),
         imported,
         id: invocation.id,
         interactions: details.interactions?.filter((item) => item.invocationId === invocation.id),

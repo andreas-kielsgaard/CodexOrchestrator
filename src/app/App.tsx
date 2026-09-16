@@ -1,25 +1,47 @@
 import type { AgentSessionImportClient } from '../application/agentSessions/importContracts';
+
 import type { SessionNavigationAgentAccess } from '../application/agentSessions/agentAccess';
+
 import { useSessionNavigationAgentConnection } from './useSessionNavigationAgentConnection';
+
 import type { SessionNavigationClient } from '../application/agentSessions/organization';
+
 import type { SessionDeepLinkSource } from '../application/agentSessions/deepLinks';
+
 import type { SessionNavigationSelection } from '../application/agentSessions/navigation';
+
 import type { ExecutionTargetClient } from '../application/executionTargets/contracts';
+
 import type { RepositoryBranchSource } from '../application/branches';
+
 import { TechnicalSettingsScreen } from '../features/technicalSettings/TechnicalSettingsScreen';
+
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
+
 import type { AgentSessionProfileClient } from '../application/agentSessions';
+
 import type { ConversationHarnessManagementSource } from '../application/conversationHarnesses';
+
 import type { ExecutionConfigurationClient } from '../application/executionConfiguration';
+
 import type { IdentityManagementClient } from '../application/identities';
+
 import type { SessionEventQueryClient } from '../application/sessionEvents';
+
 import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
+
 import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
+
 import type { WorkflowInstanceClient } from '../application/workflowInstances';
+
 import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
+
 import { DraftWorkspace } from '../components/draftWorkspace';
+
 import { useDraftCloseWarning } from '../components/useDraftCloseWarning';
+
 import { StandaloneAgentSessionScreen } from '../features/agentSessions/AgentSessionScreen';
+
 import type {
   ArtifactAccessController,
   SprintAutomaticContinuationPolicyController,
@@ -33,20 +55,24 @@ import type {
   OrchestrationApplicationClient,
   EpicInitiationConfirmationClient,
 } from '../application/orchestrations';
+
 import {
   unavailableEpicPlanProposalSource,
   unavailableEpicInitiationCapability,
   unsupportedArtifactAccessController,
 } from '../application/orchestrations';
+
 import {
   EpicPlanBuilder,
   OrchestrationSection,
   type OrchestrationNavigationChangeIntent,
 } from '../features/orchestrations';
+
 import {
   AgentSessionRuntimeGuidanceProvider,
   type EmbeddedAgentSessionComposition,
 } from '../features/agentSessions';
+
 import {
   useCallback,
   useEffect,
@@ -58,29 +84,44 @@ import {
   type ComponentType,
   type ReactNode,
 } from 'react';
+
 import {
   productOrchestrationPresentationAdapter,
   type OrchestrationPresentationAdapter,
 } from './orchestrationPresentation';
+
 import { useOrchestrationLoad } from './useOrchestrationLoad';
+
 import type { ManagedPlanBuilderSessionClient } from '../infrastructure/orchestrations/tauriManagedPlanBuilderSessionClient';
+
 import { useEpicInitiationConfirmation } from './useEpicInitiationConfirmation';
+
 import { EpicInitiationConfirmationModal } from './EpicInitiationConfirmationModal';
+
 import type {
   AgentSessionProductLocation,
   AgentSessionProductOrigin,
 } from '../application/orchestrations/navigation';
+
 import type { FileReviewSource } from '../application/fileReview';
+
 import type {
   ContextualFileReviewClient,
   ContextualFileReviewResult,
 } from '../application/contextualFileReview';
+
 import { FileReviewScreen } from '../features/fileReview';
+
 import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+
 import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
+
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
+
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
+
 import { ProductCommandBar } from './ProductCommandBar';
+
 import {
   canNavigateBack,
   contextualOriginDestination,
@@ -94,6 +135,7 @@ import {
   type FileReviewProductOrigin,
   type ProductNavigationDestination,
 } from '../application/productNavigation';
+
 import type {
   EpicProductDecisionSource,
   ProductDecisionClient,
@@ -102,11 +144,17 @@ import type {
   ProductDecisionEvidenceNavigationRequest,
   ProductDecisionPublishTarget,
 } from '../application/productDecisions';
+
 import type { RepoBranchWorktreeTargetSelectorProps } from '../application/worktreeTargets';
+
 import { ExecutionConfigurationScreen } from '../features/executionConfiguration';
+
 import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
+
 import type { WorktreeReviewClient } from '../application/worktreeReview';
+
 import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
+
 import { WorktreeReviewScreen } from '../features/worktreeReview';
 
 export type ApplicationSurface =
@@ -122,112 +170,207 @@ export type ApplicationSurface =
 
 export interface AppProps {
   readonly agentSessionImportClient?: AgentSessionImportClient;
+
   readonly sessionNavigationClient?: SessionNavigationClient;
+
   readonly sessionNavigationAgent?: SessionNavigationAgentAccess;
+
   readonly sessionDeepLinks?: SessionDeepLinkSource;
+
   readonly agentSessionClient: AgentSessionClient;
+
   /** Plan Builder alone may use a managed send boundary; ordinary screens keep the generic client. */
+
   readonly managedPlanBuilderSessionClient?: ManagedPlanBuilderSessionClient;
+
   /** Session-owned identity read; assignment and durability remain outside this view. */
+
   readonly managedPlanBuilderAgentIdentity?: AgentIdentity;
+
   readonly orchestrationClient: OrchestrationApplicationClient;
+
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
+
   readonly workflowInstanceClient?: WorkflowInstanceClient;
+
   readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
+
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
+
   readonly executionTargetClient?: ExecutionTargetClient;
+
   readonly branchSource?: RepositoryBranchSource;
+
   readonly identityManagementClient?: IdentityManagementClient;
+
   readonly agentSessionProfileClient?: AgentSessionProfileClient;
+
   readonly sessionEventQueryClient?: SessionEventQueryClient;
+
   readonly workflowTargetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
+
   readonly orchestrationPresentation?: OrchestrationPresentationAdapter;
+
   readonly orchestrationAgentSessionComposition?: EmbeddedAgentSessionComposition;
+
   readonly artifactAccessController?: ArtifactAccessController;
+
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
+
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+
   readonly epicPlanProposalSource?: EpicPlanProposalSource;
+
   readonly epicInitiationCapability?: EpicInitiationCapability;
+
   readonly epicInitiationCapabilityForDraft?: (
     draftId: string,
   ) => Promise<EpicInitiationCapability>;
+
   readonly epicPlanningDraftLifecycleClient?: EpicPlanningDraftLifecycleClient;
+
   readonly epicPlanProposalSourceForDraft?: (draftId: string) => EpicPlanProposalSource;
+
   readonly epicInitiationConfirmationClient?: EpicInitiationConfirmationClient;
+
   readonly agentSessionHarnessManagementSource?: ConversationHarnessManagementSource;
+
   readonly agentIdentityForSession?: (sessionId: string) => AgentIdentity | undefined;
+
   /** Present only in an injected development composition; production boot does not expose it. */
+
   readonly harnessManagementPreviewSurface?: ReactNode;
+
   readonly fileReviewSource?: FileReviewSource;
+
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
+
   readonly nativeProfileClient?: NativeProfileClient;
+
   readonly nativeProfileApplicationConsumer?: NativeProfileApplicationConsumer;
+
   /** Explicit application-owned destinations only; display names never become file-review input. */
+
   readonly fileReviewSourceForEvidence?: (target: {
     readonly reviewId: string;
+
     readonly changedFileId: string;
   }) => FileReviewSource | undefined;
+
   /** Development-recorded read only; product boot deliberately leaves it absent. */
+
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+
   /** Product-owned durable decision command/query boundary for the productive Epic view. */
+
   readonly productDecisionClient?: ProductDecisionClient;
+
   /** Product-owned decision correction conversation boundary; it is never a general chat client. */
+
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
+
   /** Product Worktree Review boundary. Product composition supplies this in every build profile. */
+
   readonly worktreeReviewClient?: WorktreeReviewClient;
+
   /** Shared registered-repository authority used by Worktree Review and Workflow target selection. */
+
   readonly repositoryCatalogClient?: RepositoryCatalogClient;
+
   readonly initialSurface?: ApplicationSurface;
 }
 
 export function App({
   agentSessionClient,
+
   agentSessionImportClient,
+
   sessionNavigationClient,
+
   sessionNavigationAgent,
+
   sessionDeepLinks,
+
   managedPlanBuilderSessionClient = {
     ...agentSessionClient,
+
     requestPlan: async () => {
       throw new Error('Plan Builder action is unavailable.');
     },
   },
+
   managedPlanBuilderAgentIdentity,
+
   orchestrationClient,
+
   workflowAuthoringClient,
+
   workflowInstanceClient,
+
   draftCloseGuard,
+
   executionConfigurationClient,
+
   executionTargetClient,
+
   branchSource,
+
   identityManagementClient,
+
   agentSessionProfileClient,
+
   sessionEventQueryClient,
+
   workflowTargetSelector,
+
   orchestrationPresentation = productOrchestrationPresentationAdapter,
+
   orchestrationAgentSessionComposition,
+
   artifactAccessController = unsupportedArtifactAccessController,
+
   sprintAutomaticContinuationPolicyController,
+
   epicAutomaticContinuationPolicyController,
+
   epicPlanProposalSource = unavailableEpicPlanProposalSource,
+
   epicInitiationCapability = unavailableEpicInitiationCapability,
+
   epicInitiationCapabilityForDraft,
+
   epicPlanningDraftLifecycleClient,
+
   epicPlanProposalSourceForDraft,
+
   epicInitiationConfirmationClient,
+
   agentSessionHarnessManagementSource,
+
   agentIdentityForSession,
+
   harnessManagementPreviewSurface,
+
   fileReviewSource,
+
   contextualFileReviewClient,
+
   nativeProfileClient,
+
   nativeProfileApplicationConsumer,
+
   fileReviewSourceForEvidence,
+
   epicProductDecisionSource,
+
   productDecisionClient,
+
   productDecisionCorrectionClient,
+
   worktreeReviewClient,
+
   repositoryCatalogClient,
+
   initialSurface = 'epics',
 }: AppProps) {
   const initialApplicationSurface: ApplicationSurface =
@@ -238,27 +381,42 @@ export function App({
     (initialSurface === 'worktree-review' && (!worktreeReviewClient || !repositoryCatalogClient))
       ? 'epics'
       : initialSurface;
+
   const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
+
   const [workflowDrafts] = useState(() => new DraftWorkspace<WorkflowRecipeDraftDto>());
+
   const [capabilityDrafts] = useState(() => new DraftWorkspace<CapabilityProfileDraft>());
+
   useDraftCloseWarning(() => workflowDrafts.dirty() || capabilityDrafts.dirty(), draftCloseGuard);
+
   const productNavigationEpoch = useRef(0);
+
   type ContextualFileReviewState = {
     readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
+
     readonly source: FileReviewSource;
+
     readonly initialFileId?: string;
   };
+
   const contextualFileReviewStateRef = useRef<ContextualFileReviewState | null>(null);
+
   const fileReviewRequestSequence = useRef(0);
+
   const [contextualFileReviewState, setContextualFileReviewStateState] =
     useState<ContextualFileReviewState | null>(null);
+
   const setContextualFileReviewState = useCallback((next: ContextualFileReviewState | null) => {
     contextualFileReviewStateRef.current = next;
+
     setContextualFileReviewStateState(next);
   }, []);
+
   const clearFileReviewState = useCallback(() => {
     setContextualFileReviewState(null);
   }, [setContextualFileReviewState]);
+
   const supportsProductDestination = useCallback(
     (destination: ProductNavigationDestination) => {
       switch (destination.kind) {
@@ -266,31 +424,45 @@ export function App({
         case 'plan_builder':
         case 'agent_sessions':
           return true;
+
         case 'workflow':
           return Boolean(workflowAuthoringClient);
+
         case 'file_review':
           if (destination.target.kind === 'direct') return Boolean(fileReviewSource);
+
           return sameFileReviewNavigationTarget(
             contextualFileReviewStateRef.current?.target,
+
             destination.target,
           );
+
         case 'harness_inspector':
           return Boolean(harnessManagementPreviewSurface);
+
         case 'worktree_review':
           return Boolean(worktreeReviewClient && repositoryCatalogClient);
+
         case 'product_decision_publish':
           return Boolean(productDecisionClient);
       }
     },
+
     [
       fileReviewSource,
+
       harnessManagementPreviewSurface,
+
       repositoryCatalogClient,
+
       worktreeReviewClient,
+
       productDecisionClient,
+
       workflowAuthoringClient,
     ],
   );
+
   const initialNavigationDestination: ProductNavigationDestination =
     initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
@@ -303,124 +475,168 @@ export function App({
             : initialApplicationSurface === 'worktree-review'
               ? { kind: 'worktree_review' }
               : { kind: 'orchestration', location: null };
+
   const [productNavigation, dispatchProductNavigation] = useReducer(
     (
       state: ReturnType<typeof createProductNavigation>,
+
       action: Parameters<typeof productNavigationReducer>[1],
     ) => productNavigationReducer(state, action, supportsProductDestination),
+
     createProductNavigation(initialNavigationDestination),
   );
+
   useEffect(() => {
     if (!sessionDeepLinks) return;
+
     let active = true;
+
     let stop: (() => void) | undefined;
+
     void sessionDeepLinks
+
       .subscribe((sessionId) => {
         if (active)
           dispatchProductNavigation({
             type: 'navigate',
+
             intent: 'replace',
+
             destination: {
               kind: 'agent_sessions',
+
               selection: { kind: 'session', sessionId },
+
               focusedInvocationId: null,
             },
           });
       })
+
       .then(
         (unsubscribe) => {
           if (active) stop = unsubscribe;
           else unsubscribe();
         },
+
         (error) => console.error('Session link reception failed', error),
       );
+
     return () => {
       active = false;
+
       stop?.();
     };
   }, [sessionDeepLinks]);
+
   const agentSessionSelection: SessionNavigationSelection =
     productNavigation.current.destination.kind === 'agent_sessions'
       ? productNavigation.current.destination.selection
       : { kind: 'initial' };
+
   const focusedAgentSessionInvocationId =
     productNavigation.current.destination.kind === 'agent_sessions'
       ? (productNavigation.current.destination.focusedInvocationId ?? undefined)
       : undefined;
+
   const focusedAgentSessionEvidence =
     productNavigation.current.destination.kind === 'agent_sessions'
       ? productNavigation.current.destination.focusedEvidence
       : undefined;
+
   const currentProductDestination = productNavigation.current.destination;
+
   const navigationAgent = useSessionNavigationAgentConnection(sessionNavigationAgent, () => {
     if (currentProductDestination.kind !== 'agent_sessions')
       dispatchProductNavigation({
         type: 'navigate',
+
         intent: 'push',
+
         destination: {
           kind: 'agent_sessions',
+
           selection: { kind: 'initial' },
+
           focusedInvocationId: null,
         },
       });
   });
+
   const activeFileReviewSource =
     currentProductDestination.kind === 'file_review'
       ? currentProductDestination.target.kind === 'direct'
         ? fileReviewSource
         : sameFileReviewNavigationTarget(
               contextualFileReviewState?.target,
+
               currentProductDestination.target,
             )
           ? contextualFileReviewState?.source
           : undefined
       : undefined;
+
   const productReturnOrigin =
     productNavigation.contextualOrigin &&
     ((isAgentSessionProductOrigin(productNavigation.contextualOrigin) &&
       currentProductDestination.kind === 'agent_sessions' &&
       supportsProductDestination({
         kind: 'orchestration',
+
         location: productNavigation.contextualOrigin.location,
       })) ||
       (isFileReviewProductOrigin(productNavigation.contextualOrigin) &&
         currentProductDestination.kind === 'file_review' &&
         sameFileReviewNavigationTarget(
           currentProductDestination.target,
+
           fileReviewTarget(productNavigation.contextualOrigin),
         ) &&
         supportsProductDestination(productNavigation.contextualOrigin.returnTo)))
       ? productNavigation.contextualOrigin
       : null;
+
   const canGoBack = canNavigateBack(productNavigation, supportsProductDestination);
+
   const contextualReturnDuplicatesBack =
     canGoBack &&
     productReturnOrigin !== null &&
     sameProductNavigationDestination(
       productNavigation.history.at(-1)!.destination,
+
       contextualOriginDestination(productReturnOrigin),
     );
+
   const [requestedProductLocation, setRequestedProductLocation] =
     useState<AgentSessionProductLocation | null>(null);
+
   const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
     'overview',
   );
+
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
+
   const hasSynchronizedProductDestination = useRef(false);
 
   useEffect(() => {
     if (!hasSynchronizedProductDestination.current) {
       hasSynchronizedProductDestination.current = true;
+
       return;
     }
+
     const destination = currentProductDestination;
+
     if (destination.kind === 'orchestration') {
       setSurface('epics');
+
       setRequestedProductLocation(destination.location);
+
       setSelectedDraft(null);
+
       setOrchestrationRoute('overview');
     } else if (destination.kind === 'plan_builder') {
       setSurface('epics');
+
       setOrchestrationRoute('plan-builder');
     } else if (destination.kind === 'workflow') {
       setSurface('workflows');
@@ -438,69 +654,97 @@ export function App({
   }, [currentProductDestination]);
 
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
+
   const [planningDrafts, setPlanningDrafts] = useState<readonly EpicPlanningDraftSummary[]>([]);
+
   const [initiationCapability, setInitiationCapability] = useState<EpicInitiationCapability>(
     unavailableEpicInitiationCapability,
   );
+
   const refreshDrafts = useCallback(async () => {
     if (!epicPlanningDraftLifecycleClient) return true;
+
     try {
       setPlanningDrafts(
         (await epicPlanningDraftLifecycleClient.list()).filter(
           (draft) => draft.status === 'active',
         ),
       );
+
       return true;
     } catch {
       setPlanningDrafts([]);
+
       return false;
     }
   }, [epicPlanningDraftLifecycleClient]);
+
   useEffect(() => {
     void refreshDrafts();
   }, [refreshDrafts]);
+
   const embeddedComposition = useMemo(
     () => orchestrationAgentSessionComposition ?? { client: agentSessionClient },
+
     [agentSessionClient, orchestrationAgentSessionComposition],
   );
+
   const planProposalSource = useMemo(
     () =>
       selectedDraft
         ? (epicPlanProposalSourceForDraft?.(selectedDraft.draftId) ?? epicPlanProposalSource)
         : epicPlanProposalSource,
+
     [epicPlanProposalSource, epicPlanProposalSourceForDraft, selectedDraft],
   );
+
   const loadInitiationCapability = useCallback(
     async (draftId: string) =>
       epicInitiationCapabilityForDraft
         ? epicInitiationCapabilityForDraft(draftId)
         : epicInitiationCapability,
+
     [epicInitiationCapability, epicInitiationCapabilityForDraft],
   );
+
   const planProposalSnapshot = useSyncExternalStore(
     planProposalSource.subscribe,
+
     planProposalSource.getSnapshot,
+
     planProposalSource.getSnapshot,
   );
+
   const initiationCapabilityLoadSequence = useRef(0);
+
   const initiationCapabilityLoadTarget = useRef<{
     readonly draftId: string;
+
     readonly proposalSource: EpicPlanProposalSource;
+
     readonly proposalSnapshot: EpicPlanProposalSnapshot;
+
     readonly promise: Promise<'loaded' | 'failed' | 'superseded'>;
   } | null>(null);
+
   const reconcileInitiationCapability = useCallback(
     (
       draftId: string,
+
       proposalSource: EpicPlanProposalSource,
+
       proposalSnapshot: EpicPlanProposalSnapshot,
+
       options: {
         readonly force?: boolean;
+
         readonly loadingReason?: string;
+
         readonly failureReason?: string;
       } = {},
     ) => {
       const current = initiationCapabilityLoadTarget.current;
+
       if (
         !options.force &&
         current?.draftId === draftId &&
@@ -510,130 +754,192 @@ export function App({
         return current.promise;
 
       const sequence = ++initiationCapabilityLoadSequence.current;
+
       setInitiationCapability({
         status: 'blocked',
+
         reason: options.loadingReason ?? 'Loading the current durable Epic Plan Proposal.',
       });
+
       const promise = loadInitiationCapability(draftId).then(
         (capability) => {
           if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
+
           setInitiationCapability(capability);
+
           return 'loaded' as const;
         },
+
         () => {
           if (initiationCapabilityLoadSequence.current !== sequence) return 'superseded' as const;
+
           setInitiationCapability({
             status: 'blocked',
+
             reason:
               options.failureReason ??
               'The current durable Epic Plan Proposal could not be loaded.',
           });
+
           return 'failed' as const;
         },
       );
+
       initiationCapabilityLoadTarget.current = {
         draftId,
+
         proposalSource,
+
         proposalSnapshot,
+
         promise,
       };
+
       return promise;
     },
+
     [loadInitiationCapability],
   );
+
   useEffect(() => {
     if (!selectedDraft) {
       initiationCapabilityLoadSequence.current += 1;
+
       initiationCapabilityLoadTarget.current = null;
+
       setInitiationCapability(unavailableEpicInitiationCapability);
+
       return;
     }
+
     void reconcileInitiationCapability(
       selectedDraft.draftId,
+
       planProposalSource,
+
       planProposalSnapshot,
     );
   }, [planProposalSnapshot, planProposalSource, reconcileInitiationCapability, selectedDraft]);
+
   const confirmInitiation = useCallback(async () => {
     if (selectedDraft) {
       initiationCapabilityLoadSequence.current += 1;
+
       initiationCapabilityLoadTarget.current = null;
+
       setInitiationCapability({
         status: 'blocked',
+
         reason: 'Refreshing the confirmed durable Epic initiation.',
       });
     }
+
     const [orchestrationAvailable, draftsAvailable] = await Promise.all([
       orchestrationLoad.refresh(),
+
       refreshDrafts(),
     ]);
+
     let refreshAvailable = orchestrationAvailable && draftsAvailable;
+
     if (selectedDraft) {
       const proposalBeforeRefresh = planProposalSource.getSnapshot();
+
       try {
         await planProposalSource.refresh();
       } catch {
         refreshAvailable = false;
       }
+
       const proposalAfterRefresh = planProposalSource.getSnapshot();
+
       const capabilityResult = await reconcileInitiationCapability(
         selectedDraft.draftId,
+
         planProposalSource,
+
         proposalAfterRefresh,
+
         {
           force: proposalBeforeRefresh === proposalAfterRefresh,
+
           loadingReason: 'Refreshing the confirmed durable Epic initiation.',
+
           failureReason: 'Current initiation state is unavailable after durable confirmation.',
         },
       );
+
       if (capabilityResult !== 'loaded') {
         refreshAvailable = false;
+
         if (capabilityResult === 'failed')
           setInitiationCapability({
             status: 'blocked',
+
             reason: 'Current initiation state is unavailable after durable confirmation.',
           });
       }
+
       if (proposalAfterRefresh.kind === 'unavailable') refreshAvailable = false;
     }
+
     if (!refreshAvailable) throw new Error('post-confirmation application refresh unavailable');
   }, [
     orchestrationLoad,
+
     planProposalSource,
+
     reconcileInitiationCapability,
+
     refreshDrafts,
+
     selectedDraft,
   ]);
+
   const confirmation = useEpicInitiationConfirmation(
     epicInitiationConfirmationClient,
+
     confirmInitiation,
   );
+
   const refreshInitiationFailure = useCallback(async () => {
     if (!selectedDraft) return;
+
     await reconcileInitiationCapability(
       selectedDraft.draftId,
+
       planProposalSource,
+
       planProposalSource.getSnapshot(),
+
       { force: true },
     );
   }, [planProposalSource, reconcileInitiationCapability, selectedDraft]);
+
   const bindCreatedPlanBuilderSession = useCallback(
     async (sessionId: string, title: string) => {
       if (!epicPlanningDraftLifecycleClient) return;
+
       try {
         const binding = await epicPlanningDraftLifecycleClient.reconcile(sessionId, title);
+
         setSelectedDraft(binding);
       } catch {
         // Managed send already owns creation. A catalog read can still recover that exact
+
         // durable binding without inventing a UI-local draft when reconciliation times out.
+
         try {
           const draft = (await epicPlanningDraftLifecycleClient.list()).find(
             (item) => item.agentSessionId === sessionId && item.status === 'active',
           );
+
           if (draft)
             setSelectedDraft({
               draftId: draft.epicPlanningDraftId,
+
               sessionId: draft.agentSessionId,
+
               ...(draft.title ? { title: draft.title } : {}),
             });
         } catch {
@@ -643,22 +949,32 @@ export function App({
         await refreshDrafts();
       }
     },
+
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
+
   const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
     productNavigationEpoch.current += 1;
+
     dispatchProductNavigation({
       type: 'navigate',
+
       intent: 'replace',
+
       destination: { kind: 'orchestration', location: origin.location },
     });
+
     dispatchProductNavigation({
       type: 'open_contextual_agent_session',
+
       origin,
+
       focusedInvocationId: null,
     });
+
     setSurface('agent-sessions');
   }, []);
+
   const openWorkUnitActivitySession = useCallback(
     (target: WorkUnitActivitySessionTarget, origin: AgentSessionProductOrigin) => {
       if (
@@ -671,24 +987,35 @@ export function App({
         origin.location.inspectionState.activityId !== target.activityId
       )
         return;
+
       productNavigationEpoch.current += 1;
+
       dispatchProductNavigation({
         type: 'navigate',
+
         intent: 'replace',
+
         destination: { kind: 'orchestration', location: origin.location },
       });
+
       dispatchProductNavigation({
         type: 'open_contextual_agent_session',
+
         origin,
+
         focusedInvocationId: target.invocationId,
       });
+
       setSurface('agent-sessions');
     },
+
     [],
   );
+
   const openProductDecisionEvidence = useCallback(
     (request: ProductDecisionEvidenceNavigationRequest, origin: AgentSessionProductOrigin) => {
       const resolution = epicProductDecisionSource?.resolveEvidenceNavigation(request);
+
       if (
         !resolution ||
         resolution.kind !== 'available' ||
@@ -698,22 +1025,33 @@ export function App({
         origin.invocationId !== resolution.destination.invocationId
       )
         return;
+
       productNavigationEpoch.current += 1;
+
       dispatchProductNavigation({
         type: 'navigate',
+
         intent: 'replace',
+
         destination: { kind: 'orchestration', location: origin.location },
       });
+
       dispatchProductNavigation({
         type: 'open_contextual_agent_session',
+
         origin,
+
         focusedInvocationId: resolution.destination.invocationId,
+
         focusedEvidence: resolution.destination,
       });
+
       setSurface('agent-sessions');
     },
+
     [epicProductDecisionSource],
   );
+
   const openProductiveDecisionEvidence = useCallback(
     (destination: ProductDecisionEvidenceDestination, origin: AgentSessionProductOrigin) => {
       if (
@@ -722,84 +1060,122 @@ export function App({
         origin.invocationId !== destination.invocationId
       )
         return;
+
       productNavigationEpoch.current += 1;
+
       dispatchProductNavigation({
         type: 'navigate',
+
         intent: 'replace',
+
         destination: { kind: 'orchestration', location: origin.location },
       });
+
       dispatchProductNavigation({
         type: 'open_contextual_agent_session',
+
         origin,
+
         focusedInvocationId: destination.invocationId,
+
         focusedEvidence: destination,
       });
+
       setSurface('agent-sessions');
     },
+
     [],
   );
+
   const openProductDecisionPublish = useCallback(
     (target: ProductDecisionPublishTarget) => {
       if (!productDecisionClient) return;
+
       productNavigationEpoch.current += 1;
+
       dispatchProductNavigation({
         type: 'navigate',
+
         intent: 'push',
+
         destination: { kind: 'product_decision_publish', ...target },
       });
+
       setSurface('product-decision-publish');
     },
+
     [productDecisionClient],
   );
+
   const navigateFromOrchestration = useCallback(
     (location: AgentSessionProductLocation | null, intent: OrchestrationNavigationChangeIntent) => {
       productNavigationEpoch.current += 1;
+
       const destination: ProductNavigationDestination = { kind: 'orchestration', location };
+
       const previous = productNavigation.history.at(-1)?.destination;
+
       const canRestorePrevious =
         intent === 'back' &&
         previous !== undefined &&
         sameProductNavigationDestination(previous, destination) &&
         !sameProductNavigationDestination(productNavigation.current.destination, destination);
+
       dispatchProductNavigation(
         canRestorePrevious
           ? { type: 'back' }
           : { type: 'navigate', intent: intent === 'push' ? 'push' : 'replace', destination },
       );
+
       setSurface('epics');
+
       setOrchestrationRoute('overview');
     },
+
     [productNavigation],
   );
+
   const requestContextualFileReview = useCallback(
     async (
       sprintId: string,
+
       returnLocation?: AgentSessionProductLocation,
     ): Promise<ContextualFileReviewResult> => {
       if (!contextualFileReviewClient)
         return {
           status: 'failed',
+
           reason: 'unavailable',
+
           message: 'File Review is unavailable right now.',
         };
+
       const sequence = ++fileReviewRequestSequence.current;
+
       const launchEpoch = productNavigationEpoch.current;
+
       const returnTo = returnLocation
         ? { kind: 'orchestration' as const, location: returnLocation }
         : currentProductDestination.kind === 'orchestration'
           ? currentProductDestination
           : null;
+
       clearFileReviewState();
+
       let result: ContextualFileReviewResult;
+
       try {
         result = await contextualFileReviewClient.requestForSprint(sprintId);
       } catch {
         return {
           status: 'failed',
+
           reason: 'unavailable',
+
           message: 'File Review is unavailable right now.',
         };
       }
+
       if (
         result.status === 'ready' &&
         sequence === fileReviewRequestSequence.current &&
@@ -807,72 +1183,110 @@ export function App({
         returnTo
       ) {
         const target = { kind: 'contextual_sprint' as const, sprintId };
+
         const origin: FileReviewProductOrigin = {
           kind: 'file_review',
+
           launchKind: 'contextual_sprint',
+
           sprintId,
+
           returnTo,
         };
+
         setContextualFileReviewState({ target, source: result.source });
+
         dispatchProductNavigation({ type: 'open_contextual_file_review', target, origin });
+
         setSurface('file-review');
       }
+
       return result;
     },
+
     [
       clearFileReviewState,
+
       contextualFileReviewClient,
+
       currentProductDestination,
+
       setContextualFileReviewState,
     ],
   );
+
   const openFileEvidence = useCallback(
     (
       target: { readonly reviewId: string; readonly changedFileId: string },
+
       returnLocation?: AgentSessionProductLocation,
     ) => {
       productNavigationEpoch.current += 1;
+
       fileReviewRequestSequence.current += 1;
+
       clearFileReviewState();
+
       const source = fileReviewSourceForEvidence?.(target);
+
       if (!source) return;
+
       const fileReviewTarget = { kind: 'file_evidence' as const, ...target };
+
       const returnTo = returnLocation
         ? { kind: 'orchestration' as const, location: returnLocation }
         : currentProductDestination.kind === 'orchestration'
           ? currentProductDestination
           : null;
+
       setContextualFileReviewState({
         target: fileReviewTarget,
+
         source,
+
         initialFileId: target.changedFileId,
       });
+
       if (returnTo) {
         const origin: FileReviewProductOrigin = {
           kind: 'file_review',
+
           launchKind: 'file_evidence',
+
           reviewId: target.reviewId,
+
           changedFileId: target.changedFileId,
+
           returnTo,
         };
+
         dispatchProductNavigation({
           type: 'open_contextual_file_review',
+
           target: fileReviewTarget,
+
           origin,
         });
       } else {
         dispatchProductNavigation({
           type: 'navigate',
+
           intent: 'push',
+
           destination: { kind: 'file_review', target: fileReviewTarget },
         });
       }
+
       setSurface('file-review');
     },
+
     [
       clearFileReviewState,
+
       currentProductDestination,
+
       fileReviewSourceForEvidence,
+
       setContextualFileReviewState,
     ],
   );
@@ -884,227 +1298,342 @@ export function App({
           {confirmation.receiptError}
         </p>
       )}
+
       <EpicInitiationConfirmationModal confirmation={confirmation} />
+
       <div className="surface-switcher" role="navigation" aria-label="Application surfaces">
         <div className="surface-switcher__surfaces">
           <button
             className={surface === 'epics' ? 'active' : undefined}
+
             type="button"
+
             aria-current={surface === 'epics' ? 'page' : undefined}
+
             onClick={() => {
               productNavigationEpoch.current += 1;
+
               dispatchProductNavigation({
                 type: 'navigate',
+
                 intent: 'push',
+
                 destination: { kind: 'orchestration', location: null },
               });
+
               setSurface('epics');
             }}
           >
             Orchestration
           </button>
+
           {workflowAuthoringClient ? (
             <button
               className={surface === 'workflows' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'workflows' ? 'page' : undefined}
+
               onClick={() => {
                 productNavigationEpoch.current += 1;
+
                 dispatchProductNavigation({
                   type: 'navigate',
+
                   intent: 'push',
+
                   destination: {
                     kind: 'workflow',
+
                     workflowTypeId: null,
+
                     workflowInstanceId: null,
                   },
                 });
+
                 setSurface('workflows');
               }}
             >
               Workflow
             </button>
           ) : null}
+
           {executionConfigurationClient ? (
             <button
               className={surface === 'capability-profiles' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'capability-profiles' ? 'page' : undefined}
+
               onClick={() => {
                 productNavigationEpoch.current += 1;
+
                 setSurface('capability-profiles');
               }}
             >
               Capability Profiles
             </button>
           ) : null}
+
           <button
             className={surface === 'agent-sessions' ? 'active' : undefined}
+
             type="button"
+
             aria-current={surface === 'agent-sessions' ? 'page' : undefined}
+
             onClick={() => {
               productNavigationEpoch.current += 1;
+
               dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
+
               setSurface('agent-sessions');
             }}
           >
             Agent Sessions
           </button>
+
           {harnessManagementPreviewSurface && (
             <button
               className={surface === 'harness-inspector' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'harness-inspector' ? 'page' : undefined}
+
               onClick={() => {
                 productNavigationEpoch.current += 1;
+
                 dispatchProductNavigation({
                   type: 'navigate',
+
                   intent: 'push',
+
                   destination: { kind: 'harness_inspector' },
                 });
+
                 setSurface('harness-inspector');
               }}
             >
               Harness Management
             </button>
           )}
+
           {worktreeReviewClient && repositoryCatalogClient && (
             <button
               className={surface === 'worktree-review' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'worktree-review' ? 'page' : undefined}
+
               onClick={() => {
                 productNavigationEpoch.current += 1;
+
                 dispatchProductNavigation({
                   type: 'navigate',
+
                   intent: 'push',
+
                   destination: { kind: 'worktree_review' },
                 });
+
                 setSurface('worktree-review');
               }}
             >
               Worktree Review
             </button>
           )}
+
           {fileReviewSource ? (
             <button
               className={surface === 'file-review' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'file-review' ? 'page' : undefined}
+
               onClick={() => {
                 productNavigationEpoch.current += 1;
+
                 fileReviewRequestSequence.current += 1;
+
                 dispatchProductNavigation({
                   type: 'navigate',
+
                   intent: 'push',
+
                   destination: { kind: 'file_review', target: { kind: 'direct' } },
                 });
+
                 setSurface('file-review');
               }}
             >
               Files &amp; diffs
             </button>
           ) : null}
+
           {nativeProfileClient && (
             <button
               className={surface === 'native-settings' ? 'active' : undefined}
+
               type="button"
+
               aria-current={surface === 'native-settings' ? 'page' : undefined}
+
               onClick={() => setSurface('native-settings')}
             >
               Technical Settings
             </button>
           )}
         </div>
+
         <ProductCommandBar
           canGoBack={canGoBack}
+
           onBack={() => {
             productNavigationEpoch.current += 1;
+
             fileReviewRequestSequence.current += 1;
+
             dispatchProductNavigation({ type: 'back' });
           }}
+
           returnOrigin={contextualReturnDuplicatesBack ? null : productReturnOrigin}
+
           onReturn={(origin) => {
             if (origin !== productReturnOrigin) return;
+
             productNavigationEpoch.current += 1;
+
             fileReviewRequestSequence.current += 1;
+
             dispatchProductNavigation({ type: 'return_to_contextual_origin', origin });
           }}
         />
       </div>
+
       {surface === 'product-decision-publish' &&
       currentProductDestination.kind === 'product_decision_publish' ? (
         <ProductDecisionPublishPlaceholder destination={currentProductDestination} />
       ) : surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
         <EpicPlanBuilder
           agentSessionClient={managedPlanBuilderSessionClient}
+
           agentIdentity={managedPlanBuilderAgentIdentity}
+
           proposalSource={planProposalSource}
+
           initiationCapability={initiationCapability}
+
           onRequestInitiation={confirmation.requestButton}
+
           onInitiationFailure={refreshInitiationFailure}
+
           draft={selectedDraft ?? undefined}
+
           lifecycleClient={epicPlanningDraftLifecycleClient}
+
           harnessManagementSource={agentSessionHarnessManagementSource}
+
           onSessionCreated={bindCreatedPlanBuilderSession}
+
           onBack={() => {
             dispatchProductNavigation({ type: 'back' });
+
             void refreshDrafts();
           }}
         />
       ) : surface === 'epics' ? (
         <OrchestrationSurface
           load={orchestrationLoad}
+
           presentation={orchestrationPresentation}
+
           agentSessionComposition={embeddedComposition}
+
           artifactAccessController={artifactAccessController}
+
           sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
+
           epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+
           planningDrafts={planningDrafts}
+
           onOpenDraft={(draft) => {
             setSelectedDraft({
               draftId: draft.epicPlanningDraftId,
+
               sessionId: draft.agentSessionId,
+
               ...(draft.title ? { title: draft.title } : {}),
             });
+
             dispatchProductNavigation({
               type: 'navigate',
+
               intent: 'push',
+
               destination: {
                 kind: 'plan_builder',
+
                 epicPlanningDraftId: draft.epicPlanningDraftId,
               },
             });
+
             setOrchestrationRoute('plan-builder');
           }}
+
           onPlanEpic={() => {
             setSelectedDraft(null);
+
             dispatchProductNavigation({
               type: 'navigate',
+
               intent: 'push',
+
               destination: { kind: 'plan_builder', epicPlanningDraftId: null },
             });
+
             setOrchestrationRoute('plan-builder');
           }}
+
           requestedLocation={requestedProductLocation}
+
           onProductLocationChange={navigateFromOrchestration}
+
           onOpenAgentSession={openProductAgentSession}
+
           onOpenWorkUnitActivitySession={openWorkUnitActivitySession}
+
           onRequestFileReview={contextualFileReviewClient ? requestContextualFileReview : undefined}
+
           onOpenFileEvidence={fileReviewSourceForEvidence ? openFileEvidence : undefined}
+
           globalBackAvailable={canGoBack}
+
           epicProductDecisionSource={epicProductDecisionSource}
+
           productDecisionClient={productDecisionClient}
+
           productDecisionCorrectionClient={productDecisionCorrectionClient}
+
           onOpenProductDecisionEvidence={openProductDecisionEvidence}
+
           onOpenProductiveDecisionEvidence={openProductiveDecisionEvidence}
+
           onPublishProductDecision={openProductDecisionPublish}
         />
       ) : surface === 'capability-profiles' && executionConfigurationClient ? (
         <ExecutionConfigurationScreen
           client={executionConfigurationClient}
+
           targetClient={executionTargetClient}
+
           branchSource={branchSource}
+
           workspace={capabilityDrafts}
         />
       ) : surface === 'workflows' &&
@@ -1113,33 +1642,54 @@ export function App({
         currentProductDestination.kind === 'workflow' ? (
         <WorkflowAuthoringScreen
           client={workflowAuthoringClient}
+
           executionConfigurationClient={executionConfigurationClient}
+
           identityClient={identityManagementClient}
+
           workspace={workflowDrafts}
+
           instanceClient={workflowInstanceClient}
+
           targetSelector={workflowTargetSelector}
+
           sessionClient={agentSessionClient}
+
           profileClient={agentSessionProfileClient}
+
           queryClient={sessionEventQueryClient}
+
           recipeId={currentProductDestination.workflowTypeId}
+
           instanceId={currentProductDestination.workflowInstanceId}
+
           sessionFocus={currentProductDestination.session}
+
           onOpenRecipe={(recipeId) => {
             productNavigationEpoch.current += 1;
+
             dispatchProductNavigation({
               type: 'navigate',
+
               intent: 'push',
+
               destination: { kind: 'workflow', workflowTypeId: recipeId, workflowInstanceId: null },
             });
           }}
+
           onOpenInstance={(instanceId) => {
             productNavigationEpoch.current += 1;
+
             dispatchProductNavigation({
               type: 'navigate',
+
               intent: 'push',
+
               destination: {
                 kind: 'workflow',
+
                 workflowTypeId: null,
+
                 workflowInstanceId: instanceId,
               },
             });
@@ -1148,11 +1698,13 @@ export function App({
       ) : surface === 'file-review' && activeFileReviewSource ? (
         <FileReviewScreen
           source={activeFileReviewSource}
+
           initialFileId={
             currentProductDestination.kind === 'file_review' &&
             currentProductDestination.target.kind !== 'direct' &&
             sameFileReviewNavigationTarget(
               contextualFileReviewState?.target,
+
               currentProductDestination.target,
             )
               ? contextualFileReviewState?.initialFileId
@@ -1162,53 +1714,83 @@ export function App({
       ) : surface === 'worktree-review' && worktreeReviewClient && repositoryCatalogClient ? (
         <WorktreeReviewScreen
           client={worktreeReviewClient}
+
           repositoryCatalog={repositoryCatalogClient}
         />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen
           importClient={agentSessionImportClient}
+
           executionTargetClient={executionTargetClient}
+
           executionConfigurationClient={executionConfigurationClient}
+
           branchSource={branchSource}
+
           client={agentSessionClient}
+
           harnessManagementSource={agentSessionHarnessManagementSource}
+
           profileClient={agentSessionProfileClient}
+
           sessionEventQueryClient={sessionEventQueryClient}
+
           agentIdentityForSession={agentIdentityForSession}
+
           navigationClient={sessionNavigationClient}
+
           onOpenWorkflow={
             workflowAuthoringClient && workflowInstanceClient && executionConfigurationClient
               ? (target) => {
                   productNavigationEpoch.current += 1;
+
                   dispatchProductNavigation({
                     type: 'navigate',
+
                     intent: 'push',
+
                     destination: {
                       kind: 'workflow',
+
                       workflowTypeId: null,
+
                       workflowInstanceId: target.instanceId,
+
                       session: target.session,
                     },
                   });
                 }
               : undefined
           }
+
           agentRequest={navigationAgent.request}
+
           onAgentComplete={navigationAgent.complete}
+
           selection={agentSessionSelection}
+
           focusInvocationId={focusedAgentSessionInvocationId}
+
           focusEvidence={focusedAgentSessionEvidence}
+
           onSelectionChange={(() => {
             const renderEpoch = productNavigationEpoch.current;
+
             return (selection: SessionNavigationSelection) => {
               if (currentProductDestination.kind !== 'agent_sessions') return;
+
               if (renderEpoch !== productNavigationEpoch.current) return;
+
               dispatchProductNavigation({
                 type: 'navigate',
+
                 intent: 'replace',
+
                 destination: {
                   kind: 'agent_sessions',
+
                   selection,
+
                   focusedInvocationId: null,
                 },
               });
@@ -1218,9 +1800,13 @@ export function App({
       ) : surface === 'native-settings' && nativeProfileClient ? (
         <TechnicalSettingsScreen
           nativeClient={nativeProfileClient}
+
           executionClient={executionConfigurationClient}
+
           targetClient={executionTargetClient}
+
           branchSource={branchSource}
+
           workspace={capabilityDrafts}
         />
       ) : (
@@ -1228,9 +1814,11 @@ export function App({
       )}
     </div>
   );
+
   return (
     <AgentSessionRuntimeGuidanceProvider
       consumer={nativeProfileApplicationConsumer}
+
       onOpenTechnicalSettings={
         nativeProfileClient ? () => setSurface('native-settings') : undefined
       }
@@ -1242,122 +1830,199 @@ export function App({
 
 function OrchestrationSurface({
   load,
+
   presentation,
+
   agentSessionComposition,
+
   artifactAccessController,
+
   sprintAutomaticContinuationPolicyController,
+
   epicAutomaticContinuationPolicyController,
+
   onPlanEpic,
+
   planningDrafts,
+
   onOpenDraft,
+
   requestedLocation,
+
   onProductLocationChange,
+
   onOpenAgentSession,
+
   onOpenWorkUnitActivitySession,
+
   onRequestFileReview,
+
   onOpenFileEvidence,
+
   globalBackAvailable,
+
   epicProductDecisionSource,
+
   productDecisionClient,
+
   productDecisionCorrectionClient,
+
   onOpenProductDecisionEvidence,
+
   onOpenProductiveDecisionEvidence,
+
   onPublishProductDecision,
 }: {
   readonly load: ReturnType<typeof useOrchestrationLoad>;
+
   readonly presentation: OrchestrationPresentationAdapter;
+
   readonly agentSessionComposition: EmbeddedAgentSessionComposition;
+
   readonly artifactAccessController: ArtifactAccessController;
+
   readonly sprintAutomaticContinuationPolicyController?: SprintAutomaticContinuationPolicyController;
+
   readonly epicAutomaticContinuationPolicyController?: EpicAutomaticContinuationPolicyController;
+
   readonly onPlanEpic: () => void;
+
   readonly planningDrafts: readonly EpicPlanningDraftSummary[];
+
   readonly onOpenDraft: (draft: EpicPlanningDraftSummary) => void;
+
   readonly requestedLocation: AgentSessionProductLocation | null;
+
   readonly onProductLocationChange: (
     location: AgentSessionProductLocation | null,
+
     intent: OrchestrationNavigationChangeIntent,
   ) => void;
+
   readonly onOpenAgentSession: (origin: AgentSessionProductOrigin) => void;
+
   readonly onOpenWorkUnitActivitySession: (
     target: WorkUnitActivitySessionTarget,
+
     origin: AgentSessionProductOrigin,
   ) => void;
+
   readonly onRequestFileReview?: (
     sprintId: string,
+
     returnLocation?: AgentSessionProductLocation,
   ) => Promise<ContextualFileReviewResult>;
+
   readonly onOpenFileEvidence?: (
     target: {
       readonly reviewId: string;
+
       readonly changedFileId: string;
     },
+
     returnLocation?: AgentSessionProductLocation,
   ) => void;
+
   readonly globalBackAvailable: boolean;
+
   readonly epicProductDecisionSource?: EpicProductDecisionSource;
+
   readonly productDecisionClient?: ProductDecisionClient;
+
   readonly productDecisionCorrectionClient?: ProductDecisionCorrectionClient;
+
   readonly onOpenProductDecisionEvidence: (
     request: ProductDecisionEvidenceNavigationRequest,
+
     origin: AgentSessionProductOrigin,
   ) => void;
+
   readonly onOpenProductiveDecisionEvidence: (
     destination: ProductDecisionEvidenceDestination,
+
     origin: AgentSessionProductOrigin,
   ) => void;
+
   readonly onPublishProductDecision: (target: ProductDecisionPublishTarget) => void;
 }) {
   if (load.kind === 'ready')
     return (
       <OrchestrationSection
         view={presentation.present(load.readModels)}
+
         agentSessionComposition={agentSessionComposition}
+
         artifactAccessController={artifactAccessController}
+
         sprintAutomaticContinuationPolicyController={sprintAutomaticContinuationPolicyController}
+
         epicAutomaticContinuationPolicyController={epicAutomaticContinuationPolicyController}
+
         onPlanEpic={onPlanEpic}
+
         planningDrafts={planningDrafts}
+
         onOpenPlanningDraft={onOpenDraft}
+
         requestedLocation={requestedLocation}
+
         onProductLocationChange={onProductLocationChange}
+
         onOpenAgentSession={onOpenAgentSession}
+
         onOpenWorkUnitActivitySession={onOpenWorkUnitActivitySession}
+
         onRequestFileReview={onRequestFileReview}
+
         onOpenFileEvidence={onOpenFileEvidence}
+
         globalBackAvailable={globalBackAvailable}
+
         epicProductDecisionSource={epicProductDecisionSource}
+
         productDecisionClient={productDecisionClient}
+
         productDecisionCorrectionClient={productDecisionCorrectionClient}
+
         onOpenProductDecisionEvidence={onOpenProductDecisionEvidence}
+
         onOpenProductiveDecisionEvidence={onOpenProductiveDecisionEvidence}
+
         onPublishProductDecision={onPublishProductDecision}
       />
     );
+
   const copy =
     load.kind === 'loading'
-      ? 'Loading orchestration data…'
+      ? 'Loading orchestration dataâ€¦'
       : load.kind === 'failed'
         ? load.message
         : load.reason;
+
   return (
     <main
       className="orchestration-section"
+
       aria-label="Orchestration"
+
       aria-busy={load.kind === 'loading'}
     >
       <header className="orchestration-page-header">
         <p className="eyebrow">Orchestration</p>
+
         <h1>
           {load.kind === 'unavailable'
             ? 'Orchestration data unavailable'
             : 'Orchestration overview'}
         </h1>
+
         <p role={load.kind === 'loading' ? 'status' : 'alert'}>{copy}</p>
+
         <button className="orchestration-page-header__plan" type="button" onClick={onPlanEpic}>
           Plan an Epic
         </button>
       </header>
+
       {planningDrafts.length > 0 && (
         <section className="orchestration-list" aria-label="Active Epic planning drafts">
           <table>
@@ -1367,14 +2032,19 @@ function OrchestrationSurface({
                   <td>
                     <button
                       className="orchestration-list__open"
+
                       type="button"
+
                       onClick={() => onOpenDraft(draft)}
                     >
                       <strong>{draft.title ?? 'Untitled Epic draft'}</strong>
+
                       <small>Pre-initiation planning draft</small>
                     </button>
                   </td>
+
                   <td>Planning</td>
+
                   <td>Draft</td>
                 </tr>
               ))}
@@ -1393,7 +2063,9 @@ function fileReviewTarget(
     ? { kind: 'contextual_sprint', sprintId: origin.sprintId }
     : {
         kind: 'file_evidence',
+
         reviewId: origin.reviewId,
+
         changedFileId: origin.changedFileId,
       };
 }

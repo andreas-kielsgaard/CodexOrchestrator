@@ -123,3 +123,18 @@ impl
         }
     }
 }
+
+#[tauri::command]
+pub(crate) fn load_current_agent_session_profile(
+    state: State<'_, super::AgentSessionTauriState>,
+    input: LoadPinnedSessionProfileInput,
+) -> Result<PinnedAgentSessionProfileDto, String> {
+    let profile = state
+        .application
+        .load_current_session_profile(&input.session_id)
+        .map_err(|e| e.to_string())?;
+    Ok(PinnedAgentSessionProfileDto {
+        session_id: profile.session_id,
+        creation_resolution: profile.creation_resolution,
+    })
+}

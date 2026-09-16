@@ -49,6 +49,7 @@ pub struct Host {
     sessions_directory: PathBuf,
     runtimes: HashMap<String, Arc<dyn AgentRuntime>>,
     invocations: Mutex<HashMap<AgentInvocationId, String>>,
+    active_sessions: Arc<Mutex<HashMap<AgentSessionId, AgentInvocationId>>>,
 }
 
 fn unavailable(error: impl std::fmt::Display) -> RuntimePortError {
@@ -108,6 +109,7 @@ impl Host {
             sessions_directory,
             runtimes,
             invocations: Mutex::new(HashMap::new()),
+            active_sessions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -151,6 +153,72 @@ impl Host {
         output: Arc<dyn FrameOutput>,
     ) -> Result<Value, RuntimePortError> {
         match command {
+            HostCommand::PublishedCommit {
+                repository_root,
+                branch_ref,
+            } => Ok(
+                serde_json::json!({"commit":crate::workspaces::published_commit(&repository_root, &branch_ref)?}),
+            ),
+            HostCommand::MaterializeWorktree {
+                repository_root,
+                branch_ref,
+                commit,
+                instance_id,
+            } => serde_json::to_value(crate::workspaces::materialize_worktree(
+                &repository_root,
+                &branch_ref,
+                &commit,
+                &instance_id,
+            )?)
+            .map_err(unavailable),
+            HostCommand::AuxiliaryWorkspace { session_id } => serde_json::to_value(
+                crate::workspaces::auxiliary_workspace(&self.sessions_directory, &session_id)?,
+            )
+            .map_err(unavailable),
+            HostCommand::ExportContinuation {
+                configuration_ref,
+                external_context_id,
+            } => {
+                self.assert_native_idle(&configuration_ref, &external_context_id)?;
+                let config = self.configuration(&configuration_ref)?;
+                serde_json::to_value(crate::codex::app_server::continuation::export(
+                    &config.executable,
+                    &config.home,
+                    external_context_id.as_str(),
+                )?)
+                .map_err(unavailable)
+            }
+            HostCommand::InstallContinuation {
+                configuration_ref,
+                continuation,
+            } => {
+                let id =
+                    ExternalRuntimeContextId::new(&continuation.thread_id).map_err(unavailable)?;
+                self.assert_native_idle(&configuration_ref, &id)?;
+                let config = self.configuration(&configuration_ref)?;
+                crate::codex::app_server::continuation::install(
+                    &config.executable,
+                    &config.home,
+                    &continuation,
+                )?;
+                Ok(Value::Null)
+            }
+            HostCommand::PrepareInvocation {
+                configuration_ref,
+                request,
+                external_context_id,
+            } => self.launch_invocation(
+                configuration_ref,
+                request,
+                external_context_id,
+                output,
+                true,
+            ),
+            HostCommand::DeliverPreparedInvocation { invocation_id } => {
+                self.invocation_runtime(&invocation_id)?
+                    .deliver_prepared_invocation(&invocation_id)?;
+                Ok(Value::Null)
+            }
             HostCommand::Describe => serde_json::to_value(HostDescription {
                 device_id: self.configuration.device_id.clone(),
                 device_name: self.configuration.device_name.clone(),
@@ -198,70 +266,15 @@ impl Host {
             .map_err(unavailable),
             HostCommand::Invoke {
                 configuration_ref,
-                mut request,
+                request,
                 external_context_id,
-            } => {
-                let config = self.configuration(&configuration_ref)?;
-                let cwd = request
-                    .working_directory
-                    .as_deref()
-                    .ok_or_else(|| unavailable("Remote execution requires an existing worktree"))?;
-                if !Path::new(cwd).is_absolute() || !Path::new(cwd).is_dir() {
-                    return Err(unavailable("Remote worktree directory is unavailable"));
-                }
-                let path = self.binding_path(&request.session_id);
-                let binding = SessionBinding {
-                    session_id: request.session_id.clone(),
-                    configuration_ref: configuration_ref.clone(),
-                    working_directory: cwd.into(),
-                    external_context_id: external_context_id.clone(),
-                };
-                if path.exists() {
-                    let previous: SessionBinding =
-                        serde_json::from_slice(&fs::read(&path).map_err(unavailable)?)
-                            .map_err(unavailable)?;
-                    if previous.configuration_ref != binding.configuration_ref
-                        || previous.working_directory != binding.working_directory
-                        || previous
-                            .external_context_id
-                            .as_ref()
-                            .is_some_and(|id| Some(id) != external_context_id.as_ref())
-                    {
-                        return Err(unavailable("Session is already bound to another host configuration, directory, or provider thread"));
-                    }
-                }
-                fs::write(&path, serde_json::to_vec(&binding).map_err(unavailable)?)
-                    .map_err(unavailable)?;
-                let extension = request
-                    .launch_extension
-                    .get_or_insert_with(Default::default);
-                if !extension.managed_mcp_servers.is_empty() {
-                    return Err(unavailable(
-                        "Remote workflow tools are outside this prototype",
-                    ));
-                }
-                extension.environment.retain(|(key, _)| key != "CODEX_HOME");
-                extension.environment.push((
-                    "CODEX_HOME".into(),
-                    config.home.to_string_lossy().into_owned(),
-                ));
-                let runtime = self.runtime(&configuration_ref)?;
-                self.invocations
-                    .lock()
-                    .map_err(unavailable)?
-                    .insert(request.invocation_id.clone(), configuration_ref);
-                let sink = Arc::new(InvocationOutput {
-                    output,
-                    binding: Mutex::new(binding),
-                    path,
-                });
-                if let Some(external) = external_context_id {
-                    runtime.resume_invocation(request, external, sink)?;
-                } else {
-                    runtime.start_invocation(request, sink)?;
-                }
-                Ok(Value::Null)
-            }
+            } => self.launch_invocation(
+                configuration_ref,
+                request,
+                external_context_id,
+                output,
+                false,
+            ),
             HostCommand::Respond {
                 invocation_id,
                 request_id,
@@ -301,6 +314,138 @@ impl Host {
         }
     }
 
+    fn launch_invocation(
+        &self,
+        configuration_ref: String,
+        mut request: RuntimeInvocationRequest,
+        external_context_id: Option<ExternalRuntimeContextId>,
+        output: Arc<dyn FrameOutput>,
+        prepare: bool,
+    ) -> Result<Value, RuntimePortError> {
+        let config = self.configuration(&configuration_ref)?;
+        let cwd = request
+            .working_directory
+            .as_deref()
+            .ok_or_else(|| unavailable("Remote execution requires an existing worktree"))?;
+        if !Path::new(cwd).is_absolute() || !Path::new(cwd).is_dir() {
+            return Err(unavailable("Remote worktree directory is unavailable"));
+        }
+        let path = self.binding_path(&request.session_id);
+        let binding = SessionBinding {
+            session_id: request.session_id.clone(),
+            configuration_ref: configuration_ref.clone(),
+            working_directory: cwd.into(),
+            external_context_id: external_context_id.clone(),
+        };
+        if path.exists() && !prepare {
+            let previous: SessionBinding =
+                serde_json::from_slice(&fs::read(&path).map_err(unavailable)?)
+                    .map_err(unavailable)?;
+            if previous.configuration_ref != binding.configuration_ref
+                || previous.working_directory != binding.working_directory
+                || previous
+                    .external_context_id
+                    .as_ref()
+                    .is_some_and(|id| Some(id) != external_context_id.as_ref())
+            {
+                return Err(unavailable("Session is already bound to another host configuration, directory, or provider thread; prepare an idle rebind first"));
+            }
+        }
+        let extension = request
+            .launch_extension
+            .get_or_insert_with(Default::default);
+        if !extension.managed_mcp_servers.is_empty() {
+            return Err(unavailable(
+                "Remote workflow tools are outside this prototype",
+            ));
+        }
+        extension.environment.retain(|(key, _)| key != "CODEX_HOME");
+        extension.environment.push((
+            "CODEX_HOME".into(),
+            config.home.to_string_lossy().into_owned(),
+        ));
+        let runtime = self.runtime(&configuration_ref)?;
+        let id = request.invocation_id.clone();
+        let session = request.session_id.clone();
+        {
+            let mut active = self.active_sessions.lock().map_err(unavailable)?;
+            if active.contains_key(&session) {
+                return Err(unavailable(
+                    "Session already has an active or preparing invocation",
+                ));
+            }
+            active.insert(session.clone(), id.clone());
+        }
+        self.invocations
+            .lock()
+            .map_err(unavailable)?
+            .insert(id.clone(), configuration_ref);
+        let sink = Arc::new(InvocationOutput {
+            output,
+            binding: Mutex::new(binding.clone()),
+            path: path.clone(),
+            active_sessions: self.active_sessions.clone(),
+            persist_binding: !prepare,
+        });
+        let result = if prepare {
+            runtime
+                .prepare_invocation(request, external_context_id, sink)
+                .and_then(|ready| {
+                    let ready_binding = SessionBinding {
+                        external_context_id: Some(ready.external_context_id.clone()),
+                        working_directory: ready.working_directory.clone(),
+                        ..binding
+                    };
+                    fs::write(
+                        &path,
+                        serde_json::to_vec(&ready_binding).map_err(unavailable)?,
+                    )
+                    .map_err(unavailable)?;
+                    serde_json::to_value(ready).map_err(unavailable)
+                })
+        } else {
+            fs::write(&path, serde_json::to_vec(&binding).map_err(unavailable)?)
+                .map_err(unavailable)?;
+            let started = if let Some(external) = external_context_id {
+                runtime.resume_invocation(request, external, sink)
+            } else {
+                runtime.start_invocation(request, sink)
+            };
+            started.map(|_| Value::Null)
+        };
+        if result.is_err() {
+            self.active_sessions
+                .lock()
+                .map_err(unavailable)?
+                .remove(&session);
+            let _ = runtime.cancel_invocation(&id);
+        }
+        result
+    }
+
+    fn assert_native_idle(
+        &self,
+        configuration_ref: &str,
+        external: &ExternalRuntimeContextId,
+    ) -> Result<(), RuntimePortError> {
+        let active = self.active_sessions.lock().map_err(unavailable)?;
+        for session in active.keys() {
+            let path = self.binding_path(session);
+            if let Ok(bytes) = fs::read(path) {
+                let binding: SessionBinding =
+                    serde_json::from_slice(&bytes).map_err(unavailable)?;
+                if binding.configuration_ref == configuration_ref
+                    && binding.external_context_id.as_ref() == Some(external)
+                {
+                    return Err(unavailable(
+                        "Native conversation has an active or preparing invocation",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn binding_path(&self, id: &AgentSessionId) -> PathBuf {
         use sha2::{Digest, Sha256};
         self.sessions_directory
@@ -323,6 +468,8 @@ struct InvocationOutput {
     output: Arc<dyn FrameOutput>,
     binding: Mutex<SessionBinding>,
     path: PathBuf,
+    active_sessions: Arc<Mutex<HashMap<AgentSessionId, AgentInvocationId>>>,
+    persist_binding: bool,
 }
 impl AgentRuntimeUpdateSink for InvocationOutput {
     fn emit_update(
@@ -330,6 +477,13 @@ impl AgentRuntimeUpdateSink for InvocationOutput {
         invocation_id: &AgentInvocationId,
         update: RuntimeUpdate,
     ) -> Result<(), RuntimePortError> {
+        if matches!(&update, RuntimeUpdate::Finished(_)) {
+            let session = self.binding.lock().map_err(unavailable)?.session_id.clone();
+            let mut active = self.active_sessions.lock().map_err(unavailable)?;
+            if active.get(&session) == Some(invocation_id) {
+                active.remove(&session);
+            }
+        }
         if let RuntimeUpdate::Event(event) = &update {
             if let Some(external) = event
                 .normalized
@@ -338,11 +492,13 @@ impl AgentRuntimeUpdateSink for InvocationOutput {
             {
                 let mut binding = self.binding.lock().map_err(unavailable)?;
                 binding.external_context_id = Some(external.clone());
-                fs::write(
-                    &self.path,
-                    serde_json::to_vec(&*binding).map_err(unavailable)?,
-                )
-                .map_err(unavailable)?;
+                if self.persist_binding {
+                    fs::write(
+                        &self.path,
+                        serde_json::to_vec(&*binding).map_err(unavailable)?,
+                    )
+                    .map_err(unavailable)?;
+                }
             }
         }
         self.output.send(HostFrame::Update {
@@ -378,12 +534,30 @@ pub fn connect(
     input: impl BufRead,
     output: Arc<dyn FrameOutput>,
 ) -> Result<(), RuntimePortError> {
+    let mut preparations = Vec::new();
     for line in input.lines() {
         let line = line.map_err(unavailable)?;
         if line.trim().is_empty() {
             continue;
         }
         let request: HostRequest = serde_json::from_str(&line).map_err(unavailable)?;
+        if matches!(&request.command, HostCommand::PrepareInvocation { .. }) {
+            let host = host.clone();
+            let output = output.clone();
+            preparations.push(std::thread::spawn(move || {
+                let result = host.execute(request.command, output.clone());
+                let (result, error) = match result {
+                    Ok(value) => (Some(value), None),
+                    Err(error) => (None, Some(error)),
+                };
+                output.send(HostFrame::Response {
+                    id: request.id,
+                    result,
+                    error,
+                })
+            }));
+            continue;
+        }
         let result = host.execute(request.command, output.clone());
         let (result, error) = match result {
             Ok(value) => (Some(value), None),
@@ -395,7 +569,13 @@ pub fn connect(
             error,
         })?;
     }
-    host.shutdown()
+    let shutdown = host.shutdown();
+    for preparation in preparations {
+        preparation
+            .join()
+            .map_err(|_| unavailable("Native preparation worker panicked"))??;
+    }
+    shutdown
 }
 
 #[cfg(test)]
@@ -417,6 +597,26 @@ mod tests {
         launches: Mutex<Vec<RuntimeInvocationRequest>>,
     }
     impl AgentRuntime for InteractiveRuntime {
+        fn prepare_invocation(
+            &self,
+            request: RuntimeInvocationRequest,
+            external: Option<ExternalRuntimeContextId>,
+            sink: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<RuntimeInvocationReady, RuntimePortError> {
+            let cwd = request.working_directory.clone().unwrap();
+            self.start_invocation(request, sink)?;
+            Ok(RuntimeInvocationReady {
+                external_context_id: external
+                    .unwrap_or_else(|| ExternalRuntimeContextId::new("native-thread").unwrap()),
+                working_directory: cwd,
+            })
+        }
+        fn deliver_prepared_invocation(
+            &self,
+            _: &AgentInvocationId,
+        ) -> Result<(), RuntimePortError> {
+            Ok(())
+        }
         fn preflight_invocation(
             &self,
             _: RuntimeInvocationMode,
@@ -631,5 +831,83 @@ mod tests {
         assert!(
             matches!(&frames[1], HostFrame::Response { id, result: Some(value), error: None } if id == "2" && value["deviceId"] == "remote")
         );
+    }
+    #[test]
+    fn explicit_preparation_rebinds_idle_sessions_and_preserves_active_destination() {
+        let folder = tempfile::tempdir().unwrap();
+        let old = folder.path().join("old");
+        let new = folder.path().join("new");
+        fs::create_dir(&old).unwrap();
+        fs::create_dir(&new).unwrap();
+        let configuration = HostConfiguration {
+            device_id: "remote".into(),
+            device_name: "Remote".into(),
+            configurations: vec![CodexConfiguration {
+                id: "codex".into(),
+                executable: "fake".into(),
+                home: folder.path().into(),
+            }],
+        };
+        let mut host = Host::new(configuration, folder.path().join("bindings")).unwrap();
+        host.runtimes
+            .insert("codex".into(), Arc::new(InteractiveRuntime::default()));
+        let id = AgentSessionId::new("session").unwrap();
+        let external = ExternalRuntimeContextId::new("native-thread").unwrap();
+        let binding = SessionBinding {
+            session_id: id.clone(),
+            configuration_ref: "codex".into(),
+            working_directory: old.to_string_lossy().into_owned(),
+            external_context_id: Some(external.clone()),
+        };
+        fs::write(
+            host.binding_path(&id),
+            serde_json::to_vec(&binding).unwrap(),
+        )
+        .unwrap();
+        let request = RuntimeInvocationRequest {
+            session_id: id.clone(),
+            invocation_id: AgentInvocationId::new("prepared").unwrap(),
+            submitted_text: "continue".into(),
+            working_directory: Some(new.to_string_lossy().into_owned()),
+            options: Default::default(),
+            launch_extension: None,
+        };
+        let capture = Arc::new(Capture::default());
+        host.execute(
+            HostCommand::PrepareInvocation {
+                configuration_ref: "codex".into(),
+                request: request.clone(),
+                external_context_id: Some(external.clone()),
+            },
+            capture.clone(),
+        )
+        .unwrap();
+        let actual: SessionBinding =
+            serde_json::from_slice(&fs::read(host.binding_path(&id)).unwrap()).unwrap();
+        assert_eq!(actual.working_directory, new.to_string_lossy());
+        assert_eq!(actual.external_context_id, Some(external.clone()));
+        let mut blocked = request.clone();
+        blocked.invocation_id = AgentInvocationId::new("other").unwrap();
+        blocked.working_directory = Some(old.to_string_lossy().into_owned());
+        assert!(host
+            .execute(
+                HostCommand::PrepareInvocation {
+                    configuration_ref: "codex".into(),
+                    request: blocked,
+                    external_context_id: Some(external)
+                },
+                capture.clone()
+            )
+            .is_err());
+        let actual: SessionBinding =
+            serde_json::from_slice(&fs::read(host.binding_path(&id)).unwrap()).unwrap();
+        assert_eq!(actual.working_directory, new.to_string_lossy());
+        host.execute(
+            HostCommand::Cancel {
+                invocation_id: request.invocation_id,
+            },
+            capture,
+        )
+        .unwrap();
     }
 }

@@ -178,15 +178,15 @@ it('handles arrows, Tab, Backspace, Shift+Enter, and IME composition separately 
   expect(send).not.toHaveBeenCalled();
 });
 
-it('does not change model or effort during a turn but still offers skills', async () => {
+it('allows draft model changes during a turn and still offers skills', async () => {
   const { input, user, send } = setup(true);
   await user.type(input, '/model');
   expect(await screen.findByRole('option', { name: /Model/ })).toHaveAttribute(
     'aria-disabled',
-    'true',
+    'false',
   );
   await user.keyboard('{Enter}');
-  expect(input).toHaveValue('/model');
+  expect(input).toHaveValue('/');
   expect(send).not.toHaveBeenCalled();
   await user.clear(input);
   await user.type(input, '/review');

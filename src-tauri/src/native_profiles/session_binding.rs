@@ -171,3 +171,36 @@ impl NativeProfileService {
         Ok(extension)
     }
 }
+
+impl NativeProfileService {
+    pub(super) fn prepare_destination_native_launch(
+        &self,
+        reference: &str,
+        session_id: &str,
+        invocation_id: &str,
+        resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        let home = self.resolve_configuration_home(reference)?;
+        let mut extension = extension.unwrap_or_default();
+        if extension
+            .environment
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("CODEX_HOME"))
+        {
+            return Err("Native profile owns CODEX_HOME".into());
+        }
+        self.write("record prepared native launch",|tx| {
+            let preparation:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_session_preparations p JOIN agent_session_invocations i ON i.id=p.invocation_id WHERE p.invocation_id=?1 AND p.session_id=?2 AND i.status='pending')",params![invocation_id,session_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if !preparation {return Err("Destination preparation requires a pending ordinary submission".into());}
+            let mode=if resuming {"resume"}else{"start"};
+            tx.execute("INSERT INTO agent_session_native_profile_launch_provenance(invocation_id,session_id,profile_id,filesystem_identity,environment_key,invocation_mode,prepared_at) VALUES(?1,?2,?3,?4,'CODEX_HOME',?5,?6) ON CONFLICT(invocation_id) DO NOTHING",params![invocation_id,session_id,home.profile_id,home.filesystem_identity,mode,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
+            Ok(())
+        })?;
+        extension.environment.push((
+            "CODEX_HOME".into(),
+            home.home.to_string_lossy().into_owned(),
+        ));
+        Ok(extension)
+    }
+}

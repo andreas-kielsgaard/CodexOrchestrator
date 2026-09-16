@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum AgentSessionNotification {
+    PreparationUpdated {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+    },
     SteeringAccepted {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
@@ -36,10 +40,46 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
 /// Application-owned authority for deriving the one native home used by a managed provider
 /// launch. Callers can supply invocation-specific extensions, but never profile authority.
 pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
+    fn bound_configuration_ref(
+        &self,
+        _session_id: &AgentSessionId,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    fn prepare_destination_launch(
+        &self,
+        configuration_ref: &str,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        resuming: bool,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String> {
+        self.prepare_configured_launch(
+            configuration_ref,
+            session_id,
+            invocation_id,
+            resuming,
+            extension,
+        )
+    }
+    fn commit_destination(
+        &self,
+        _configuration_ref: &str,
+        _session_id: &AgentSessionId,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     fn prepare_configured_launch(
-        &self, _configuration_ref: &str, session_id: &AgentSessionId, invocation_id: &AgentInvocationId,
-        resuming: bool, extension: Option<RuntimeLaunchExtension>,
-    ) -> Result<RuntimeLaunchExtension, String> { self.prepare_launch(session_id, invocation_id, resuming, extension) }
+        &self,
+        _configuration_ref: &str,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        resuming: bool,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String> {
+        self.prepare_launch(session_id, invocation_id, resuming, extension)
+    }
     fn prepare_launch(
         &self,
         session_id: &AgentSessionId,

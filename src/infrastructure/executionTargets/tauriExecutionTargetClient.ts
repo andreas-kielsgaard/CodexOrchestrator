@@ -4,6 +4,7 @@ export function createTauriExecutionTargetClient(
   invokeCommand: typeof invoke = invoke,
 ): ExecutionTargetClient {
   return {
+    resolvePublishedTip: (input) => invokeCommand('resolve_published_worktree_commit', { input }),
     listDevices: () => invokeCommand('list_execution_target_devices'),
     listWorktreeChoices: (scope) => invokeCommand('list_execution_worktree_choices', { scope }),
     listTargets: (repositoryId, branchRef) =>

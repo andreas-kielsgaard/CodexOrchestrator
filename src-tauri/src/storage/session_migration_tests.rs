@@ -224,3 +224,16 @@ fn main_and_remote_prototype_schemas_upgrade_without_losing_session_state() {
         }
     }
 }
+
+#[test]
+fn preparation_schema_upgrade_preserves_existing_sessions_and_is_idempotent() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("preparation-v51.sqlite");
+    let connection=open_active_database(&path).unwrap();
+    connection.execute_batch("DROP TABLE agent_session_preparations; DROP TABLE agent_session_current_execution; PRAGMA user_version=51; INSERT INTO agent_sessions(id,title,availability,external_context_id,working_directory,requested_options_json,created_at,updated_at) VALUES('before-preparation','Existing session','available','native-existing','C:/existing','{}','before','before');").unwrap();
+    let before=session_rows(&connection);drop(connection);
+    for _ in 0..2 {
+        let connection=open_active_database(&path).unwrap();assert_eq!(session_rows(&connection),before);
+        assert_eq!(connection.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        assert_eq!(connection.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),super::ACTIVE_SCHEMA_VERSION);
+    }
+}

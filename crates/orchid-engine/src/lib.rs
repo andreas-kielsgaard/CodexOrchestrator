@@ -7,3 +7,5 @@ pub mod host;
 pub mod processes;
 pub mod protocol;
 pub mod repository_context;
+
+pub mod workspaces;

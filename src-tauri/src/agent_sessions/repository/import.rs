@@ -129,6 +129,7 @@ mod tests {
         let session = AgentSession {
             id: AgentSessionId::new("import-session").unwrap(),
             title: "Imported".into(),
+            execution_target: None,
             availability: AgentSessionAvailability::Available,
             workspace_origin: Some("allocated".into()),
             working_directory: Some("workspace".into()),

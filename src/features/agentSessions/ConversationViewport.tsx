@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
@@ -22,6 +23,8 @@ export interface ConversationViewportSegment {
 }
 
 export interface ConversationViewportComposerTarget {
+  toolbar?: ReactNode;
+  preparationPanel?: ReactNode;
   quickFeatures?: ComposerQuickFeatures;
   targetSource?: ComposerTargetSource;
   steeringAvailable?: boolean;
@@ -100,6 +103,7 @@ export function ConversationViewport({
 
   return (
     <div className="agent-session-conversation">
+      {composerTarget?.preparationPanel}
       {requests.length > 0 && (
         <section className="session-request-notice" aria-label="Pending agent requests">
           <span role="status">
@@ -162,7 +166,7 @@ export function ConversationViewport({
       </div>
       {composerTarget && (
         <AgentSessionComposer
-          key={composerTarget.sessionId ?? 'new-session'}
+          toolbar={composerTarget.toolbar}
           quickFeatures={composerTarget.quickFeatures}
           targetSource={composerTarget.targetSource}
           draft={composerTarget.draft}

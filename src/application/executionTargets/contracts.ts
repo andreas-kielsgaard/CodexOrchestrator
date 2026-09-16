@@ -29,6 +29,21 @@ export interface SessionExecutionTargetDto {
   readonly path: string;
   readonly head: string | null;
 }
+export interface SessionExecutionSelectionDto {
+  readonly capabilityProfileId: string;
+  readonly capabilityProfileRevision: number;
+  readonly execution: ExecutionBindingDto;
+  readonly workspace:
+    | { readonly kind: 'existing'; readonly target: SessionExecutionTargetDto }
+    | {
+        readonly kind: 'create';
+        readonly repositoryId: string;
+        readonly branchRef: string;
+        readonly commit: string;
+        readonly attachment: 'branch';
+      }
+    | { readonly kind: 'auxiliary' };
+}
 export interface ExecutionTargetProfileDto {
   readonly capabilityProfileId: string;
   readonly capabilityProfileRevision: number;
@@ -70,6 +85,11 @@ export interface ExecutionTargetRuntimeDto {
   readonly nativeInventory: NativeCapabilityInventoryDto;
 }
 export interface ExecutionTargetClient {
+  resolvePublishedTip?(input: {
+    repositoryId: string;
+    branchRef: string;
+    execution: ExecutionBindingDto;
+  }): Promise<{ commit: string }>;
   listDevices(): Promise<readonly ConfiguredExecutionDeviceDto[]>;
   listWorktreeChoices(
     scope: WorktreeChoiceScopeDto,

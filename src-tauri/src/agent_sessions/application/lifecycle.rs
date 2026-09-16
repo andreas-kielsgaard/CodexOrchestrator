@@ -23,11 +23,27 @@ impl AgentSessionApplication {
             .get_invocation(&command.invocation_id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Agent invocation not found"))?;
+        if self
+            .repository
+            .preparation(&invocation.id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .is_some_and(|p| {
+                !p.delivery_started
+                    && matches!(
+                        p.phase,
+                        crate::agent_sessions::preparation::PreparationPhase::Accepted
+                            | crate::agent_sessions::preparation::PreparationPhase::Preparing
+                    )
+            })
+        {
+            self.cancel_preparation(&invocation.id)?;
+            return Ok(invocation);
+        }
         if !invocation.status.is_active() {
             return Ok(invocation);
         }
         if let Err(error) = self
-            .runtime_for_session_id(&invocation.session_id)?
+            .runtime_for_invocation(&invocation.id)?
             .cancel_invocation(&command.invocation_id)
         {
             self.record_diagnostic(
@@ -63,6 +79,7 @@ impl AgentSessionApplication {
                 })?;
             for invocation_history in history.invocations {
                 let invocation = invocation_history.invocation;
+                self.reconcile_preparation_on_startup(&invocation.id)?;
                 if !invocation.status.is_active() {
                     continue;
                 }
@@ -131,6 +148,7 @@ impl AgentSessionApplication {
     }
 
     pub(crate) fn shutdown_runtime(&self) -> Result<(), AgentSessionApplicationError> {
+        self.preparation_workers.cancel_all();
         if let Some(endpoints) = &self.endpoints {
             endpoints
                 .shutdown()

@@ -11,6 +11,7 @@ mod creation;
 mod dependencies;
 mod diagnostics;
 mod direct_user;
+pub(crate) mod preparation;
 mod interactions;
 mod invocation;
 mod lifecycle;
@@ -59,6 +60,8 @@ pub(crate) struct AgentSessionApplication {
     interaction_lanes: Arc<interactions::InteractionLanes>,
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
+    execution_target_service: Option<Arc<crate::execution_targets::ExecutionTargetService>>,
+    preparation_workers: Arc<preparation::PreparationWorkers>,
 }
 
 impl AgentSessionApplication {
@@ -86,6 +89,8 @@ impl AgentSessionApplication {
             interaction_lanes: Arc::new(interactions::InteractionLanes::default()),
             capability_profiles: None,
             endpoints: None,
+            execution_target_service: None,
+            preparation_workers: Arc::new(preparation::PreparationWorkers::default()),
         }
     }
 

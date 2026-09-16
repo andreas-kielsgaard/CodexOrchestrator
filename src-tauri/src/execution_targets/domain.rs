@@ -146,3 +146,32 @@ pub(crate) struct ExecutionTargetRuntime {
     pub(crate) runtime_profile: crate::execution_configuration::RuntimeProfileSnapshot,
     pub(crate) native_inventory: crate::execution_configuration::NativeCapabilityInventory,
 }
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionExecutionSelection {
+    pub(crate) capability_profile_id: String,
+    pub(crate) capability_profile_revision: u64,
+    pub(crate) execution: ExecutionBinding,
+    pub(crate) workspace: SessionWorkspaceSelection,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum SessionWorkspaceSelection {
+    Existing {
+        target: SessionExecutionTarget,
+    },
+    Create {
+        repository_id: String,
+        branch_ref: String,
+        commit: String,
+        attachment: String,
+    },
+    Auxiliary,
+}

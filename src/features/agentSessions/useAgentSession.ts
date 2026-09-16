@@ -1,4 +1,13 @@
-import type { SessionExecutionTargetDto } from '../../application/executionTargets/contracts';
+import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
+import { mergeSelectedQuickFeatures } from './selectedTargetQuickFeatures';
+import type {
+  SessionExecutionSelectionDto,
+  SessionExecutionTargetDto,
+} from '../../application/executionTargets/contracts';
+import {
+  isSessionPreparing,
+  type SessionPreparationDto,
+} from '../../application/agentSessions/preparation';
 import { sessionErrorMessage as errorMessage } from './sessionErrors';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
@@ -6,11 +15,18 @@ import type {
   AgentSessionDetailsDto,
   AgentSessionUpdateDto,
   AgentSessionProfileClient,
+  PinnedAgentSessionProfileDto,
 } from '../../application/agentSessions';
+import { samePreparedConfiguration } from './sessionPreparationState';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 
 export interface AgentSessionWorkspaceController {
+  currentProfile?: PinnedAgentSessionProfileDto | null;
+  preparation?: SessionPreparationDto | null;
+  preparing?: boolean;
+  submissionUnavailableReason?: string;
+  retryPreparation?(): Promise<void>;
   quickFeatures?: ComposerQuickFeatures;
   selectedSessionId: string | null;
   details: AgentSessionDetailsDto | null;
@@ -37,6 +53,9 @@ export interface AgentSessionWorkspaceController {
 }
 
 export interface UseAgentSessionOptions {
+  executionQuickFeatures?: AgentSessionQuickFeatures;
+  executionSelection?: SessionExecutionSelectionDto | null;
+  preparedExecution?: boolean;
   executionTarget?: SessionExecutionTargetDto | null;
   execution?: {
     readonly target?: SessionExecutionTargetDto | null;
@@ -70,6 +89,10 @@ export function useAgentSession(
   const selectedSessionId = options.selectedSessionId;
   const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
   const [draft, setDraft] = useState('');
+  const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
+  const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
+  const acceptedOptionsRef = useRef<string | null>(null);
+  const sendingRef = useRef(false);
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -88,18 +111,28 @@ export function useAgentSession(
       const next = reload
         ? await client.reloadSession({ sessionId })
         : await client.loadSession({ sessionId });
+      const prepared =
+        options.preparedExecution && options.execution?.client.loadPreparation
+          ? await options.execution.client.loadPreparation(sessionId)
+          : null;
+      const current =
+        options.preparedExecution && options.execution?.client.loadCurrentProfile
+          ? await options.execution.client.loadCurrentProfile(sessionId).catch(() => null)
+          : null;
       if (
         mountedRef.current &&
         selectedIdRef.current === sessionId &&
         generation === loadGenerationRef.current
       ) {
         setDetails(next);
+        setPreparation(prepared);
+        setCurrentProfile(current);
         setWorkingDirectory(next.session.workingDirectory ?? '');
         invocationIdsRef.current = new Set(next.invocations.map(({ invocation }) => invocation.id));
       }
       return next;
     },
-    [client],
+    [client, options.preparedExecution, options.execution?.client],
   );
 
   const reconcileUpdate = useCallback(
@@ -146,6 +179,9 @@ export function useAgentSession(
     async (sessionId: string) => {
       selectedIdRef.current = sessionId;
       setDetails(null);
+      setCurrentProfile(null);
+      setPreparation(null);
+      acceptedOptionsRef.current = null;
       setLoading(true);
       setError(null);
       try {
@@ -163,6 +199,9 @@ export function useAgentSession(
     loadGenerationRef.current += 1;
     selectedIdRef.current = null;
     setDetails(null);
+    setPreparation(null);
+    setCurrentProfile(null);
+    acceptedOptionsRef.current = null;
     invocationIdsRef.current = new Set();
     setWorkingDirectory('');
     setDraft('');
@@ -199,9 +238,12 @@ export function useAgentSession(
   const sendText = useCallback(
     async (value: string, clearComposer = false) => {
       const submittedText = value.trim();
-      if (!submittedText || sending) return;
+      if (!submittedText || sendingRef.current) return;
+      const preparingNow = isSessionPreparing(preparation);
+      if (preparingNow) return;
       const sendContext = contextRef.current;
       const existingSessionId = selectedIdRef.current;
+      sendingRef.current = true;
       setSending(true);
       setError(null);
       try {
@@ -211,6 +253,16 @@ export function useAgentSession(
             ? projectAgentSessionTranscript(details).activeInvocationId
             : null;
         if (existingSessionId && activeInvocationId) {
+          if (
+            options.preparedExecution &&
+            !samePreparedConfiguration(
+              options.executionSelection,
+              options.execution?.selection,
+              preparation,
+              acceptedOptionsRef.current,
+            )
+          )
+            throw new Error('These execution choices apply after the current turn finishes.');
           if (!client.steerSession)
             throw new Error('Turn steering is unavailable for this connection.');
           const outcome = await client.steerSession({
@@ -233,6 +285,7 @@ export function useAgentSession(
           return;
         }
         if (
+          !options.preparedExecution &&
           existingSessionId &&
           details?.session.id === existingSessionId &&
           !details.session.workingDirectory &&
@@ -242,47 +295,63 @@ export function useAgentSession(
             throw new Error('Working context selection is unavailable.');
           await client.resolveWorkingDirectory(existingSessionId, workingDirectory.trim());
         }
+        const preparedOptions = JSON.stringify([
+          options.executionSelection,
+          options.execution?.selection,
+        ]);
         const acknowledgement =
-          existingSessionId && options.sendExistingMessage
-            ? await options.sendExistingMessage({
+          options.preparedExecution && options.execution?.client.sendPreparedMessage
+            ? await options.execution.client.sendPreparedMessage({
                 sessionId: existingSessionId,
+                submissionId: crypto.randomUUID(),
                 submittedText,
+                title: options.sessionTitle ?? null,
+                workingDirectory: workingDirectory.trim() || null,
+                executionSelection: options.executionSelection ?? null,
+                ...options.execution.selection,
+                folderTarget: options.folderTarget ?? null,
               })
-            : options.execution
-              ? existingSessionId
-                ? await options.execution.client.sendDirectUserMessage({
-                    sessionId: existingSessionId,
-                    submittedText,
-                    ...options.execution.selection,
-                  })
-                : await options.execution.client.startDirectUserSession({
-                    submittedText,
-                    workingDirectory:
-                      options.execution.target?.path ?? (workingDirectory.trim() || null),
-                    title: options.sessionTitle ?? null,
-                    ...(options.execution.target
-                      ? { executionTarget: options.execution.target }
-                      : {}),
-                    ...options.execution.selection,
-                    ...(options.folderTarget ? { folderTarget: options.folderTarget } : {}),
-                  })
-              : !existingSessionId && options.startSession
-                ? await options.startSession({
-                    submittedText,
-                    workingDirectory: workingDirectory.trim() || null,
-                    title: options.sessionTitle ?? null,
-                  })
-                : await client.sendMessage({
-                    ...(existingSessionId ? { sessionId: existingSessionId } : {}),
-                    submittedText,
-                    ...(!existingSessionId && options.sessionTitle
-                      ? { title: options.sessionTitle }
-                      : {}),
-                    ...(!existingSessionId && workingDirectory.trim()
-                      ? { workingDirectory: workingDirectory.trim() }
-                      : {}),
-                  });
-        options.execution?.afterAccepted();
+            : existingSessionId && options.sendExistingMessage
+              ? await options.sendExistingMessage({
+                  sessionId: existingSessionId,
+                  submittedText,
+                })
+              : options.execution
+                ? existingSessionId
+                  ? await options.execution.client.sendDirectUserMessage({
+                      sessionId: existingSessionId,
+                      submittedText,
+                      ...options.execution.selection,
+                    })
+                  : await options.execution.client.startDirectUserSession({
+                      submittedText,
+                      workingDirectory:
+                        options.execution.target?.path ?? (workingDirectory.trim() || null),
+                      title: options.sessionTitle ?? null,
+                      ...(options.execution.target
+                        ? { executionTarget: options.execution.target }
+                        : {}),
+                      ...options.execution.selection,
+                      ...(options.folderTarget ? { folderTarget: options.folderTarget } : {}),
+                    })
+                : !existingSessionId && options.startSession
+                  ? await options.startSession({
+                      submittedText,
+                      workingDirectory: workingDirectory.trim() || null,
+                      title: options.sessionTitle ?? null,
+                    })
+                  : await client.sendMessage({
+                      ...(existingSessionId ? { sessionId: existingSessionId } : {}),
+                      submittedText,
+                      ...(!existingSessionId && options.sessionTitle
+                        ? { title: options.sessionTitle }
+                        : {}),
+                      ...(!existingSessionId && workingDirectory.trim()
+                        ? { workingDirectory: workingDirectory.trim() }
+                        : {}),
+                    });
+        acceptedOptionsRef.current = preparedOptions;
+        if (!options.preparedExecution) options.execution?.afterAccepted();
         if (!existingSessionId && contextRef.current === sendContext)
           options.onSessionCreated?.(acknowledgement.sessionId);
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
@@ -294,10 +363,11 @@ export function useAgentSession(
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
+        sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, options, sending, workingDirectory],
+    [client, details, loadSelected, options, preparation, workingDirectory],
   );
 
   const send = useCallback(() => sendText(draft, true), [draft, sendText]);
@@ -310,14 +380,16 @@ export function useAgentSession(
     setCanceling(true);
     setError(null);
     try {
-      await client.cancelInvocation({ invocationId: activeInvocationId });
+      if (isSessionPreparing(preparation) && options.execution?.client.cancelPreparation)
+        await options.execution.client.cancelPreparation(activeInvocationId);
+      else await client.cancelInvocation({ invocationId: activeInvocationId });
       if (selectedIdRef.current) await loadSelected(selectedIdRef.current, true);
     } catch (caught) {
       if (mountedRef.current) setError(errorMessage(caught));
     } finally {
       if (mountedRef.current) setCanceling(false);
     }
-  }, [canceling, client, details, loadSelected]);
+  }, [canceling, client, details, loadSelected, preparation, options.execution?.client]);
 
   const respondToRequest = useCallback(
     async (invocationId: string, requestId: string, response: unknown) => {
@@ -345,8 +417,8 @@ export function useAgentSession(
   }, []);
 
   const transcript = useMemo(
-    () => (details ? projectAgentSessionTranscript(details) : null),
-    [details],
+    () => (details ? projectAgentSessionTranscript(details, preparation) : null),
+    [details, preparation],
   );
 
   useEffect(() => {
@@ -363,24 +435,89 @@ export function useAgentSession(
   }, [loadSelected, selectedSessionId, transcript?.activeInvocationId]);
 
   const quickFeaturesClient = options.execution?.client;
-  const quickExecutionTarget = selectedSessionId ? null : options.execution?.target;
+  const quickExecutionTarget = options.execution?.target;
   const quickContext =
-    details?.session.id === selectedSessionId
+    quickExecutionTarget?.path ??
+    (details?.session.id === selectedSessionId
       ? details.session.workingDirectory
-      : (quickExecutionTarget?.path ?? workingDirectory);
+      : workingDirectory);
   const quickFolderTarget = selectedSessionId ? null : options.folderTarget;
-  const loadQuickFeatures = useCallback(() => {
-    if (!quickFeaturesClient?.loadQuickFeatures)
-      return Promise.reject(new Error('Quick features are unavailable.'));
+  const loadQuickFeatures = useCallback(async () => {
+    const selectedFacts = options.executionQuickFeatures;
+    const desired = options.executionSelection;
+    if (options.preparedExecution && desired && selectedFacts) {
+      if (desired.execution.connection.kind === 'ssh')
+        return {
+          ...selectedFacts,
+          limitations: ['Native skill discovery is unavailable on remote devices.'],
+        };
+      if (desired.workspace.kind !== 'existing')
+        return {
+          ...selectedFacts,
+          limitations: ['Skills are available after the working folder is prepared.'],
+        };
+      if (!quickFeaturesClient?.loadQuickFeatures) return selectedFacts;
+      try {
+        const discovered = await quickFeaturesClient.loadQuickFeatures({
+          sessionId: null,
+          workingDirectory: desired.workspace.target.path,
+          executionTarget: desired.workspace.target,
+        });
+        return mergeSelectedQuickFeatures(selectedFacts, discovered);
+      } catch (cause) {
+        return {
+          ...selectedFacts,
+          limitations: [`Skill discovery unavailable: ${errorMessage(cause)}`],
+        };
+      }
+    }
+    if (options.preparedExecution && desired)
+      throw new Error('Loading selected target capabilities.');
+    if (!quickFeaturesClient?.loadQuickFeatures) throw new Error('Quick features are unavailable.');
     return quickFeaturesClient.loadQuickFeatures({
       sessionId: selectedSessionId,
       workingDirectory: quickContext || null,
       ...(quickFolderTarget ? { folderTarget: quickFolderTarget } : {}),
       ...(quickExecutionTarget ? { executionTarget: quickExecutionTarget } : {}),
     });
-  }, [quickFeaturesClient, selectedSessionId, quickContext, quickFolderTarget, quickExecutionTarget]);
+  }, [
+    quickFeaturesClient,
+    selectedSessionId,
+    quickContext,
+    quickFolderTarget,
+    quickExecutionTarget,
+    options.preparedExecution,
+    options.executionSelection,
+    options.executionQuickFeatures,
+  ]);
 
+  const preparing = isSessionPreparing(preparation);
+  const sameActiveConfiguration =
+    !options.preparedExecution ||
+    samePreparedConfiguration(
+      options.executionSelection,
+      options.execution?.selection,
+      preparation,
+      acceptedOptionsRef.current,
+    );
   return {
+    preparation,
+    preparing,
+    currentProfile,
+    submissionUnavailableReason: preparing
+      ? 'Waiting for setup to finish.'
+      : transcript?.activeInvocationId && !sameActiveConfiguration
+        ? 'These execution choices apply after the current turn finishes.'
+        : undefined,
+    retryPreparation: async () => {
+      if (!preparation?.canRetry || !options.execution?.client.retryPreparation) return;
+      try {
+        await options.execution.client.retryPreparation(preparation.invocationId);
+        if (selectedIdRef.current) await loadSelected(selectedIdRef.current, true);
+      } catch (cause) {
+        setError(errorMessage(cause));
+      }
+    },
     quickFeatures:
       options.execution?.setSelection && quickFeaturesClient?.loadQuickFeatures
         ? {
@@ -389,6 +526,8 @@ export function useAgentSession(
               quickContext,
               quickFolderTarget,
               quickExecutionTarget,
+              options.executionSelection,
+              options.executionQuickFeatures,
             ]),
             load: loadQuickFeatures,
             selection: options.execution.selection,
@@ -396,7 +535,7 @@ export function useAgentSession(
           }
         : undefined,
     respondToRequest,
-    steeringAvailable: Boolean(client.steerSession),
+    steeringAvailable: Boolean(client.steerSession) && !preparing && sameActiveConfiguration,
     selectedSessionId,
     details,
     transcript,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AgentSessionProfileClient,
   PinnedAgentSessionProfileDto,
@@ -12,18 +12,19 @@ export function useSessionExecutionSelection(
   client: AgentSessionProfileClient | undefined,
   sessionId: string | null,
   draftId?: string,
-  draftTargetKey?: string,
 ) {
   const [profile, setProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState(inherited);
   const currentSession = useRef(sessionId ?? draftId);
   currentSession.current = sessionId ?? draftId;
+  const previousContext = useRef({ sessionId, draftId });
   useEffect(() => {
     let active = true;
     setProfile(null);
     setError(null);
-    setSelection(inherited());
+    if (previousContext.current.sessionId || !sessionId) setSelection(inherited());
+    previousContext.current = { sessionId, draftId };
     if (client && sessionId)
       void client.loadPinnedProfile(sessionId).then(
         (value) => {
@@ -36,7 +37,20 @@ export function useSessionExecutionSelection(
     return () => {
       active = false;
     };
-  }, [client, sessionId, draftId, draftTargetKey]);
+  }, [client, sessionId, draftId]);
+  const reloadProfile = useCallback(async () => {
+    if (!client || !sessionId) return;
+    try {
+      const value = await client.loadPinnedProfile(sessionId);
+      if (currentSession.current === sessionId) {
+        setProfile(value);
+        setError(null);
+      }
+    } catch (cause) {
+      if (currentSession.current === sessionId)
+        setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [client, sessionId]);
   const afterAccepted = () => {
     if (currentSession.current === (sessionId ?? draftId))
       setSelection((current) => (current === selection ? inherited() : current));
@@ -44,6 +58,7 @@ export function useSessionExecutionSelection(
   return {
     profile,
     error,
+    reloadProfile,
     selection,
     setSelection,
     execution: client ? { client, selection, setSelection, afterAccepted } : undefined,

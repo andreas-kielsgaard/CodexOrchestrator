@@ -5,6 +5,14 @@ use crate::{
 };
 
 impl AgentSessionApplication {
+    pub(crate) fn with_execution_target_service(
+        mut self,
+        service: Arc<crate::execution_targets::ExecutionTargetService>,
+    ) -> Self {
+        self.execution_target_service = Some(service);
+        self
+    }
+
     pub(crate) fn with_execution_endpoints(mut self, endpoints: Arc<ExecutionEndpoints>) -> Self {
         self.endpoints = Some(endpoints);
         self
@@ -35,6 +43,26 @@ impl AgentSessionApplication {
         &self,
         id: &AgentInvocationId,
     ) -> Result<Arc<dyn AgentRuntime>, AgentSessionApplicationError> {
+        if let Some(preparation) = self
+            .repository
+            .preparation(id)
+            .map_err(AgentSessionApplicationError::repository)?
+        {
+            if let Some(target) = preparation
+                .resolved_target
+                .as_ref()
+                .or(preparation.source_target.as_ref())
+            {
+                return self
+                    .endpoints
+                    .as_ref()
+                    .ok_or_else(|| {
+                        AgentSessionApplicationError::invalid("Execution endpoints unavailable")
+                    })?
+                    .runtime(&target.execution)
+                    .map_err(AgentSessionApplicationError::invalid);
+            }
+        }
         let invocation = self
             .repository
             .get_invocation(id)

@@ -88,6 +88,11 @@ export function AgentSessionTranscript({
                     </span>
                   </header>
                   <p>{invocation.submittedText}</p>
+                  {invocation.preparing && (
+                    <small className="waiting-status" role="status">
+                      Waiting for setup
+                    </small>
+                  )}
                 </article>
               )}
               <section
@@ -97,7 +102,7 @@ export function AgentSessionTranscript({
                 <ProcessingDisclosure
                   invocationId={invocation.id}
                   activity={invocation.processing}
-                  running={invocation.isActive}
+                  running={invocation.isActive && !invocation.preparing}
                   expanded={expandedProcessing.has(invocation.id)}
                   onToggle={() => onToggleProcessing(invocation.id)}
                   safeOnly={safeActivityDetails}

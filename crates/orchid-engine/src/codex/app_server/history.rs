@@ -10,8 +10,17 @@ pub fn read_thread(program: &str, home: PathBuf, id: &str) -> Result<Value, Runt
     })
 }
 
-pub fn fork_thread(program: &str, home: PathBuf, id: &str, last: &str, cwd: &str) -> Result<Value, RuntimePortError> {
+pub fn fork_thread(
+    program: &str,
+    home: PathBuf,
+    id: &str,
+    last: &str,
+    cwd: &str,
+) -> Result<Value, RuntimePortError> {
     client::with_connection(program, home, Some(PathBuf::from(cwd)), |rpc| {
-        rpc.call("thread/fork", json!({"threadId":id,"lastTurnId":last,"cwd":cwd}))
+        rpc.call(
+            "thread/fork",
+            json!({"threadId":id,"lastTurnId":last,"cwd":cwd}),
+        )
     })
 }

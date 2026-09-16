@@ -2,12 +2,13 @@
 mod approval_choices;
 mod capability_roots;
 mod client;
-pub mod history;
-pub mod items;
 pub mod configuration;
 mod connection;
+pub mod continuation;
 pub mod environment;
+pub mod history;
 mod inventory;
+pub mod items;
 mod notifications;
 mod process_context;
 mod requests;
@@ -37,6 +38,7 @@ struct Invocation {
     target: Mutex<Option<RuntimeTurnTarget>>,
     requests: Mutex<HashMap<String, requests::PendingRequest>>,
     finished: AtomicBool,
+    prepared_turn: Mutex<Option<Value>>,
 }
 
 impl Invocation {
@@ -248,6 +250,9 @@ impl CodexAppServerRuntime {
         request: RuntimeInvocationRequest,
         external: Option<ExternalRuntimeContextId>,
         sink: Arc<dyn AgentRuntimeUpdateSink>,
+        preparation: Option<
+            std::sync::mpsc::SyncSender<Result<RuntimeInvocationReady, RuntimePortError>>,
+        >,
     ) -> Result<(), RuntimePortError> {
         let program = self.program.clone().map_err(unavailable)?;
         let environment = request
@@ -289,6 +294,7 @@ impl CodexAppServerRuntime {
             target: Mutex::new(None),
             requests: Mutex::new(HashMap::new()),
             finished: AtomicBool::new(false),
+            prepared_turn: Mutex::new(None),
         });
         {
             let mut all = self
@@ -322,8 +328,30 @@ impl CodexAppServerRuntime {
         thread::Builder::new()
             .name(format!("codex-initialize-{id}"))
             .spawn(move || {
-                if let Err(error) = initialize_turn(&invocation, request, external) {
-                    invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error));
+                let initialized = initialize_turn(&invocation, request, external);
+                match (initialized, preparation) {
+                    (Ok((ready, turn)), Some(sender)) => {
+                        if invocation.finished.load(Ordering::Acquire) {
+                            let _ =
+                                sender.send(Err(unavailable("Native preparation was canceled")));
+                            return;
+                        }
+                        *invocation.prepared_turn.lock().expect("prepared turn") = Some(turn);
+                        if sender.send(Ok(ready)).is_err() {
+                            invocation.finish(AgentInvocationTerminalStatus::Canceled, None);
+                        }
+                    }
+                    (Ok((_, turn)), None) => {
+                        if let Err(error) = invocation.connection.call("turn/start", turn) {
+                            invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error));
+                        }
+                    }
+                    (Err(error), sender) => {
+                        if let Some(sender) = sender {
+                            let _ = sender.send(Err(error.clone()));
+                        }
+                        invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error));
+                    }
                 }
                 // EOF normally closes app-server. Retain ownership and bound cleanup if it does not.
                 while !invocation.finished.load(Ordering::Acquire) {
@@ -351,7 +379,7 @@ fn initialize_turn(
     invocation: &Invocation,
     mut request: RuntimeInvocationRequest,
     external: Option<ExternalRuntimeContextId>,
-) -> Result<(), RuntimePortError> {
+) -> Result<(RuntimeInvocationReady, Value), RuntimePortError> {
     let rpc = &invocation.connection;
     rpc.call("initialize", json!({"clientInfo":{"name":"codex_orchestrator","version":"1"},"capabilities":{"experimentalApi":true}}))?;
     rpc.write(json!({"method":"initialized","params":{}}))?;
@@ -402,6 +430,7 @@ fn initialize_turn(
         }
         .into();
     }
+    let expected_external = external.clone();
     let method = if let Some(external) = external {
         // CLI 0.144 retains model/effort from history unless resume supplies current values.
         // Ask Codex to resolve a fresh, ephemeral thread with this exact invocation's config.
@@ -432,6 +461,26 @@ fn initialize_turn(
     let thread_id = result["thread"]["id"]
         .as_str()
         .ok_or_else(|| unavailable("App-server did not return a thread identity"))?;
+    if expected_external
+        .as_ref()
+        .is_some_and(|expected| expected.as_str() != thread_id)
+    {
+        return Err(unavailable(
+            "Native resume returned a different conversation identity",
+        ));
+    }
+    if let (Some(requested), Some(actual)) =
+        (request.working_directory.as_deref(), result["cwd"].as_str())
+    {
+        let requested =
+            std::fs::canonicalize(requested).unwrap_or_else(|_| PathBuf::from(requested));
+        let actual = std::fs::canonicalize(actual).unwrap_or_else(|_| PathBuf::from(actual));
+        if requested != actual {
+            return Err(unavailable(
+                "Native resume did not select the requested working directory",
+            ));
+        }
+    }
     // Resume does not necessarily emit thread/started. Always establish durable continuation identity.
     let context = invocation
         .protocol
@@ -452,11 +501,61 @@ fn initialize_turn(
     {
         turn["effort"] = effort.clone().into();
     }
-    rpc.call("turn/start", turn)?;
-    Ok(())
+    let working_directory = result["cwd"]
+        .as_str()
+        .or(request.working_directory.as_deref())
+        .ok_or_else(|| unavailable("App-server did not return a working directory"))?
+        .to_owned();
+    Ok((
+        RuntimeInvocationReady {
+            external_context_id: ExternalRuntimeContextId::new(thread_id)
+                .map_err(|error| unavailable(error.to_string()))?,
+            working_directory,
+        },
+        turn,
+    ))
 }
 
 impl AgentRuntime for CodexAppServerRuntime {
+    fn prepare_invocation(
+        &self,
+        request: RuntimeInvocationRequest,
+        external: Option<ExternalRuntimeContextId>,
+        sink: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<RuntimeInvocationReady, RuntimePortError> {
+        let id = request.invocation_id.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.launch(request, external, sink, Some(sender))?;
+        match receiver.recv_timeout(Duration::from_secs(120)) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = self.cancel_invocation(&id);
+                Err(unavailable(format!(
+                    "Native preparation did not finish: {error}"
+                )))
+            }
+        }
+    }
+    fn deliver_prepared_invocation(&self, id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+        let invocation = self.coordinator.get(id)?;
+        if invocation.finished.load(Ordering::Acquire) {
+            return Err(unavailable("Prepared invocation has finished"));
+        }
+        let turn = invocation
+            .prepared_turn
+            .lock()
+            .map_err(|_| unavailable("Prepared turn lock poisoned"))?
+            .take()
+            .ok_or_else(|| {
+                unavailable("Prepared prompt is unavailable or was already delivered")
+            })?;
+        if let Err(error) = invocation.connection.call("turn/start", turn) {
+            invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error.clone()));
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn preflight_invocation(
         &self,
         _mode: RuntimeInvocationMode,
@@ -475,7 +574,7 @@ impl AgentRuntime for CodexAppServerRuntime {
         request: RuntimeInvocationRequest,
         sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
-        self.launch(request, None, sink)
+        self.launch(request, None, sink, None)
     }
     fn resume_invocation(
         &self,
@@ -483,7 +582,7 @@ impl AgentRuntime for CodexAppServerRuntime {
         external: ExternalRuntimeContextId,
         sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
-        self.launch(request, Some(external), sink)
+        self.launch(request, Some(external), sink, None)
     }
     fn active_turn(&self, id: &AgentInvocationId) -> Result<RuntimeTurnTarget, RuntimePortError> {
         self.coordinator
@@ -564,3 +663,6 @@ impl AgentRuntime for CodexAppServerRuntime {
             .map_err(|e| unavailable(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod preparation_tests;

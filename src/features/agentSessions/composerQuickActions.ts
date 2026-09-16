@@ -12,14 +12,13 @@ export interface ComposerQuickFeatures {
 export function sessionQuickActions(
   capabilities: AgentSessionQuickFeatures,
   source: ComposerQuickFeatures,
-  active: boolean,
 ): readonly ComposerQuickAction[] {
   const { selection, setSelection } = source;
   const effectiveModel = selection.model ?? capabilities.defaults.model;
   const model = capabilities.models.find((item) => item.id === effectiveModel);
   const effectiveReasoning =
     selection.reasoningMode ?? capabilities.defaults.reasoningMode ?? model?.defaultReasoningMode;
-  const disabledReason = active ? 'Available after the current turn finishes' : undefined;
+  const disabledReason = undefined;
   const changeModel = (id: string | null) => {
     const next = capabilities.models.find(
       (item) => item.id === (id ?? capabilities.defaults.model),

@@ -225,7 +225,34 @@ pub trait AgentRuntimeUpdateSink: Send + Sync {
 /// error is returned, and no later updates may follow that error return. The application then
 /// checks durable invocation state: an already-terminal invocation is left unchanged, while a
 /// still-active invocation is durably failed from the returned launch error.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeInvocationReady {
+    pub external_context_id: ExternalRuntimeContextId,
+    pub working_directory: String,
+}
+
 pub trait AgentRuntime: Send + Sync {
+    /// Resolve native continuation on a retained connection without delivering the prompt.
+    fn prepare_invocation(
+        &self,
+        _request: RuntimeInvocationRequest,
+        _external_context_id: Option<ExternalRuntimeContextId>,
+        _sink: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<RuntimeInvocationReady, RuntimePortError> {
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::UnsupportedOptions,
+            "Runtime preparation is unavailable",
+        ))
+    }
+
+    fn deliver_prepared_invocation(&self, _id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+        Err(RuntimePortError::new(
+            RuntimePortErrorKind::NotActive,
+            "No prepared invocation",
+        ))
+    }
+
     fn active_turn(
         &self,
         _invocation_id: &AgentInvocationId,

@@ -18,7 +18,7 @@ pub(super) struct SessionServices {
     pub(super) imports: Arc<crate::agent_sessions::application::import::AgentSessionImportService>,
     pub(super) selected_runtime_profile: Arc<dyn SelectedRuntimeProfileSource>,
     pub(super) capability_profiles: Arc<CapabilityProfileService>,
-    pub(super) endpoints: Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
+    pub(super) execution_targets: Arc<crate::execution_targets::ExecutionTargetService>,
 }
 
 pub(super) fn compose(
@@ -35,11 +35,12 @@ pub(super) fn compose(
         Arc::new(crate::runtime::codex::app_server::CodexAppServerRuntime::system("codex"));
     let (selected_runtime_profile, capability_profiles, endpoints) =
         super::execution_configuration::compose(
-            database,
+            database.clone(),
             native_profiles.clone(),
             &workspaces,
             local_runtime.clone(),
         )?;
+    let execution_targets = Arc::new(crate::execution_targets::ExecutionTargetService::new(database, endpoints.clone(), capability_profiles.clone()));
     let providers = Arc::new(SystemAgentSessionProviders);
     let application = Arc::new(
         AgentSessionApplication::new(
@@ -53,6 +54,7 @@ pub(super) fn compose(
         .with_profile_source(selected_runtime_profile.clone())
         .with_capability_profiles(capability_profiles.clone())
         .with_execution_endpoints(endpoints.clone())
+        .with_execution_target_service(execution_targets.clone())
         .with_workspaces(workspaces)
         .with_native_profile_launch_authority(native_profiles.clone())
         .with_session_harness_version_resolver(Arc::new(harness_catalog))
@@ -79,6 +81,6 @@ pub(super) fn compose(
         application,
         selected_runtime_profile,
         capability_profiles,
-        endpoints,
+        execution_targets,
     })
 }

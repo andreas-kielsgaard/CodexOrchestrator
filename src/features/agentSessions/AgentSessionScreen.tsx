@@ -3,9 +3,16 @@ import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
-import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
+import {
+  localExecutionBinding,
+  type ExecutionTargetClient,
+} from '../../application/executionTargets/contracts';
+import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
 import { useSessionTarget } from './useSessionTarget';
-import { PerMessageRuntimeControls } from './PerMessageRuntimeControls';
+import { SessionComposerToolbar } from './SessionComposerToolbar';
+import { SessionPreparationPanel } from './SessionPreparationPanel';
+import { preparationPreview } from './preparationPreview';
+import { SessionTargetDialog } from './SessionTargetDialog';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
 import type {
   SessionNavigationCommandRequest,
@@ -87,6 +94,8 @@ export function StandaloneAgentSessionScreen({
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
+  const [targetPicker, setTargetPicker] = useState<{ deviceId?: string } | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
     kind: 'initial',
   });
@@ -113,6 +122,7 @@ export function StandaloneAgentSessionScreen({
     selectedSessionId,
     draftId,
   );
+  const { preserveOnAcknowledgement, adoptCurrent, acceptReady } = targetDraft;
   useEffect(() => {
     if (selection.kind !== 'initial' || collection.loading || collection.error) return;
     const first = collection.summaries[0];
@@ -125,19 +135,64 @@ export function StandaloneAgentSessionScreen({
   const reloadCollection = collection.reload;
   const onCreated = useCallback(
     (id: string) => {
+      preserveOnAcknowledgement(id);
       select({ kind: 'session', sessionId: id });
       void reloadCollection();
     },
-    [select, reloadCollection],
+    [select, reloadCollection, preserveOnAcknowledgement],
   );
   const view = useProfiledAgentSession(client, profileClient, sessionEventQueryClient, {
     selectedSessionId,
     onSessionCreated: onCreated,
     draftId,
     executionTarget: targetDraft.target,
+    executionSelection: targetDraft.selection,
+    executionQuickFeatures: selectedTargetQuickFeatures(targetDraft.runtime, targetDraft.profile),
+    preparedExecution: Boolean(executionTargetClient && profileClient?.sendPreparedMessage),
     folderTarget: selection.kind === 'draft' ? selection.folderTarget : undefined,
   });
   const session = view.session;
+  const currentTarget = session.details?.session.executionTarget ?? null;
+  useEffect(() => {
+    if (session.details?.session.id === selectedSessionId)
+      adoptCurrent(
+        currentTarget,
+        session.preparation?.selection ??
+          (() => {
+            const configured = targetDraft.availableProfiles.find(
+              (profile) =>
+                profile.capabilityProfileId ===
+                (session.currentProfile ?? view.profile)?.creationResolution.sessionProfile
+                  .capabilityProfileId,
+            );
+            return configured
+              ? {
+                  capabilityProfileId: configured.capabilityProfileId,
+                  capabilityProfileRevision: configured.revision,
+                  execution: configured.execution ?? localExecutionBinding,
+                  workspace: { kind: 'auxiliary' as const },
+                }
+              : null;
+          })(),
+      );
+  }, [
+    session.details?.session.id,
+    selectedSessionId,
+    currentTarget,
+    session.preparation?.selection,
+    adoptCurrent,
+    targetDraft.availableProfiles,
+    view.profile,
+    session.currentProfile,
+  ]);
+  useEffect(() => {
+    if (session.preparation?.phase === 'ready')
+      acceptReady(session.preparation.selection, session.preparation.resolvedTarget ?? null);
+  }, [session.preparation, acceptReady]);
+  useEffect(() => {
+    if (session.preparing || session.sending) setPreviewOpen(false);
+  }, [session.preparing, session.sending]);
+
   const model = useMemo(() => buildSessionNavigation(collection.data), [collection.data]);
   const [openRevision, setOpenRevision] = useState(0);
   const onSelect = (sessionId: string) => {
@@ -183,7 +238,7 @@ export function StandaloneAgentSessionScreen({
     guidance: targetDraft.target
       ? `This session will run in ${targetDraft.target.path} on ${targetDraft.target.execution.deviceName}.`
       : folderLabel
-        ? `New session in ${folderLabel}. It starts in the repository’s main working tree unless you select a target worktree.`
+        ? `New session in ${folderLabel}. It starts in the repositoryâ€™s main working tree unless you select a target worktree.`
         : 'Choose a target worktree on this laptop or a remote device. To start in an empty local workspace, choose a local default in Capability Profiles.',
   };
   const evidenceRange =
@@ -210,75 +265,119 @@ export function StandaloneAgentSessionScreen({
         onReloadDeliveries={view.deliveries.reload}
         selection={view.selection}
         onSelectionChange={view.setSelection}
-        disabled={session.sending}
         identity={session.details?.session.assignedIdentity}
         onIdentityChange={view.updateIdentity}
+        showMessageControls={!executionTargetClient || !branchSource}
       />
-    ) : targetDraft.target ? (
-      <div className="session-target-draft-options">
-        <p>
-          Capability Profile:{' '}
-          <strong>{targetDraft.profile?.name ?? targetDraft.target.capabilityProfileId}</strong>
-        </p>
-        {targetDraft.error && <p role="alert">{targetDraft.error}</p>}
-        <PerMessageRuntimeControls
-          value={view.selection}
-          onChange={view.setSelection}
-          disabled={session.sending || targetDraft.loading}
-          models={(targetDraft.runtime?.exposure.models ?? [])
-            .filter((model) => targetDraft.profile?.allowedCapabilities.models.includes(model))
-            .map((value) => ({ value, label: value }))}
-          reasoningModes={(targetDraft.runtime?.exposure.reasoningModes ?? [])
-            .filter((mode) =>
-              targetDraft.profile?.allowedCapabilities.reasoningModes.includes(mode),
-            )
-            .map((value) => ({ value, label: value }))}
-          defaultModelLabel={targetDraft.profile?.defaults?.model ?? 'Use profile default'}
-          defaultReasoningLabel={
-            targetDraft.profile?.defaults?.reasoningMode ?? 'Use profile default'
-          }
-        />
-      </div>
     ) : undefined;
+  const resolvedProfile =
+    session.currentProfile?.creationResolution.sessionProfile ??
+    view.profile?.creationResolution.sessionProfile;
+  const models = targetDraft.profile
+    ? (targetDraft.runtime?.exposure.models ?? []).filter((value) =>
+        targetDraft.profile!.allowedCapabilities.models.includes(value),
+      )
+    : (resolvedProfile?.attachedRuntimeCapabilities.models ?? []);
+  const reasoningModes = targetDraft.profile
+    ? (targetDraft.runtime?.exposure.reasoningModes ?? []).filter((value) =>
+        targetDraft.profile!.allowedCapabilities.reasoningModes.includes(value),
+      )
+    : (resolvedProfile?.attachedRuntimeCapabilities.reasoningModes ?? []);
+  const hasRuntimeFacts = Boolean(targetDraft.profile ? targetDraft.runtime : resolvedProfile);
+  const selectionError =
+    targetDraft.deviceId && !targetDraft.selection
+      ? 'Choose a Capability Profile for this device.'
+      : targetDraft.selection?.execution.connection.kind === 'ssh' &&
+          targetDraft.selection.workspace.kind === 'auxiliary'
+        ? 'Choose a worktree on this device.'
+        : hasRuntimeFacts &&
+            view.selection.model &&
+            !targetDraft.loading &&
+            !models.includes(view.selection.model)
+          ? `Model ${view.selection.model} is unavailable for the selected profile.`
+          : hasRuntimeFacts &&
+              view.selection.reasoningMode &&
+              !targetDraft.loading &&
+              !reasoningModes.includes(view.selection.reasoningMode)
+            ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected profile.`
+            : undefined;
   const sendUnavailableReason =
-    !selectedSessionId &&
-    targetDraft.target &&
-    (targetDraft.loading || targetDraft.error || !targetDraft.runtime)
-      ? (targetDraft.error ?? 'Loading target capabilities…')
-      : view.sendUnavailableReason;
-  const targetControl =
-    executionTargetClient && branchSource && profileClient
-      ? {
-          client: executionTargetClient,
-          branches: branchSource,
-          target: selectedSessionId
-            ? (session.details?.session.executionTarget ?? null)
-            : targetDraft.target,
-          fixed: Boolean(selectedSessionId),
-          disabled: session.sending,
-          onChange: targetDraft.setTarget,
+    selectionError ??
+    (targetDraft.selection && (targetDraft.loading || targetDraft.error || !targetDraft.runtime)
+      ? (targetDraft.error ?? 'Loading target capabilitiesâ€¦')
+      : view.sendUnavailableReason);
+  const workspaceChoice = targetDraft.selection?.workspace;
+  const pending = Boolean(
+    targetDraft.selection &&
+    (workspaceChoice?.kind === 'create' ||
+      (currentTarget
+        ? targetDraft.selection.capabilityProfileId !== currentTarget.capabilityProfileId ||
+          targetDraft.selection.capabilityProfileRevision !==
+            currentTarget.capabilityProfileRevision ||
+          JSON.stringify(targetDraft.selection.execution) !==
+            JSON.stringify(currentTarget.execution) ||
+          targetDraft.selection.execution.deviceId !== currentTarget.execution.deviceId ||
+          workspaceChoice?.kind !== 'existing' ||
+          workspaceChoice.target.worktreeId !== currentTarget.worktreeId
+        : session.preparation?.phase !== 'ready' ||
+          JSON.stringify(targetDraft.selection) !== JSON.stringify(session.preparation.selection))),
+  );
+  const preview = useMemo(
+    () => (previewOpen ? preparationPreview(targetDraft.selection, currentTarget) : null),
+    [previewOpen, targetDraft.selection, currentTarget],
+  );
+  const toolbar =
+    executionTargetClient && profileClient && branchSource ? (
+      <SessionComposerToolbar
+        profiles={targetDraft.availableProfiles}
+        selection={targetDraft.selection}
+        deviceId={targetDraft.deviceId}
+        options={view.selection}
+        models={models}
+        reasoningModes={reasoningModes}
+        defaultModel={targetDraft.profile?.defaults?.model ?? resolvedProfile?.pinnedDefaults.model}
+        defaultReasoning={
+          targetDraft.profile?.defaults?.reasoningMode ??
+          resolvedProfile?.pinnedDefaults.reasoningMode
         }
-      : undefined;
+        pending={pending}
+        onProfile={targetDraft.chooseProfile}
+        onDevice={targetDraft.chooseDevice}
+        onWorktree={() => setTargetPicker({ deviceId: targetDraft.deviceId ?? undefined })}
+        onOptions={view.setSelection}
+        onPreview={() => setPreviewOpen(!previewOpen)}
+      />
+    ) : undefined;
+  const preparationPanel = (
+    <SessionPreparationPanel
+      preparation={session.preparation}
+      preview={preview}
+      deviceName={
+        (previewOpen ? targetDraft.selection : session.preparation?.selection)?.execution
+          .deviceName ?? 'this device'
+      }
+      onClosePreview={() => setPreviewOpen(false)}
+      onCancel={() => void session.cancel()}
+      onRetry={() => void session.retryPreparation?.()}
+    />
+  );
   const workspace =
     selection.kind === 'initial' ? (
-      <p role="status">Loading sessions…</p>
+      <p role="status">Loading sessionsâ€¦</p>
     ) : (
       <AgentSessionHeaderActionsProvider actions={null} settings={settings}>
         <AgentSessionWorkspace
           controller={session}
-          targetControl={targetControl}
+          composerToolbar={toolbar}
+          preparationPanel={preparationPanel}
           targetSource={
-            targetControl
+            executionTargetClient && branchSource && profileClient
               ? {
                   contextKey: selectionKey(selection),
-                  client: targetControl.client,
-                  target: targetControl.target,
-                  disabledReason: selectedSessionId
-                    ? 'This Session target is fixed after its first prompt.'
-                    : session.sending
-                      ? 'Target selection is unavailable while sending.'
-                      : undefined,
+                  client: executionTargetClient,
+                  target: targetDraft.target,
                   onSelectTarget: targetDraft.setTarget,
+                  onBrowseBranches: (deviceId) => setTargetPicker({ deviceId }),
                 }
               : undefined
           }
@@ -305,6 +404,28 @@ export function StandaloneAgentSessionScreen({
     );
   return (
     <>
+      {targetPicker && executionTargetClient && branchSource && (
+        <SessionTargetDialog
+          client={executionTargetClient}
+          source={branchSource}
+          selected={targetDraft.target}
+          deviceId={targetPicker.deviceId}
+          capabilityProfileId={
+            targetPicker.deviceId === targetDraft.deviceId
+              ? targetDraft.selection?.capabilityProfileId
+              : undefined
+          }
+          onClose={() => setTargetPicker(null)}
+          onSelect={(target) => {
+            targetDraft.setTarget(target);
+            setTargetPicker(null);
+          }}
+          onSelectSelection={(next) => {
+            targetDraft.setSelection(next);
+            setTargetPicker(null);
+          }}
+        />
+      )}
       {importOpen && importClient && (
         <ImportCodexSessionDialog
           client={importClient}

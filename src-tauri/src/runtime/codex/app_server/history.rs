@@ -1,7 +1,7 @@
 //! Stored Codex history and native forks; never starts a model turn.
 use orchid_engine::codex::app_server::{history as native_history, items};
 use crate::agent_sessions::{domain::*, imports::*, ports::CodexHistorySource};
-use crate::runtime::codex::protocol::CodexJsonlProtocol;
+use orchid_engine::codex::protocol::CodexJsonlProtocol;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 

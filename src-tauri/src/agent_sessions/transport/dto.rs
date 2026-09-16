@@ -246,6 +246,7 @@ impl From<AgentSessionSummary> for AgentSessionSummaryDto {
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum AgentSessionUpdateDto {
+    PreparationUpdated { session_id: AgentSessionId, invocation_id: AgentInvocationId },
     SteeringAccepted {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
@@ -271,6 +272,7 @@ pub(crate) enum AgentSessionUpdateDto {
 impl From<AgentSessionNotification> for AgentSessionUpdateDto {
     fn from(value: AgentSessionNotification) -> Self {
         match value {
+            AgentSessionNotification::PreparationUpdated { session_id, invocation_id } => Self::PreparationUpdated { session_id, invocation_id },
             AgentSessionNotification::SteeringAccepted {
                 session_id,
                 invocation_id,

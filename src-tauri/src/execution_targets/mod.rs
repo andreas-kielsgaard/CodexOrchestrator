@@ -1,6 +1,7 @@
 pub(crate) mod domain;
 pub(crate) mod endpoints;
 mod inventory;
+mod preparation;
 mod remote_runtime;
 mod ssh_connection;
 pub(crate) mod transport;

@@ -15,6 +15,17 @@ struct FakeConnection {
 impl HostConnection for FakeConnection {
     fn request(&self, command: HostCommand) -> Result<Value, RuntimePortError> {
         let result = match &command {
+            HostCommand::PrepareInvocation {
+                request,
+                external_context_id,
+                ..
+            } => serde_json::to_value(RuntimeInvocationReady {
+                external_context_id: external_context_id
+                    .clone()
+                    .unwrap_or_else(|| ExternalRuntimeContextId::new("prepared-thread").unwrap()),
+                working_directory: request.working_directory.clone().unwrap(),
+            })
+            .unwrap(),
             HostCommand::Preflight { options, .. } => {
                 serde_json::to_value(RuntimeInvocationPreflight {
                     effective_options: options.clone(),
@@ -72,6 +83,37 @@ fn invocation(id: &str) -> RuntimeInvocationRequest {
         options: Default::default(),
         launch_extension: None,
     }
+}
+
+#[test]
+fn preparation_retains_connection_and_delivery_never_reconnects_or_replays() {
+    let original = Arc::new(FakeConnection::default());
+    original.closed.store(true, Ordering::SeqCst);
+    let replacement = Arc::new(FakeConnection::default());
+    let (runtime, attempts) = runtime(original.clone(), replacement.clone());
+    let request = invocation("prepared");
+    let ready = runtime
+        .prepare_invocation(request.clone(), None, Arc::new(Sink))
+        .unwrap();
+    assert_eq!(ready.external_context_id.as_str(), "prepared-thread");
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(replacement.has_active_invocations());
+    assert!(matches!(
+        replacement.calls.lock().unwrap().as_slice(),
+        [HostCommand::PrepareInvocation { .. }]
+    ));
+    runtime
+        .deliver_prepared_invocation(&request.invocation_id)
+        .unwrap();
+    assert!(matches!(
+        replacement.calls.lock().unwrap().last(),
+        Some(HostCommand::DeliverPreparedInvocation { .. })
+    ));
+    replacement.closed.store(true, Ordering::SeqCst);
+    assert!(runtime
+        .deliver_prepared_invocation(&request.invocation_id)
+        .is_err());
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
 
 fn runtime(

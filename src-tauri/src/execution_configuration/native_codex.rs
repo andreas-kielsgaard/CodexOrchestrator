@@ -39,6 +39,15 @@ impl NativeCodexSelectedRuntimeProfileSource {
 }
 
 impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
+    fn configuration_home(
+        &self,
+        reference: &str,
+    ) -> Result<std::path::PathBuf, SelectedRuntimeProfileSourceError> {
+        self.service
+            .resolve_configuration_home(reference)
+            .map(|home| home.home)
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)
+    }
     fn quick_features_at(
         &self,
         cwd: Option<&str>,

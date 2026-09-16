@@ -65,6 +65,71 @@ pub(crate) trait AgentSessionAddressStore: Send + Sync {
 /// are ordered by sequence ascending. Event append implementations enforce invocation ownership
 /// and increasing sequence.
 pub(crate) trait AgentSessionRepository: Send + Sync {
+    fn current_execution_resolution(
+        &self,
+        _id: &AgentSessionId,
+    ) -> Result<Option<crate::execution_configuration::SessionCreationResolution>, RepositoryError>
+    {
+        Ok(None)
+    }
+
+    fn accept_preparation(
+        &self,
+        _session: Option<(
+            AgentSession,
+            Option<crate::agent_sessions::organization::SessionPlacement>,
+        )>,
+        _invocation: AgentInvocation,
+        _preparation: super::super::preparation::SessionPreparation,
+    ) -> Result<(), RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session preparation storage is unavailable",
+        ))
+    }
+    fn preparation(
+        &self,
+        _id: &AgentInvocationId,
+    ) -> Result<Option<super::super::preparation::SessionPreparation>, RepositoryError> {
+        Ok(None)
+    }
+    fn latest_preparation(
+        &self,
+        _id: &AgentSessionId,
+    ) -> Result<Option<super::super::preparation::SessionPreparation>, RepositoryError> {
+        Ok(None)
+    }
+    fn save_preparation(
+        &self,
+        _preparation: &super::super::preparation::SessionPreparation,
+    ) -> Result<(), RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session preparation storage is unavailable",
+        ))
+    }
+    fn commit_prepared_binding(
+        &self,
+        _preparation: &super::super::preparation::SessionPreparation,
+        _binding: AgentRuntimeBinding,
+        _at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session preparation storage is unavailable",
+        ))
+    }
+    fn retry_preparation(
+        &self,
+        _id: &AgentInvocationId,
+        _at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session preparation storage is unavailable",
+        ))
+    }
+
     fn resolve_working_directory(
         &self,
         _session_id: &AgentSessionId,

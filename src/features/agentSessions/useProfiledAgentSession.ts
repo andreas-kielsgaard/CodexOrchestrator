@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type {
   AgentSessionClient,
   AgentSessionProfileClient,
@@ -12,19 +13,16 @@ export function useProfiledAgentSession(
   queryClient: SessionEventQueryClient | undefined,
   options: UseAgentSessionOptions,
 ) {
-  const { profile, error, selection, setSelection, execution } = useSessionExecutionSelection(
-    profileClient,
-    options.selectedSessionId,
-    options.draftId,
-    options.executionTarget
-      ? `${options.executionTarget.capabilityProfileId}:${options.executionTarget.worktreeId}`
-      : undefined,
-  );
+  const { profile, error, selection, setSelection, execution, reloadProfile } =
+    useSessionExecutionSelection(profileClient, options.selectedSessionId, options.draftId);
   const deliveries = useSessionDeliveries(queryClient, options.selectedSessionId);
   const session = useAgentSession(client, {
     ...options,
     execution: execution ? { ...execution, target: options.executionTarget } : undefined,
   });
+  useEffect(() => {
+    if (session.preparation?.phase === 'ready') void reloadProfile();
+  }, [session.preparation?.phase, reloadProfile]);
   const updateIdentity =
     client.updateIdentity && session.details
       ? async (
@@ -40,7 +38,10 @@ export function useProfiledAgentSession(
         }
       : undefined;
   const sendUnavailableReason =
-    profileClient && options.selectedSessionId && profile?.sessionId !== options.selectedSessionId
+    !options.preparedExecution &&
+    profileClient &&
+    options.selectedSessionId &&
+    profile?.sessionId !== options.selectedSessionId
       ? error
         ? 'This Session has no available pinned configuration. Its history is still readable.'
         : 'Loading Session configuration…'

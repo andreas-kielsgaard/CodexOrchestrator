@@ -90,6 +90,14 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn configuration_home(
+        &self,
+        _reference: &str,
+    ) -> Result<std::path::PathBuf, SelectedRuntimeProfileSourceError> {
+        Err(SelectedRuntimeProfileSourceError::unavailable(
+            "Native configuration home is unavailable",
+        ))
+    }
     fn quick_features_for_configuration(
         &self,
         reference: &str,

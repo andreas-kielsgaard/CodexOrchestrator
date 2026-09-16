@@ -36,6 +36,15 @@ export interface StartDirectUserAgentSessionInput extends Omit<
   readonly executionTarget?: SessionExecutionTargetDto;
 }
 export interface AgentSessionProfileClient {
+  loadCurrentProfile?(sessionId: string): Promise<PinnedAgentSessionProfileDto>;
+  sendPreparedMessage?(
+    input: import('./preparation').SendPreparedAgentSessionMessageInput,
+  ): Promise<{ sessionId: string; invocationId: string }>;
+  loadPreparation?(
+    sessionId: string,
+  ): Promise<import('./preparation').SessionPreparationDto | null>;
+  cancelPreparation?(invocationId: string): Promise<void>;
+  retryPreparation?(invocationId: string): Promise<void>;
   loadQuickFeatures?(
     input: import('./quickFeatures').LoadAgentSessionQuickFeaturesInput,
   ): Promise<import('./quickFeatures').AgentSessionQuickFeatures>;

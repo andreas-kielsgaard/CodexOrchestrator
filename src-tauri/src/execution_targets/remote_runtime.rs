@@ -44,6 +44,39 @@ pub(crate) struct RemoteRuntime {
 }
 
 impl AgentRuntime for RemoteRuntime {
+    fn prepare_invocation(
+        &self,
+        request: RuntimeInvocationRequest,
+        external_context_id: Option<ExternalRuntimeContextId>,
+        sink: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<RuntimeInvocationReady, RuntimePortError> {
+        let id = request.invocation_id.clone();
+        let connection = self.connection_for_invocation()?;
+        connection.register(id.clone(), sink);
+        let result = request_host(
+            &*connection,
+            HostCommand::PrepareInvocation {
+                configuration_ref: self.binding.configuration_ref.clone(),
+                request,
+                external_context_id,
+            },
+        );
+        if result.is_err() {
+            connection.unregister(&id);
+        }
+        result
+    }
+    fn deliver_prepared_invocation(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<(), RuntimePortError> {
+        request_host(
+            &*self.current_connection(),
+            HostCommand::DeliverPreparedInvocation {
+                invocation_id: invocation_id.clone(),
+            },
+        )
+    }
     fn preflight_invocation(
         &self,
         mode: RuntimeInvocationMode,

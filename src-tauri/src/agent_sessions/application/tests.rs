@@ -9,6 +9,7 @@ use super::{
 mod import_tests;
 mod repair_tests;
 mod target_tests;
+mod preparation_tests;
 
 #[test]
 fn addressed_creation_retry_uses_its_original_native_evidence() {
@@ -2330,6 +2331,7 @@ impl RecordingNotifier {
 impl AgentSessionNotifier for RecordingNotifier {
     fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
         let persisted = match &notification {
+            AgentSessionNotification::PreparationUpdated { invocation_id, .. } => self.repository.preparation(invocation_id).is_ok_and(|p| p.is_some()),
             AgentSessionNotification::SteeringAccepted {
                 invocation_id,
                 input_id,

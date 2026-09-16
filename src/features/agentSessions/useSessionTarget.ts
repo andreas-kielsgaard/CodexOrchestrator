@@ -1,46 +1,164 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
-import type {
-  ExecutionTargetClient,
-  SessionExecutionTargetDto,
+import {
+  localExecutionBinding,
+  type ExecutionTargetClient,
+  type SessionExecutionSelectionDto,
+  type SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
 
+export function selectionForTarget(
+  target: SessionExecutionTargetDto,
+): SessionExecutionSelectionDto {
+  return {
+    capabilityProfileId: target.capabilityProfileId,
+    capabilityProfileRevision: target.capabilityProfileRevision,
+    execution: target.execution,
+    workspace: { kind: 'existing', target },
+  };
+}
 export function useSessionTarget(
   client: ExecutionTargetClient | undefined,
   profiles: ExecutionConfigurationClient | undefined,
   sessionId: string | null,
   draftId?: string,
 ) {
-  const [target, setTarget] = useState<SessionExecutionTargetDto | null>(null);
+  const [selection, setSelectionState] = useState<SessionExecutionSelectionDto | null>(null);
+  const [availableProfiles, setAvailableProfiles] = useState<readonly CapabilityProfileDto[]>([]);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto | null>(null);
-  const [profile, setProfile] = useState<CapabilityProfileDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dirty = useRef(false);
+  const acknowledgedSession = useRef<string | null>(null);
+  const context = sessionId ?? draftId;
+  const contextRef = useRef(context);
   useEffect(() => {
-    setTarget(null);
-  }, [sessionId, draftId]);
+    if (contextRef.current === context) return;
+    contextRef.current = context;
+    if (sessionId && sessionId === acknowledgedSession.current) {
+      acknowledgedSession.current = null;
+      return;
+    }
+    dirty.current = false;
+    setSelectionState(null);
+    setDeviceId(null);
+  }, [context, sessionId]);
+  useEffect(() => {
+    let current = true;
+    if (!profiles) return;
+    void Promise.all([
+      profiles.listCapabilityProfiles(),
+      profiles.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
+    ]).then(
+      ([items, defaultId]) => {
+        if (!current) return;
+        setAvailableProfiles(items);
+        if (!sessionId && !dirty.current) {
+          const selected = items.find((item) => item.capabilityProfileId === defaultId);
+          if (selected) {
+            const execution = selected.execution ?? localExecutionBinding;
+            setSelectionState({
+              capabilityProfileId: selected.capabilityProfileId,
+              capabilityProfileRevision: selected.revision,
+              execution,
+              workspace: { kind: 'auxiliary' },
+            });
+            setDeviceId(execution.deviceId);
+          }
+        }
+      },
+      (cause) => {
+        if (current) setError(String(cause));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [profiles, sessionId, draftId]);
+  const setSelection = useCallback((next: SessionExecutionSelectionDto | null) => {
+    dirty.current = true;
+    setSelectionState(next);
+    if (next) setDeviceId(next.execution.deviceId);
+  }, []);
+  const setTarget = useCallback(
+    (target: SessionExecutionTargetDto | null) =>
+      setSelection(target ? selectionForTarget(target) : null),
+    [setSelection],
+  );
+  const adoptCurrent = useCallback(
+    (target: SessionExecutionTargetDto | null, accepted?: SessionExecutionSelectionDto | null) => {
+      if (dirty.current) return;
+      const next = target ? selectionForTarget(target) : accepted;
+      if (next) {
+        setSelectionState((previous) =>
+          JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
+        );
+        setDeviceId(next.execution.deviceId);
+      }
+    },
+    [],
+  );
+  const chooseProfile = useCallback(
+    (id: string) => {
+      const profile = availableProfiles.find((item) => item.capabilityProfileId === id);
+      if (!profile) return;
+      const execution = profile.execution ?? localExecutionBinding;
+      const workspace =
+        selection?.execution.deviceId === execution.deviceId
+          ? selection.workspace
+          : { kind: 'auxiliary' as const };
+      const next = {
+        capabilityProfileId: id,
+        capabilityProfileRevision: profile.revision,
+        execution,
+      };
+      setSelection({
+        ...next,
+        workspace:
+          workspace.kind === 'existing'
+            ? { kind: 'existing', target: { ...workspace.target, ...next } }
+            : workspace,
+      });
+    },
+    [availableProfiles, selection, setSelection],
+  );
+  const chooseDevice = useCallback(
+    (id: string) => {
+      const matches = availableProfiles.filter(
+        (item) => (item.execution ?? localExecutionBinding).deviceId === id,
+      );
+      const match =
+        matches.find((item) => item.capabilityProfileId === selection?.capabilityProfileId) ??
+        (matches.length === 1 ? matches[0] : null);
+      if (match) chooseProfile(match.capabilityProfileId);
+      else {
+        setSelection(null);
+        setDeviceId(id);
+      }
+    },
+    [availableProfiles, chooseProfile, selection, setSelection],
+  );
+  const target = selection?.workspace.kind === 'existing' ? selection.workspace.target : null;
+  const profile =
+    availableProfiles.find((item) => item.capabilityProfileId === selection?.capabilityProfileId) ??
+    null;
   useEffect(() => {
     let current = true;
     setRuntime(null);
-    setProfile(null);
     setError(null);
     setLoading(false);
-    if (!target || !client || !profiles || sessionId) return;
+    if (!selection || !client) return;
     setLoading(true);
-    void Promise.all([
-      client.loadRuntime(target.execution, target.path),
-      profiles.loadCapabilityProfile(target.capabilityProfileId),
-    ])
+    void client
+      .loadRuntime(selection.execution, target?.path)
       .then(
-        ([facts, saved]) => {
-          if (current) {
-            setRuntime(facts.runtimeProfile);
-            setProfile(saved);
-          }
+        (facts) => {
+          if (current) setRuntime(facts.runtimeProfile);
         },
         (cause) => {
           if (current) setError(String(cause));
@@ -52,6 +170,36 @@ export function useSessionTarget(
     return () => {
       current = false;
     };
-  }, [target, client, profiles, sessionId]);
-  return { target, setTarget, runtime, profile, loading, error };
+  }, [selection, target?.path, client]);
+  const acceptReady = useCallback(
+    (accepted: SessionExecutionSelectionDto | null, target: SessionExecutionTargetDto | null) => {
+      if (target)
+        setSelectionState((current) =>
+          JSON.stringify(current) === JSON.stringify(accepted)
+            ? selectionForTarget(target)
+            : current,
+        );
+    },
+    [],
+  );
+  const preserveOnAcknowledgement = useCallback((id: string) => {
+    acknowledgedSession.current = id;
+  }, []);
+  return {
+    target,
+    setTarget,
+    selection,
+    setSelection,
+    runtime,
+    profile,
+    availableProfiles,
+    deviceId,
+    chooseDevice,
+    chooseProfile,
+    loading,
+    error,
+    adoptCurrent,
+    acceptReady,
+    preserveOnAcknowledgement,
+  };
 }

@@ -1,3 +1,7 @@
+import {
+  WorktreeCreationConfirmation,
+  type WorktreeCreationRequest,
+} from './WorktreeCreationConfirmation';
 import { Monitor, Server, Check, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
@@ -13,6 +17,7 @@ import type {
   ExecutionTargetClient,
   ExecutionTargetDeviceDto,
   SessionExecutionTargetDto,
+  SessionExecutionSelectionDto,
 } from '../../application/executionTargets/contracts';
 import { toSessionExecutionTarget } from '../../application/executionTargets/presentation';
 import '../worktreeReview/worktreeReview.css';
@@ -22,13 +27,21 @@ export function SessionTargetDialog({
   selected,
   onClose,
   onSelect,
+  deviceId,
+  capabilityProfileId,
+  onSelectSelection,
 }: {
+  readonly deviceId?: string | null;
+  readonly capabilityProfileId?: string | null;
+  readonly onSelectSelection?: (selection: SessionExecutionSelectionDto) => void;
   readonly client: ExecutionTargetClient;
   readonly source: RepositoryBranchSource;
   readonly selected: SessionExecutionTargetDto | null;
   readonly onClose: () => void;
   readonly onSelect: (target: SessionExecutionTargetDto | null) => void;
 }) {
+  const [creation, setCreation] = useState<WorktreeCreationRequest | null>(null);
+  const [confirmedBranchKey, setConfirmedBranchKey] = useState('');
   const [repositories, setRepositories] = useState<readonly RegisteredRepository[]>([]);
   const [loadingRepositories, setLoadingRepositories] = useState(true);
   const [repositoryId, setRepositoryId] = useState(selected?.repositoryId ?? '');
@@ -111,6 +124,36 @@ export function SessionTargetDialog({
       current = false;
     };
   }, [client, repositoryId, branchRef, refresh]);
+  useEffect(() => {
+    if (!deviceId || !onSelectSelection || loadingDevices || !branchRef) return;
+    const key = `${repositoryId}:${branchRef}:${deviceId}`;
+    if (confirmedBranchKey === key) return;
+    const matching =
+      devices
+        .find((device) => device.deviceId === deviceId)
+        ?.profiles.filter(
+          (profile) => !capabilityProfileId || profile.capabilityProfileId === capabilityProfileId,
+        ) ?? [];
+    if (matching.length !== 1 || matching[0].error || matching[0].instances.length) return;
+    setConfirmedBranchKey(key);
+    setCreation({
+      repositoryId,
+      repositoryName:
+        repositories.find((repo) => repo.repositoryId === repositoryId)?.name ?? repositoryId,
+      branchRef,
+      profile: matching[0],
+    });
+  }, [
+    deviceId,
+    onSelectSelection,
+    loadingDevices,
+    branchRef,
+    repositoryId,
+    confirmedBranchKey,
+    devices,
+    capabilityProfileId,
+    repositories,
+  ]);
   const selectedBranch = useMemo<ReviewTarget | null>(
     () => (branchRef ? { kind: 'branch', repositoryId, branchRef } : null),
     [repositoryId, branchRef],
@@ -133,187 +176,221 @@ export function SessionTargetDialog({
     setGraphOpen(false);
   }
   return (
-    <ModalDialog
-      labelledBy="session-target-title"
-      className="session-target-dialog"
-      onClose={onClose}
-    >
-      <header className="session-target-dialog__header">
-        <div>
-          <p className="worktree-review__step">New Agent Session</p>
-          <h2 id="session-target-title">Target worktree</h2>
-          <p>Choose where Codex will work. The target stays with this session.</p>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close target selector">
-          <X size={18} />
-        </button>
-      </header>
-      <label className="worktree-review__field">
-        <span>Repository / project</span>
-        <select
-          aria-label="Target repository"
-          value={repositoryId}
-          onChange={(event) => {
-            setRepositoryId(event.target.value);
-            setBranchRef('');
-            setCandidate(null);
-            setGraphOpen(false);
-          }}
-        >
-          <option value="">Choose a repository…</option>
-          {repositories.map((repo) => (
-            <option key={repo.repositoryId} value={repo.repositoryId}>
-              {repo.name} — {repo.locationLabel}
-            </option>
-          ))}
-        </select>
-      </label>
-      {repositoryError && <p role="alert">{repositoryError}</p>}
-      {!repositoryId ? (
-        <p className="session-target-dialog__placeholder">
-          {loadingRepositories
-            ? 'Loading registered repositories…'
-            : repositories.length === 0
-              ? 'No repositories are registered. Add a repository in Worktree Review, then reopen this selector.'
-              : 'Select a registered repository to browse its branches.'}
-        </p>
-      ) : graphOpen ? (
-        <div className="session-target-dialog__graph">
-          <button
-            type="button"
-            className="worktree-review__secondary"
-            onClick={() => setGraphOpen(false)}
-          >
-            Back to worktrees
+    <>
+      <ModalDialog
+        labelledBy="session-target-title"
+        className="session-target-dialog"
+        onClose={onClose}
+      >
+        <header className="session-target-dialog__header">
+          <div>
+            <p className="worktree-review__step">Next message</p>
+            <h2 id="session-target-title">Target worktree</h2>
+            <p>Choose where the next prompt will run.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close target selector">
+            <X size={18} />
           </button>
-          <BranchGraphBrowser
-            source={source}
-            repositoryId={repositoryId}
-            selectedTarget={selectedBranch}
-            branchesOnly
-            onSelect={chooseBranch}
-          />
-        </div>
-      ) : (
-        <div className="session-target-dialog__body">
-          <aside>
-            {loadingBranches ? (
-              <p role="status">Loading branches…</p>
-            ) : (
-              <BranchBrowser
-                repositoryId={repositoryId}
-                branches={branches}
-                selectedTarget={selectedBranch}
-                onBranchChange={chooseBranch}
-                onOpenGraph={() => setGraphOpen(true)}
-              />
-            )}
-          </aside>
-          <section className="session-target-dialog__devices" aria-label="Worktrees by device">
-            <header>
-              <div>
-                <h3>Devices and worktrees</h3>
-                <p>
-                  {branchRef
-                    ? branchRef.replace(/^refs\/heads\//, '')
-                    : 'Choose a branch to see its worktrees.'}
-                </p>
-              </div>
-              {branchRef && (
-                <button
-                  type="button"
-                  disabled={loadingDevices}
-                  onClick={() => {
-                    setCandidate(null);
-                    setRefresh((value) => value + 1);
-                  }}
-                >
-                  Refresh
-                </button>
-              )}
-            </header>
-            {loadingDevices && <p role="status">Finding existing worktrees…</p>}
-            {deviceError && <p role="alert">{deviceError}</p>}
-            {!loadingDevices && branchRef && !deviceError && devices.length === 0 && (
-              <p>No devices are configured. Add a Capability Profile in Technical Settings.</p>
-            )}
-            {devices.map((device) => (
-              <article
-                className="session-target-device"
-                key={device.deviceId}
-                aria-label={device.deviceName}
-              >
-                <h4>
-                  {device.profiles.some(
-                    (profile) => profile.execution.connection.kind === 'ssh',
-                  ) ? (
-                    <Server size={17} />
-                  ) : (
-                    <Monitor size={17} />
-                  )}
-                  {device.deviceName}
-                </h4>
-                {device.profiles.map((profile) => (
-                  <div className="session-target-profile" key={profile.capabilityProfileId}>
-                    <p>{profile.capabilityProfileName} · Codex</p>
-                    {profile.error ? (
-                      <p role="status" className="session-target-unavailable">
-                        Unavailable: {profile.error}
-                      </p>
-                    ) : profile.instances.length === 0 ? (
-                      <p className="session-target-empty">No existing worktree for this branch.</p>
-                    ) : (
-                      profile.instances.map((instance) => {
-                        const active =
-                          candidate?.worktreeId === instance.worktreeId &&
-                          candidate?.capabilityProfileId === profile.capabilityProfileId;
-                        return (
-                          <button
-                            key={instance.worktreeId}
-                            type="button"
-                            className="session-target-instance"
-                            aria-pressed={active}
-                            onClick={() =>
-                              setCandidate(toSessionExecutionTarget(repositoryId, profile, instance))
-                            }
-                          >
-                            <span>
-                              <strong>{instance.path}</strong>
-                              <code>HEAD {instance.head?.slice(0, 10) ?? 'unknown'}</code>
-                            </span>
-                            {active && <Check size={17} aria-hidden="true" />}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                ))}
-              </article>
+        </header>
+        <label className="worktree-review__field">
+          <span>Repository / project</span>
+          <select
+            aria-label="Target repository"
+            value={repositoryId}
+            onChange={(event) => {
+              setRepositoryId(event.target.value);
+              setBranchRef('');
+              setCandidate(null);
+              setGraphOpen(false);
+            }}
+          >
+            <option value="">Choose a repository…</option>
+            {repositories.map((repo) => (
+              <option key={repo.repositoryId} value={repo.repositoryId}>
+                {repo.name} — {repo.locationLabel}
+              </option>
             ))}
-          </section>
-        </div>
-      )}
-      <footer className="session-target-dialog__footer">
-        <div>
-          {selected && (
+          </select>
+        </label>
+        {repositoryError && <p role="alert">{repositoryError}</p>}
+        {!repositoryId ? (
+          <p className="session-target-dialog__placeholder">
+            {loadingRepositories
+              ? 'Loading registered repositories…'
+              : repositories.length === 0
+                ? 'No repositories are registered. Add a repository in Worktree Review, then reopen this selector.'
+                : 'Select a registered repository to browse its branches.'}
+          </p>
+        ) : graphOpen ? (
+          <div className="session-target-dialog__graph">
             <button
               type="button"
               className="worktree-review__secondary"
-              onClick={() => onSelect(null)}
+              onClick={() => setGraphOpen(false)}
             >
-              Clear target
+              Back to worktrees
             </button>
-          )}
-        </div>
-        <button
-          type="button"
-          className="worktree-review__primary"
-          disabled={!candidateAvailable || loadingDevices || graphOpen}
-          onClick={() => candidateAvailable && candidate && onSelect(candidate)}
-        >
-          Use worktree
-        </button>
-      </footer>
-    </ModalDialog>
+            <BranchGraphBrowser
+              source={source}
+              repositoryId={repositoryId}
+              selectedTarget={selectedBranch}
+              branchesOnly
+              onSelect={chooseBranch}
+            />
+          </div>
+        ) : (
+          <div className="session-target-dialog__body">
+            <aside>
+              {loadingBranches ? (
+                <p role="status">Loading branches…</p>
+              ) : (
+                <BranchBrowser
+                  repositoryId={repositoryId}
+                  branches={branches}
+                  selectedTarget={selectedBranch}
+                  onBranchChange={chooseBranch}
+                  onOpenGraph={() => setGraphOpen(true)}
+                />
+              )}
+            </aside>
+            <section className="session-target-dialog__devices" aria-label="Worktrees by device">
+              <header>
+                <div>
+                  <h3>Devices and worktrees</h3>
+                  <p>
+                    {branchRef
+                      ? branchRef.replace(/^refs\/heads\//, '')
+                      : 'Choose a branch to see its worktrees.'}
+                  </p>
+                </div>
+                {branchRef && (
+                  <button
+                    type="button"
+                    disabled={loadingDevices}
+                    onClick={() => {
+                      setCandidate(null);
+                      setRefresh((value) => value + 1);
+                    }}
+                  >
+                    Refresh
+                  </button>
+                )}
+              </header>
+              {loadingDevices && <p role="status">Finding existing worktrees…</p>}
+              {deviceError && <p role="alert">{deviceError}</p>}
+              {!loadingDevices && branchRef && !deviceError && devices.length === 0 && (
+                <p>No devices are configured. Add a Capability Profile in Technical Settings.</p>
+              )}
+              {devices
+                .filter((device) => !deviceId || device.deviceId === deviceId)
+                .map((device) => (
+                  <article
+                    className="session-target-device"
+                    key={device.deviceId}
+                    aria-label={device.deviceName}
+                  >
+                    <h4>
+                      {device.profiles.some(
+                        (profile) => profile.execution.connection.kind === 'ssh',
+                      ) ? (
+                        <Server size={17} />
+                      ) : (
+                        <Monitor size={17} />
+                      )}
+                      {device.deviceName}
+                    </h4>
+                    {device.profiles.map((profile) => (
+                      <div className="session-target-profile" key={profile.capabilityProfileId}>
+                        <p>{profile.capabilityProfileName} · Codex</p>
+                        {profile.error ? (
+                          <p role="status" className="session-target-unavailable">
+                            Unavailable: {profile.error}
+                          </p>
+                        ) : profile.instances.length === 0 ? (
+                          <div className="session-target-empty">
+                            <p>No existing worktree for this branch.</p>
+                            {onSelectSelection && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCreation({
+                                    repositoryId,
+                                    repositoryName:
+                                      repositories.find(
+                                        (repo) => repo.repositoryId === repositoryId,
+                                      )?.name ?? repositoryId,
+                                    branchRef,
+                                    profile,
+                                  })
+                                }
+                              >
+                                Create worktree on Send…
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          profile.instances.map((instance) => {
+                            const active =
+                              candidate?.worktreeId === instance.worktreeId &&
+                              candidate?.capabilityProfileId === profile.capabilityProfileId;
+                            return (
+                              <button
+                                key={instance.worktreeId}
+                                type="button"
+                                className="session-target-instance"
+                                aria-pressed={active}
+                                onClick={() =>
+                                  setCandidate(
+                                    toSessionExecutionTarget(repositoryId, profile, instance),
+                                  )
+                                }
+                              >
+                                <span>
+                                  <strong>{instance.path}</strong>
+                                  <code>HEAD {instance.head?.slice(0, 10) ?? 'unknown'}</code>
+                                </span>
+                                {active && <Check size={17} aria-hidden="true" />}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    ))}
+                  </article>
+                ))}
+            </section>
+          </div>
+        )}
+        <footer className="session-target-dialog__footer">
+          <div>
+            {selected && (
+              <button
+                type="button"
+                className="worktree-review__secondary"
+                onClick={() => onSelect(null)}
+              >
+                Clear target
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className="worktree-review__primary"
+            disabled={!candidateAvailable || loadingDevices || graphOpen}
+            onClick={() => candidateAvailable && candidate && onSelect(candidate)}
+          >
+            Use worktree
+          </button>
+        </footer>
+      </ModalDialog>
+      {creation && onSelectSelection && (
+        <WorktreeCreationConfirmation
+          client={client}
+          request={creation}
+          onCancel={() => setCreation(null)}
+          onConfirm={onSelectSelection}
+        />
+      )}
+    </>
   );
 }

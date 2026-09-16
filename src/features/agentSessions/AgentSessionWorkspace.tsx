@@ -1,4 +1,3 @@
-import { SessionTargetControl, type SessionTargetControlProps } from './SessionTargetControl';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
@@ -34,7 +33,8 @@ export interface AgentSessionPresentation {
 
 export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
-  readonly targetControl?: SessionTargetControlProps;
+  readonly composerToolbar?: ReactNode;
+  readonly preparationPanel?: ReactNode;
   readonly targetSource?: ComposerTargetSource;
   readonly sendUnavailableReason?: string;
   readonly presentation?: AgentSessionPresentation;
@@ -68,7 +68,8 @@ export function AgentSessionHeaderActionsProvider({
 
 export function AgentSessionWorkspace({
   controller,
-  targetControl,
+  composerToolbar,
+  preparationPanel,
   targetSource,
   sendUnavailableReason,
   presentation = {},
@@ -81,7 +82,11 @@ export function AgentSessionWorkspace({
   const awaitingResponse = pendingSessionRequests(controller.details?.interactions).length > 0;
   const activityStatus = active ? (
     <span className={awaitingResponse ? 'waiting-status' : 'working-status'} role="status">
-      {awaitingResponse ? pendingRequestLabel : 'Working'}
+      {controller.preparing
+        ? 'Waiting for setup'
+        : awaitingResponse
+          ? pendingRequestLabel
+          : 'Working'}
     </span>
   ) : null;
   const title = controller.details?.session.title ?? 'New Agent Session';
@@ -133,7 +138,7 @@ export function AgentSessionWorkspace({
     <section
       className={`agent-session-workspace${
         showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
-      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}${targetControl ? ' agent-session-workspace--with-target' : ''}`}
+      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
       aria-label={presentation.ariaLabel ?? title}
     >
       {identityHeader ? (
@@ -182,7 +187,6 @@ export function AgentSessionWorkspace({
           {activityStatus}
         </div>
       )}
-      {targetControl && <SessionTargetControl {...targetControl} />}
       {contextualChrome.settings && (
         <div className="agent-session-settings">{contextualChrome.settings}</div>
       )}
@@ -223,6 +227,8 @@ export function AgentSessionWorkspace({
               : presentation.composer
           }
           composerTarget={{
+            toolbar: composerToolbar,
+            preparationPanel,
             quickFeatures: controller.quickFeatures,
             targetSource,
             steeringAvailable: controller.steeringAvailable,
@@ -236,7 +242,8 @@ export function AgentSessionWorkspace({
             workingDirectory: controller.workingDirectory,
             sending: controller.sending,
             sendUnavailableReason:
-              active && controller.steeringAvailable ? undefined : sendUnavailableReason,
+              controller.submissionUnavailableReason ??
+              (active && controller.steeringAvailable ? undefined : sendUnavailableReason),
             active,
             canceling: controller.canceling,
             setDraft: controller.setDraft,

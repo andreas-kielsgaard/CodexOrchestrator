@@ -100,10 +100,10 @@ pub(crate) fn run() {
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
-            let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, endpoints } = sessions::compose(
+            let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
                 database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier,
             )?;
-            app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(Arc::new(crate::execution_targets::ExecutionTargetService::new(database.clone(), endpoints, capability_profiles.clone()))));
+            app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(execution_targets));
             let session_event_adapter = Arc::new(
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
                     application.clone(),
@@ -319,8 +319,14 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::interactions::list_agent_session_interactions,
             crate::agent_sessions::transport::interactions::resolve_agent_session_working_directory,
             crate::agent_sessions::transport::selections::load_pinned_agent_session_profile,
+            crate::agent_sessions::transport::selections::load_current_agent_session_profile,
             crate::agent_sessions::transport::quick_features::load_agent_session_quick_features,
             crate::agent_sessions::transport::selections::send_direct_user_agent_session_message,
+            crate::execution_targets::transport::resolve_published_worktree_commit,
+            crate::agent_sessions::transport::preparation::send_prepared_agent_session_message,
+            crate::agent_sessions::transport::preparation::load_agent_session_preparation,
+            crate::agent_sessions::transport::preparation::cancel_agent_session_preparation,
+            crate::agent_sessions::transport::preparation::retry_agent_session_preparation,
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,

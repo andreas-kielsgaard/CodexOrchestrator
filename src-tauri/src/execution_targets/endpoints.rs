@@ -9,7 +9,7 @@ use std::{
 };
 
 pub(crate) struct ExecutionEndpoints {
-    local_source: Arc<dyn SelectedRuntimeProfileSource>,
+    pub(super) local_source: Arc<dyn SelectedRuntimeProfileSource>,
     local_runtime: Arc<dyn AgentRuntime>,
     remote_runtimes: Mutex<HashMap<String, Arc<dyn AgentRuntime>>>,
 }
