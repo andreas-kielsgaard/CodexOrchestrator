@@ -33,11 +33,40 @@ export interface OtpToolDto {
   readonly outputs: readonly OtpOutputDto[];
   readonly configuration: readonly OtpConfigurationFieldDto[];
 }
+export interface OtpAgentMcpToolDto {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly capability: string;
+}
+export interface OtpAgentMcpServerDto {
+  readonly serverName: string;
+  readonly name: string;
+  readonly description: string;
+  readonly tools: readonly OtpAgentMcpToolDto[];
+  readonly configuration: readonly OtpConfigurationFieldDto[];
+}
 export interface OtpPackageDto {
   readonly id: string;
   readonly contractVersion: number;
   readonly requestedHandles: readonly ('definitions' | 'node_sessions' | 'emit_output')[];
   readonly tools: readonly OtpToolDto[];
+  readonly agentMcpServers: readonly OtpAgentMcpServerDto[];
 }
-
 export type OtpCatalogueReader = () => Promise<readonly OtpPackageDto[]>;
+
+export interface JobAgentOtpInstallationDto {
+  readonly root: string;
+  readonly python: string;
+}
+export interface JobAgentOtpInstallationStatusDto {
+  readonly installation: JobAgentOtpInstallationDto | null;
+  readonly status: 'unconfigured' | 'verified' | 'incompatible';
+  readonly detail: string;
+}
+export interface OtpInstallationClient {
+  readJobAgentInstallation(): Promise<JobAgentOtpInstallationStatusDto>;
+  saveJobAgentInstallation(
+    installation: JobAgentOtpInstallationDto,
+  ): Promise<JobAgentOtpInstallationStatusDto>;
+}

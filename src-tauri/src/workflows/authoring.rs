@@ -44,6 +44,8 @@ pub(crate) struct WorkflowAuthoringNode {
     pub(crate) node_profile: NodeProfile,
     pub(crate) initial_prompt: Option<String>,
     pub(crate) agent_identity_id: Option<String>,
+    #[serde(default)]
+    pub(crate) agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -200,12 +202,14 @@ impl WorkflowRecipeDraft {
                         contract_version: 1,
                         capability_profile: capability_profile.clone(),
                         node_profile: node.node_profile.clone(),
+                        agent_mcp_configuration: node.agent_mcp_configuration.clone(),
                     })
                 } else {
                     WorkflowSessionCreation::AtBirth(
                         crate::execution_configuration::SessionCreationIntent {
                             capability_profile_id: node.capability_profile_id.clone(),
                             node_profile: node.node_profile.clone(),
+                            agent_mcp_configuration: node.agent_mcp_configuration.clone(),
                             working_directory: working_directory.into(),
                             title: node.name.clone(),
                         },
@@ -445,6 +449,7 @@ mod tests {
                 },
                 initial_prompt: Some("Plan the work.".into()),
                 agent_identity_id: Some("identity-avery".into()),
+                agent_mcp_configuration: Default::default(),
             }],
             connections: Vec::new(),
         }

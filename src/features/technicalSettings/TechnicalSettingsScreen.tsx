@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { OtpCatalogueReader } from '../../application/otp';
+import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { NativeProfileSettings } from '../nativeProfiles/NativeProfileSettings';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
@@ -8,9 +8,11 @@ import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   client,
   readOtpCatalogue,
+  otpInstallations,
 }: {
   readonly client: NativeProfileClient;
   readonly readOtpCatalogue?: OtpCatalogueReader;
+  readonly otpInstallations?: OtpInstallationClient;
 }) {
   const [tab, setTab] = useState('homes');
   return (
@@ -64,7 +66,7 @@ export function TechnicalSettingsScreen({
         aria-labelledby="settings-tab-otp"
         hidden={tab !== 'otp'}
       >
-        <OtpConfigurationPanel readCatalogue={readOtpCatalogue} />
+        <OtpConfigurationPanel readCatalogue={readOtpCatalogue} installations={otpInstallations} />
       </section>
     </main>
   );

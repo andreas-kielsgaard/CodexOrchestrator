@@ -126,6 +126,11 @@ pub(crate) fn run() {
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
+            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
+            let otp_installations = crate::otp_host::installations::OtpInstallationService::open(
+                &database_path,
+                otp_registry.clone(),
+            )?;
             let harness_catalog =
                 crate::harness_engine::catalog_service::HarnessCatalogService::open(
                     &database_path,
@@ -134,7 +139,12 @@ pub(crate) fn run() {
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
                 &database_path,
                 managed_mcp_upstreams.clone(),
-            )?;
+            )?.with_agent_mcp_provisioner(
+                crate::otp_host::job_agent::JobAgentMcpProvisioner::new(
+                    otp_registry.clone(),
+                    otp_installations.clone(),
+                ),
+            );
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 &database_path,
@@ -185,7 +195,7 @@ pub(crate) fn run() {
             application
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
-            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow"])?;
+            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
             let selected_runtime_profile = Arc::new(
                 crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
                     native_profiles.clone(),
@@ -268,6 +278,9 @@ pub(crate) fn run() {
             );
             app.manage(crate::worktree_targets_temp::WorktreeTargetsTempState::new(
                 app_data_dir.join("codex-orchestrator.sqlite"),
+            ));
+            app.manage(crate::otp_host::installations::OtpInstallationTauriState::new(
+                otp_installations.clone(),
             ));
             let workflow_authoring = Arc::new(
                 crate::workflows::authoring_service::WorkflowAuthoringService::new(
@@ -518,6 +531,8 @@ pub(crate) fn run() {
             crate::harness_engine::transport::publish_session_harness_override,
             crate::harness_engine::transport::order_harness_version_replacement,
             crate::harness_engine::transport::resolve_harness_version,
+            crate::otp_host::installations::read_job_agent_otp_installation,
+            crate::otp_host::installations::save_job_agent_otp_installation,
             crate::workflows::authoring_transport::list_workflow_recipes,
             crate::workflows::authoring_transport::list_workflow_capabilities,
             crate::workflows::authoring_transport::load_workflow_recipe,

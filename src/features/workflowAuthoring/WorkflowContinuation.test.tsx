@@ -40,6 +40,7 @@ it('discovers continuation fields and saves ordered file selections for multiple
   await user.click(screen.getByRole('button', { name: 'Workflow continuation · Continuation' }));
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set trigger' }));
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));
+  await user.selectOptions(screen.getByLabelText('Output field'), 'outputFiles');
   expect(screen.getByLabelText('Output field')).toHaveValue('outputFiles');
   await user.selectOptions(screen.getByLabelText('Output field'), 'sourceNode');
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));

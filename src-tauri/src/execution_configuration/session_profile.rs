@@ -2,6 +2,7 @@ use super::runtime_profile::{
     validate_identifier, validate_selection_availability, CapabilitySet, RuntimeSelections,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub(crate) const SESSION_PROFILE_CONTRACT_VERSION: u32 = 1;
 
@@ -16,6 +17,8 @@ pub(crate) struct SessionProfile {
     capability_profile_revision: u64,
     node_capabilities: CapabilitySet,
     pinned_defaults: RuntimeSelections,
+    #[serde(default)]
+    agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
 }
 
 impl SessionProfile {
@@ -27,6 +30,7 @@ impl SessionProfile {
         capability_profile_revision: u64,
         node_capabilities: CapabilitySet,
         pinned_defaults: RuntimeSelections,
+        agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
     ) -> Self {
         Self {
             contract_version: SESSION_PROFILE_CONTRACT_VERSION,
@@ -37,6 +41,7 @@ impl SessionProfile {
             capability_profile_revision,
             node_capabilities,
             pinned_defaults,
+            agent_mcp_configuration,
         }
     }
 
@@ -66,6 +71,10 @@ impl SessionProfile {
 
     pub(crate) fn pinned_defaults(&self) -> &RuntimeSelections {
         &self.pinned_defaults
+    }
+
+    pub(crate) fn agent_mcp_configuration(&self) -> &BTreeMap<String, serde_json::Value> {
+        &self.agent_mcp_configuration
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {

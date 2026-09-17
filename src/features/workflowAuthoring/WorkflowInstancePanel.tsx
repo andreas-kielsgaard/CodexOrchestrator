@@ -33,6 +33,7 @@ export function WorkflowInstancePanel({
   const [selected, setSelected] = useState<string | null>(null);
   const [nodeId, setNodeId] = useState('');
   const [text, setText] = useState('');
+  const [data, setData] = useState('{}');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
@@ -135,6 +136,17 @@ export function WorkflowInstancePanel({
             onSubmit={(event) => {
               event.preventDefault();
               if (busy || (usesPrompt && !text.trim())) return;
+              let parsedData: Record<string, unknown>;
+              try {
+                const parsed = JSON.parse(data) as unknown;
+                if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+                  throw new Error('Structured data must be a JSON object.');
+                }
+                parsedData = parsed as Record<string, unknown>;
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : 'Structured data must be a JSON object.');
+                return;
+              }
               setBusy(true);
               setActionMessage('');
               setError(null);
@@ -144,6 +156,7 @@ export function WorkflowInstancePanel({
                   recipeId: instance.recipe.recipeId,
                   nodeId: nodeId || null,
                   text,
+                  data: parsedData,
                 })
                 .then(async (value) => {
                   if (!mounted.current) return;
@@ -163,6 +176,7 @@ export function WorkflowInstancePanel({
                   );
                   setResult(null);
                   setText('');
+                  setData('{}');
                   setSelected(
                     value.eventGroups.flatMap((group) => group.deliveries)[0]?.targetSession.id ??
                       null,
@@ -194,6 +208,14 @@ export function WorkflowInstancePanel({
                 />
               </label>
             )}
+            <label>
+              Structured data (JSON object)
+              <textarea
+                value={data}
+                rows={4}
+                onChange={(event) => setData(event.currentTarget.value)}
+              />
+            </label>
             <button disabled={busy || (usesPrompt && !text.trim())}>
               {busy ? 'Running…' : usesPrompt ? 'Send request' : 'Run action'}
             </button>

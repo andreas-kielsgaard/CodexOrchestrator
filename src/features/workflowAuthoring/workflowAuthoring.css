@@ -508,3 +508,17 @@
   margin: 0;
   padding: 10px 14px;
 }
+
+.workflow-node-otp-configuration {
+  margin-top: 20px;
+}
+.workflow-node-otp-configuration article {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #ccd7d0;
+  border-radius: 8px;
+}
+.workflow-node-otp-configuration h3,
+.workflow-node-otp-configuration h4 {
+  margin: 0 0 6px;
+}

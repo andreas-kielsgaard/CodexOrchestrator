@@ -270,6 +270,7 @@ mod tests {
                 },
                 initial_prompt: None,
                 agent_identity_id: None,
+                agent_mcp_configuration: Default::default(),
             }],
             connections: Vec::new(),
         }

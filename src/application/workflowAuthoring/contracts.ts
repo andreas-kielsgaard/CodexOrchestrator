@@ -38,6 +38,12 @@ export interface WorkflowCompiledPlanDto {
   }[];
 }
 
+export interface AgentMcpConfigurationDto {
+  readonly [packageId: string]: {
+    readonly [serverName: string]: { readonly [key: string]: unknown };
+  };
+}
+
 export interface WorkflowAuthoringNodeDto {
   readonly nodeId: string;
   readonly name: string;
@@ -47,6 +53,7 @@ export interface WorkflowAuthoringNodeDto {
   readonly nodeProfile: NodeProfileDto;
   readonly initialPrompt: string | null;
   readonly agentIdentityId: string | null;
+  readonly agentMcpConfiguration?: AgentMcpConfigurationDto;
 }
 
 export interface WorkflowAuthoringConnectionDto {

@@ -109,6 +109,7 @@ fn creation_request() -> SessionCreationRequest {
         contract_version: SESSION_CREATION_REQUEST_CONTRACT_VERSION,
         capability_profile: capability_profile(),
         node_profile: node_profile(),
+        agent_mcp_configuration: Default::default(),
     }
 }
 

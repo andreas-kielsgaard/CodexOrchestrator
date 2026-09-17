@@ -1,6 +1,6 @@
 import catalogue from './otpCatalogue.fixture.json';
 import type { OtpPackageDto } from '../../application/workflowAuthoring';
-export const otpCatalogue = catalogue as readonly OtpPackageDto[];
+export const otpCatalogue = catalogue as unknown as readonly OtpPackageDto[];
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,

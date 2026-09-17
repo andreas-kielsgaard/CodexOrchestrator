@@ -87,5 +87,6 @@ export interface WorkflowInstanceClient {
     readonly instanceId: string;
     readonly nodeId: string | null;
     readonly text: string;
+    readonly data?: Readonly<Record<string, unknown>>;
   }): Promise<WorkflowActionResult>;
 }

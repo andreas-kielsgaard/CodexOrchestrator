@@ -1,8 +1,11 @@
-use super::compiled_plan::{WorkflowCompiledPlan, WorkflowConnectionPromptInput};
+use super::compiled_plan::{
+    WorkflowCompiledPlan, WorkflowConnectionPromptInput, WorkflowSessionCreation,
+};
 use crate::{
     otp_api::{Entrypoint, OutputKind},
     otp_host::OtpRegistry,
 };
+use serde_json::json;
 use std::collections::BTreeSet;
 
 pub(crate) struct WorkflowCompiler;
@@ -18,6 +21,9 @@ impl WorkflowCompiler {
             .collect();
         if nodes.len() != plan.nodes.len() || !nodes.contains(plan.starting_node.identity().id()) {
             return Err("Invalid Workflow node bindings".into());
+        }
+        for node in &plan.nodes {
+            validate_agent_mcp_configuration(registry, node)?;
         }
         validate_action(registry, &plan.entry_action, &plan.entry_configuration)?;
         for edge in &plan.connections {
@@ -66,6 +72,47 @@ impl WorkflowCompiler {
         Ok(plan)
     }
 }
+
+fn validate_agent_mcp_configuration(
+    registry: &OtpRegistry,
+    node: &super::compiled_plan::WorkflowCompiledNode,
+) -> Result<(), String> {
+    let (capabilities, configuration) = match &node.session_creation {
+        WorkflowSessionCreation::ResolvedInput(request) => (
+            &request.node_profile.allowed_capabilities,
+            &request.agent_mcp_configuration,
+        ),
+        WorkflowSessionCreation::AtBirth(intent) => (
+            &intent.node_profile.allowed_capabilities,
+            &intent.agent_mcp_configuration,
+        ),
+    };
+    for server in capabilities.mcp_tools.keys() {
+        let Ok((package, _)) = registry.agent_mcp_server(server) else {
+            continue;
+        };
+        let value = configuration
+            .get(&package)
+            .and_then(serde_json::Value::as_object)
+            .and_then(|servers| servers.get(server))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        registry.validate_agent_mcp_configuration(&package, server, &value)?;
+    }
+    for package in configuration.keys() {
+        if !registry
+            .catalogue()
+            .iter()
+            .any(|candidate| candidate.id == *package)
+        {
+            return Err(format!(
+                "Workflow node configures unavailable OTP package {package}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_action(
     registry: &OtpRegistry,
     reference: &crate::otp_api::CapabilityRef,

@@ -40,7 +40,7 @@ it('runs a Stop destination without prompt text and displays its no-op result', 
   expect(screen.queryByRole('textbox', { name: 'Request' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Run action' }));
   await waitFor(() =>
-    expect(messageNode).toHaveBeenCalledWith(expect.objectContaining({ text: '' })),
+    expect(messageNode).toHaveBeenCalledWith(expect.objectContaining({ text: '', data: {} })),
   );
   expect(await screen.findByRole('status')).toHaveTextContent('nothing to stop');
 });

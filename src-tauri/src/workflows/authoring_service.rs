@@ -274,6 +274,7 @@ mod tests {
             },
             initial_prompt: Some(format!("You are {name}.")),
             agent_identity_id: None,
+            agent_mcp_configuration: Default::default(),
         }
     }
 

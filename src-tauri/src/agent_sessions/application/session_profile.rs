@@ -110,6 +110,7 @@ impl AgentSessionProfileApplication {
                     allowed_capabilities: runtime.exposure,
                     pinned_defaults: runtime.locked,
                 },
+                agent_mcp_configuration: Default::default(),
             },
         )
         .map_err(AgentSessionProfileApplicationError::resolution)?;

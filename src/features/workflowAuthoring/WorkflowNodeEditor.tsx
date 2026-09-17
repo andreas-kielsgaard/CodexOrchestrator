@@ -13,6 +13,7 @@ import {
 } from '../executionConfiguration';
 import { selectedMcpToolValues } from '../executionConfiguration/types';
 import type { CatalogState } from '../../components/CatalogSelect';
+import { AgentMcpConfigurationEditor } from './AgentMcpConfigurationEditor';
 
 export function WorkflowNodeEditor({
   node,
@@ -120,6 +121,12 @@ export function WorkflowNodeEditor({
           .map((candidate) => ({ nodeId: candidate.nodeId, nodeName: candidate.name }))}
         onChange={update}
         onCopyFromNode={onCopy}
+      />
+      <AgentMcpConfigurationEditor
+        packages={runtime.catalogs.otpPackages ?? []}
+        selectedTools={node.nodeProfile.allowedCapabilities.mcpTools}
+        value={node.agentMcpConfiguration ?? {}}
+        onChange={(agentMcpConfiguration) => onChange({ ...node, agentMcpConfiguration })}
       />
       <RuntimeProfileInspector runtime={runtime} defaultExpanded={false} />
     </>

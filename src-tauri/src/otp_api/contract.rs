@@ -22,7 +22,9 @@ pub(crate) struct PackageDescriptor {
     pub contract_version: u32,
     pub requested_handles: Vec<Handle>,
     pub tools: Vec<ToolDescriptor>,
+    pub agent_mcp_servers: Vec<AgentMcpServerDescriptor>,
 }
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Handle {
@@ -41,6 +43,28 @@ pub(crate) struct ToolDescriptor {
     pub outputs: Vec<OutputDescriptor>,
     pub configuration: Vec<ConfigurationField>,
 }
+
+/// A package-declared MCP service that is delivered to an agent through the Harness.
+/// It is intentionally distinct from Workflow trigger and action tools.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentMcpServerDescriptor {
+    pub server_name: String,
+    pub name: String,
+    pub description: String,
+    pub tools: Vec<AgentMcpToolDescriptor>,
+    pub configuration: Vec<ConfigurationField>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentMcpToolDescriptor {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub capability: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(
     tag = "kind",
@@ -52,11 +76,13 @@ pub(crate) enum Entrypoint {
     SessionEvent { event: SessionEventKind },
     Action { uses_prompt: bool },
 }
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionEventKind {
     InvocationTerminal,
 }
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OutputDescriptor {
@@ -65,6 +91,7 @@ pub(crate) struct OutputDescriptor {
     pub kind: OutputKind,
     pub schema: Value,
 }
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OutputKind {
@@ -91,6 +118,7 @@ pub(crate) struct SourceContext {
     pub session_id: String,
     pub invocation_id: String,
 }
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InvocationContext {
@@ -101,6 +129,7 @@ pub(crate) struct InvocationContext {
     pub connection_id: Option<String>,
     pub output_node_id: Option<String>,
 }
+
 #[derive(Clone, Debug)]
 pub(crate) enum ToolInput {
     Mcp(Value),
@@ -113,6 +142,7 @@ pub(crate) enum ToolInput {
         inputs: Vec<ResolvedInput>,
     },
 }
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolvedInput {
@@ -145,6 +175,7 @@ pub(crate) struct SessionRequest {
     pub target: SessionRequestTarget,
     pub prompt: Vec<PromptPart>,
 }
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionStopRequest {
@@ -158,6 +189,7 @@ pub(crate) struct ToolResult {
     pub text: String,
     pub session_requests: Vec<SessionRequest>,
 }
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RoutingReceipt {
     pub stops: usize,
@@ -167,6 +199,14 @@ pub(crate) struct RoutingReceipt {
 pub(crate) trait OtpPackage: Send + Sync {
     fn descriptor(&self) -> PackageDescriptor;
     fn validate_configuration(&self, tool: &str, configuration: &Value) -> Result<(), String>;
+    fn validate_agent_mcp_configuration(
+        &self,
+        server: &str,
+        configuration: &Value,
+    ) -> Result<(), String> {
+        let _ = (server, configuration);
+        Ok(())
+    }
     fn invoke(
         &self,
         context: &InvocationContext,

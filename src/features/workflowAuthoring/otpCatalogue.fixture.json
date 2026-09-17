@@ -1,16 +1,24 @@
 [
   {
+    "agentMcpServers": [],
     "contractVersion": 1,
     "id": "workflow",
-    "requestedHandles": ["definitions", "node_sessions", "emit_output"],
+    "requestedHandles": [
+      "definitions",
+      "node_sessions",
+      "emit_output"
+    ],
     "tools": [
       {
         "configuration": [],
-        "description": "Trigger connections configured for this call from this node. Follow your instructions for when to call it. Optionally supply output file paths.",
+        "description": "Trigger connections configured for this call from this node. Follow your instructions for when to call it.",
         "entrypoint": {
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
+              "data": {
+                "type": "object"
+              },
               "outputFiles": {
                 "items": {
                   "type": "string"
@@ -32,6 +40,9 @@
             "schema": {
               "additionalProperties": false,
               "properties": {
+                "data": {
+                  "type": "object"
+                },
                 "outputFiles": {
                   "items": {
                     "type": "string"
@@ -47,7 +58,10 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "name"],
+                  "required": [
+                    "id",
+                    "name"
+                  ],
                   "type": "object"
                 }
               },
@@ -73,7 +87,10 @@
                 "type": "string"
               }
             },
-            "required": ["filePaths", "promptText"],
+            "required": [
+              "filePaths",
+              "promptText"
+            ],
             "type": "object"
           },
           "kind": "mcp"
@@ -106,7 +123,10 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "name"],
+                  "required": [
+                    "id",
+                    "name"
+                  ],
                   "type": "object"
                 }
               },
@@ -144,7 +164,10 @@
                       "type": "string"
                     }
                   },
-                  "required": ["id", "name"],
+                  "required": [
+                    "id",
+                    "name"
+                  ],
                   "type": "object"
                 }
               },
@@ -156,53 +179,88 @@
       {
         "configuration": [
           {
-            "choices": ["select", "new"],
+            "choices": [
+              "select",
+              "new"
+            ],
             "defaultValue": "select",
             "key": "mode",
             "label": "Session mode",
             "when": null
           },
           {
-            "choices": ["first", "all"],
+            "choices": [
+              "first",
+              "all"
+            ],
             "defaultValue": "first",
             "key": "cardinality",
             "label": "Sessions to select",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           },
           {
-            "choices": ["newest", "last_addressed"],
+            "choices": [
+              "newest",
+              "last_addressed"
+            ],
             "defaultValue": "newest",
             "key": "ordering",
             "label": "Order sessions",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           },
           {
-            "choices": ["any", "running_only", "not_running"],
+            "choices": [
+              "any",
+              "running_only",
+              "not_running"
+            ],
             "defaultValue": "any",
             "key": "running",
             "label": "Invocation state",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           },
           {
-            "choices": ["create", "fail", "noop"],
+            "choices": [
+              "create",
+              "fail",
+              "noop"
+            ],
             "defaultValue": "create",
             "key": "missing",
             "label": "If no session matches",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           },
           {
             "choices": [],
             "defaultValue": "",
             "key": "createdByEvent",
             "label": "Created by event",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           },
           {
             "choices": [],
             "defaultValue": "",
             "key": "createdBySession",
             "label": "Created by session",
-            "when": ["mode", "select"]
+            "when": [
+              "mode",
+              "select"
+            ]
           }
         ],
         "description": "Choose destination-node sessions and request delivery of the configured prompt.",
@@ -226,7 +284,10 @@
       {
         "configuration": [
           {
-            "choices": ["newest", "last_addressed"],
+            "choices": [
+              "newest",
+              "last_addressed"
+            ],
             "defaultValue": "newest",
             "key": "ordering",
             "label": "Order running sessions",

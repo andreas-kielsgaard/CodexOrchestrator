@@ -68,7 +68,7 @@ fn package_emits_declared_data_without_consuming_the_source_session() {
         host.emitted.lock().unwrap()[0],
         (
             "continuation".into(),
-            json!({"outputFiles":["spec.md"],"sourceNode":{"id":"source","name":"Node source"}})
+            json!({"outputFiles":["spec.md"],"sourceNode":{"id":"source","name":"Node source"},"data":{}})
         )
     );
     package

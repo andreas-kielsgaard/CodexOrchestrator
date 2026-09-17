@@ -107,7 +107,7 @@ impl WorkflowExecutionService {
         instance_id: &str,
         text: String,
     ) -> Result<super::instances::WorkflowActionResult, String> {
-        self.dispatch_node_user_request(recipe_id, instance_id, None, text)
+        self.dispatch_node_user_request(recipe_id, instance_id, None, text, serde_json::json!({}))
     }
     pub(crate) fn dispatch_node_user_request(
         &self,
@@ -115,7 +115,11 @@ impl WorkflowExecutionService {
         instance_id: &str,
         node_id: Option<&str>,
         text: String,
+        data: serde_json::Value,
     ) -> Result<super::instances::WorkflowActionResult, String> {
+        if !data.is_object() {
+            return Err("Workflow entry data must be an object".into());
+        }
         let instance = self.instances.load(instance_id)?;
         if instance.recipe.recipe_id != recipe_id {
             return Err("Instance belongs to another Workflow".into());
@@ -134,12 +138,18 @@ impl WorkflowExecutionService {
             &instance,
             &context,
             None,
-            serde_json::json!({"text":text}),
+            serde_json::json!({"text":text,"data":data}),
             plan.entry_configuration.clone(),
-            Ok(vec![ResolvedInput {
-                reference: occurrence_id,
-                value: serde_json::Value::String(text),
-            }]),
+            Ok(vec![
+                ResolvedInput {
+                    reference: occurrence_id.clone(),
+                    value: serde_json::Value::String(text),
+                },
+                ResolvedInput {
+                    reference: format!("{occurrence_id}:data"),
+                    value: data,
+                },
+            ]),
         )
     }
 }

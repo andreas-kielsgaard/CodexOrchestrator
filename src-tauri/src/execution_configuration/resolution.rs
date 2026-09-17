@@ -10,7 +10,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 pub(crate) const SESSION_CREATION_REQUEST_CONTRACT_VERSION: u32 = 1;
 pub(crate) const SESSION_CREATION_RESOLUTION_CONTRACT_VERSION: u32 = 1;
@@ -23,6 +23,8 @@ pub(crate) struct SessionCreationRequest {
     pub(crate) contract_version: u32,
     pub(crate) capability_profile: CapabilityProfile,
     pub(crate) node_profile: NodeProfile,
+    #[serde(default)]
+    pub(crate) agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -183,6 +185,7 @@ impl SessionProfileResolver {
             request.capability_profile.revision,
             request.node_profile.allowed_capabilities,
             pinned_defaults,
+            request.agent_mcp_configuration,
         );
         let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
         let digest = session_profile_digest(contract_version, &session_profile)?;

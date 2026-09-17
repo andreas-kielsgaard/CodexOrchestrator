@@ -24,6 +24,7 @@ use uuid::Uuid;
 #[derive(Default)]
 pub(crate) struct ManagedMcpUpstreamRegistry {
     descriptors: Mutex<BTreeMap<String, Vec<ManagedMcpUpstreamRegistration>>>,
+    scoped_descriptors: Mutex<BTreeMap<(String, String), Vec<ManagedMcpUpstreamRegistration>>>,
 }
 
 struct ManagedMcpUpstreamRegistration {
@@ -61,6 +62,28 @@ impl ManagedMcpUpstreamRegistry {
         Ok(registration_id)
     }
 
+    pub(crate) fn register_for_session(
+        &self,
+        session_id: &str,
+        descriptor: ManagedMcpUpstreamDescriptor,
+    ) -> Result<String, String> {
+        let name = descriptor.name.trim();
+        if session_id.trim().is_empty() || name.is_empty() || descriptor.url.trim().is_empty() {
+            return Err("Managed session MCP upstream session, name, and URL are required.".into());
+        }
+        let registration_id = format!("managed-mcp-upstream-{}", Uuid::new_v4());
+        self.scoped_descriptors
+            .lock()
+            .map_err(|_| "Managed MCP upstream registry is unavailable.".to_string())?
+            .entry((session_id.into(), name.into()))
+            .or_default()
+            .push(ManagedMcpUpstreamRegistration {
+                id: registration_id.clone(),
+                descriptor,
+                owner: None,
+            });
+        Ok(registration_id)
+    }
     pub(crate) fn retain_owner(
         &self,
         registration_id: &str,
@@ -78,23 +101,53 @@ impl ManagedMcpUpstreamRegistry {
                 return Ok(());
             }
         }
+        drop(descriptors);
+        let Ok(mut scoped) = self.scoped_descriptors.lock() else {
+            return Err(owner);
+        };
+        for registrations in scoped.values_mut() {
+            if let Some(registration) = registrations
+                .iter_mut()
+                .find(|registration| registration.id == registration_id)
+            {
+                registration.owner = Some(owner);
+                return Ok(());
+            }
+        }
         Err(owner)
     }
 
     pub(crate) fn unregister(&self, registration_id: &str) {
         if let Ok(mut descriptors) = self.descriptors.lock() {
-            let mut empty_name = None;
-            for (name, registrations) in descriptors.iter_mut() {
+            descriptors.retain(|_, registrations| {
                 registrations.retain(|registration| registration.id != registration_id);
-                if registrations.is_empty() {
-                    empty_name = Some(name.clone());
-                    break;
-                }
-            }
-            if let Some(name) = empty_name {
-                descriptors.remove(&name);
-            }
+                !registrations.is_empty()
+            });
         }
+        if let Ok(mut scoped) = self.scoped_descriptors.lock() {
+            scoped.retain(|_, registrations| {
+                registrations.retain(|registration| registration.id != registration_id);
+                !registrations.is_empty()
+            });
+        }
+    }
+
+    pub(crate) fn resolve_scoped(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<ManagedMcpUpstreamDescriptor, String> {
+        if let Some(descriptor) = self
+            .scoped_descriptors
+            .lock()
+            .map_err(|_| "Managed MCP upstream registry is unavailable.".to_string())?
+            .get(&(session_id.into(), name.into()))
+            .and_then(|registrations| registrations.last())
+            .map(|registration| registration.descriptor.clone())
+        {
+            return Ok(descriptor);
+        }
+        self.resolve(name)
     }
 
     fn resolve(&self, name: &str) -> Result<ManagedMcpUpstreamDescriptor, String> {
@@ -112,7 +165,7 @@ impl ManagedMcpUpstreamRegistry {
     }
 
     pub(crate) fn shutdown(&self) {
-        let owners = self
+        let mut owners = self
             .descriptors
             .lock()
             .map(|mut descriptors| {
@@ -123,6 +176,18 @@ impl ManagedMcpUpstreamRegistry {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        owners.extend(
+            self.scoped_descriptors
+                .lock()
+                .map(|mut descriptors| {
+                    descriptors
+                        .values_mut()
+                        .flat_map(|registrations| registrations.iter_mut())
+                        .filter_map(|registration| registration.owner.take())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
         for owner in owners {
             owner.stop();
         }
@@ -133,6 +198,7 @@ pub(crate) struct HarnessEngineService {
     repository: Arc<dyn HarnessBindingRepository>,
     sidecar: Arc<dyn HarnessSidecarClient>,
     upstreams: Arc<ManagedMcpUpstreamRegistry>,
+    agent_mcp_provisioner: Option<Arc<dyn crate::otp_host::job_agent::AgentMcpUpstreamProvisioner>>,
 }
 
 impl HarnessEngineService {
@@ -150,6 +216,9 @@ impl HarnessEngineService {
             }
             return Ok(());
         }
+        if let Some(provisioner) = &self.agent_mcp_provisioner {
+            provisioner.provision(session_id, profile, self.upstreams.as_ref())?;
+        }
         let mut exposures = Vec::new();
         for (index, (server, tools)) in profile
             .session_profile()
@@ -164,7 +233,7 @@ impl HarnessEngineService {
             exposures.push(HarnessMcpExposurePlan {
                 configured_server_name: server.clone(),
                 proxy_server_name: format!("session_capability_{}", index + 1),
-                upstream: self.upstreams.resolve(server)?,
+                upstream: self.upstreams.resolve_scoped(session_id.as_str(), server)?,
                 access: HarnessToolAccess::SelectedTools {
                     tool_names: tools.iter().cloned().collect(),
                 },
@@ -217,10 +286,20 @@ impl HarnessEngineService {
             repository,
             sidecar,
             upstreams,
+            agent_mcp_provisioner: None,
         });
         Ok(service)
     }
 
+    pub(crate) fn with_agent_mcp_provisioner(
+        mut self: Arc<Self>,
+        provisioner: Arc<dyn crate::otp_host::job_agent::AgentMcpUpstreamProvisioner>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("Harness Engine is configured before sharing")
+            .agent_mcp_provisioner = Some(provisioner);
+        self
+    }
     fn proxy_extension(
         &self,
         binding: &HarnessBindingRecord,
@@ -486,6 +565,7 @@ mod tests {
                     allowed_capabilities: capabilities,
                     pinned_defaults: RuntimeSelections::default(),
                 },
+                agent_mcp_configuration: Default::default(),
             },
         )
         .unwrap()

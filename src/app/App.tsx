@@ -7,6 +7,7 @@ import type { SessionEventQueryClient } from '../application/sessionEvents';
 import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
 import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
 import type { WorkflowInstanceClient } from '../application/workflowInstances';
+import type { OtpInstallationClient } from '../application/otp';
 import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
 import { DraftWorkspace } from '../components/draftWorkspace';
 import { useDraftCloseWarning } from '../components/useDraftCloseWarning';
@@ -118,6 +119,7 @@ export interface AppProps {
   readonly orchestrationClient: OrchestrationApplicationClient;
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
   readonly workflowInstanceClient?: WorkflowInstanceClient;
+  readonly otpInstallationClient?: OtpInstallationClient;
   readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
   readonly identityManagementClient?: IdentityManagementClient;
@@ -175,6 +177,7 @@ export function App({
   orchestrationClient,
   workflowAuthoringClient,
   workflowInstanceClient,
+  otpInstallationClient,
   draftCloseGuard,
   executionConfigurationClient,
   identityManagementClient,
@@ -1198,6 +1201,7 @@ export function App({
         <TechnicalSettingsScreen
           client={nativeProfileClient}
           readOtpCatalogue={workflowAuthoringClient?.listCapabilities}
+                  otpInstallations={otpInstallationClient}
         />
       ) : (
         harnessManagementPreviewSurface

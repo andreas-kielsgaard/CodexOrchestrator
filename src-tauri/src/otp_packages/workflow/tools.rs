@@ -7,6 +7,11 @@ use serde_json::{json, Value};
 struct Continuation {
     #[serde(default)]
     output_files: Vec<String>,
+    #[serde(default = "empty_object")]
+    data: Value,
+}
+fn empty_object() -> Value {
+    json!({})
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,7 +37,7 @@ pub(super) fn invoke(
                 serde_json::from_value(arguments).map_err(|e| e.to_string())?;
             (
                 "continuation",
-                json!({"outputFiles":args.output_files,"sourceNode":source_node}),
+                json!({"outputFiles":args.output_files,"sourceNode":source_node,"data":args.data}),
             )
         }
         ("handoff_to_agent", ToolInput::Mcp(arguments)) => {

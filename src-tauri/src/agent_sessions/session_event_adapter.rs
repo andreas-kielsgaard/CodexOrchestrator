@@ -239,6 +239,7 @@ impl SessionDirectory for AgentSessionEventAdapter {
                         contract_version: 1,
                         capability_profile: profile,
                         node_profile: intent.node_profile,
+                        agent_mcp_configuration: intent.agent_mcp_configuration,
                     },
                     Some(intent.working_directory),
                     Some(intent.title),

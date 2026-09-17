@@ -5,6 +5,20 @@ import { OtpElementPicker, type OtpPickerGroup } from '../../components/otp/OtpE
 import { OtpElementDetails } from '../otp/otpElements';
 import { mcpToolCatalogValue } from './types';
 
+type ManagedTool =
+  | {
+      readonly kind: 'workflow';
+      readonly pkg: OtpPackageDto;
+      readonly tool: OtpPackageDto['tools'][number];
+    }
+  | {
+      readonly kind: 'agent_mcp';
+      readonly pkg: OtpPackageDto;
+      readonly serverName: string;
+      readonly serverLabel: string;
+      readonly tool: OtpPackageDto['agentMcpServers'][number]['tools'][number];
+    };
+
 export function OtpMcpToolsPicker({
   packages,
   catalog,
@@ -19,12 +33,33 @@ export function OtpMcpToolsPicker({
   readonly onChange: (values: readonly string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const managed = new Map(
-    packages.flatMap((pkg) =>
-      pkg.tools
-        .filter((t) => t.entrypoint.kind === 'mcp')
-        .map((tool) => [mcpToolCatalogValue(pkg.id, tool.id), { pkg, tool }] as const),
-    ),
+  const managed = new Map<string, ManagedTool>(
+    packages.flatMap((pkg) => [
+      ...pkg.tools
+        .filter((tool) => tool.entrypoint.kind === 'mcp')
+        .map(
+          (tool) =>
+            [
+              mcpToolCatalogValue(pkg.id, tool.id),
+              { kind: 'workflow', pkg, tool } as const,
+            ] as const,
+        ),
+      ...(pkg.agentMcpServers ?? []).flatMap((server) =>
+        server.tools.map(
+          (tool) =>
+            [
+              mcpToolCatalogValue(server.serverName, tool.id),
+              {
+                kind: 'agent_mcp',
+                pkg,
+                serverName: server.serverName,
+                serverLabel: server.name,
+                tool,
+              } as const,
+            ] as const,
+        ),
+      ),
+    ]),
   );
   const groups = new Map<
     string,
@@ -33,12 +68,15 @@ export function OtpMcpToolsPicker({
   for (const option of catalog.options) {
     const owned = managed.get(option.value);
     const server = option.value.split('\u0000')[0];
-    const knownPackage = packages.some((pkg) => pkg.id === server);
-    if (knownPackage && !owned) continue;
-    const groupId = owned ? `otp:${owned.pkg.id}` : `mcp:${server}`;
+    const groupId = owned
+      ? `otp:${owned.pkg.id}:${owned.kind === 'agent_mcp' ? owned.serverName : 'workflow'}`
+      : `mcp:${server}`;
     const group = groups.get(groupId) ?? {
       id: groupId,
-      label: owned?.pkg.id ?? `MCP server: ${server}`,
+      label:
+        owned?.kind === 'agent_mcp'
+          ? `${owned.pkg.id}: ${owned.serverLabel}`
+          : owned?.pkg.id ?? `MCP server: ${server}`,
       items: [],
     };
     group.items.push({
@@ -74,12 +112,20 @@ export function OtpMcpToolsPicker({
           selected={values}
           renderDetails={(id) => {
             const owned = managed.get(id);
-            return owned ? (
-              <OtpElementDetails tool={owned.tool} />
-            ) : (
+            if (!owned) {
+              return (
+                <>
+                  <h3>{id.replace('\u0000', '/')}</h3>
+                  <p>Tool provided by an MCP server.</p>
+                </>
+              );
+            }
+            if (owned.kind === 'workflow') return <OtpElementDetails tool={owned.tool} />;
+            return (
               <>
-                <h3>{id.replace('\u0000', '/')}</h3>
-                <p>Tool provided by an MCP server.</p>
+                <h3>{owned.tool.name}</h3>
+                <p>{owned.tool.description}</p>
+                <p>Job capability: {owned.tool.capability.replaceAll('_', ' ')}.</p>
               </>
             );
           }}

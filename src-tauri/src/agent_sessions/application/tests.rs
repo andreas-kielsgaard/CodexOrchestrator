@@ -394,6 +394,7 @@ fn test_session_creation_request() -> SessionCreationRequest {
                 sandbox_mode: None,
             },
         },
+        agent_mcp_configuration: Default::default(),
     }
 }
 
