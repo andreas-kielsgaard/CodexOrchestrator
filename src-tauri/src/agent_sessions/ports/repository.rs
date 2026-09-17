@@ -130,6 +130,33 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         ))
     }
 
+    /// One current device/worktree transition can be retained independently from an invocation.
+    fn target_transition(
+        &self,
+        _session_id: &AgentSessionId,
+    ) -> Result<
+        Option<crate::agent_sessions::target_transition::SessionTargetTransition>,
+        RepositoryError,
+    > {
+        Ok(None)
+    }
+    fn save_target_transition(
+        &self,
+        _transition: &crate::agent_sessions::target_transition::SessionTargetTransition,
+    ) -> Result<crate::agent_sessions::target_transition::SessionTargetTransition, RepositoryError>
+    {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target transition storage is unavailable",
+        ))
+    }
+    fn clear_target_transition(&self, _session_id: &AgentSessionId) -> Result<(), RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target transition storage is unavailable",
+        ))
+    }
+
     fn resolve_working_directory(
         &self,
         _session_id: &AgentSessionId,

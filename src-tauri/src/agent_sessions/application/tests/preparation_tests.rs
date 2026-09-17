@@ -444,5 +444,4 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
     );
 }
 
-
 mod persistence;

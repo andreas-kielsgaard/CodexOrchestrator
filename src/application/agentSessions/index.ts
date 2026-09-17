@@ -10,6 +10,16 @@ export * from './contracts';
 export * from './selections';
 
 export type {
+  RequestSessionTargetTransitionInput,
+  SessionTargetTransitionDto,
+  SessionTargetTransitionEstimateDto,
+  SessionTargetTransitionPhaseDto,
+  SessionTargetTransitionSnapshotDto,
+  SessionTargetTransitionSnapshotArtifactDto,
+  SessionTargetTransitionTaskDto,
+} from './preparation';
+
+export type {
   AgentSessionImportClient,
   CodexImportPreview,
   CodexImportCommand,

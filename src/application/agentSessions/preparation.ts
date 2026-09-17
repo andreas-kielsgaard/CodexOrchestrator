@@ -40,6 +40,79 @@ export interface SendPreparedAgentSessionMessageInput {
   readonly folderTarget?: SessionFolderTarget | null;
 }
 
+/**
+ * A device/worktree change owned by the Session, rather than by one submitted prompt.
+ * Pending and running transitions keep a later prompt behind their worktree work.
+ */
+export type SessionTargetTransitionPhaseDto =
+  | 'pending'
+  | 'running'
+  | 'ready'
+  | 'failed'
+  | 'canceled';
+
+export interface SessionTargetTransitionTaskDto {
+  readonly kind:
+    | 'inspect_source'
+    | 'inspect_destination'
+    | 'capture_snapshot'
+    | 'materialize_destination'
+    | 'transfer_snapshot'
+    | 'apply_snapshot'
+    | 'verify_destination'
+    | 'activate_sister';
+  readonly status: 'pending' | 'running' | 'completed' | 'failed';
+  readonly detail?: string | null;
+  readonly error?: string | null;
+}
+
+export interface SessionTargetTransitionSnapshotDto {
+  readonly sourceHead: string | null;
+  readonly destinationHead: string | null;
+  readonly commitBundle: SessionTargetTransitionSnapshotArtifactDto;
+  readonly stagedPatch: SessionTargetTransitionSnapshotArtifactDto;
+  readonly unstagedPatch: SessionTargetTransitionSnapshotArtifactDto;
+  readonly untrackedFiles: SessionTargetTransitionSnapshotArtifactDto;
+  readonly totalBytes: number;
+}
+
+export interface SessionTargetTransitionSnapshotArtifactDto {
+  readonly entryCount: number;
+  readonly bytes: number;
+  readonly digest?: string | null;
+}
+
+export interface SessionTargetTransitionEstimateDto {
+  readonly snapshotBytes: number;
+  readonly bytesPerSecond: number;
+  readonly estimatedSeconds: number;
+  readonly measuredAt: string;
+}
+
+export interface SessionTargetTransitionDto {
+  readonly sessionId: string;
+  readonly sourceTarget: SessionExecutionTargetDto;
+  readonly destinationSelection: SessionExecutionSelectionDto;
+  readonly phase: SessionTargetTransitionPhaseDto;
+  readonly tasks: readonly SessionTargetTransitionTaskDto[];
+  readonly snapshot?: SessionTargetTransitionSnapshotDto | null;
+  readonly transferEstimate?: SessionTargetTransitionEstimateDto | null;
+  readonly resolvedTarget?: SessionExecutionTargetDto | null;
+  readonly error?: string | null;
+}
+
+export interface RequestSessionTargetTransitionInput {
+  readonly sessionId: string;
+  readonly sourceTarget: SessionExecutionTargetDto;
+  readonly destinationSelection: SessionExecutionSelectionDto;
+}
+
+export function isSessionTargetTransitionRunning(
+  transition: SessionTargetTransitionDto | null | undefined,
+): boolean {
+  return transition?.phase === 'running';
+}
+
 export function isSessionPreparing(preparation: SessionPreparationDto | null | undefined): boolean {
   return (
     preparation?.phase === 'accepted' ||

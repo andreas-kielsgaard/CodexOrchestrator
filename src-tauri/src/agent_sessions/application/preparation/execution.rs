@@ -15,6 +15,21 @@ impl AgentSessionApplication {
             .preparation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
+        if let Some(transition) = self.await_target_transition(&p.session_id)? {
+            let target = transition.resolved_target.ok_or_else(|| {
+                AgentSessionApplicationError::invalid(
+                    "The device switch completed without a destination worktree",
+                )
+            })?;
+            p.selection = Some(SessionExecutionSelection {
+                capability_profile_id: target.capability_profile_id.clone(),
+                capability_profile_revision: target.capability_profile_revision,
+                execution: target.execution.clone(),
+                workspace: SessionWorkspaceSelection::Existing { target },
+            });
+            p.source_target = Some(transition.source_target);
+            self.save_progress(&p)?;
+        }
         let session = self.load_session(&p.session_id)?.session;
         let endpoints = self.endpoints.as_ref().ok_or_else(|| {
             AgentSessionApplicationError::invalid("Execution endpoints unavailable")

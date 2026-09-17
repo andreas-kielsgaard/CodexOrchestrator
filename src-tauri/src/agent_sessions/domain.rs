@@ -1,12 +1,11 @@
-pub(crate) use orchid_engine::contracts::domain::*;
 use crate::{
     execution_configuration::SessionCreationResolution, harness_engine::domain::HarnessVersionRef,
     identities::AssignedAgentIdentity,
 };
 use chrono::{DateTime, Utc};
+pub(crate) use orchid_engine::contracts::domain::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -14,10 +13,6 @@ pub(crate) enum AgentSessionAvailability {
     Available,
     Archived,
 }
-
-
-
-
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,22 +45,12 @@ pub(crate) struct AgentSession {
     pub(crate) updated_at: DateTime<Utc>,
 }
 
-
-
-
-
-
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentInvocationInputProvenance {
     User,
     Application,
 }
-
-
-
-
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,21 +176,8 @@ impl AgentInvocation {
     }
 }
 
-
-
-
-
 /// Provider-neutral semantic detail for a tool item. The enclosing runtime event retains the
 /// provider payload for audit; consumers use these fields without parsing it.
-
-
-
-
-
-
-
-
-
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,12 +190,6 @@ pub(crate) struct AgentRuntimeEvent {
     pub(crate) normalized: Option<NormalizedRuntimeEvent>,
     pub(crate) recorded_at: DateTime<Utc>,
 }
-
-
-
-
-
-
 
 pub(crate) fn validate_session_update(
     current: &AgentSession,

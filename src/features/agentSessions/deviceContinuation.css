@@ -78,6 +78,7 @@
 }
 .device-continuation__device-step,
 .device-continuation__comparison,
+.device-continuation__plan,
 .device-continuation__empty {
   flex: 1;
   min-height: 0;
@@ -258,10 +259,23 @@
   margin-top: 14px;
 }
 .device-continuation__worktree {
+  display: block;
+  width: 100%;
   padding: 13px;
   border: 1px solid #dde5de;
   border-radius: 8px;
   background: #fcfdfb;
+  color: inherit;
+  text-align: left;
+}
+.device-continuation__worktree:hover,
+.device-continuation__worktree.is-selected {
+  border-color: #4a765b;
+  box-shadow: inset 3px 0 #4a765b;
+}
+.device-continuation__worktree:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 .device-continuation__worktree strong,
 .device-continuation__worktree code {
@@ -308,6 +322,81 @@
   font-size: 13px;
   line-height: 1.45;
 }
+.device-continuation__worktree--create {
+  display: grid;
+  gap: 6px;
+  border-style: dashed;
+}
+.device-continuation__worktree--create span {
+  color: #64736a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.device-continuation__plan {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+.device-continuation__plan-card {
+  width: min(720px, 100%);
+  padding: 22px;
+  border: 1px solid #dbe4dd;
+  border-radius: 12px;
+  background: white;
+}
+.device-continuation__plan-card h3,
+.device-continuation__plan-card p {
+  margin: 0;
+}
+.device-continuation__plan-card > h3 {
+  margin-top: 4px;
+}
+.device-continuation__plan-card > h3 + p {
+  margin-top: 10px;
+  color: #607066;
+  line-height: 1.5;
+}
+.device-continuation__estimate {
+  margin-top: 14px !important;
+  color: #3c6d4e !important;
+  font-size: 13px;
+  font-weight: 600;
+}
+.device-continuation__task-list {
+  display: grid;
+  gap: 11px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.device-continuation__task-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #51645a;
+}
+.device-continuation__task-list li > span {
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #bac8bc;
+}
+.device-continuation__task-list li.is-running > span {
+  background: #bc8525;
+}
+.device-continuation__task-list li.is-completed > span {
+  background: #3c7b50;
+}
+.device-continuation__task-list li.is-failed > span {
+  background: #ad4f47;
+}
+.device-continuation__task-list p {
+  margin-top: 3px;
+  color: #69786e;
+  font-size: 12px;
+}
 .device-continuation__empty {
   display: grid;
   place-content: center;
@@ -352,6 +441,7 @@
   .device-continuation__footer,
   .device-continuation__device-step,
   .device-continuation__comparison,
+  .device-continuation__plan,
   .device-continuation__empty {
     padding-left: 16px;
     padding-right: 16px;

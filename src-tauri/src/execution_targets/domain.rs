@@ -85,6 +85,10 @@ pub(crate) struct TargetWorktree {
     pub(crate) path: String,
     pub(crate) head: Option<String>,
     pub(crate) branch_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) sister_lock: Option<super::sisters::SisterWorktreeLock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_sister: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -94,6 +98,8 @@ pub(crate) struct ProfileWorktreeTargets {
     pub(crate) profile: ExecutionTargetProfile,
     pub(crate) instances: Vec<TargetWorktree>,
     pub(crate) error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) sister_lock: Option<super::sisters::SisterWorktreeLock>,
 }
 
 #[derive(Clone, Debug, Serialize)]

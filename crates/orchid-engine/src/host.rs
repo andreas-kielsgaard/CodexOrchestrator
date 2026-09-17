@@ -171,6 +171,32 @@ impl Host {
                 &instance_id,
             )?)
             .map_err(unavailable),
+            HostCommand::InspectWorktree {
+                worktree_root,
+                compare_to_head,
+            } => serde_json::to_value(crate::workspaces::inspect_worktree(
+                &worktree_root,
+                compare_to_head.as_deref(),
+            )?)
+            .map_err(unavailable),
+            HostCommand::CaptureWorktreeSnapshot {
+                worktree_root,
+                destination_head,
+                snapshot_id,
+            } => serde_json::to_value(crate::workspaces::capture_worktree_snapshot(
+                &worktree_root,
+                destination_head.as_deref(),
+                &snapshot_id,
+            )?)
+            .map_err(unavailable),
+            HostCommand::ApplyWorktreeSnapshot {
+                worktree_root,
+                snapshot,
+            } => serde_json::to_value(crate::workspaces::apply_worktree_snapshot(
+                &worktree_root,
+                &snapshot,
+            )?)
+            .map_err(unavailable),
             HostCommand::AuxiliaryWorkspace { session_id } => serde_json::to_value(
                 crate::workspaces::auxiliary_workspace(&self.sessions_directory, &session_id)?,
             )
@@ -831,6 +857,61 @@ mod tests {
         assert!(
             matches!(&frames[1], HostFrame::Response { id, result: Some(value), error: None } if id == "2" && value["deviceId"] == "remote")
         );
+    }
+
+    #[test]
+    fn host_dispatches_typed_worktree_inspection() {
+        use std::process::Command;
+
+        fn git(root: &Path, args: &[&str]) {
+            let output = Command::new("git")
+                .current_dir(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        git(directory.path(), &["config", "user.name", "Fixture"]);
+        git(
+            directory.path(),
+            &["config", "user.email", "fixture@example.invalid"],
+        );
+        git(directory.path(), &["config", "core.autocrlf", "false"]);
+        fs::write(directory.path().join("README.md"), "base\n").unwrap();
+        git(directory.path(), &["add", "."]);
+        git(directory.path(), &["commit", "-m", "base"]);
+        fs::write(directory.path().join("README.md"), "staged\n").unwrap();
+        git(directory.path(), &["add", "."]);
+
+        let host = Host::new(
+            HostConfiguration {
+                device_id: "remote".into(),
+                device_name: "Remote".into(),
+                configurations: vec![],
+            },
+            directory.path().join("bindings"),
+        )
+        .unwrap();
+        let value = host
+            .execute(
+                HostCommand::InspectWorktree {
+                    worktree_root: directory.path().to_string_lossy().into_owned(),
+                    compare_to_head: None,
+                },
+                Arc::new(Capture::default()),
+            )
+            .unwrap();
+        let inspection: WorktreeInspection = serde_json::from_value(value).unwrap();
+        assert_eq!(inspection.branch_ref.as_deref(), Some("refs/heads/main"));
+        assert_eq!(inspection.staged.files, 1);
+        assert!(!inspection.detached);
     }
     #[test]
     fn explicit_preparation_rebinds_idle_sessions_and_preserves_active_destination() {

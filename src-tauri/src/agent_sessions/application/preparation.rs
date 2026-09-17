@@ -69,12 +69,36 @@ impl PreparationWorkers {
 impl AgentSessionApplication {
     pub(crate) fn accept_prepared_message(
         &self,
-        input: PreparedMessageInput,
+        mut input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         if input.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
                 "A message must contain text",
             ));
+        }
+        // A device move has no synthetic invocation. When a prompt arrives, retain the normal
+        // durable invocation but bind its preparation to the move's requested/resolved target.
+        if let Some(session_id) = input.session_id.clone() {
+            if let Some(transition) = self.queue_target_transition_prompt(
+                &session_id,
+                input.submitted_text.clone(),
+                input.submission_id.as_str().into(),
+            )? {
+                if transition.phase.is_unfinished()
+                    || transition.phase
+                        == crate::agent_sessions::target_transition::TargetTransitionPhase::Ready
+                {
+                    input.execution_selection = Some(match transition.resolved_target {
+                        Some(target) => SessionExecutionSelection {
+                            capability_profile_id: target.capability_profile_id.clone(),
+                            capability_profile_revision: target.capability_profile_revision,
+                            execution: target.execution.clone(),
+                            workspace: SessionWorkspaceSelection::Existing { target },
+                        },
+                        None => transition.destination_selection,
+                    });
+                }
+            }
         }
         if let Some(existing) = self
             .repository

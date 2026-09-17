@@ -376,6 +376,7 @@ export function StandaloneAgentSessionScreen({
             executionTargetClient && branchSource && profileClient
               ? {
                   contextKey: selectionKey(selection),
+                  sessionId: selectedSessionId ?? undefined,
                   client: executionTargetClient,
                   target: targetDraft.target,
                   onSelectTarget: targetDraft.setTarget,
@@ -417,6 +418,7 @@ export function StandaloneAgentSessionScreen({
               ? targetDraft.selection?.capabilityProfileId
               : undefined
           }
+          sessionId={selectedSessionId ?? undefined}
           onClose={() => setTargetPicker(null)}
           onSelect={(target) => {
             targetDraft.setTarget(target);
@@ -431,9 +433,15 @@ export function StandaloneAgentSessionScreen({
       {deviceContinuationOpen && executionTargetClient && branchSource && (
         <DeviceContinuationDialog
           client={executionTargetClient}
+          profileClient={profileClient}
+          sessionId={selectedSessionId ?? undefined}
           source={branchSource}
           sourceTarget={currentTarget ?? targetDraft.target}
           onChooseDevice={targetDraft.chooseDevice}
+          onTransitionChanged={() => {
+            void session.reload();
+            void reloadCollection();
+          }}
           onClose={() => setDeviceContinuationOpen(false)}
         />
       )}

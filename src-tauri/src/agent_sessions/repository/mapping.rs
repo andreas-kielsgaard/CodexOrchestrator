@@ -97,7 +97,11 @@ pub(super) fn event_row(row: &Row<'_>) -> rusqlite::Result<EventRow> {
 
 pub(super) fn map_session_row(row: SessionRow) -> Result<AgentSession, RepositoryError> {
     let session = AgentSession {
-        execution_target: row.13.as_deref().map(|value| from_json(value, "Session execution target")).transpose()?,
+        execution_target: row
+            .13
+            .as_deref()
+            .map(|value| from_json(value, "Session execution target"))
+            .transpose()?,
         workspace_origin: row.12,
         id: AgentSessionId::new(row.0).map_err(contract_error)?,
         title: row.1,

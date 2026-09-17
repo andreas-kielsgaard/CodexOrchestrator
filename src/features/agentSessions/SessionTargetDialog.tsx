@@ -29,10 +29,12 @@ export function SessionTargetDialog({
   onSelect,
   deviceId,
   capabilityProfileId,
+  sessionId,
   onSelectSelection,
 }: {
   readonly deviceId?: string | null;
   readonly capabilityProfileId?: string | null;
+  readonly sessionId?: string;
   readonly onSelectSelection?: (selection: SessionExecutionSelectionDto) => void;
   readonly client: ExecutionTargetClient;
   readonly source: RepositoryBranchSource;
@@ -166,6 +168,18 @@ export function SessionTargetDialog({
           !profile.error &&
           profile.capabilityProfileId === candidate.capabilityProfileId &&
           profile.instances.some((instance) => instance.worktreeId === candidate.worktreeId),
+      ),
+    );
+  const candidateLocked =
+    candidate &&
+    devices.some((device) =>
+      device.profiles.some((profile) =>
+        profile.instances.some(
+          (instance) =>
+            instance.worktreeId === candidate.worktreeId &&
+            instance.sisterLock &&
+            instance.sisterLock.ownerSessionId !== sessionId,
+        ),
       ),
     );
 
@@ -309,23 +323,30 @@ export function SessionTargetDialog({
                         ) : profile.instances.length === 0 ? (
                           <div className="session-target-empty">
                             <p>No existing worktree for this branch.</p>
-                            {onSelectSelection && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setCreation({
-                                    repositoryId,
-                                    repositoryName:
-                                      repositories.find(
-                                        (repo) => repo.repositoryId === repositoryId,
-                                      )?.name ?? repositoryId,
-                                    branchRef,
-                                    profile,
-                                  })
-                                }
-                              >
-                                Create worktree on Send…
-                              </button>
+                            {profile.sisterLock &&
+                            profile.sisterLock.ownerSessionId !== sessionId ? (
+                              <p className="session-target-unavailable">
+                                Locked to a Session on {profile.sisterLock.activeDeviceId}.
+                              </p>
+                            ) : (
+                              onSelectSelection && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCreation({
+                                      repositoryId,
+                                      repositoryName:
+                                        repositories.find(
+                                          (repo) => repo.repositoryId === repositoryId,
+                                        )?.name ?? repositoryId,
+                                      branchRef,
+                                      profile,
+                                    })
+                                  }
+                                >
+                                  Create worktree on Send…
+                                </button>
+                              )
                             )}
                           </div>
                         ) : (
@@ -333,12 +354,16 @@ export function SessionTargetDialog({
                             const active =
                               candidate?.worktreeId === instance.worktreeId &&
                               candidate?.capabilityProfileId === profile.capabilityProfileId;
+                            const locked =
+                              instance.sisterLock &&
+                              instance.sisterLock.ownerSessionId !== sessionId;
                             return (
                               <button
                                 key={instance.worktreeId}
                                 type="button"
                                 className="session-target-instance"
                                 aria-pressed={active}
+                                disabled={Boolean(locked)}
                                 onClick={() =>
                                   setCandidate(
                                     toSessionExecutionTarget(repositoryId, profile, instance),
@@ -348,6 +373,7 @@ export function SessionTargetDialog({
                                 <span>
                                   <strong>{instance.path}</strong>
                                   <code>HEAD {instance.head?.slice(0, 10) ?? 'unknown'}</code>
+                                  {locked && <small>Locked to another Session</small>}
                                 </span>
                                 {active && <Check size={17} aria-hidden="true" />}
                               </button>
@@ -376,7 +402,9 @@ export function SessionTargetDialog({
           <button
             type="button"
             className="worktree-review__primary"
-            disabled={!candidateAvailable || loadingDevices || graphOpen}
+            disabled={
+              !candidateAvailable || Boolean(candidateLocked) || loadingDevices || graphOpen
+            }
             onClick={() => candidateAvailable && candidate && onSelect(candidate)}
           >
             Use worktree

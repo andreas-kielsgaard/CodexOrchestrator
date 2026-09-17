@@ -56,7 +56,13 @@ fn notification_ids(
     notification: &AgentSessionNotification,
 ) -> (AgentInvocationId, AgentSessionId) {
     match notification {
-        AgentSessionNotification::PreparationUpdated { session_id, invocation_id } => (invocation_id.clone(), session_id.clone()),
+        AgentSessionNotification::TargetTransitionUpdated { .. } => {
+            unreachable!("target-transition notifications do not record invocation diagnostics")
+        }
+        AgentSessionNotification::PreparationUpdated {
+            session_id,
+            invocation_id,
+        } => (invocation_id.clone(), session_id.clone()),
         AgentSessionNotification::SteeringAccepted {
             session_id,
             invocation_id,

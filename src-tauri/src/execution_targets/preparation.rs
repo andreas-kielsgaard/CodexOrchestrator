@@ -2,9 +2,91 @@
 use super::{
     domain::*, endpoints::ExecutionEndpoints, ssh_connection::SshConnection, ExecutionTargetService,
 };
-use orchid_engine::protocol::{HostCommand, WorktreeInstance};
+use orchid_engine::protocol::{HostCommand, WorktreeInspection, WorktreeInstance, WorktreeSnapshot};
 
 impl ExecutionEndpoints {
+    /// Runs the same Git inspection locally or through the Orchid host. The result carries only
+    /// device-local facts; Orchid decides whether those facts are eligible for a move.
+    pub(crate) fn inspect_worktree(
+        &self,
+        binding: &ExecutionBinding,
+        worktree_root: &str,
+        compare_to_head: Option<&str>,
+    ) -> Result<WorktreeInspection, String> {
+        match &binding.connection {
+            ExecutionConnection::Local => orchid_engine::workspaces::inspect_worktree(
+                worktree_root,
+                compare_to_head,
+            )
+            .map_err(|error| error.to_string()),
+            ExecutionConnection::Ssh {
+                target,
+                host_executable,
+            } => SshConnection::connect(target, host_executable)
+                .map_err(|error| error.to_string())?
+                .request(HostCommand::InspectWorktree {
+                    worktree_root: worktree_root.into(),
+                    compare_to_head: compare_to_head.map(Into::into),
+                })
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    /// Captures a product-owned virtual Git snapshot. Its bytes can cross the existing JSON SSH
+    /// protocol in this first slice; the descriptor remains usable when that transport streams.
+    pub(crate) fn capture_worktree_snapshot(
+        &self,
+        binding: &ExecutionBinding,
+        worktree_root: &str,
+        destination_head: Option<&str>,
+        snapshot_id: &str,
+    ) -> Result<WorktreeSnapshot, String> {
+        match &binding.connection {
+            ExecutionConnection::Local => orchid_engine::workspaces::capture_worktree_snapshot(
+                worktree_root,
+                destination_head,
+                snapshot_id,
+            )
+            .map_err(|error| error.to_string()),
+            ExecutionConnection::Ssh {
+                target,
+                host_executable,
+            } => SshConnection::connect(target, host_executable)
+                .map_err(|error| error.to_string())?
+                .request(HostCommand::CaptureWorktreeSnapshot {
+                    worktree_root: worktree_root.into(),
+                    destination_head: destination_head.map(Into::into),
+                    snapshot_id: snapshot_id.into(),
+                })
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    pub(crate) fn apply_worktree_snapshot(
+        &self,
+        binding: &ExecutionBinding,
+        worktree_root: &str,
+        snapshot: &WorktreeSnapshot,
+    ) -> Result<WorktreeInspection, String> {
+        match &binding.connection {
+            ExecutionConnection::Local => orchid_engine::workspaces::apply_worktree_snapshot(
+                worktree_root,
+                snapshot,
+            )
+            .map_err(|error| error.to_string()),
+            ExecutionConnection::Ssh {
+                target,
+                host_executable,
+            } => SshConnection::connect(target, host_executable)
+                .map_err(|error| error.to_string())?
+                .request(HostCommand::ApplyWorktreeSnapshot {
+                    worktree_root: worktree_root.into(),
+                    snapshot: snapshot.clone(),
+                })
+                .map_err(|error| error.to_string()),
+        }
+    }
+
     pub(crate) fn transfer_continuation(
         &self,
         source: &ExecutionBinding,

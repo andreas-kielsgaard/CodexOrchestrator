@@ -114,6 +114,8 @@ fn profile_targets(
                         path: instance.path,
                         head: instance.head,
                         branch_ref,
+                        sister_lock: None,
+                        is_sister: None,
                     })
                 })
                 .collect(),
@@ -125,6 +127,7 @@ fn profile_targets(
         profile: profile_identity(profile),
         instances,
         error,
+        sister_lock: None,
     }
 }
 

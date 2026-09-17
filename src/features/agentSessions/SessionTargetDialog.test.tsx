@@ -86,6 +86,40 @@ it('displays a worktree with an unknown HEAD without treating it as an absent in
   await waitFor(() => expect(screen.getByText('HEAD unknown')).toBeVisible());
 });
 
+it('does not allow a different Session to select a locked sister worktree', async () => {
+  const fixture = sessionTargetFixtures();
+  fixture.devices[1] = {
+    ...fixture.devices[1],
+    profiles: [
+      {
+        ...fixture.devices[1].profiles[0],
+        instances: [
+          {
+            ...fixture.devices[1].profiles[0].instances[0],
+            sisterLock: {
+              sisterGroupId: 'group-one',
+              activeDeviceId: 'remote',
+              ownerSessionId: 'other-session',
+            },
+          },
+        ],
+      },
+    ],
+  };
+  render(
+    <SessionTargetDialog
+      client={fixture.client}
+      source={fixture.source}
+      selected={remoteTarget}
+      onClose={() => {}}
+      onSelect={() => {}}
+    />,
+  );
+
+  expect(await screen.findByRole('button', { name: new RegExp(remoteTarget.path) })).toBeDisabled();
+  expect(screen.getByText('Locked to another Session')).toBeVisible();
+});
+
 it('keeps a reopened selection unavailable when its current device listing fails', async () => {
   const user = userEvent.setup();
   const fixture = sessionTargetFixtures();

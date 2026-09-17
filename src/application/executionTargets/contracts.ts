@@ -55,10 +55,18 @@ export interface TargetWorktreeDto {
   readonly path: string;
   readonly head: string | null;
   readonly branchRef: string;
+  readonly sisterLock?: SisterWorktreeLockDto | null;
+  readonly isSister?: boolean | null;
+}
+export interface SisterWorktreeLockDto {
+  readonly sisterGroupId: string;
+  readonly activeDeviceId: string;
+  readonly ownerSessionId: string;
 }
 export interface ProfileWorktreeTargetsDto extends ExecutionTargetProfileDto {
   readonly instances: readonly TargetWorktreeDto[];
   readonly error: string | null;
+  readonly sisterLock?: SisterWorktreeLockDto | null;
 }
 export interface ConfiguredExecutionDeviceDto {
   readonly deviceId: string;

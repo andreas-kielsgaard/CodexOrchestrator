@@ -2,6 +2,9 @@
 pub mod checkout;
 pub mod domain;
 mod git;
+mod snapshot;
+
+pub use snapshot::{apply_worktree_snapshot, capture_worktree_snapshot, inspect_worktree};
 
 use crate::{
     contracts::{RuntimePortError, RuntimePortErrorKind},

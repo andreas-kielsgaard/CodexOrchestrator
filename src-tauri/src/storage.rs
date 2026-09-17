@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 52;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 53;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -461,6 +461,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 
 fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), String> {
     connection.execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA).map_err(|e| e.to_string())?;
+    connection.execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA).map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -472,6 +473,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(crate::repository_catalog::device_locations::DEVICE_LOCATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::execution_targets::sisters::SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
         .execute_batch(
@@ -591,7 +595,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         "SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_imports','agent_session_imported_turns')",
         [], |row| row.get(0)).map_err(|e| e.to_string())?;
     let preparation_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    Ok(preparation_schema_is_present && import_schema_is_present && native_profile_schema_is_present
+    let target_transition_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_target_transitions','sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    Ok(preparation_schema_is_present && target_transition_schema_is_present && import_schema_is_present && native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && replacement_workflow_schema_is_present

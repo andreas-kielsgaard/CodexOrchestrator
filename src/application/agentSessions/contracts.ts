@@ -232,6 +232,7 @@ export interface SendAgentSessionMessageResultDto {
 
 export type AgentSessionUpdateDto =
   | { kind: 'preparation_updated'; sessionId: string; invocationId: string }
+  | { kind: 'target_transition_updated'; sessionId: string }
   | { kind: 'steering_accepted'; sessionId: string; invocationId: string; inputId: string }
   | {
       kind: 'event_persisted';

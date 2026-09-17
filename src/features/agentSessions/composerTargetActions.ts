@@ -10,6 +10,7 @@ import type { ComposerQuickAction, ComposerQuickPage } from './composerQuickMenu
 
 export interface ComposerTargetSource {
   readonly contextKey: string;
+  readonly sessionId?: string;
   readonly client: Pick<ExecutionTargetClient, 'listDevices' | 'listWorktreeChoices'>;
   readonly target: SessionExecutionTargetDto | null;
   readonly disabledReason?: string;
@@ -43,6 +44,10 @@ export function composerTargetActions(
           return {
             ...choice,
             selected: choice.id === selectedId,
+            disabledReason:
+              instance.sisterLock && instance.sisterLock.ownerSessionId !== source.sessionId
+                ? `Locked to a Session on ${instance.sisterLock.activeDeviceId}`
+                : undefined,
             run: () => {
               source.onSelectTarget(target);
               return {

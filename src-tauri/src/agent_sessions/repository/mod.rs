@@ -1,5 +1,7 @@
 mod preparation;
 pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
+mod target_transition;
+pub(crate) use target_transition::SCHEMA as TARGET_TRANSITION_SCHEMA;
 mod addressing;
 mod mapping;
 mod organization;
@@ -190,6 +192,25 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     fn save_preparation(&self, preparation: &super::preparation::SessionPreparation) -> Result<(), RepositoryError> { self.save_preparation_record(preparation) }
     fn commit_prepared_binding(&self, preparation: &super::preparation::SessionPreparation, binding: AgentRuntimeBinding, at: DateTime<Utc>) -> Result<AgentSession, RepositoryError> { self.commit_prepared_binding_record(preparation, binding, at) }
     fn retry_preparation(&self, id: &AgentInvocationId, at: DateTime<Utc>) -> Result<(), RepositoryError> { self.retry_preparation_record(id, at) }
+    fn target_transition(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<
+        Option<crate::agent_sessions::target_transition::SessionTargetTransition>,
+        RepositoryError,
+    > {
+        self.read_target_transition_record(session_id)
+    }
+    fn save_target_transition(
+        &self,
+        transition: &crate::agent_sessions::target_transition::SessionTargetTransition,
+    ) -> Result<crate::agent_sessions::target_transition::SessionTargetTransition, RepositoryError>
+    {
+        self.save_target_transition_record(transition)
+    }
+    fn clear_target_transition(&self, session_id: &AgentSessionId) -> Result<(), RepositoryError> {
+        self.clear_target_transition_record(session_id)
+    }
 
     fn create_session_with_placement(
         &self,
@@ -588,6 +609,7 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
     connection.execute_batch(PREPARATION_SCHEMA).map_err(|e| e.to_string())?;
+    connection.execute_batch(TARGET_TRANSITION_SCHEMA).map_err(|e| e.to_string())?;
     ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(IMPORT_SCHEMA)

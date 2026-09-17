@@ -89,7 +89,10 @@ pub(crate) fn ensure_agent_session_ownership_schema(conn: &Connection) -> Result
     if columns.is_empty() {
         return Ok(());
     }
-    if !columns.iter().any(|column| column == "execution_target_json") {
+    if !columns
+        .iter()
+        .any(|column| column == "execution_target_json")
+    {
         conn.execute("ALTER TABLE agent_sessions ADD COLUMN execution_target_json TEXT CHECK (execution_target_json IS NULL OR json_valid(execution_target_json))", []).map_err(|e| format!("Unable to add Session execution target: {e}"))?;
     }
     if !columns.iter().any(|column| column == "workspace_origin") {

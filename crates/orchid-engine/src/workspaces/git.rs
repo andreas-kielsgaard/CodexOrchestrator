@@ -8,6 +8,7 @@ use std::{
 };
 
 const GIT_OUTPUT_LIMIT: usize = 1024 * 1024;
+pub(super) const SNAPSHOT_OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
 
 pub(super) struct GitRunner {
     process: HardenedGitProcess,
@@ -26,6 +27,34 @@ impl GitRunner {
         S: AsRef<OsStr>,
     {
         self.required_with(root, arguments, GitCommandEnvironment::Clean)
+    }
+
+    pub(super) fn required_snapshot<I, S>(
+        &self,
+        root: &Path,
+        arguments: I,
+    ) -> Result<Vec<u8>, CheckoutError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let outcome = self
+            .process
+            .run(
+                root,
+                arguments,
+                SNAPSHOT_OUTPUT_LIMIT,
+                GitCommandEnvironment::Clean,
+            )
+            .map_err(git_process_error)?;
+        if outcome.success {
+            Ok(outcome.stdout)
+        } else {
+            Err(CheckoutError::new(
+                CheckoutErrorKind::GitUnavailable,
+                "Git could not complete the worktree snapshot operation.",
+            ))
+        }
     }
 
     pub(super) fn optional<I, S>(

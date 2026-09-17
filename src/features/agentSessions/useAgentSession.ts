@@ -137,8 +137,11 @@ export function useAgentSession(
 
   const reconcileUpdate = useCallback(
     async (update: AgentSessionUpdateDto) => {
+      if (update.sessionId !== selectedIdRef.current) {
+        return;
+      }
       if (
-        update.sessionId !== selectedIdRef.current ||
+        update.kind !== 'target_transition_updated' &&
         !invocationIdsRef.current.has(update.invocationId)
       ) {
         return;

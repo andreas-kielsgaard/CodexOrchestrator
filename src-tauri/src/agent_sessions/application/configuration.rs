@@ -235,11 +235,23 @@ impl SessionConfigurationError {
 }
 
 impl AgentSessionApplication {
-    pub(crate) fn load_current_session_profile(&self, session_id: &AgentSessionId) -> Result<PinnedAgentSessionProfile, SessionConfigurationError> {
-        let current=self.repository.current_execution_resolution(session_id).map_err(AgentSessionApplicationError::repository).map_err(SessionConfigurationError::agent_session)?;
+    pub(crate) fn load_current_session_profile(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<PinnedAgentSessionProfile, SessionConfigurationError> {
+        let current = self
+            .repository
+            .current_execution_resolution(session_id)
+            .map_err(AgentSessionApplicationError::repository)
+            .map_err(SessionConfigurationError::agent_session)?;
         match current {
-            Some(creation_resolution)=>Ok(PinnedAgentSessionProfile{session_id:session_id.clone(),creation_resolution}),
-            None=>self.load_pinned_session_profile(LoadPinnedSessionProfileQuery{session_id:session_id.clone()})
+            Some(creation_resolution) => Ok(PinnedAgentSessionProfile {
+                session_id: session_id.clone(),
+                creation_resolution,
+            }),
+            None => self.load_pinned_session_profile(LoadPinnedSessionProfileQuery {
+                session_id: session_id.clone(),
+            }),
         }
     }
 }
