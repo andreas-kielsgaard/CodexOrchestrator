@@ -74,7 +74,7 @@ function JobAgentInstallationForm({ state, saving, error, onChange, onSave }: { 
       <label>Job Agent root<input value={state.root} onChange={(event) => onChange({ ...state, root: event.currentTarget.value })} placeholder="C:\path\to\Job Agent" /></label>
       <label>Python command<input value={state.python} onChange={(event) => onChange({ ...state, python: event.currentTarget.value })} placeholder="python" /></label>
       {error ? <p role="alert">{error}</p> : null}
-      <button type="submit" disabled={saving}>{saving ? 'Verifying…' : 'Save and verify'}</button>
+      <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save configuration'}</button>
     </form>
   );
 }

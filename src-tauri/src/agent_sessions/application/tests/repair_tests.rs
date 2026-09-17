@@ -118,17 +118,16 @@ impl Fixture {
                 .collect(),
             );
         }
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap()),
-            source.clone(),
+            snapshot.clone(),
         ));
         let definition = test_session_creation_request().capability_profile;
         profiles
             .create(
                 definition.capability_profile_id,
                 definition.name,
-                snapshot.exposure,
+                snapshot.exposure.clone(),
             )
             .unwrap();
         let adapter = Arc::new(
@@ -136,7 +135,7 @@ impl Fixture {
                 &database,
                 sessions.clone(),
                 repository.clone(),
-                source.clone(),
+                snapshot.clone(),
                 identities,
             )
             .unwrap()
@@ -177,7 +176,7 @@ impl Fixture {
             let registration = registry.register(descriptors.remove(0)).unwrap();
             assert!(registry.retain_owner(&registration, owner).is_ok());
         }
-        let direct = AgentSessionProfileApplication::new(sessions.clone(), source);
+        let direct = AgentSessionProfileApplication::new(sessions.clone(), snapshot);
         Self {
             folder,
             repository,

@@ -10,7 +10,6 @@ export type NativeProfileLifecycle =
 export type NativeProfileAuthentication = 'unknown' | 'authenticated' | 'unauthenticated';
 export type NativeProfileSandbox = 'unknown' | 'initialized' | 'failed' | 'attention_required';
 export type NativeProfileCanary = 'not_run' | 'passed' | 'blocked';
-export type NativeProfileMcp = 'not_assessed' | 'ready' | 'probe_failed';
 export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
 export type NativeDangerAuthorizationDisposition = 'not_authorized' | 'legacy_insufficient' | 'authorized' | 'revoked' | 'foreign';
 export type NativeDangerAuthorizationScope = 'filesystem_only' | 'full_machine_filesystem_and_unrestricted_network';
@@ -25,7 +24,6 @@ export interface NativeProfileAttentions {
   readonly authentication: string | null;
   readonly sandbox: string | null;
   readonly canary: string | null;
-  readonly mcpReporting: string | null;
   readonly continuity: string | null;
   readonly cli: string | null;
 }
@@ -35,7 +33,6 @@ export interface NativeProfileReadiness {
   readonly sandboxInitialization: NativeProfileSandbox;
   readonly workspaceWriteCanary: NativeProfileCanary;
   readonly dangerFullAccessCanary: NativeProfileCanary;
-  readonly mcpReporting: NativeProfileMcp;
   readonly attentions: NativeProfileAttentions;
 }
 
@@ -349,7 +346,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'fullAccessCanaryAttempt', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
-  keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
+  keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'attentions'], 'readiness');
   const execution = object(profile.execution, `native profile ${index} execution`);
   const loginAttempt = object(profile.loginAttempt, `native profile ${index} login attempt`);
   const setupAttempt = object(profile.setupAttempt, `native profile ${index} setup attempt`);
@@ -366,7 +363,7 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   keys(fullAccessCanaryAttempt, ['disposition', 'authorizationVersion', 'authorizationCorrelationId', 'correlationId', 'requestedAt', 'launchAcceptedAt', 'deadlineAt', 'settledAt', 'processActivity', 'providerActivity', 'terminalClassification', 'terminalExitCode', 'receiptObserved', 'cleanupDisposition'], `native profile ${index} full access canary attempt`);
   if (typeof execution.dangerFullAccessAuthorized !== 'boolean') throw new Error(`native profile ${index} danger authorization must be boolean`);
   const attentions = object(readiness.attentions, 'attentions');
-  keys(attentions, ['authentication', 'sandbox', 'canary', 'mcpReporting', 'continuity', 'cli'], 'attentions');
+  keys(attentions, ['authentication', 'sandbox', 'canary', 'continuity', 'cli'], 'attentions');
   const decodedSetupAttempt: NativeProfileSetupAttempt = {
     phase: enumValue(setupAttempt.phase, ['not_requested', 'sandbox_initialization', 'workspace_write_canary'], 'setup attempt phase'),
     disposition: enumValue(setupAttempt.disposition, ['not_requested', 'pending', 'launch_failed', 'terminal_succeeded', 'terminal_failed', 'timed_out', 'cancelled', 'recovered_unobserved', 'legacy_unclassified_failed', 'policy_unsupported'], 'setup attempt disposition'),
@@ -453,12 +450,10 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
       sandboxInitialization: enumValue(readiness.sandboxInitialization, ['unknown', 'initialized', 'failed', 'attention_required'], 'sandbox initialization'),
       workspaceWriteCanary: enumValue(readiness.workspaceWriteCanary, ['not_run', 'passed', 'blocked'], 'workspace canary'),
       dangerFullAccessCanary: enumValue(readiness.dangerFullAccessCanary, ['not_run', 'passed', 'blocked'], 'full access canary'),
-      mcpReporting: enumValue(readiness.mcpReporting, ['not_assessed', 'ready', 'probe_failed'], 'MCP reporting'),
       attentions: {
         authentication: nullableString(attentions.authentication, 'authentication attention'),
         sandbox: nullableString(attentions.sandbox, 'sandbox attention'),
         canary: nullableString(attentions.canary, 'canary attention'),
-        mcpReporting: nullableString(attentions.mcpReporting, 'MCP attention'),
         continuity: nullableString(attentions.continuity, 'continuity attention'),
         cli: nullableString(attentions.cli, 'CLI attention'),
       },
@@ -483,7 +478,6 @@ export interface NativeProfileClient {
   confirmPreprovisionedSandboxAdoption(profileId: string): Promise<NativeProfileQuery>;
   runCanary(profileId: string): Promise<NativeProfileQuery>;
   runDangerFullAccessCanary(profileId: string): Promise<NativeProfileQuery>;
-  probeMcp(profileId: string): Promise<NativeProfileQuery>;
 }
 
 export function createNativeProfileClient(invokeCommand: Invoke = invoke): NativeProfileClient {
@@ -522,7 +516,6 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
     runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
     runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
-    probeMcp: (profileId) => action('reconcile_native_profile_mcp_reporting', id(profileId)),
   };
 }
 

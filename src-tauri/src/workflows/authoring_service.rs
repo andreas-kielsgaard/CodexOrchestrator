@@ -203,28 +203,21 @@ mod tests {
     use super::*;
     use crate::execution_configuration::{
         CapabilitySet, InMemoryCapabilityProfileRepository, NodeProfile, RuntimeProfileSnapshot,
-        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError,
+        RuntimeSelections, SandboxMode,
     };
     use crate::workflows::{
         authoring::WorkflowAuthoringNode, authoring_repository::SqliteWorkflowAuthoringRepository,
     };
 
-    struct RuntimeSource;
-
-    impl SelectedRuntimeProfileSource for RuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-            Ok(RuntimeProfileSnapshot {
-                contract_version: 1,
-                profile_ref: "native-codex:selected".into(),
-                exposure: capabilities(),
-                locked: RuntimeSelections {
-                    sandbox_mode: Some(SandboxMode::WorkspaceWrite),
-                    ..RuntimeSelections::default()
-                },
-            })
+    fn runtime_profile() -> RuntimeProfileSnapshot {
+        RuntimeProfileSnapshot {
+            contract_version: 1,
+            profile_ref: "orchestration:configured-runtime/v1".into(),
+            exposure: capabilities(),
+            locked: RuntimeSelections {
+                sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                ..RuntimeSelections::default()
+            },
         }
     }
 
@@ -240,7 +233,7 @@ mod tests {
     fn service() -> WorkflowAuthoringService {
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(RuntimeSource),
+            runtime_profile(),
         ));
         profiles
             .create(

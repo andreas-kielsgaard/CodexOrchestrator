@@ -9,7 +9,7 @@ use crate::{
     },
     execution_configuration::{
         CapabilityProfile, DirectUserInvocationRequest, DirectUserInvocationResolution,
-        NodeProfile, ResolutionError, RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
+        NodeProfile, ResolutionError, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
         SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
     },
 };
@@ -70,7 +70,7 @@ impl Error for AgentSessionProfileApplicationError {}
 /// choices. Workflow-owned messages continue to enter through the Session Event adapter.
 pub(crate) struct AgentSessionProfileApplication {
     sessions: Arc<AgentSessionApplication>,
-    profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    runtime_profile: RuntimeProfileSnapshot,
 }
 
 impl AgentSessionProfileApplication {
@@ -90,10 +90,7 @@ impl AgentSessionProfileApplication {
                 "A message must contain text",
             ));
         }
-        let runtime = self
-            .profile_source
-            .selected_runtime_profile()
-            .map_err(|error| AgentSessionProfileApplicationError::resolution(error.into()))?;
+        let runtime = self.runtime_profile.clone();
         let resolution = SessionProfileResolver::resolve_snapshot(
             runtime.clone(),
             SessionCreationRequest {
@@ -116,7 +113,7 @@ impl AgentSessionProfileApplication {
         .map_err(AgentSessionProfileApplicationError::resolution)?;
         // Reject an invalid first-message selection before creating any Session.
         SessionProfileResolver::validate_direct_user_invocation(
-            self.profile_source.as_ref(),
+            &self.runtime_profile,
             &resolution,
             DirectUserInvocationRequest {
                 contract_version: 1,
@@ -151,11 +148,11 @@ impl AgentSessionProfileApplication {
 
     pub(crate) fn new(
         sessions: Arc<AgentSessionApplication>,
-        profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        runtime_profile: RuntimeProfileSnapshot,
     ) -> Self {
         Self {
             sessions,
-            profile_source,
+            runtime_profile,
         }
     }
 
@@ -190,7 +187,7 @@ impl AgentSessionProfileApplication {
             session_id: command.session_id.clone(),
         })?;
         let invocation_resolution = SessionProfileResolver::validate_direct_user_invocation(
-            self.profile_source.as_ref(),
+            &self.runtime_profile,
             &pinned.creation_resolution,
             DirectUserInvocationRequest {
                 contract_version: 1,

@@ -127,10 +127,8 @@ pub(crate) fn run() {
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
             let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
-            let otp_installations = crate::otp_host::installations::OtpInstallationService::open(
-                &database_path,
-                otp_registry.clone(),
-            )?;
+            let otp_installations =
+                crate::otp_host::installations::OtpInstallationService::open(&database_path)?;
             let harness_catalog =
                 crate::harness_engine::catalog_service::HarnessCatalogService::open(
                     &database_path,
@@ -196,32 +194,27 @@ pub(crate) fn run() {
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
             let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
-            let selected_runtime_profile = Arc::new(
-                crate::execution_configuration::NativeCodexSelectedRuntimeProfileSource::new(
-                    native_profiles.clone(),
-                    crate::execution_configuration::NativeCodexCapabilityExposure {
-                        capabilities: crate::execution_configuration::CapabilitySet {
-                            // This tool is supplied by the application, not discovered in Codex.
-                            mcp_tools: otp_registry.mcp_tools(),
-                            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
-                                .into_iter()
-                                .collect(),
-                            reasoning_modes: [
-                                "low".to_string(),
-                                "medium".to_string(),
-                                "high".to_string(),
-                                "xhigh".to_string(),
-                                "max".to_string(),
-                                "ultra".to_string(),
-                            ]
+            let configured_runtime_profile =
+                crate::execution_configuration::configured_runtime_profile(
+                    crate::execution_configuration::CapabilitySet {
+                        // This tool surface is declared by imported OTPs, not discovered from Codex.
+                        mcp_tools: otp_registry.mcp_tools(),
+                        models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
                             .into_iter()
                             .collect(),
-                            ..crate::execution_configuration::CapabilitySet::default()
-                        },
-                        locked: crate::execution_configuration::RuntimeSelections::default(),
+                        reasoning_modes: [
+                            "low".to_string(),
+                            "medium".to_string(),
+                            "high".to_string(),
+                            "xhigh".to_string(),
+                            "max".to_string(),
+                            "ultra".to_string(),
+                        ]
+                        .into_iter()
+                        .collect(),
+                        ..crate::execution_configuration::CapabilitySet::default()
                     },
-                ),
-            );
+                );
             let capability_profiles = Arc::new(
                 crate::execution_configuration::CapabilityProfileService::new(
                     Arc::new(
@@ -229,7 +222,7 @@ pub(crate) fn run() {
                             &database_path,
                         )?,
                     ),
-                    selected_runtime_profile.clone(),
+                    configured_runtime_profile.clone(),
                 ),
             );
             let session_event_adapter = Arc::new(
@@ -237,7 +230,7 @@ pub(crate) fn run() {
                     &database_path,
                     application.clone(),
                     repository.clone(),
-                    selected_runtime_profile.clone(),
+                    configured_runtime_profile.clone(),
                     identities.clone(),
                 )?.with_capability_profiles(capability_profiles.clone()),
             );
@@ -269,7 +262,7 @@ pub(crate) fn run() {
                 crate::agent_sessions::transport::AgentSessionProfileTauriState::new(Arc::new(
                     crate::agent_sessions::application::AgentSessionProfileApplication::new(
                         application.clone(),
-                        selected_runtime_profile,
+                        configured_runtime_profile,
                     ),
                 )),
             );
@@ -562,8 +555,6 @@ pub(crate) fn run() {
             crate::native_profiles::confirm_native_profile_preprovisioned_sandbox_adoption,
             crate::native_profiles::run_native_profile_workspace_write_canary,
             crate::native_profiles::run_native_profile_danger_full_access_canary,
-            crate::native_profiles::probe_native_profile_mcp_reporting,
-            crate::native_profiles::reconcile_native_profile_mcp_reporting,
             crate::product_decisions::accept_product_decision_version,
             crate::product_decisions::load_product_decision_current_query,
             crate::product_decisions::load_product_decision_history,

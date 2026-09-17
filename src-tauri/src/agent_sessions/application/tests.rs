@@ -33,8 +33,7 @@ use crate::{
     agent_sessions::session_event_adapter::AgentSessionEventAdapter,
     execution_configuration::{
         CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
-        SandboxMode as ExecutionSandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError, SessionCreationRequest,
+        SandboxMode as ExecutionSandboxMode, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
     identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
@@ -74,7 +73,6 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         Some("codex-test".into()),
     ));
     let runtime_profile = test_selected_runtime_profile();
-    let profile_source = Arc::new(FixedSelectedRuntimeProfileSource(runtime_profile.clone()));
     let assigned_definition = identities
         .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
         .expect("Identity definition");
@@ -83,7 +81,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
             &database_path,
             application.clone(),
             repository,
-            profile_source.clone(),
+            runtime_profile.clone(),
             identities,
         )
         .expect("Session Event adapter"),
@@ -93,7 +91,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     let event_queries = SessionEventQueryApplication::new(event_store.clone());
     let events = SessionEventApplication::new(adapter.clone(), adapter.clone(), event_store);
     let profile_application =
-        AgentSessionProfileApplication::new(application.clone(), profile_source);
+        AgentSessionProfileApplication::new(application.clone(), runtime_profile.clone());
     let logical_address = SessionLogicalAddress::new(
         reference("workflow_instance", "run-1"),
         reference("workflow_node", "review"),
@@ -333,17 +331,6 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         )
         .unwrap();
     assert!(application.load_session(&session_id).is_err());
-}
-
-#[derive(Clone)]
-struct FixedSelectedRuntimeProfileSource(RuntimeProfileSnapshot);
-
-impl SelectedRuntimeProfileSource for FixedSelectedRuntimeProfileSource {
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        Ok(self.0.clone())
-    }
 }
 
 fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {

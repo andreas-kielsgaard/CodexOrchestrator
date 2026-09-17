@@ -80,7 +80,7 @@ impl LiveRun {
             .collect(),
             ..CapabilitySet::default()
         };
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(RuntimeProfileSnapshot {
+        let source = RuntimeProfileSnapshot {
             contract_version: 1,
             profile_ref: "live:installed-codex-defaults".into(),
             exposure: capabilities.clone(),
@@ -88,7 +88,7 @@ impl LiveRun {
                 sandbox_mode: Some(ExecutionSandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
-        }));
+        };
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap()),
             source.clone(),

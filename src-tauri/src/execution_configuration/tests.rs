@@ -1,7 +1,6 @@
 use super::{
     capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
     node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION},
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
     resolution::{
         DirectUserInvocationRequest, ResolutionError, SessionCreationRequest,
         SessionCreationResolution, SessionProfileResolver,
@@ -13,16 +12,6 @@ use super::{
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
-
-struct FixedProfileSource(Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError>);
-
-impl SelectedRuntimeProfileSource for FixedProfileSource {
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.0.clone()
-    }
-}
 
 fn set(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|value| (*value).to_string()).collect()
@@ -115,7 +104,7 @@ fn creation_request() -> SessionCreationRequest {
 
 #[test]
 fn creation_resolves_an_immutable_session_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let profile = resolution.session_profile();
 
@@ -140,7 +129,7 @@ fn creation_resolves_an_immutable_session_profile() {
 
 #[test]
 fn capability_profile_cannot_widen_the_runtime() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let mut request = creation_request();
     request
         .capability_profile
@@ -157,7 +146,7 @@ fn capability_profile_cannot_widen_the_runtime() {
 
 #[test]
 fn node_profile_cannot_widen_its_capability_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let mut request = creation_request();
     request
         .node_profile
@@ -176,7 +165,7 @@ fn node_profile_cannot_widen_its_capability_profile() {
 
 #[test]
 fn runtime_locked_control_cannot_be_removed_or_changed() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let mut excluding = creation_request();
     excluding
         .node_profile
@@ -194,7 +183,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
         .exposure
         .sandbox_modes
         .insert(SandboxMode::DangerFullAccess);
-    let source = FixedProfileSource(Ok(selectable_but_locked));
+    let source = selectable_but_locked;
     let mut changing = creation_request();
     changing
         .capability_profile
@@ -215,7 +204,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
 
 #[test]
 fn unavailable_pinned_default_fails_without_fallback() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let mut request = creation_request();
     request.node_profile.pinned_defaults.model = Some("unavailable".into());
 
@@ -228,7 +217,7 @@ fn unavailable_pinned_default_fails_without_fallback() {
 
 #[test]
 fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let mut request = creation_request();
     request.node_profile.allowed_capabilities.models = set(&["codex-a"]);
     request.node_profile.allowed_capabilities.reasoning_modes = set(&["high"]);
@@ -262,7 +251,7 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
 
 #[test]
 fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let before = creation.clone();
 
@@ -286,11 +275,11 @@ fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
 
 #[test]
 fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut changed = runtime_profile();
     changed.profile_ref = "native-codex:other".into();
-    let changed_source = FixedProfileSource(Ok(changed));
+    let changed_source = changed;
 
     assert!(matches!(
         SessionProfileResolver::validate_direct_user_invocation(
@@ -308,11 +297,11 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
 
 #[test]
 fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut changed = runtime_profile();
     changed.profile_ref = "native-codex:other".into();
-    let changed_source = FixedProfileSource(Ok(changed));
+    let changed_source = changed;
 
     assert!(matches!(
         SessionProfileResolver::validate_pinned_session(&changed_source, &creation),
@@ -322,11 +311,11 @@ fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
 
 #[test]
 fn digest_is_stable_for_equivalent_unordered_inputs() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let first = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut reordered_runtime = runtime_profile();
     reordered_runtime.exposure = reverse_insertion_order(&reordered_runtime.exposure);
-    let reordered_source = FixedProfileSource(Ok(reordered_runtime));
+    let reordered_source = reordered_runtime;
     let mut reordered_request = creation_request();
     reordered_request.capability_profile.allowed_capabilities =
         reverse_insertion_order(&reordered_request.capability_profile.allowed_capabilities);
@@ -355,7 +344,7 @@ fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
 
 #[test]
 fn digest_verification_rejects_a_contract_version_change() {
-    let source = FixedProfileSource(Ok(runtime_profile()));
+    let source = runtime_profile();
     let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut value = serde_json::to_value(resolution).unwrap();
     value["contractVersion"] = serde_json::json!(2);
@@ -375,17 +364,4 @@ fn strict_contracts_reject_unknown_fields_and_node_identity() {
     let mut node_value = serde_json::to_value(node_profile()).unwrap();
     node_value["nodeProfileId"] = serde_json::json!("reusable-node");
     assert!(serde_json::from_value::<NodeProfile>(node_value).is_err());
-}
-
-#[test]
-fn source_failure_is_a_typed_resolution_error() {
-    let source = FixedProfileSource(Err(SelectedRuntimeProfileSourceError::unavailable(
-        "no ready profile",
-    )));
-    assert_eq!(
-        SessionProfileResolver::resolve_creation(&source, creation_request()),
-        Err(ResolutionError::SourceUnavailable(
-            "no ready profile".into()
-        ))
-    );
 }

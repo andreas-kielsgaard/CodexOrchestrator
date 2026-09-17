@@ -13,7 +13,7 @@ const profile = {
   sandboxAdoption: { disposition: 'not_verified', executable: null, version: null, workspaceSandboxSupported: null, windowsSandboxSetupSupported: null, correlationId: null, observedAt: null, elevatedModeObserved: null },
   sandboxAdoptionConfirmation: { disposition: 'not_confirmed', correlationId: null, confirmedAt: null },
   fullAccessCanaryAttempt: { disposition: 'not_requested', authorizationVersion: null, authorizationCorrelationId: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, processActivity: 'unobserved', providerActivity: 'unobserved', terminalClassification: 'not_observed', terminalExitCode: null, receiptObserved: false, cleanupDisposition: 'not_observed' },
-  readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', mcpReporting: 'not_assessed', attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } },
+  readiness: { authentication: 'unknown', sandboxInitialization: 'unknown', workspaceWriteCanary: 'not_run', dangerFullAccessCanary: 'not_run', attentions: { authentication: null, sandbox: null, canary: null, continuity: null, cli: null } },
 };
 const query = () => ({ contract: 'native-codex-profile-query/v1', profiles: [profile] });
 
@@ -127,15 +127,6 @@ describe('native profile client', () => {
   it('rejects malformed action DTOs before reloading durable state', async () => {
     const invoke = async <T>(command: string) => (command === 'load_native_profile_query' ? query() : { ...profile, extra: true }) as T;
     await expect(createNativeProfileClient(invoke).select('p1')).rejects.toThrow(/unknown field/);
-  });
-  it('reconciles the application-owned MCP receipt through the production command', async () => {
-    const calls: string[] = [];
-    const invoke = async <T>(command: string) => {
-      calls.push(command);
-      return (command === 'load_native_profile_query' ? query() : profile) as T;
-    };
-    await createNativeProfileClient(invoke).probeMcp('p1');
-    expect(calls).toEqual(['reconcile_native_profile_mcp_reporting', 'load_native_profile_query']);
   });
   it('orders a public load behind an in-flight action', async () => {
     const calls: string[] = [];

@@ -1,7 +1,6 @@
 use super::{
     capability_profile::CapabilityProfile,
     node_profile::NodeProfile,
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
     runtime_profile::{
         validate_identifier, validate_selection_availability, CapabilitySet,
         RuntimeProfileSnapshot, RuntimeSelections,
@@ -81,7 +80,6 @@ pub(crate) struct DirectUserInvocationResolution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ResolutionError {
-    SourceUnavailable(String),
     InvalidInput(String),
     CapabilityProfileWidensRuntime(String),
     NodeProfileWidensCapabilityProfile(String),
@@ -97,12 +95,6 @@ pub(crate) enum ResolutionError {
 impl fmt::Display for ResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SourceUnavailable(message) => {
-                write!(
-                    formatter,
-                    "Selected runtime profile is unavailable: {message}"
-                )
-            }
             Self::InvalidInput(message) => formatter.write_str(message),
             Self::CapabilityProfileWidensRuntime(capability) => write!(
                 formatter,
@@ -141,22 +133,15 @@ impl fmt::Display for ResolutionError {
 
 impl Error for ResolutionError {}
 
-impl From<SelectedRuntimeProfileSourceError> for ResolutionError {
-    fn from(value: SelectedRuntimeProfileSourceError) -> Self {
-        Self::SourceUnavailable(value.to_string())
-    }
-}
-
 pub(crate) struct SessionProfileResolver;
 
 impl SessionProfileResolver {
     pub(crate) fn resolve_creation(
-        source: &dyn SelectedRuntimeProfileSource,
+        runtime_profile: &RuntimeProfileSnapshot,
         request: SessionCreationRequest,
     ) -> Result<SessionCreationResolution, ResolutionError> {
         validate_creation_request(&request)?;
-        let runtime_profile = source.selected_runtime_profile()?;
-        Self::resolve_snapshot(runtime_profile, request)
+        Self::resolve_snapshot(runtime_profile.clone(), request)
     }
 
     pub(crate) fn resolve_snapshot(
@@ -197,12 +182,12 @@ impl SessionProfileResolver {
     }
 
     pub(crate) fn validate_direct_user_invocation(
-        source: &dyn SelectedRuntimeProfileSource,
+        runtime_profile: &RuntimeProfileSnapshot,
         creation: &SessionCreationResolution,
         request: DirectUserInvocationRequest,
     ) -> Result<DirectUserInvocationResolution, ResolutionError> {
         validate_direct_user_request(&request)?;
-        Self::validate_pinned_session(source, creation)?;
+        Self::validate_pinned_session(runtime_profile, creation)?;
         let session_profile = creation.session_profile();
         let requested = RuntimeSelections {
             model: request
@@ -228,11 +213,10 @@ impl SessionProfileResolver {
     }
 
     pub(crate) fn validate_pinned_session(
-        source: &dyn SelectedRuntimeProfileSource,
+        runtime_profile: &RuntimeProfileSnapshot,
         creation: &SessionCreationResolution,
     ) -> Result<(), ResolutionError> {
         creation.verify_digest()?;
-        let runtime_profile = source.selected_runtime_profile()?;
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
@@ -240,7 +224,7 @@ impl SessionProfileResolver {
         if runtime_profile.profile_ref != session_profile.runtime_profile_ref() {
             return Err(ResolutionError::RuntimeProfileChanged {
                 expected: session_profile.runtime_profile_ref().to_owned(),
-                actual: runtime_profile.profile_ref,
+                actual: runtime_profile.profile_ref.clone(),
             });
         }
         Ok(())

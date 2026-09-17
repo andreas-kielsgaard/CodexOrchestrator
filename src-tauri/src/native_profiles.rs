@@ -3,33 +3,18 @@
 
 mod discovery;
 
-use axum::http::{header, StatusCode};
-use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
-use http_body_util::Empty;
-use hyper::{server::conn::http1, service::service_fn, Response};
-use hyper_util::rt::TokioIo;
-use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router, ServerHandler,
-};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Read, Write},
-    net::SocketAddr,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc, Arc, Mutex, OnceLock},
-    thread,
+    sync::{Arc, Mutex, OnceLock},
 };
 use tauri::State;
-use tokio_util::sync::CancellationToken;
-use tower::ServiceExt;
 use uuid::Uuid;
 
 const FULL_ACCESS_CANARY_RECEIPT: &str = "native-codex-profile-canary";
@@ -72,7 +57,6 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_readiness (
   sandbox_initialization TEXT NOT NULL CHECK (sandbox_initialization IN ('unknown','initialized','failed','attention_required')),
   workspace_write_canary TEXT NOT NULL CHECK (workspace_write_canary IN ('not_run','passed','blocked')),
   danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked')),
-  mcp_reporting TEXT NOT NULL CHECK (mcp_reporting IN ('not_assessed','ready','probe_failed')),
   attention TEXT,
   login_requested_at TEXT,
   observed_at TEXT NOT NULL,
@@ -80,7 +64,7 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_readiness (
 );
 CREATE TABLE IF NOT EXISTS native_codex_profile_attentions (
   profile_id TEXT NOT NULL,
-  concern TEXT NOT NULL CHECK (concern IN ('authentication','sandbox','canary','mcp_reporting','continuity','cli')),
+  concern TEXT NOT NULL CHECK (concern IN ('authentication','sandbox','canary','continuity','cli')),
   detail TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   PRIMARY KEY(profile_id, concern),
@@ -108,24 +92,6 @@ CREATE TABLE IF NOT EXISTS native_codex_profile_setup_attempts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_setup_attempt_pending
 ON native_codex_profile_setup_attempts(profile_id,phase) WHERE state='pending';
-CREATE TABLE IF NOT EXISTS native_codex_profile_mcp_probes (
-  request_id TEXT PRIMARY KEY,
-  profile_id TEXT NOT NULL,
-  correlation_id TEXT NOT NULL UNIQUE,
-  expected_capability TEXT NOT NULL,
-  expected_server TEXT NOT NULL,
-  expected_tool TEXT NOT NULL,
-  expected_probe_root TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('pending','dispatching','received','expired','cancelled')),
-  requested_at TEXT NOT NULL,
-  deadline_at TEXT NOT NULL,
-  dispatch_claim_id TEXT,
-  dispatch_claimed_at TEXT,
-  received_at TEXT,
-  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profile_mcp_probe_pending
-ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
 CREATE TABLE IF NOT EXISTS native_codex_profile_execution_modes (
   profile_id TEXT PRIMARY KEY,
   selected_mode TEXT NOT NULL CHECK (selected_mode IN ('workspace_write','danger_full_access')),
@@ -604,11 +570,7 @@ ON native_codex_profile_mcp_probes(profile_id) WHERE state='pending';
 
 const MARKER_FILE: &str = ".codex-orchestrator-profile.json";
 const PROFILE_QUERY_CONTRACT: &str = "native-codex-profile-query/v1";
-const MCP_REPORTING_CAPABILITY: &str = "native-codex-profile-reporting/v1";
-const MCP_REPORTING_SERVER: &str = "codex-orchestrator-reporting";
-const MCP_REPORTING_TOOL: &str = "report_native_profile_readiness";
 const SETUP_ATTEMPT_TIMEOUT_SECONDS: i64 = 120;
-const MCP_PROBE_TIMEOUT_SECONDS: i64 = 300;
 const WORKSPACE_WRITE_CANARY_COMMAND_FILE: &str = "native-codex-profile-canary.cmd";
 const FULL_ACCESS_CANARY_TIMEOUT_SECONDS: i64 = 120;
 const DANGER_AUTHORITY_SCOPE: &str = "full_machine_filesystem_and_unrestricted_network";
@@ -1062,7 +1024,6 @@ pub(crate) struct NativeProfileReadiness {
     sandbox_initialization: String,
     workspace_write_canary: String,
     danger_full_access_canary: String,
-    mcp_reporting: String,
     attentions: NativeProfileAttentions,
 }
 
@@ -1158,7 +1119,6 @@ pub(crate) struct NativeProfileAttentions {
     authentication: Option<String>,
     sandbox: Option<String>,
     canary: Option<String>,
-    mcp_reporting: Option<String>,
     continuity: Option<String>,
     cli: Option<String>,
 }
@@ -1236,240 +1196,6 @@ pub(crate) struct NativeFullAccessCanaryProjectionDto {
     launch: NativeLaunchProjectionDto,
     sentinel_path: String,
     evidence_state: &'static str,
-}
-
-/// NCHP-03 supplies this only after its bounded, application-owned MCP action receives a
-/// correlated receipt. It is deliberately not inferred from `codex mcp list` or a file write.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NativeMcpReportingReceipt {
-    pub(crate) capability: String,
-    pub(crate) server: String,
-    pub(crate) tool: String,
-    pub(crate) correlation_id: String,
-    pub(crate) probe_root: PathBuf,
-}
-
-/// Private application authority for NCHP-03. This never appears in settings DTOs.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NativeMcpReportingProbeAuthority {
-    pub(crate) profile_id: String,
-    pub(crate) correlation_id: String,
-    pub(crate) capability: String,
-    pub(crate) server: String,
-    pub(crate) tool: String,
-    pub(crate) probe_root: PathBuf,
-}
-
-struct ClaimedNativeMcpReportingProbe {
-    authority: NativeMcpReportingProbeAuthority,
-    claim_id: String,
-}
-
-/// An application-owned MCP server for one already-durable reporting request. It accepts no caller
-/// supplied identity or correlation; those stay bound to the pending application authority.
-#[derive(Clone)]
-struct NativeMcpReportingMcp {
-    authority: NativeMcpReportingProbeAuthority,
-    receipt: mpsc::SyncSender<NativeMcpReportingReceipt>,
-    tool_router: ToolRouter<Self>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct NativeMcpReportingInput {}
-
-impl NativeMcpReportingMcp {
-    fn new(
-        authority: NativeMcpReportingProbeAuthority,
-        receipt: mpsc::SyncSender<NativeMcpReportingReceipt>,
-    ) -> Self {
-        Self {
-            authority,
-            receipt,
-            tool_router: Self::tool_router(),
-        }
-    }
-}
-
-#[tool_router]
-impl NativeMcpReportingMcp {
-    #[tool(
-        description = "Record the one application-bound native-profile reporting receipt. Input is ONLY {}. It reports MCP exposure and this exact tool call only; readiness, provider activity, and application-consumer resolution remain separate facts."
-    )]
-    fn report_native_profile_readiness(
-        &self,
-        Parameters(_): Parameters<NativeMcpReportingInput>,
-    ) -> CallToolResult {
-        let receipt = NativeMcpReportingReceipt {
-            capability: self.authority.capability.clone(),
-            server: self.authority.server.clone(),
-            tool: self.authority.tool.clone(),
-            correlation_id: self.authority.correlation_id.clone(),
-            probe_root: self.authority.probe_root.clone(),
-        };
-        match self.receipt.try_send(receipt) {
-            Ok(()) => CallToolResult::success(vec![ContentBlock::text(
-                "{\"status\":\"mcp_reporting_receipt_reported\",\"ready\":false}",
-            )]),
-            Err(mpsc::TrySendError::Full(_)) => CallToolResult::success(vec![ContentBlock::text(
-                "{\"status\":\"mcp_reporting_receipt_already_reported\",\"ready\":false}",
-            )]),
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                CallToolResult::error(vec![ContentBlock::text("{\"code\":\"unavailable\"}")])
-            }
-        }
-    }
-}
-
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for NativeMcpReportingMcp {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Call report_native_profile_readiness exactly once with {}. The application validates and settles the correlated receipt separately.",
-        )
-    }
-}
-
-struct NativeMcpReportingServer {
-    address: SocketAddr,
-    bearer: String,
-    receipt: mpsc::Receiver<NativeMcpReportingReceipt>,
-    cancellation: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
-}
-
-impl NativeMcpReportingServer {
-    fn start(authority: NativeMcpReportingProbeAuthority) -> Result<Self, String> {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|_| {
-            "Unable to expose the application-owned MCP reporting server".to_string()
-        })?;
-        listener.set_nonblocking(true).map_err(|_| {
-            "Unable to expose the application-owned MCP reporting server".to_string()
-        })?;
-        let address = listener.local_addr().map_err(|_| {
-            "Unable to expose the application-owned MCP reporting server".to_string()
-        })?;
-        let bearer = uuid::Uuid::new_v4().simple().to_string();
-        let (receipt_tx, receipt) = mpsc::sync_channel(1);
-        let cancellation = CancellationToken::new();
-        let server_cancel = cancellation.clone();
-        let expected_bearer = bearer.clone();
-        let join = thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .expect("native MCP reporting runtime");
-            runtime.block_on(async move {
-                let allowed_host = format!("127.0.0.1:{}", address.port());
-                let config =
-                    rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
-                        .with_allowed_hosts([allowed_host.clone()])
-                        .with_cancellation_token(server_cancel.clone());
-                let service: rmcp::transport::streamable_http_server::StreamableHttpService<
-                    NativeMcpReportingMcp,
-                    rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
-                > = rmcp::transport::streamable_http_server::StreamableHttpService::new(
-                    move || {
-                        Ok(NativeMcpReportingMcp::new(
-                            authority.clone(),
-                            receipt_tx.clone(),
-                        ))
-                    },
-                    Default::default(),
-                    config,
-                );
-                let expected_bearer = Arc::new(expected_bearer);
-                let listener = tokio::net::TcpListener::from_std(listener)
-                    .expect("native MCP reporting listener");
-                loop {
-                    let accepted = tokio::select! {
-                        _ = server_cancel.cancelled() => break,
-                        accepted = listener.accept() => accepted,
-                    };
-                    let Ok((stream, _)) = accepted else { continue };
-                    let service = service.clone();
-                    let expected_bearer = expected_bearer.clone();
-                    let allowed_host = allowed_host.clone();
-                    tokio::spawn(async move {
-                        let guard = service_fn(move |request| {
-                            let service = service.clone();
-                            let expected_bearer = expected_bearer.clone();
-                            let allowed_host = allowed_host.clone();
-                            async move {
-                                if let Some(status) = native_mcp_transport_denial(
-                                    &expected_bearer,
-                                    &allowed_host,
-                                    &request,
-                                ) {
-                                    return Ok::<_, std::convert::Infallible>(
-                                        Response::builder()
-                                            .status(status)
-                                            .body(Empty::<Bytes>::new())
-                                            .expect("native MCP denial response")
-                                            .map(axum::body::Body::new),
-                                    );
-                                }
-                                let response = service
-                                    .oneshot(request)
-                                    .await
-                                    .expect("native MCP service response");
-                                Ok::<_, std::convert::Infallible>(
-                                    response.map(axum::body::Body::new),
-                                )
-                            }
-                        });
-                        let _ = http1::Builder::new()
-                            .serve_connection(TokioIo::new(stream), guard)
-                            .await;
-                    });
-                }
-            });
-        });
-        Ok(Self {
-            address,
-            bearer,
-            receipt,
-            cancellation,
-            join: Some(join),
-        })
-    }
-
-    fn url(&self) -> String {
-        format!("http://{}/mcp", self.address)
-    }
-
-    fn take_receipt(&self) -> Option<NativeMcpReportingReceipt> {
-        self.receipt.try_recv().ok()
-    }
-
-    fn stop(mut self) {
-        self.cancellation.cancel();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
-}
-
-fn native_mcp_transport_denial<B>(
-    expected_bearer: &str,
-    allowed_host: &str,
-    request: &hyper::Request<B>,
-) -> Option<StatusCode> {
-    let authorized = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.strip_prefix("Bearer ") == Some(expected_bearer));
-    if !authorized {
-        return Some(StatusCode::UNAUTHORIZED);
-    }
-    (request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        != Some(allowed_host))
-    .then_some(StatusCode::FORBIDDEN)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1575,7 +1301,6 @@ pub(crate) struct NativeProfileService {
     login_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     setup_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
     full_access_canary_children: Mutex<HashMap<String, Box<dyn NativeCliChild>>>,
-    mcp_dispatch_claims: Mutex<HashMap<String, String>>,
     operation_gate: Mutex<()>,
 }
 
@@ -1589,6 +1314,7 @@ impl NativeProfileService {
         connection
             .execute_batch(NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
+        remove_mcp_reporting_schema(&connection)?;
         Ok(Self {
             database_path,
             dedicated_root: app_data_dir.join("native-codex-homes"),
@@ -1598,7 +1324,6 @@ impl NativeProfileService {
             login_children: Mutex::new(HashMap::new()),
             setup_children: Mutex::new(HashMap::new()),
             full_access_canary_children: Mutex::new(HashMap::new()),
-            mcp_dispatch_claims: Mutex::new(HashMap::new()),
             operation_gate: Mutex::new(()),
         })
     }
@@ -1615,7 +1340,6 @@ impl NativeProfileService {
             self.reconcile_login_attempt(&profile.id)?;
             self.reconcile_setup_attempts(&profile.id)?;
             self.reconcile_full_access_canary(&profile.id)?;
-            self.expire_mcp_probe(&profile.id)?;
         }
         let profiles = load_profiles(&mut connection)?;
         Ok(NativeProfileQueryDto {
@@ -1701,7 +1425,7 @@ impl NativeProfileService {
         }
         transaction
             .execute(
-                "INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,mcp_reporting,observed_at) VALUES (?1,'unknown','unknown','not_run','not_assessed',?2)",
+                "INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,observed_at) VALUES (?1,'unknown','unknown','not_run',?2)",
                 params![id, now],
             )
             .map_err(|error| format!("Unable to initialize profile readiness: {error}"))?;
@@ -1921,7 +1645,6 @@ impl NativeProfileService {
             None,
             None,
             None,
-            None,
         )?;
         self.profile(id).map(Into::into)
     }
@@ -1958,14 +1681,7 @@ impl NativeProfileService {
         if latest_state.as_deref() != Some("terminal_succeeded") {
             return Err("A completed application-owned sandbox setup request is required before confirmation".into());
         }
-        self.update_readiness(
-            id,
-            None,
-            Some("initialized"),
-            None,
-            None,
-            Some(("sandbox", None)),
-        )?;
+        self.update_readiness(id, None, Some("initialized"), None, Some(("sandbox", None)))?;
         self.profile(id).map(Into::into)
     }
 
@@ -1999,7 +1715,6 @@ impl NativeProfileService {
             None,
             Some("attention_required"),
             Some("blocked"),
-            None,
             Some((
                 "sandbox",
                 Some(if verified {
@@ -2050,7 +1765,6 @@ impl NativeProfileService {
             None,
             Some("initialized"),
             None,
-            None,
             Some((
                 "sandbox",
                 Some("external_sandbox_adoption_confirmed_product_uac_unobserved"),
@@ -2070,7 +1784,6 @@ impl NativeProfileService {
                 None,
                 None,
                 Some("blocked"),
-                None,
                 Some((
                     "canary",
                     Some("workspace_write_canary_requires_observed_sandbox_initialization"),
@@ -2080,319 +1793,6 @@ impl NativeProfileService {
         }
         self.start_setup_attempt(&profile, SetupPhase::WorkspaceWriteCanary)?;
         self.profile(id).map(Into::into)
-    }
-
-    pub(crate) fn probe_mcp_reporting(&self, id: &str) -> Result<NativeProfileDto, String> {
-        self.begin_mcp_reporting_probe(id)?;
-        self.profile(id).map(Into::into)
-    }
-
-    /// Performs one scoped reporting exchange only for an already-durable pending request. It
-    /// never creates a request, retries a failed exchange, or infers a receipt from process exit.
-    pub(crate) fn reconcile_pending_mcp_reporting(
-        &self,
-        id: &str,
-    ) -> Result<NativeProfileDto, String> {
-        let gate = self
-            .operation_gate
-            .lock()
-            .map_err(|_| "Native profile operation supervision is unavailable")?;
-        let profile = self.require_selected_active_while_gated(id)?;
-        self.expire_mcp_probe(id)?;
-        let Some(claimed) = self.claim_pending_mcp_reporting_probe(id)? else {
-            return self.profile(id).map(Into::into);
-        };
-        let authority = claimed.authority;
-        if authority.profile_id != profile.id {
-            return Err("The application-owned MCP reporting request has invalid authority".into());
-        }
-        self.mcp_dispatch_claims
-            .lock()
-            .map_err(|_| "Native MCP reporting receipt supervision is unavailable")?
-            .insert(id.into(), claimed.claim_id.clone());
-        let server = match NativeMcpReportingServer::start(authority.clone()) {
-            Ok(server) => server,
-            Err(error) => {
-                self.release_mcp_dispatch_claim(id);
-                self.cancel_pending_mcp_reporting_probe(
-                    id,
-                    &authority,
-                    &claimed.claim_id,
-                    "mcp_reporting_dispatch_unavailable",
-                )?;
-                return Err(error);
-            }
-        };
-        let variable = format!(
-            "CODEX_ORCHESTRATOR_NATIVE_MCP_REPORTING_{}",
-            Uuid::new_v4().simple()
-        );
-        let mut args = vec![
-            "exec".into(),
-            "--json".into(),
-            "--strict-config".into(),
-            "--ignore-user-config".into(),
-            "--ignore-rules".into(),
-            "--sandbox".into(),
-            "workspace-write".into(),
-            "--cd".into(),
-            authority.probe_root.to_string_lossy().into_owned(),
-            "--skip-git-repo-check".into(),
-        ];
-        let configuration = [
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.url={:?}", server.url()),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.bearer_token_env_var={variable:?}"),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.enabled_tools=[{MCP_REPORTING_TOOL:?}]"),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.required=true"),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.default_tools_approval_mode=\"approve\""),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.startup_timeout_sec=10"),
-            format!("mcp_servers.{MCP_REPORTING_SERVER}.tool_timeout_sec=300"),
-        ];
-        for value in configuration {
-            args.push("-c".into());
-            args.push(value);
-        }
-        args.push(format!(
-            "Use only the {MCP_REPORTING_CAPABILITY} MCP capability. Call {MCP_REPORTING_SERVER}.{MCP_REPORTING_TOOL} exactly once with {{}}. Do not read or write files, report profile content, or perform any other work."
-        ));
-        let outcome = self.cli.run(&NativeCliInvocation {
-            args,
-            cwd: authority.probe_root.clone(),
-            codex_home: profile.home.clone(),
-            environment: {
-                let mut environment = native_windows_cli_environment(&profile.home);
-                environment.push((variable, server.bearer.clone()));
-                environment
-            },
-            sandbox_receipt: None,
-            sandbox_command_file: None,
-        });
-        let receipt = server.take_receipt();
-        server.stop();
-
-        if let Some(receipt) = receipt {
-            self.require_selected_active_while_gated(id)?;
-            let result = self.record_mcp_reporting_receipt(id, &receipt);
-            self.release_mcp_dispatch_claim(id);
-            drop(gate);
-            return result;
-        }
-        let attention = if outcome.is_err() {
-            "mcp_reporting_dispatch_unavailable"
-        } else {
-            "mcp_reporting_dispatch_completed_without_receipt"
-        };
-        self.release_mcp_dispatch_claim(id);
-        self.cancel_pending_mcp_reporting_probe(id, &authority, &claimed.claim_id, attention)?;
-        drop(gate);
-        if outcome.is_err() {
-            return Err("The application-owned MCP reporting exchange is unavailable".into());
-        }
-        Err("The MCP reporting exchange completed without a correlated receipt".into())
-    }
-
-    pub(crate) fn begin_mcp_reporting_probe(
-        &self,
-        id: &str,
-    ) -> Result<NativeMcpReportingProbeAuthority, String> {
-        let gate = self
-            .operation_gate
-            .lock()
-            .map_err(|_| "Native profile operation supervision is unavailable")?;
-        self.require_selected_active_while_gated(id)?;
-        let root = self.probe_root(id);
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to begin native MCP reporting probe: {error}"))?;
-        let now = Utc::now();
-        transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
-            params![id, now.to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
-        if let Some(authority) = load_pending_mcp_probe(&transaction, id)? {
-            transaction.commit().map_err(|error| error.to_string())?;
-            return Ok(authority);
-        }
-        if self.has_current_mcp_reporting_probe(&transaction, id)? {
-            transaction.commit().map_err(|error| error.to_string())?;
-            return Err(
-                "The application-owned MCP reporting probe is already pending or claimed".into(),
-            );
-        }
-        let authority = NativeMcpReportingProbeAuthority {
-            profile_id: id.into(),
-            correlation_id: format!("native-mcp-probe-{}", Uuid::new_v4()),
-            capability: MCP_REPORTING_CAPABILITY.into(),
-            server: MCP_REPORTING_SERVER.into(),
-            tool: MCP_REPORTING_TOOL.into(),
-            probe_root: root,
-        };
-        transaction.execute(
-            "INSERT INTO native_codex_profile_mcp_probes (request_id,profile_id,correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root,state,requested_at,deadline_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9)",
-            params![format!("native-mcp-request-{}", Uuid::new_v4()), authority.profile_id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy(), now.to_rfc3339(), (now + Duration::seconds(MCP_PROBE_TIMEOUT_SECONDS)).to_rfc3339()],
-        ).map_err(|error| format!("Unable to persist native MCP reporting probe: {error}"))?;
-        transaction.execute(
-            "UPDATE native_codex_profile_readiness SET mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1",
-            params![id, now.to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
-        self.write_attention(
-            &transaction,
-            id,
-            "mcp_reporting",
-            Some("mcp_reporting_probe_pending_application_receipt"),
-        )?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        drop(gate);
-        Ok(authority)
-    }
-
-    pub(crate) fn record_mcp_reporting_receipt(
-        &self,
-        id: &str,
-        receipt: &NativeMcpReportingReceipt,
-    ) -> Result<NativeProfileDto, String> {
-        self.require_selected_active(id)?;
-        let dispatch_claim_id = self
-            .mcp_dispatch_claims
-            .lock()
-            .map_err(|_| "Native MCP reporting receipt supervision is unavailable")?
-            .get(id)
-            .cloned()
-            .ok_or("The application-owned MCP reporting receipt has no current dispatch claim")?;
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to begin native MCP receipt settlement: {error}"))?;
-        let now = Utc::now();
-        let expired = transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
-            params![id, now.to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
-        if expired != 0 {
-            transaction.execute(
-                "UPDATE native_codex_profile_readiness SET mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1",
-                params![id, now.to_rfc3339()],
-            ).map_err(|error| error.to_string())?;
-            self.write_attention(
-                &transaction,
-                id,
-                "mcp_reporting",
-                Some("mcp_reporting_probe_expired"),
-            )?;
-            transaction.commit().map_err(|error| error.to_string())?;
-            return Err("The application-owned MCP reporting probe has expired".into());
-        }
-        let transitioned = transaction.execute(
-            "UPDATE native_codex_profile_mcp_probes SET state='received',received_at=?2 WHERE profile_id=?1 AND state='dispatching' AND dispatch_claim_id=?8 AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7 AND deadline_at > ?2",
-            params![id, now.to_rfc3339(), receipt.correlation_id, receipt.capability, receipt.server, receipt.tool, receipt.probe_root.to_string_lossy(), dispatch_claim_id],
-        ).map_err(|error| error.to_string())?;
-        if transitioned != 1 {
-            return Err(
-                "MCP reporting receipt does not match one current application-owned probe".into(),
-            );
-        }
-        transaction.execute(
-            "UPDATE native_codex_profile_readiness SET mcp_reporting='ready',observed_at=?2 WHERE profile_id=?1",
-            params![id, now.to_rfc3339()],
-        ).map_err(|error| error.to_string())?;
-        self.write_attention(&transaction, id, "mcp_reporting", None)?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        self.profile(id).map(Into::into)
-    }
-
-    fn claim_pending_mcp_reporting_probe(
-        &self,
-        id: &str,
-    ) -> Result<Option<ClaimedNativeMcpReportingProbe>, String> {
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to claim native MCP reporting probe: {error}"))?;
-        let Some(authority) = load_pending_mcp_probe(&transaction, id)? else {
-            transaction.commit().map_err(|error| error.to_string())?;
-            return Ok(None);
-        };
-        let claim_id = format!("native-mcp-dispatch-{}", Uuid::new_v4());
-        let now = Utc::now().to_rfc3339();
-        let claimed = transaction
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='dispatching',dispatch_claim_id=?2,dispatch_claimed_at=?3 WHERE profile_id=?1 AND state='pending' AND correlation_id=?4 AND expected_capability=?5 AND expected_server=?6 AND expected_tool=?7 AND expected_probe_root=?8",
-                params![id, claim_id, now, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
-            )
-            .map_err(|error| error.to_string())?;
-        if claimed != 1 {
-            return Err("The application-owned MCP reporting probe could not be claimed".into());
-        }
-        self.write_attention(
-            &transaction,
-            id,
-            "mcp_reporting",
-            Some("mcp_reporting_dispatch_claimed_receipt_pending"),
-        )?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        Ok(Some(ClaimedNativeMcpReportingProbe {
-            authority,
-            claim_id,
-        }))
-    }
-
-    fn has_current_mcp_reporting_probe(
-        &self,
-        connection: &Connection,
-        id: &str,
-    ) -> Result<bool, String> {
-        connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state IN ('pending','dispatching'))",
-                params![id],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|value| value != 0)
-            .map_err(|error| error.to_string())
-    }
-
-    fn release_mcp_dispatch_claim(&self, id: &str) {
-        if let Ok(mut claims) = self.mcp_dispatch_claims.lock() {
-            claims.remove(id);
-        }
-    }
-
-    /// Terminalizes an attempted bridge that supplied no receipt. A later invocation observes
-    /// this durable cancellation rather than starting another exchange or replacement request.
-    fn cancel_pending_mcp_reporting_probe(
-        &self,
-        id: &str,
-        authority: &NativeMcpReportingProbeAuthority,
-        claim_id: &str,
-        attention: &'static str,
-    ) -> Result<(), String> {
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                format!("Unable to terminalize native MCP reporting probe: {error}")
-            })?;
-        let now = Utc::now().to_rfc3339();
-        let transitioned = transaction
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='dispatching' AND dispatch_claim_id=?2 AND correlation_id=?3 AND expected_capability=?4 AND expected_server=?5 AND expected_tool=?6 AND expected_probe_root=?7",
-                params![id, claim_id, authority.correlation_id, authority.capability, authority.server, authority.tool, authority.probe_root.to_string_lossy()],
-            )
-            .map_err(|error| error.to_string())?;
-        if transitioned != 1 {
-            return Err(
-                "The application-owned MCP reporting probe could not be terminalized".into(),
-            );
-        }
-        transaction
-            .execute(
-                "UPDATE native_codex_profile_readiness SET mcp_reporting='probe_failed',observed_at=?2 WHERE profile_id=?1",
-                params![id, now],
-            )
-            .map_err(|error| error.to_string())?;
-        self.write_attention(&transaction, id, "mcp_reporting", Some(attention))?;
-        transaction.commit().map_err(|error| error.to_string())
     }
 
     pub(crate) fn resolve_selected_home(&self) -> Result<ResolvedNativeCodexHome, String> {
@@ -2418,7 +1818,6 @@ impl NativeProfileService {
         if readiness.authentication != "authenticated"
             || readiness.sandbox_initialization != "initialized"
             || readiness.workspace_write_canary != "passed"
-            || readiness.mcp_reporting != "ready"
         {
             return Err(
                 "The selected native Codex home is not ready for an application consumer".into(),
@@ -2954,25 +2353,6 @@ impl NativeProfileService {
         Ok(profile)
     }
 
-    /// Caller owns `operation_gate`; avoid recursively acquiring it if continuity must be
-    /// recorded while adopting a pending reporting request.
-    fn require_selected_active_while_gated(&self, id: &str) -> Result<StoredProfile, String> {
-        let profile = self.profile(id)?;
-        let lifecycle = validate_profile(&profile);
-        if profile.lifecycle != Lifecycle::Active || lifecycle != Lifecycle::Active {
-            if lifecycle != Lifecycle::Active {
-                self.record_lifecycle_while_gated(id, lifecycle)?;
-            }
-            return Err(
-                "Only a currently validated native profile can perform this operation".into(),
-            );
-        }
-        if !profile.selected {
-            return Err("Only the selected native Codex profile can perform this operation".into());
-        }
-        Ok(profile)
-    }
-
     fn revalidate(&self, profile: &StoredProfile) -> Result<(), String> {
         let lifecycle = validate_profile(profile);
         if lifecycle != Lifecycle::Active {
@@ -3086,7 +2466,6 @@ impl NativeProfileService {
                 None,
                 (phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
                 (phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
-                None,
                 Some((
                     phase.attention_concern(),
                     Some("native_sandbox_semantic_policy_unsupported"),
@@ -3139,7 +2518,6 @@ impl NativeProfileService {
                                 None,
                                 None,
                                 Some("blocked"),
-                                None,
                                 Some((
                                     "canary",
                                     Some("native_sandbox_canary_receipt_cleanup_failed"),
@@ -3162,7 +2540,6 @@ impl NativeProfileService {
                                 None,
                                 None,
                                 Some("blocked"),
-                                None,
                                 Some((
                                     "canary",
                                     Some("native_sandbox_canary_command_cleanup_failed"),
@@ -3188,9 +2565,7 @@ impl NativeProfileService {
                         None,
                         None,
                         Some("blocked"),
-                        None,
-                        Some(("canary", Some("native_sandbox_canary_command_prepare_failed"))),
-                    )?;
+                        Some(("canary", Some("native_sandbox_canary_command_prepare_failed"))))?;
                     return Err(format!(
                         "Unable to prepare the application-owned sandbox canary command: {error}"
                     ));
@@ -3270,7 +2645,6 @@ impl NativeProfileService {
                     None,
                     (phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
                     (phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
-                    None,
                     Some((
                         phase.attention_concern(),
                         Some("native_sandbox_launch_failed"),
@@ -3344,19 +2718,16 @@ impl NativeProfileService {
                             None,
                             Some("attention_required"),
                             None,
-                            None,
                             Some((
                                 "sandbox",
                                 Some("native_sandbox_setup_completed_explicit_uac_confirmation_required"),
-                            )),
-                        )?;
+                            )))?;
                     } else {
                         self.update_readiness(
                             id,
                             None,
                             None,
                             Some("passed"),
-                            None,
                             Some((attempt.phase.attention_concern(), None)),
                         )?;
                         self.remove_workspace_write_canary_command(&attempt.profile_id);
@@ -3406,7 +2777,6 @@ impl NativeProfileService {
             None,
             (attempt.phase == SetupPhase::SandboxInitialization).then_some("attention_required"),
             (attempt.phase == SetupPhase::WorkspaceWriteCanary).then_some("blocked"),
-            None,
             Some((
                 attempt.phase.attention_concern(),
                 Some(match state {
@@ -3464,27 +2834,6 @@ impl NativeProfileService {
             "UPDATE native_codex_profile_setup_attempts SET state=?2,settled_at=?3,terminal_classification=?4,terminal_exit_code=?5 WHERE attempt_id=?1 AND state='pending'",
             params![attempt_id, state, Utc::now().to_rfc3339(), terminal_classification, terminal_exit_code],
         ).map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    fn expire_mcp_probe(&self, id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        let expired = connection
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND state IN ('pending','dispatching') AND deadline_at <= ?2",
-                params![id, Utc::now().to_rfc3339()],
-            )
-            .map_err(|error| error.to_string())?;
-        if expired != 0 {
-            self.update_readiness(
-                id,
-                None,
-                None,
-                None,
-                Some("not_assessed"),
-                Some(("mcp_reporting", Some("mcp_reporting_probe_expired"))),
-            )?;
-        }
         Ok(())
     }
 
@@ -3637,9 +2986,8 @@ impl NativeProfileService {
         let connection = self.connection()?;
         connection.execute("UPDATE native_codex_profiles SET lifecycle=?2,selected_at=NULL,updated_at=?3 WHERE id=?1", params![id, lifecycle.database(), Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_mode_authorizations SET revoked_at=COALESCE(revoked_at,?2) WHERE profile_id=?1 AND mode='danger_full_access'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+        connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',danger_full_access_canary='blocked',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_setup_attempts SET state='cancelled',settled_at=?2,terminal_classification='cancelled' WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
-        connection.execute("UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state IN ('pending','dispatching')", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_login_attempts SET state='cancelled',settled_at=?2 WHERE profile_id=?1 AND state='pending'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoptions SET state='invalidated' WHERE profile_id=?1", params![id]).map_err(|error| error.to_string())?;
         connection.execute("UPDATE native_codex_profile_sandbox_adoption_confirmations SET state='invalidated',invalidated_at=COALESCE(invalidated_at,?2) WHERE profile_id=?1 AND state='confirmed'", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
@@ -3667,7 +3015,6 @@ impl NativeProfileService {
             None,
             Some("attention_required"),
             Some("blocked"),
-            None,
             Some((
                 "sandbox",
                 Some("external_sandbox_adoption_evidence_invalidated"),
@@ -3718,7 +3065,6 @@ impl NativeProfileService {
                 None,
                 Some("attention_required"),
                 Some("blocked"),
-                None,
                 Some((
                     "sandbox",
                     Some("external_sandbox_adoption_evidence_invalidated"),
@@ -3734,13 +3080,12 @@ impl NativeProfileService {
         authentication: Option<&str>,
         sandbox: Option<&str>,
         canary: Option<&str>,
-        mcp: Option<&str>,
         attention: Option<(&str, Option<&str>)>,
     ) -> Result<(), String> {
         let connection = self.connection()?;
         connection.execute(
-            "UPDATE native_codex_profile_readiness SET authentication=COALESCE(?2,authentication),sandbox_initialization=COALESCE(?3,sandbox_initialization),workspace_write_canary=COALESCE(?4,workspace_write_canary),mcp_reporting=COALESCE(?5,mcp_reporting),observed_at=?6 WHERE profile_id=?1",
-            params![id, authentication, sandbox, canary, mcp, Utc::now().to_rfc3339()],
+            "UPDATE native_codex_profile_readiness SET authentication=COALESCE(?2,authentication),sandbox_initialization=COALESCE(?3,sandbox_initialization),workspace_write_canary=COALESCE(?4,workspace_write_canary),observed_at=?5 WHERE profile_id=?1",
+            params![id, authentication, sandbox, canary, Utc::now().to_rfc3339()],
         ).map_err(|error| format!("Unable to record native profile readiness: {error}"))?;
         if let Some((concern, detail)) = attention {
             self.write_attention(&connection, id, concern, detail)?;
@@ -3757,7 +3102,7 @@ impl NativeProfileService {
     ) -> Result<(), String> {
         let connection = self.connection()?;
         if reset_readiness {
-            connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',mcp_reporting='not_assessed',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+            connection.execute("UPDATE native_codex_profile_readiness SET authentication='unknown',sandbox_initialization='unknown',workspace_write_canary='not_run',observed_at=?2 WHERE profile_id=?1", params![id, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
         } else {
             connection
                 .execute(
@@ -3790,6 +3135,78 @@ impl NativeProfileService {
         }
         Ok(())
     }
+}
+
+fn remove_mcp_reporting_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "DROP INDEX IF EXISTS ux_native_codex_profile_mcp_probe_pending;
+             DROP TABLE IF EXISTS native_codex_profile_mcp_probes;",
+        )
+        .map_err(|error| {
+            format!("Unable to remove retired native MCP reporting storage: {error}")
+        })?;
+
+    let readiness_has_mcp = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_readiness') WHERE name='mcp_reporting')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?
+        != 0;
+    if readiness_has_mcp {
+        connection
+            .execute_batch(
+                "ALTER TABLE native_codex_profile_readiness RENAME TO native_codex_profile_readiness_retired_mcp;
+                 CREATE TABLE native_codex_profile_readiness (
+                   profile_id TEXT PRIMARY KEY,
+                   authentication TEXT NOT NULL CHECK (authentication IN ('unknown','authenticated','unauthenticated')),
+                   sandbox_initialization TEXT NOT NULL CHECK (sandbox_initialization IN ('unknown','initialized','failed','attention_required')),
+                   workspace_write_canary TEXT NOT NULL CHECK (workspace_write_canary IN ('not_run','passed','blocked')),
+                   danger_full_access_canary TEXT NOT NULL DEFAULT 'not_run' CHECK (danger_full_access_canary IN ('not_run','passed','blocked')),
+                   attention TEXT,
+                   login_requested_at TEXT,
+                   observed_at TEXT NOT NULL,
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 INSERT INTO native_codex_profile_readiness (profile_id,authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,attention,login_requested_at,observed_at)
+                 SELECT profile_id,authentication,sandbox_initialization,workspace_write_canary,danger_full_access_canary,attention,login_requested_at,observed_at
+                 FROM native_codex_profile_readiness_retired_mcp;
+                 DROP TABLE native_codex_profile_readiness_retired_mcp;",
+            )
+            .map_err(|error| format!("Unable to remove retired native MCP readiness storage: {error}"))?;
+    }
+
+    let attentions_have_mcp = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='native_codex_profile_attentions'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|sql| sql.contains("mcp_reporting"))
+        .unwrap_or(false);
+    if attentions_have_mcp {
+        connection
+            .execute_batch(
+                "ALTER TABLE native_codex_profile_attentions RENAME TO native_codex_profile_attentions_retired_mcp;
+                 CREATE TABLE native_codex_profile_attentions (
+                   profile_id TEXT NOT NULL,
+                   concern TEXT NOT NULL CHECK (concern IN ('authentication','sandbox','canary','continuity','cli')),
+                   detail TEXT NOT NULL,
+                   recorded_at TEXT NOT NULL,
+                   PRIMARY KEY(profile_id, concern),
+                   FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE RESTRICT
+                 );
+                 INSERT INTO native_codex_profile_attentions (profile_id,concern,detail,recorded_at)
+                 SELECT profile_id,concern,detail,recorded_at
+                 FROM native_codex_profile_attentions_retired_mcp
+                 WHERE concern <> 'mcp_reporting';
+                 DROP TABLE native_codex_profile_attentions_retired_mcp;",
+            )
+            .map_err(|error| format!("Unable to remove retired native MCP attention storage: {error}"))?;
+    }
+    Ok(())
 }
 
 impl Drop for NativeProfileService {
@@ -4533,34 +3950,13 @@ fn load_pending_login_attempt(
     ).optional().map_err(|error| error.to_string())
 }
 
-fn load_pending_mcp_probe(
-    connection: &Connection,
-    profile_id: &str,
-) -> Result<Option<NativeMcpReportingProbeAuthority>, String> {
-    connection
-        .query_row(
-            "SELECT correlation_id,expected_capability,expected_server,expected_tool,expected_probe_root FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state='pending'",
-            params![profile_id],
-            |row| Ok(NativeMcpReportingProbeAuthority {
-                profile_id: profile_id.into(),
-                correlation_id: row.get(0)?,
-                capability: row.get(1)?,
-                server: row.get(2)?,
-                tool: row.get(3)?,
-                probe_root: PathBuf::from(row.get::<_, String>(4)?),
-            }),
-        )
-        .optional()
-        .map_err(|error| error.to_string())
-}
-
 fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, String> {
-    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,r.mcp_reporting,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='mcp_reporting'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT phase FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT state FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT executable FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT version FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT workspace_sandbox_supported FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT correlation_id FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT deadline_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_classification FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_exit_code FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
+    let mut statement = connection.prepare("SELECT p.id,p.canonical_home_path,p.filesystem_identity,p.ownership,p.lifecycle,p.selected_at,r.authentication,r.sandbox_initialization,r.workspace_write_canary,r.danger_full_access_canary,e.selected_mode,a.filesystem_identity,a.revoked_at,(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='authentication'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='sandbox'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='canary'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='continuity'),(SELECT detail FROM native_codex_profile_attentions x WHERE x.profile_id=p.id AND x.concern='cli'),(SELECT state FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT browser_handoff FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_login_attempts l WHERE l.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT phase FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT state FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT executable FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT version FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT workspace_sandbox_supported FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT correlation_id FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT requested_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT launch_accepted_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT deadline_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT settled_at FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_classification FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1),(SELECT terminal_exit_code FROM native_codex_profile_setup_attempts s WHERE s.profile_id=p.id ORDER BY requested_at DESC,attempt_id DESC LIMIT 1) FROM native_codex_profiles p JOIN native_codex_profile_readiness r ON r.profile_id=p.id JOIN native_codex_profile_execution_modes e ON e.profile_id=p.id LEFT JOIN native_codex_profile_mode_authorizations a ON a.profile_id=p.id AND a.mode='danger_full_access' ORDER BY p.created_at").map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([], |row| {
             let identity: String = row.get(2)?;
-            let authorization_identity: Option<String> = row.get(12)?;
-            let authorization_revoked: Option<String> = row.get(13)?;
+            let authorization_identity: Option<String> = row.get(11)?;
+            let authorization_revoked: Option<String> = row.get(12)?;
             Ok(StoredProfile {
                 id: row.get(0)?,
                 home: PathBuf::from(row.get::<_, String>(1)?),
@@ -4571,7 +3967,7 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                     .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 selected: row.get::<_, Option<String>>(5)?.is_some(),
                 execution: NativeProfileExecution {
-                    selected_mode: ExecutionMode::parse(&row.get::<_, String>(11)?)
+                    selected_mode: ExecutionMode::parse(&row.get::<_, String>(10)?)
                         .map_err(|_| rusqlite::Error::InvalidQuery)?,
                     danger_full_access_authorized: false,
                     danger_authorization: NativeProfileDangerAuthorization {
@@ -4591,36 +3987,36 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                 },
                 login_attempt: NativeProfileLoginAttempt {
                     disposition: row
-                        .get::<_, Option<String>>(20)?
+                        .get::<_, Option<String>>(18)?
                         .unwrap_or_else(|| "not_requested".into()),
                     browser_handoff: row
-                        .get::<_, Option<String>>(21)?
+                        .get::<_, Option<String>>(19)?
                         .unwrap_or_else(|| "unobserved".into()),
-                    requested_at: row.get(22)?,
-                    launch_accepted_at: row.get(23)?,
-                    settled_at: row.get(24)?,
+                    requested_at: row.get(20)?,
+                    launch_accepted_at: row.get(21)?,
+                    settled_at: row.get(22)?,
                 },
                 setup_attempt: NativeProfileSetupAttempt {
                     phase: row
-                        .get::<_, Option<String>>(25)?
+                        .get::<_, Option<String>>(23)?
                         .unwrap_or_else(|| "not_requested".into()),
                     disposition: row
-                        .get::<_, Option<String>>(26)?
+                        .get::<_, Option<String>>(24)?
                         .unwrap_or_else(|| "not_requested".into()),
-                    executable: row.get(27)?,
-                    version: row.get(28)?,
+                    executable: row.get(25)?,
+                    version: row.get(26)?,
                     workspace_sandbox_supported: row
-                        .get::<_, Option<i64>>(29)?
+                        .get::<_, Option<i64>>(27)?
                         .map(|value| value != 0),
-                    correlation_id: row.get(30)?,
-                    requested_at: row.get(31)?,
-                    launch_accepted_at: row.get(32)?,
-                    deadline_at: row.get(33)?,
-                    settled_at: row.get(34)?,
+                    correlation_id: row.get(28)?,
+                    requested_at: row.get(29)?,
+                    launch_accepted_at: row.get(30)?,
+                    deadline_at: row.get(31)?,
+                    settled_at: row.get(32)?,
                     terminal_classification: row
-                        .get::<_, Option<String>>(35)?
+                        .get::<_, Option<String>>(33)?
                         .unwrap_or_else(|| "not_observed".into()),
-                    terminal_exit_code: row.get(36)?,
+                    terminal_exit_code: row.get(34)?,
                 },
                 sandbox_adoption: NativeProfileSandboxAdoption {
                     disposition: "not_verified".into(),
@@ -4658,14 +4054,12 @@ fn load_profiles(connection: &mut Connection) -> Result<Vec<StoredProfile>, Stri
                     sandbox_initialization: row.get(7)?,
                     workspace_write_canary: row.get(8)?,
                     danger_full_access_canary: row.get(9)?,
-                    mcp_reporting: row.get(10)?,
                     attentions: NativeProfileAttentions {
-                        authentication: row.get(14)?,
-                        sandbox: row.get(15)?,
-                        canary: row.get(16)?,
-                        mcp_reporting: row.get(17)?,
-                        continuity: row.get(18)?,
-                        cli: row.get(19)?,
+                        authentication: row.get(13)?,
+                        sandbox: row.get(14)?,
+                        canary: row.get(15)?,
+                        continuity: row.get(16)?,
+                        cli: row.get(17)?,
                     },
                 },
             })
@@ -4921,33 +4315,9 @@ pub(crate) fn run_native_profile_danger_full_access_canary(
         .service
         .run_danger_full_access_canary(&input.profile_id)
 }
-#[tauri::command]
-pub(crate) fn probe_native_profile_mcp_reporting(
-    state: State<'_, NativeProfileTauriState>,
-    input: NativeProfileIdInput,
-) -> Result<NativeProfileDto, String> {
-    state.service.probe_mcp_reporting(&input.profile_id)
-}
-
-#[tauri::command]
-pub(crate) fn reconcile_native_profile_mcp_reporting(
-    state: State<'_, NativeProfileTauriState>,
-    input: NativeProfileIdInput,
-) -> Result<NativeProfileDto, String> {
-    state
-        .service
-        .reconcile_pending_mcp_reporting(&input.profile_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution_configuration::{
-        CapabilitySet, NativeCodexCapabilityExposure, NativeCodexSelectedRuntimeProfileSource,
-        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
-    };
-    use std::sync::Barrier;
-    use std::thread;
 
     struct FakeChild {
         result: Option<NativeCliReceipt>,
@@ -5090,115 +4460,7 @@ mod tests {
         (directory, service)
     }
 
-    struct ReportingCli {
-        calls: Mutex<Vec<NativeCliInvocation>>,
-    }
-
-    impl ReportingCli {
-        fn new() -> Self {
-            Self {
-                calls: Mutex::new(vec![]),
-            }
-        }
-
-        fn call_reporting_tool(invocation: &NativeCliInvocation) -> Result<(), String> {
-            let configured = |suffix: &str| {
-                invocation.args.windows(2).find_map(|pair| {
-                    (pair[0] == "-c")
-                        .then(|| pair[1].strip_prefix(suffix).map(str::to_owned))
-                        .flatten()
-                })
-            };
-            let endpoint = configured(&format!("mcp_servers.{MCP_REPORTING_SERVER}.url="))
-                .and_then(|value| serde_json::from_str::<String>(&value).ok())
-                .ok_or("missing MCP endpoint")?;
-            let variable = configured(&format!(
-                "mcp_servers.{MCP_REPORTING_SERVER}.bearer_token_env_var="
-            ))
-            .and_then(|value| serde_json::from_str::<String>(&value).ok())
-            .ok_or("missing MCP bearer variable")?;
-            let bearer = invocation
-                .environment
-                .iter()
-                .find_map(|(key, value)| (key == &variable).then_some(value.clone()))
-                .ok_or("missing MCP bearer")?;
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .map_err(|_| "test MCP runtime unavailable")?;
-            runtime.block_on(async move {
-                let client = reqwest::Client::new();
-                let initialize = client
-                    .post(&endpoint)
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json, text/event-stream")
-                    .header("authorization", format!("Bearer {bearer}"))
-                    .body(serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"native-profile-test","version":"1"}}}).to_string())
-                    .send()
-                    .await
-                    .map_err(|_| "test MCP initialize unavailable")?;
-                let session = initialize
-                    .headers()
-                    .get("mcp-session-id")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned)
-                    .ok_or("test MCP session missing")?;
-                if !initialize.status().is_success() {
-                    return Err("test MCP initialize rejected".into());
-                }
-                let notification = client
-                    .post(&endpoint)
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json, text/event-stream")
-                    .header("authorization", format!("Bearer {bearer}"))
-                    .header("mcp-session-id", &session)
-                    .body("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")
-                    .send()
-                    .await
-                    .map_err(|_| "test MCP notification unavailable")?;
-                if !notification.status().is_success() {
-                    return Err("test MCP notification rejected".into());
-                }
-                let call = client
-                    .post(&endpoint)
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json, text/event-stream")
-                    .header("authorization", format!("Bearer {bearer}"))
-                    .header("mcp-session-id", session)
-                    .body(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":MCP_REPORTING_TOOL,"arguments":{}}}).to_string())
-                    .send()
-                    .await
-                    .map_err(|_| "test MCP tool unavailable")?;
-                call.status()
-                    .is_success()
-                    .then_some(())
-                    .ok_or_else(|| "test MCP tool rejected".into())
-            })
-        }
-    }
-
-    impl NativeCliPort for ReportingCli {
-        fn run(&self, invocation: &NativeCliInvocation) -> Result<NativeCliReceipt, String> {
-            self.calls.lock().unwrap().push(invocation.clone());
-            Self::call_reporting_tool(invocation)?;
-            Ok(NativeCliReceipt {
-                succeeded: true,
-                exit_code: Some(0),
-                sandbox_receipt_observed: false,
-            })
-        }
-
-        fn start(&self, _: &NativeCliInvocation) -> Result<Box<dyn NativeCliChild>, String> {
-            Err("not used by MCP reporting".into())
-        }
-
-        fn surface(&self) -> Result<NativeCliSurface, String> {
-            FakeCli::succeeding().surface()
-        }
-    }
-
-    fn selected_profile_ready_except_mcp(service: &NativeProfileService) -> NativeProfileDto {
+    fn selected_profile_ready(service: &NativeProfileService) -> NativeProfileDto {
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
         service
@@ -5207,67 +4469,10 @@ mod tests {
                 Some("authenticated"),
                 Some("initialized"),
                 Some("passed"),
-                Some("not_assessed"),
                 None,
             )
             .unwrap();
         profile
-    }
-
-    fn mark_mcp_ready(service: &NativeProfileService, profile_id: &str) {
-        service.connection().unwrap().execute(
-            "UPDATE native_codex_profile_readiness SET mcp_reporting='ready' WHERE profile_id=?1",
-            params![profile_id],
-        ).unwrap();
-    }
-
-    #[test]
-    fn selected_profile_adapter_exposes_only_opaque_identity_and_locked_execution_mode() {
-        let (_directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        mark_mcp_ready(&service, &profile.id);
-        let source = NativeCodexSelectedRuntimeProfileSource::new(
-            Arc::new(service),
-            NativeCodexCapabilityExposure {
-                capabilities: CapabilitySet {
-                    sandbox_modes: [SandboxMode::ReadOnly, SandboxMode::DangerFullAccess]
-                        .into_iter()
-                        .collect(),
-                    ..CapabilitySet::default()
-                },
-                locked: RuntimeSelections::default(),
-            },
-        );
-
-        let snapshot = source.selected_runtime_profile().unwrap();
-        assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
-        assert_eq!(
-            snapshot.exposure.sandbox_modes,
-            [SandboxMode::WorkspaceWrite].into_iter().collect()
-        );
-        assert_eq!(
-            snapshot.locked.sandbox_mode,
-            Some(SandboxMode::WorkspaceWrite)
-        );
-        let encoded = serde_json::to_value(snapshot).unwrap();
-        assert!(encoded.get("home").is_none());
-        assert!(encoded.get("filesystemIdentity").is_none());
-    }
-
-    fn claim_mcp_reporting_for_current_reconciliation(
-        service: &NativeProfileService,
-        id: &str,
-    ) -> NativeMcpReportingProbeAuthority {
-        let claimed = service
-            .claim_pending_mcp_reporting_probe(id)
-            .unwrap()
-            .expect("pending reporting request is claimed");
-        service
-            .mcp_dispatch_claims
-            .lock()
-            .unwrap()
-            .insert(id.into(), claimed.claim_id);
-        claimed.authority
     }
 
     #[test]
@@ -5293,8 +4498,7 @@ mod tests {
     #[test]
     fn managed_agent_session_binding_revalidates_selection_and_records_no_raw_home() {
         let (directory, service) = service();
-        let first = selected_profile_ready_except_mcp(&service);
-        mark_mcp_ready(&service, &first.id);
+        let first = selected_profile_ready(&service);
         let first_home = first.home_path.clone();
         let prepared = service
             .prepare_managed_agent_session_launch(
@@ -5340,8 +4544,7 @@ mod tests {
             .prepare_managed_agent_session_launch("session-1", "invocation-2", true, None)
             .is_ok());
 
-        let second = selected_profile_ready_except_mcp(&reopened);
-        mark_mcp_ready(&reopened, &second.id);
+        selected_profile_ready(&reopened);
         assert!(reopened
             .prepare_managed_agent_session_launch("session-1", "invocation-3", true, None)
             .is_err());
@@ -5379,7 +4582,6 @@ mod tests {
                 Some("authenticated"),
                 Some("initialized"),
                 Some("passed"),
-                Some("ready"),
                 None,
             )
             .unwrap();
@@ -5429,7 +4631,6 @@ mod tests {
                 Some("authenticated"),
                 Some("attention_required"),
                 Some("blocked"),
-                Some("probe_failed"),
                 Some((
                     "sandbox",
                     Some("sandbox_probe_failed_or_uac_attention_required"),
@@ -5450,7 +4651,6 @@ mod tests {
                 Some("authenticated"),
                 Some("initialized"),
                 Some("passed"),
-                Some("ready"),
                 None,
             )
             .unwrap();
@@ -5634,7 +4834,6 @@ mod tests {
                 Some("initialized"),
                 Some("not_run"),
                 None,
-                None,
             )
             .unwrap();
         *fake.next_child_result.lock().unwrap() = Some(NativeCliReceipt {
@@ -5680,7 +4879,6 @@ mod tests {
                 None,
                 Some("initialized"),
                 Some("not_run"),
-                None,
                 None,
             )
             .unwrap();
@@ -6117,7 +5315,7 @@ mod tests {
         let second = service.create_dedicated().unwrap();
         service.select(&first.id).unwrap();
         service
-            .update_readiness(&first.id, None, Some("initialized"), None, None, None)
+            .update_readiness(&first.id, None, Some("initialized"), None, None)
             .unwrap();
         service.run_workspace_write_canary(&first.id).unwrap();
 
@@ -6735,7 +5933,6 @@ mod tests {
                 Some("authenticated"),
                 Some("initialized"),
                 Some("passed"),
-                Some("ready"),
                 None,
             )
             .unwrap();
@@ -6908,14 +6105,7 @@ mod tests {
             .project_launch(&profile.id, &workspace_target)
             .is_err());
         service
-            .update_readiness(
-                &profile.id,
-                None,
-                Some("initialized"),
-                Some("passed"),
-                None,
-                None,
-            )
+            .update_readiness(&profile.id, None, Some("initialized"), Some("passed"), None)
             .unwrap();
         let workspace = service
             .project_launch(&profile.id, &workspace_target)
@@ -7226,7 +6416,7 @@ mod tests {
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
         service
-            .update_readiness(&profile.id, None, Some("initialized"), None, None, None)
+            .update_readiness(&profile.id, None, Some("initialized"), None, None)
             .unwrap();
         service.run_workspace_write_canary(&profile.id).unwrap();
         let command_file = service
@@ -7437,14 +6627,19 @@ mod tests {
     }
 
     #[test]
-    fn v21_readiness_migration_preserves_facts_and_maps_retired_states() {
+    fn opening_a_migrated_profile_removes_retired_mcp_reporting_storage() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("active.sqlite");
         let connection = crate::storage::open_active_database(&database).unwrap();
         connection.execute_batch("DROP TABLE native_codex_profile_readiness; CREATE TABLE native_codex_profile_readiness (profile_id TEXT PRIMARY KEY, authentication TEXT NOT NULL, sandbox_initialization TEXT NOT NULL, workspace_write_canary TEXT NOT NULL, mcp_reporting TEXT NOT NULL, attention TEXT, login_requested_at TEXT, observed_at TEXT NOT NULL); INSERT INTO native_codex_profiles (id,canonical_home_path,filesystem_identity,ownership,lifecycle,created_at,updated_at) VALUES ('profile','C:\\profile','identity','registered_existing','active','t','t'); INSERT INTO native_codex_profile_readiness VALUES ('profile','authenticated','unsupported','blocked','not_configured','legacy','t','t'); PRAGMA user_version=21;").unwrap();
         crate::storage::initialize_active_database(&connection).unwrap();
-        let row: (String, String) = connection.query_row("SELECT sandbox_initialization,mcp_reporting FROM native_codex_profile_readiness WHERE profile_id='profile'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
-        assert_eq!(row, ("attention_required".into(), "not_assessed".into()));
+        drop(connection);
+        let service = NativeProfileService::open(database, directory.path().join("app")).unwrap();
+        let connection = service.connection().unwrap();
+        let sandbox: String = connection.query_row("SELECT sandbox_initialization FROM native_codex_profile_readiness WHERE profile_id='profile'", [], |row| row.get(0)).unwrap();
+        assert_eq!(sandbox, "attention_required");
+        let has_mcp: i64 = connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('native_codex_profile_readiness') WHERE name='mcp_reporting')", [], |row| row.get(0)).unwrap();
+        assert_eq!(has_mcp, 0);
         let attention: String = connection
             .query_row(
                 "SELECT detail FROM native_codex_profile_attentions WHERE profile_id='profile' AND concern='continuity'",
@@ -7593,749 +6788,6 @@ mod tests {
                 [],
             )
             .unwrap();
-    }
-
-    #[test]
-    fn mcp_reporting_probe_changes_only_its_own_readiness_fact() {
-        let (_directory, service) = service();
-        let profile = service.create_dedicated().unwrap();
-        service.select(&profile.id).unwrap();
-        let result = service.probe_mcp_reporting(&profile.id).unwrap();
-        assert_eq!(result.readiness.authentication, "unknown");
-        assert_eq!(result.readiness.sandbox_initialization, "unknown");
-        assert_eq!(result.readiness.workspace_write_canary, "not_run");
-        assert_eq!(result.readiness.mcp_reporting, "not_assessed");
-        assert_eq!(
-            result.readiness.attentions.mcp_reporting,
-            Some("mcp_reporting_probe_pending_application_receipt".into())
-        );
-    }
-
-    #[test]
-    fn reporting_dispatch_calls_the_exact_mcp_tool_then_settles_the_real_receipt() {
-        let (_directory, mut service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let reporting = Arc::new(ReportingCli::new());
-        service.cli = reporting.clone();
-
-        let ready = service
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .unwrap();
-
-        assert_eq!(ready.readiness.mcp_reporting, "ready");
-        assert!(service.resolve_selected_home().is_ok());
-        let calls = reporting.calls.lock().unwrap();
-        assert_eq!(calls.len(), 1);
-        let call = &calls[0];
-        assert_eq!(call.codex_home, PathBuf::from(&profile.home_path));
-        assert!(call.args.iter().any(|argument| {
-            argument
-                == &format!(
-                    "mcp_servers.{MCP_REPORTING_SERVER}.enabled_tools=[{MCP_REPORTING_TOOL:?}]"
-                )
-        }));
-        assert!(call
-            .args
-            .last()
-            .is_some_and(|prompt| prompt.contains(MCP_REPORTING_CAPABILITY)));
-    }
-
-    #[test]
-    fn reporting_dispatch_terminalizes_no_receipt_without_reopen_or_duplicate_retry() {
-        let (directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        assert!(service
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .is_err());
-        let incomplete = service.profile(&profile.id).unwrap();
-        assert_eq!(incomplete.readiness.mcp_reporting, "probe_failed");
-        assert_eq!(
-            incomplete.readiness.attentions.mcp_reporting.as_deref(),
-            Some("mcp_reporting_dispatch_completed_without_receipt")
-        );
-        assert_eq!(
-            service
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![profile.id],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "cancelled"
-        );
-        drop(service);
-
-        let mut reopened = NativeProfileService::open(
-            directory.path().join("active.sqlite"),
-            directory.path().join("app"),
-        )
-        .unwrap();
-        let reporting = Arc::new(ReportingCli::new());
-        reopened.cli = reporting.clone();
-        reopened
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .unwrap();
-        reopened
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .unwrap();
-        assert!(reporting.calls.lock().unwrap().is_empty());
-        assert!(reopened.resolve_selected_home().is_err());
-    }
-
-    #[test]
-    fn reporting_dispatch_requires_the_current_selected_profile_before_mcp_exposure() {
-        let (_directory, mut service) = service();
-        let profile = service.create_dedicated().unwrap();
-        service.select(&profile.id).unwrap();
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let other = service.create_dedicated().unwrap();
-        service.select(&other.id).unwrap();
-        let reporting = Arc::new(ReportingCli::new());
-        service.cli = reporting.clone();
-
-        assert!(service
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .is_err());
-        assert!(reporting.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            service
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .mcp_reporting,
-            "not_assessed"
-        );
-    }
-
-    #[test]
-    fn reporting_reconciliation_without_a_request_is_a_noop() {
-        let (_directory, mut service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        let reporting = Arc::new(ReportingCli::new());
-        service.cli = reporting.clone();
-
-        service
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .unwrap();
-
-        assert!(reporting.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            service
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![profile.id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0
-        );
-    }
-
-    #[test]
-    fn concurrent_reporting_dispatches_adopt_one_pending_request() {
-        let (_directory, mut service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let reporting = Arc::new(ReportingCli::new());
-        service.cli = reporting.clone();
-        let service = Arc::new(service);
-        let barrier = Arc::new(Barrier::new(2));
-        let joins = (0..2)
-            .map(|_| {
-                let service = service.clone();
-                let profile_id = profile.id.clone();
-                let barrier = barrier.clone();
-                thread::spawn(move || {
-                    barrier.wait();
-                    service.reconcile_pending_mcp_reporting(&profile_id)
-                })
-            })
-            .collect::<Vec<_>>();
-        assert!(joins.into_iter().all(|join| join.join().unwrap().is_ok()));
-        assert_eq!(reporting.calls.lock().unwrap().len(), 1);
-        assert_eq!(
-            service
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .mcp_reporting,
-            "ready"
-        );
-    }
-
-    #[test]
-    fn claimed_reporting_dispatch_reopens_without_a_second_exchange() {
-        let (directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let claimed = service
-            .claim_pending_mcp_reporting_probe(&profile.id)
-            .unwrap()
-            .expect("pending request is claimed");
-        assert!(!claimed.claim_id.is_empty());
-        drop(service);
-
-        let mut reopened = NativeProfileService::open(
-            directory.path().join("active.sqlite"),
-            directory.path().join("app"),
-        )
-        .unwrap();
-        let reporting = Arc::new(ReportingCli::new());
-        reopened.cli = reporting.clone();
-        reopened
-            .reconcile_pending_mcp_reporting(&profile.id)
-            .unwrap();
-
-        assert!(reporting.calls.lock().unwrap().is_empty());
-        assert_eq!(
-            reopened
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![profile.id],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "dispatching"
-        );
-        assert_eq!(
-            reopened
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .attentions
-                .mcp_reporting
-                .as_deref(),
-            Some("mcp_reporting_dispatch_claimed_receipt_pending")
-        );
-    }
-
-    #[test]
-    fn two_services_claim_one_reporting_exchange() {
-        let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("active.sqlite");
-        let app = directory.path().join("app");
-        let mut seed = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        seed.cli = Arc::new(FakeCli::succeeding());
-        let profile = selected_profile_ready_except_mcp(&seed);
-        seed.begin_mcp_reporting_probe(&profile.id).unwrap();
-        drop(seed);
-
-        let mut first = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        let first_reporting = Arc::new(ReportingCli::new());
-        first.cli = first_reporting.clone();
-        let mut second = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        let second_reporting = Arc::new(ReportingCli::new());
-        second.cli = second_reporting.clone();
-        let barrier = Arc::new(Barrier::new(2));
-        let joins = [first, second]
-            .into_iter()
-            .map(|service| {
-                let barrier = barrier.clone();
-                let profile_id = profile.id.clone();
-                thread::spawn(move || {
-                    barrier.wait();
-                    service.reconcile_pending_mcp_reporting(&profile_id)
-                })
-            })
-            .collect::<Vec<_>>();
-
-        assert!(joins.into_iter().all(|join| join.join().unwrap().is_ok()));
-        assert_eq!(
-            first_reporting.calls.lock().unwrap().len()
-                + second_reporting.calls.lock().unwrap().len(),
-            1
-        );
-        let reopened = NativeProfileService::open(database, app).unwrap();
-        assert_eq!(
-            reopened
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .mcp_reporting,
-            "ready"
-        );
-    }
-
-    #[test]
-    fn mcp_receipts_require_a_current_dispatch_claim_and_matching_authority() {
-        let (_directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: String::new(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .is_err());
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: authority.correlation_id.clone(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .is_err());
-        assert_eq!(
-            service
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![profile.id],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "pending"
-        );
-        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: String::new(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .is_err());
-        let ready = service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: authority.correlation_id.clone(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .unwrap();
-        assert_eq!(ready.readiness.mcp_reporting, "ready");
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability,
-                    server: authority.server,
-                    tool: authority.tool,
-                    correlation_id: authority.correlation_id,
-                    probe_root: authority.probe_root,
-                },
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn direct_mcp_receipts_cannot_settle_a_pending_probe_across_service_instances() {
-        let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("active.sqlite");
-        let app = directory.path().join("app");
-        let service = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        let profile = selected_profile_ready_except_mcp(&service);
-        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        drop(service);
-        let receipt = NativeMcpReportingReceipt {
-            capability: authority.capability,
-            server: authority.server,
-            tool: authority.tool,
-            correlation_id: authority.correlation_id,
-            probe_root: authority.probe_root,
-        };
-        let barrier = Arc::new(Barrier::new(2));
-        let mut joins = vec![];
-        for _ in 0..2 {
-            let database = database.clone();
-            let app = app.clone();
-            let profile_id = profile.id.clone();
-            let receipt = receipt.clone();
-            let barrier = barrier.clone();
-            joins.push(thread::spawn(move || {
-                let service = NativeProfileService::open(database, app).unwrap();
-                barrier.wait();
-                service.record_mcp_reporting_receipt(&profile_id, &receipt)
-            }));
-        }
-        let outcomes = joins
-            .into_iter()
-            .map(|join| join.join().unwrap().is_ok())
-            .collect::<Vec<_>>();
-        assert_eq!(outcomes.into_iter().filter(|success| *success).count(), 0);
-        let reopened = NativeProfileService::open(database, app).unwrap();
-        assert_eq!(
-            reopened
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .mcp_reporting,
-            "not_assessed"
-        );
-    }
-
-    #[test]
-    fn mcp_receipt_settlement_requires_a_currently_selected_active_profile() {
-        let (_directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
-        let other = service.create_dedicated().unwrap();
-        service.select(&other.id).unwrap();
-
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: authority.correlation_id.clone(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .is_err());
-
-        service.select(&profile.id).unwrap();
-        fs::remove_dir_all(&profile.home_path).unwrap();
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability,
-                    server: authority.server,
-                    tool: authority.tool,
-                    correlation_id: authority.correlation_id,
-                    probe_root: authority.probe_root,
-                },
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn cancelled_or_expired_probe_cannot_set_mcp_ready() {
-        let (_directory, service) = service();
-        let profile = selected_profile_ready_except_mcp(&service);
-        service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &profile.id);
-        service
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='cancelled' WHERE profile_id=?1 AND state='dispatching'",
-                params![profile.id],
-            )
-            .unwrap();
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability,
-                    server: authority.server,
-                    tool: authority.tool,
-                    correlation_id: authority.correlation_id,
-                    probe_root: authority.probe_root,
-                },
-            )
-            .is_err());
-        assert_ne!(
-            service
-                .profile(&profile.id)
-                .unwrap()
-                .readiness
-                .mcp_reporting,
-            "ready"
-        );
-    }
-
-    #[test]
-    fn terminal_mcp_probe_history_allows_one_fresh_pending_request_without_mutation() {
-        for (terminal_state, received_at) in [
-            ("expired", None),
-            ("received", Some("2026-08-07T12:01:00Z")),
-            ("cancelled", None),
-        ] {
-            let (_directory, service) = service();
-            let profile = service.create_dedicated().unwrap();
-            service.select(&profile.id).unwrap();
-            let historical = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-            service
-                .connection()
-                .unwrap()
-                .execute(
-                    "UPDATE native_codex_profile_mcp_probes SET state=?1,received_at=?2 WHERE profile_id=?3 AND correlation_id=?4",
-                    params![terminal_state, received_at, profile.id, historical.correlation_id],
-                )
-                .unwrap();
-            let connection = service.connection().unwrap();
-            let before = connection
-                .query_row(
-                    "SELECT request_id,correlation_id,state,requested_at,deadline_at,received_at FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
-                    params![profile.id, historical.correlation_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?)),
-                )
-                .unwrap();
-
-            let fresh = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-
-            let after = connection
-                .query_row(
-                    "SELECT request_id,correlation_id,state,requested_at,deadline_at,received_at FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
-                    params![profile.id, historical.correlation_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?)),
-                )
-                .unwrap();
-            assert_eq!(after, before, "{terminal_state} history changed");
-            assert_ne!(fresh.correlation_id, historical.correlation_id);
-            assert_eq!(
-                connection
-                    .query_row(
-                        "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state='pending'",
-                        params![profile.id],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .unwrap(),
-                1,
-                "{terminal_state} history did not leave exactly one current pending request"
-            );
-            assert_eq!(
-                connection
-                    .query_row(
-                        "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                        params![profile.id],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .unwrap(),
-                2
-            );
-        }
-    }
-
-    #[test]
-    fn mcp_probe_creation_requires_the_current_selected_active_profile() {
-        let (_directory, service) = service();
-        let first = service.create_dedicated().unwrap();
-        let second = service.create_dedicated().unwrap();
-        assert_eq!(
-            service.profile(&second.id).unwrap().lifecycle,
-            Lifecycle::Active
-        );
-        assert!(!service.profile(&first.id).unwrap().selected);
-
-        assert!(service.begin_mcp_reporting_probe(&first.id).is_err());
-        assert_eq!(
-            service
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![first.id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0
-        );
-    }
-
-    #[test]
-    fn selection_move_prevents_a_competing_unselected_mcp_probe_creation() {
-        let (_directory, service) = service();
-        let service = Arc::new(service);
-        let first = service.create_dedicated().unwrap();
-        service.select(&first.id).unwrap();
-        let second = service.create_dedicated().unwrap();
-        let (creation_ready_sender, creation_ready_receiver) = std::sync::mpsc::channel();
-        let (selection_start_sender, selection_start_receiver) = std::sync::mpsc::channel();
-        let (selection_committed_sender, selection_committed_receiver) = std::sync::mpsc::channel();
-        let (creation_continue_sender, creation_continue_receiver) = std::sync::mpsc::channel();
-
-        let selecting = {
-            let service = service.clone();
-            let second_id = second.id.clone();
-            thread::spawn(move || {
-                selection_start_receiver.recv().unwrap();
-                let result = service.select(&second_id);
-                selection_committed_sender.send(()).unwrap();
-                result
-            })
-        };
-        let creating = {
-            let service = service.clone();
-            let first_id = first.id.clone();
-            thread::spawn(move || {
-                creation_ready_sender.send(()).unwrap();
-                creation_continue_receiver.recv().unwrap();
-                service.begin_mcp_reporting_probe(&first_id)
-            })
-        };
-
-        creation_ready_receiver.recv().unwrap();
-        selection_start_sender.send(()).unwrap();
-        selection_committed_receiver.recv().unwrap();
-        creation_continue_sender.send(()).unwrap();
-        selecting.join().unwrap().unwrap();
-        assert!(creating.join().unwrap().is_err());
-        assert_eq!(
-            service
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT COUNT(*) FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND state IN ('pending','dispatching')",
-                    params![first.id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            0
-        );
-    }
-
-    #[test]
-    fn concurrent_terminal_history_replacement_converges_on_one_current_request() {
-        let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("active.sqlite");
-        let app = directory.path().join("app");
-        let service = NativeProfileService::open(database.clone(), app.clone()).unwrap();
-        let profile = service.create_dedicated().unwrap();
-        service.select(&profile.id).unwrap();
-        let historical = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        service
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET state='expired' WHERE profile_id=?1 AND correlation_id=?2",
-                params![profile.id, historical.correlation_id],
-            )
-            .unwrap();
-        drop(service);
-        let barrier = Arc::new(Barrier::new(2));
-        let mut joins = vec![];
-        for _ in 0..2 {
-            let database = database.clone();
-            let app = app.clone();
-            let profile_id = profile.id.clone();
-            let barrier = barrier.clone();
-            joins.push(thread::spawn(move || {
-                let service = NativeProfileService::open(database, app).unwrap();
-                barrier.wait();
-                service.begin_mcp_reporting_probe(&profile_id)
-            }));
-        }
-        let first = joins.remove(0).join().unwrap().unwrap();
-        let second = joins.remove(0).join().unwrap().unwrap();
-        assert_eq!(first, second);
-        let reopened = NativeProfileService::open(database, app).unwrap();
-        let connection = reopened.connection().unwrap();
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT COUNT(*),COUNT(CASE WHEN state IN ('pending','dispatching') THEN 1 END),COUNT(CASE WHEN state='pending' THEN 1 END) FROM native_codex_profile_mcp_probes WHERE profile_id=?1",
-                    params![profile.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-                )
-                .unwrap(),
-            (2, 1, 1)
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT state FROM native_codex_profile_mcp_probes WHERE profile_id=?1 AND correlation_id=?2",
-                    params![profile.id, historical.correlation_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .unwrap(),
-            "expired"
-        );
-    }
-
-    #[test]
-    fn foreign_and_stale_mcp_probe_receipts_are_rejected_without_readiness_success() {
-        let (_directory, service) = service();
-        let first = selected_profile_ready_except_mcp(&service);
-        let second = service.create_dedicated().unwrap();
-        service.begin_mcp_reporting_probe(&first.id).unwrap();
-        let authority = claim_mcp_reporting_for_current_reconciliation(&service, &first.id);
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &second.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability.clone(),
-                    server: authority.server.clone(),
-                    tool: authority.tool.clone(),
-                    correlation_id: authority.correlation_id.clone(),
-                    probe_root: authority.probe_root.clone(),
-                },
-            )
-            .is_err());
-        let connection = service.connection().unwrap();
-        connection
-            .execute(
-                "UPDATE native_codex_profile_mcp_probes SET deadline_at='2000-01-01T00:00:00+00:00' WHERE profile_id=?1",
-                params![first.id],
-            )
-            .unwrap();
-        service.query().unwrap();
-        assert!(service
-            .record_mcp_reporting_receipt(
-                &first.id,
-                &NativeMcpReportingReceipt {
-                    capability: authority.capability,
-                    server: authority.server,
-                    tool: authority.tool,
-                    correlation_id: authority.correlation_id,
-                    probe_root: authority.probe_root,
-                },
-            )
-            .is_err());
-        assert_eq!(
-            service.profile(&first.id).unwrap().readiness.mcp_reporting,
-            "not_assessed"
-        );
-    }
-
-    #[test]
-    fn pending_mcp_probe_reopens_with_the_same_private_correlation() {
-        let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("active.sqlite");
-        let service =
-            NativeProfileService::open(database.clone(), directory.path().join("app")).unwrap();
-        let profile = selected_profile_ready_except_mcp(&service);
-        let authority = service.begin_mcp_reporting_probe(&profile.id).unwrap();
-        drop(service);
-        let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
-        let retained = reopened.begin_mcp_reporting_probe(&profile.id).unwrap();
-        assert_eq!(retained, authority);
-        let claimed = claim_mcp_reporting_for_current_reconciliation(&reopened, &profile.id);
-        assert_eq!(claimed, retained);
-        let ready = reopened
-            .record_mcp_reporting_receipt(
-                &profile.id,
-                &NativeMcpReportingReceipt {
-                    capability: claimed.capability,
-                    server: claimed.server,
-                    tool: claimed.tool,
-                    correlation_id: claimed.correlation_id,
-                    probe_root: claimed.probe_root,
-                },
-            )
-            .unwrap();
-        assert_eq!(ready.readiness.mcp_reporting, "ready");
     }
 
     #[test]

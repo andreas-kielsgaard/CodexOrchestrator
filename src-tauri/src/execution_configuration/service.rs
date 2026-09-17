@@ -1,8 +1,6 @@
 use super::{
     capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
-    ports::{
-        CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
-    },
+    ports::{CapabilityProfileRepository, CapabilityProfileRepositoryError},
     runtime_profile::{
         validate_identifier, validate_selection_availability, CapabilitySet, RuntimeProfileSnapshot,
     },
@@ -12,34 +10,28 @@ use std::{error::Error, fmt, sync::Arc};
 #[derive(Clone)]
 pub(crate) struct CapabilityProfileService {
     repository: Arc<dyn CapabilityProfileRepository>,
-    runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    runtime_profile: RuntimeProfileSnapshot,
 }
 
 impl CapabilityProfileService {
     pub(crate) fn new(
         repository: Arc<dyn CapabilityProfileRepository>,
-        runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        runtime_profile: RuntimeProfileSnapshot,
     ) -> Self {
         Self {
             repository,
-            runtime_profile_source,
+            runtime_profile,
         }
     }
 
-    /// Returns the one runtime profile currently available to Execution Configuration.
+    /// Returns the product-declared capability ceiling for Execution Configuration.
     pub(crate) fn runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, CapabilityProfileServiceError> {
-        let runtime_profile = self
-            .runtime_profile_source
-            .selected_runtime_profile()
-            .map_err(|error| {
-                CapabilityProfileServiceError::RuntimeUnavailable(error.to_string())
-            })?;
-        runtime_profile
+        self.runtime_profile
             .validate()
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
-        Ok(runtime_profile)
+        Ok(self.runtime_profile.clone())
     }
 
     pub(crate) fn list(&self) -> Result<Vec<CapabilityProfile>, CapabilityProfileServiceError> {
@@ -144,7 +136,6 @@ impl CapabilityProfileService {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilityProfileServiceError {
     InvalidInput(String),
-    RuntimeUnavailable(String),
     WidensRuntime(String),
     ExcludesRuntimeLock(String),
     AlreadyExists(String),
@@ -164,9 +155,6 @@ impl fmt::Display for CapabilityProfileServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidInput(message) => formatter.write_str(message),
-            Self::RuntimeUnavailable(message) => {
-                write!(formatter, "Selected runtime profile is unavailable: {message}")
-            }
             Self::WidensRuntime(capability) => {
                 write!(formatter, "Capability Profile requests unavailable {capability}")
             }
@@ -225,21 +213,10 @@ impl From<CapabilityProfileRepositoryError> for CapabilityProfileServiceError {
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        ports::SelectedRuntimeProfileSourceError,
         repository::InMemoryCapabilityProfileRepository,
         runtime_profile::{RuntimeSelections, SandboxMode, RUNTIME_PROFILE_CONTRACT_VERSION},
     };
     use std::collections::BTreeSet;
-
-    struct FixedRuntimeSource(RuntimeProfileSnapshot);
-
-    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-            Ok(self.0.clone())
-        }
-    }
 
     fn set(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -276,7 +253,7 @@ mod tests {
     fn service() -> CapabilityProfileService {
         CapabilityProfileService::new(
             Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(FixedRuntimeSource(runtime())),
+            runtime(),
         )
     }
 

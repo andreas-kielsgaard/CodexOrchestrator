@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { NativeProfileSettings } from './NativeProfileSettings';
 import type { NativeProfile, NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 
-const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, mcpReporting: 'not_assessed' as const, attentions: { authentication: null, sandbox: null, canary: null, mcpReporting: null, continuity: null, cli: null } };
+const readiness = { authentication: 'unknown' as const, sandboxInitialization: 'unknown' as const, workspaceWriteCanary: 'not_run' as const, dangerFullAccessCanary: 'not_run' as const, attentions: { authentication: null, sandbox: null, canary: null, continuity: null, cli: null } };
 const execution = { selectedMode: 'workspace_write' as const, dangerFullAccessAuthorized: false, dangerAuthorization: { disposition: 'not_authorized' as const, authorityScope: null, authorityVersion: null, correlationId: null, authorizedAt: null, revokedAt: null } };
 const loginAttempt = { disposition: 'not_requested' as const, browserHandoff: 'unobserved' as const, requestedAt: null, launchAcceptedAt: null, settledAt: null };
 const setupAttempt = { phase: 'not_requested' as const, disposition: 'not_requested' as const, executable: null, version: null, workspaceSandboxSupported: null, correlationId: null, requestedAt: null, launchAcceptedAt: null, deadlineAt: null, settledAt: null, terminalClassification: 'not_observed' as const, terminalExitCode: null };
@@ -20,7 +20,7 @@ const profiles: readonly NativeProfile[] = [
 
 function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClient {
   const query = async () => ({ contract: 'native-codex-profile-query/v1' as const, profiles });
-  return { load: query, discoverHomes: async () => [], registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, verifyPreprovisionedSandbox: query, confirmPreprovisionedSandboxAdoption: query, runCanary: query, runDangerFullAccessCanary: query, probeMcp: query, ...overrides };
+  return { load: query, discoverHomes: async () => [], registerExisting: query, createDedicated: query, select: query, selectExecutionMode: query, authorizeDangerFullAccess: query, revokeDangerFullAccess: query, requestLogin: query, refreshReadiness: query, initializeSandbox: query, confirmSandboxInitialization: query, verifyPreprovisionedSandbox: query, confirmPreprovisionedSandboxAdoption: query, runCanary: query, runDangerFullAccessCanary: query, ...overrides };
 }
 
 describe('NativeProfileSettings', () => {

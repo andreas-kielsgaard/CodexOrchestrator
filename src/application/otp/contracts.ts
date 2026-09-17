@@ -85,7 +85,7 @@ export interface JobAgentOtpInstallationDto {
 }
 export interface JobAgentOtpInstallationStatusDto {
   readonly installation: JobAgentOtpInstallationDto | null;
-  readonly status: 'unconfigured' | 'verified' | 'incompatible';
+  readonly status: 'unconfigured' | 'configured';
   readonly detail: string;
 }
 export interface OtpInstallationClient {

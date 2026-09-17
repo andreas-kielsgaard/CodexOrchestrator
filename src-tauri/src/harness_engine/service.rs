@@ -198,7 +198,7 @@ pub(crate) struct HarnessEngineService {
     repository: Arc<dyn HarnessBindingRepository>,
     sidecar: Arc<dyn HarnessSidecarClient>,
     upstreams: Arc<ManagedMcpUpstreamRegistry>,
-    agent_mcp_provisioner: Option<Arc<dyn crate::otp_host::job_agent::AgentMcpUpstreamProvisioner>>,
+    agent_mcp_provisioner: Option<Arc<dyn crate::otp_host::agent_mcp::AgentMcpUpstreamProvisioner>>,
 }
 
 impl HarnessEngineService {
@@ -293,7 +293,7 @@ impl HarnessEngineService {
 
     pub(crate) fn with_agent_mcp_provisioner(
         mut self: Arc<Self>,
-        provisioner: Arc<dyn crate::otp_host::job_agent::AgentMcpUpstreamProvisioner>,
+        provisioner: Arc<dyn crate::otp_host::agent_mcp::AgentMcpUpstreamProvisioner>,
     ) -> Arc<Self> {
         Arc::get_mut(&mut self)
             .expect("Harness Engine is configured before sharing")

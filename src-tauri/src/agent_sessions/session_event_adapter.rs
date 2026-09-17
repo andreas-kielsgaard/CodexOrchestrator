@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     execution_configuration::{
-        CapabilityProfileService, DirectUserInvocationRequest, SelectedRuntimeProfileSource,
+        CapabilityProfileService, DirectUserInvocationRequest, RuntimeProfileSnapshot,
         SessionCreationIntent, SessionCreationRequest, SessionProfileResolver,
     },
     identities::{service::IdentityService, IdentityId},
@@ -66,7 +66,7 @@ const IDENTITY_REF_KIND: &str = "identity";
 pub(crate) struct AgentSessionEventAdapter {
     application: Arc<AgentSessionApplication>,
     repository: Arc<SqliteAgentSessionRepository>,
-    profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    runtime_profile: RuntimeProfileSnapshot,
     capability_profiles: Option<Arc<CapabilityProfileService>>,
     identities: IdentityService,
     connection: Mutex<Connection>,
@@ -77,7 +77,7 @@ impl AgentSessionEventAdapter {
         path: impl AsRef<std::path::Path>,
         application: Arc<AgentSessionApplication>,
         repository: Arc<SqliteAgentSessionRepository>,
-        profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        runtime_profile: RuntimeProfileSnapshot,
         identities: IdentityService,
     ) -> Result<Self, String> {
         let connection = Connection::open(path)
@@ -93,7 +93,7 @@ impl AgentSessionEventAdapter {
         Ok(Self {
             application,
             repository,
-            profile_source,
+            runtime_profile,
             capability_profiles: None,
             identities,
             connection: Mutex::new(connection),
@@ -258,11 +258,9 @@ impl SessionDirectory for AgentSessionEventAdapter {
                     Some(request.logical_address.subject.id().to_string()),
                 )
             };
-        let resolution = SessionProfileResolver::resolve_creation(
-            self.profile_source.as_ref(),
-            creation_request,
-        )
-        .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+        let resolution =
+            SessionProfileResolver::resolve_creation(&self.runtime_profile, creation_request)
+                .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
         let assigned_identity = request
             .configuration
             .assigned_identity
@@ -412,7 +410,7 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
         let selections = match direct_user_options {
             Some(options) => {
                 SessionProfileResolver::validate_direct_user_invocation(
-                    self.profile_source.as_ref(),
+                    &self.runtime_profile,
                     creation,
                     DirectUserInvocationRequest {
                         contract_version: 1,
@@ -424,11 +422,8 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
                 .selections
             }
             None => {
-                SessionProfileResolver::validate_pinned_session(
-                    self.profile_source.as_ref(),
-                    creation,
-                )
-                .map_err(|error| SessionInvocationError::new(error.to_string()))?;
+                SessionProfileResolver::validate_pinned_session(&self.runtime_profile, creation)
+                    .map_err(|error| SessionInvocationError::new(error.to_string()))?;
                 creation.session_profile().pinned_defaults().clone()
             }
         };

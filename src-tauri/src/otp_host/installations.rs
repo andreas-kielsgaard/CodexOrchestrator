@@ -1,12 +1,6 @@
-use crate::otp_host::OtpRegistry;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Mutex,
-};
+use std::{path::Path, sync::Mutex};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS otp_job_agent_installation (
@@ -33,14 +27,21 @@ pub(crate) struct JobAgentInstallationStatus {
 
 pub(crate) struct OtpInstallationService {
     database: Mutex<Connection>,
-    registry: std::sync::Arc<OtpRegistry>,
 }
 
 impl OtpInstallationService {
-    pub(crate) fn open(
-        database_path: &Path,
-        registry: std::sync::Arc<OtpRegistry>,
-    ) -> Result<std::sync::Arc<Self>, String> {
+    #[cfg(test)]
+    pub(crate) fn in_memory() -> std::sync::Arc<Self> {
+        let connection = Connection::open_in_memory().expect("OTP installation test database");
+        connection
+            .execute_batch(SCHEMA)
+            .expect("OTP installation test schema");
+        std::sync::Arc::new(Self {
+            database: Mutex::new(connection),
+        })
+    }
+
+    pub(crate) fn open(database_path: &Path) -> Result<std::sync::Arc<Self>, String> {
         let connection = Connection::open(database_path).map_err(|error| error.to_string())?;
         crate::storage::configure_sqlite_connection(&connection)
             .map_err(|error| error.to_string())?;
@@ -49,41 +50,32 @@ impl OtpInstallationService {
             .map_err(|error| error.to_string())?;
         Ok(std::sync::Arc::new(Self {
             database: Mutex::new(connection),
-            registry,
         }))
     }
 
     pub(crate) fn status(&self) -> Result<JobAgentInstallationStatus, String> {
         let installation = self.load()?;
-        match &installation {
-            None => Ok(JobAgentInstallationStatus {
-                installation,
-                status: "unconfigured".into(),
-                detail:
-                    "Set the local Job Agent root and Python command to enable its OTP MCP service."
-                        .into(),
-            }),
-            Some(value) => match self.verify(value) {
-                Ok(()) => Ok(JobAgentInstallationStatus {
-                    installation,
-                    status: "verified".into(),
-                    detail: "The local Job Agent bridge matches the imported OTP declaration."
-                        .into(),
-                }),
-                Err(error) => Ok(JobAgentInstallationStatus {
-                    installation,
-                    status: "incompatible".into(),
-                    detail: error,
-                }),
+        Ok(JobAgentInstallationStatus {
+            status: if installation.is_some() {
+                "configured"
+            } else {
+                "unconfigured"
+            }
+            .into(),
+            detail: if installation.is_some() {
+                "The configured Job Agent bridge is contacted only when an agent calls an exposed endpoint.".into()
+            } else {
+                "Set the local Job Agent root and Python command for agent endpoint calls.".into()
             },
-        }
+            installation,
+        })
     }
 
-    pub(crate) fn save_and_verify(
+    pub(crate) fn save_configuration(
         &self,
         installation: JobAgentInstallation,
     ) -> Result<JobAgentInstallationStatus, String> {
-        self.verify(&installation)?;
+        validate_configuration(&installation)?;
         self.database
             .lock()
             .map_err(|_| "OTP installation storage is unavailable.".to_string())?
@@ -96,10 +88,8 @@ impl OtpInstallationService {
         self.status()
     }
 
-    pub(crate) fn verified_installation(&self) -> Result<JobAgentInstallation, String> {
-        let value = self.load()?.ok_or("Job Agent OTP is not configured.")?;
-        self.verify(&value)?;
-        Ok(value)
+    pub(crate) fn configured_installation(&self) -> Result<Option<JobAgentInstallation>, String> {
+        self.load()
     }
 
     fn load(&self) -> Result<Option<JobAgentInstallation>, String> {
@@ -119,62 +109,16 @@ impl OtpInstallationService {
             .optional()
             .map_err(|error| error.to_string())
     }
+}
 
-    fn verify(&self, installation: &JobAgentInstallation) -> Result<(), String> {
-        let root = PathBuf::from(installation.root.trim());
-        if !root.is_dir() {
-            return Err("Job Agent root must be an existing folder.".into());
-        }
-        let python = installation.python.trim();
-        if python.is_empty() {
-            return Err("Job Agent Python command is required.".into());
-        }
-        let output = Command::new(python)
-            .args(["-m", "job_agent.mcp.orchid_host", "describe"])
-            .current_dir(&root)
-            .env("PYTHONPATH", root.join("app").join("code"))
-            .output()
-            .map_err(|error| format!("Unable to start Job Agent bridge: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Job Agent bridge describe failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        let manifest: Value = serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("Job Agent bridge returned invalid JSON: {error}"))?;
-        let (_, declared) = self.registry.agent_mcp_server("job_agent")?;
-        if manifest.get("contractVersion").and_then(Value::as_u64) != Some(1)
-            || manifest.get("serverName").and_then(Value::as_str) != Some("job_agent")
-        {
-            return Err("Job Agent bridge has an incompatible orchestration manifest.".into());
-        }
-        let remote = manifest
-            .get("tools")
-            .and_then(Value::as_array)
-            .ok_or("Job Agent manifest has no tools.")?
-            .iter()
-            .map(|tool| {
-                Ok((
-                    tool.get("name")
-                        .and_then(Value::as_str)
-                        .ok_or("Job Agent manifest tool has no name.")?,
-                    tool.get("capability")
-                        .and_then(Value::as_str)
-                        .ok_or("Job Agent manifest tool has no capability.")?,
-                ))
-            })
-            .collect::<Result<std::collections::BTreeMap<_, _>, &str>>()?;
-        let local = declared
-            .tools
-            .iter()
-            .map(|tool| (tool.id.as_str(), tool.capability.as_str()))
-            .collect::<std::collections::BTreeMap<_, _>>();
-        if remote != local {
-            return Err("Job Agent bridge tools or capability groups do not match the imported OTP package.".into());
-        }
-        Ok(())
+fn validate_configuration(installation: &JobAgentInstallation) -> Result<(), String> {
+    if installation.root.trim().is_empty() {
+        return Err("Job Agent root is required.".into());
     }
+    if installation.python.trim().is_empty() {
+        return Err("Job Agent Python command is required.".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -206,5 +150,5 @@ pub(crate) fn save_job_agent_otp_installation(
     state: tauri::State<'_, OtpInstallationTauriState>,
     input: SaveJobAgentInstallationInput,
 ) -> Result<JobAgentInstallationStatus, String> {
-    state.service.save_and_verify(input.installation)
+    state.service.save_configuration(input.installation)
 }
