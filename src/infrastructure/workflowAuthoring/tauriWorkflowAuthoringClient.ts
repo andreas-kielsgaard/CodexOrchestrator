@@ -1,13 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   WorkflowAuthoringClient,
+  WorkflowCompiledPlanDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
-import type {
-  SessionEventDefinitionDto,
-  SessionEventResultDto,
-} from '../../application/sessionEvents';
+import type { WorkflowActionResult } from '../../application/workflowInstances';
 
 export type WorkflowAuthoringInvoke = <T>(
   command: string,
@@ -38,11 +36,11 @@ export function createTauriWorkflowAuthoringClient(
         input: { recipeId, expectedRevision },
       }),
     compileRecipeInstance: (recipeId, instanceId) =>
-      invokeCommand<SessionEventDefinitionDto[]>('compile_workflow_recipe_instance', {
+      invokeCommand<WorkflowCompiledPlanDto>('compile_workflow_recipe_instance', {
         input: { recipeId, instanceId },
       }),
     dispatchUserRequest: (input) =>
-      invokeCommand<SessionEventResultDto>('dispatch_workflow_user_request', { input }),
+      invokeCommand<WorkflowActionResult>('dispatch_workflow_user_request', { input }),
   };
 }
 

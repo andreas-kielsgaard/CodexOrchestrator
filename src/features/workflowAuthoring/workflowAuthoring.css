@@ -249,6 +249,43 @@
   resize: vertical;
 }
 
+.workflow-entry-destination {
+  flex-shrink: 0;
+  max-height: 42vh;
+  padding: 10px 18px;
+  overflow: auto;
+  border-bottom: 1px solid #d5ddd6;
+  background: #fffdf9;
+}
+
+.workflow-entry-destination label {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-entry-destination select,
+.otp-selection > button,
+.workflow-connection-editor__grid input,
+.workflow-connection-editor__grid select {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid #c9d2ca;
+  border-radius: 8px;
+  background: white;
+  color: #24362c;
+  font: inherit;
+}
+
+.workflow-node-otp-configuration { margin-top: 20px; }
+.workflow-node-otp-configuration article {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #ccd7d0;
+  border-radius: 8px;
+}
+.workflow-node-otp-configuration h3,
+.workflow-node-otp-configuration h4 { margin: 0 0 6px; }
+
 @media (max-width: 900px) {
   .workflow-authoring-screen {
     grid-template-columns: 1fr;

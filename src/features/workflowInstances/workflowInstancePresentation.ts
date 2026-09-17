@@ -52,8 +52,7 @@ export function attemptsForConnection(
 ): readonly WorkflowEventAttempt[] {
   return attempts.filter(
     (attempt) =>
-      attempt.workflowElementRef?.kind === 'connection' &&
-      attempt.workflowElementRef.id === connectionId,
+      attempt.context.connectionId === connectionId,
   );
 }
 
@@ -63,14 +62,16 @@ export function attemptsForNode(
 ): readonly WorkflowEventAttempt[] {
   return attempts.filter(
     (attempt) =>
-      attempt.workflowElementRef?.kind === 'node' && attempt.workflowElementRef.id === nodeId,
+      attempt.context.outputNodeId === nodeId || attempt.context.source?.nodeId === nodeId,
   );
 }
 
 export function attemptsWithoutElement(
   attempts: readonly WorkflowEventAttempt[],
 ): readonly WorkflowEventAttempt[] {
-  return attempts.filter((attempt) => !attempt.workflowElementRef);
+  return attempts.filter(
+    (attempt) => !attempt.context.connectionId && !attempt.context.outputNodeId,
+  );
 }
 
 export function nodeById(
@@ -91,6 +92,6 @@ export function connectionById(
 
 export function attemptStatus(attempt: WorkflowEventAttempt): string {
   if (attempt.error) return 'Failed';
-  if (attempt.eventGroup) return 'Delivered';
+  if (attempt.eventGroups.length) return 'Delivered';
   return 'Preparing';
 }

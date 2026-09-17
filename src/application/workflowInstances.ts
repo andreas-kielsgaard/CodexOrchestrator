@@ -1,4 +1,8 @@
-import type { WorkflowRecipeDraftDto } from './workflowAuthoring';
+import type {
+  WorkflowRecipeDraftDto,
+  OtpCapabilityRefDto,
+  OtpOutputRefDto,
+} from './workflowAuthoring';
 import type {
   ReferenceIdentityDto,
   SessionLogicalAddressDto,
@@ -22,17 +26,50 @@ export interface WorkflowEventAttempt {
   readonly id: string;
   readonly instanceId: string;
   readonly definitionRef: ReferenceIdentityDto;
-  /** The recipe node or connection that compiled into this attempt, when known. */
-  readonly workflowElementRef: ReferenceIdentityDto | null;
-  readonly sourceSessionId: string | null;
+  readonly context: {
+    readonly instanceId: string;
+    readonly occurrenceId: string;
+    readonly capability: OtpCapabilityRefDto;
+    readonly source: {
+      readonly nodeId: string;
+      readonly nodeName: string;
+      readonly sessionId: string;
+      readonly invocationId: string;
+    } | null;
+    readonly connectionId: string | null;
+    readonly outputNodeId: string | null;
+  };
+  readonly output: OtpOutputRefDto | null;
+  readonly payload: unknown;
+  readonly sessionRequests: readonly {
+    readonly nodeId: string;
+    readonly target:
+      { readonly kind: 'new' } | { readonly kind: 'exact'; readonly sessionId: string };
+    readonly prompt: readonly { readonly reference: string; readonly text: string }[];
+  }[];
+  readonly stopOutcomes?: readonly SessionStopOutcome[];
+  readonly message?: string;
   readonly createdAt: string;
-  readonly eventGroup: ReferenceIdentityDto | null;
+  readonly eventGroups: readonly SessionEventResultDto[];
   readonly error: string | null;
 }
 export interface WorkflowInstanceDetails {
   readonly instance: WorkflowRecipeInstance;
   readonly sessions: readonly WorkflowInstanceSession[];
   readonly attempts: readonly WorkflowEventAttempt[];
+}
+export interface SessionStopOutcome {
+  readonly nodeId: string;
+  readonly sessionId: string;
+  readonly invocationId: string | null;
+  readonly status: 'pending' | 'requested' | 'no_op' | 'failed';
+  readonly error: string | null;
+}
+export interface WorkflowActionResult {
+  readonly attemptId: string;
+  readonly eventGroups: readonly SessionEventResultDto[];
+  readonly stopOutcomes: readonly SessionStopOutcome[];
+  readonly message: string;
 }
 /** Runtime instances are separate from editable recipes. Creation does not launch a Session. */
 export interface WorkflowInstanceClient {
@@ -50,5 +87,6 @@ export interface WorkflowInstanceClient {
     readonly instanceId: string;
     readonly nodeId: string | null;
     readonly text: string;
-  }): Promise<SessionEventResultDto>;
+    readonly data?: Readonly<Record<string, unknown>>;
+  }): Promise<WorkflowActionResult>;
 }

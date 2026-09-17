@@ -232,6 +232,15 @@ async fn handle_proxy_request(
     let mut forwarded_body = body.clone();
     let mut workflow_warning = None;
     if let Some((id, tool_name)) = tool_call(&request_json) {
+        if exposure.upstream.caller_context
+            && (headers.contains_key("x-otp-session-id")
+                || headers.contains_key("x-otp-invocation-id"))
+        {
+            return denied_tool_result(
+                id,
+                "Harness rejected caller-supplied OTP routing context.".to_string(),
+            );
+        }
         if exposure.upstream.workflow_tool_name.as_deref() == Some(tool_name) {
             if has_reserved_workflow_argument(&request_json) {
                 return denied_tool_result(
@@ -352,6 +361,17 @@ async fn handle_proxy_request(
     }
     if !exposure.upstream.bearer_token.is_empty() {
         upstream = upstream.bearer_auth(&exposure.upstream.bearer_token);
+    }
+    if exposure.upstream.caller_context && tool_call(&request_json).is_some() {
+        let Some(invocation_id) = binding.current_invocation_id.as_deref() else {
+            return json_rpc_failure(
+                request_id(&request_json),
+                "Harness has no current invocation for OTP routing.".to_string(),
+            );
+        };
+        upstream = upstream
+            .header("x-otp-session-id", &binding.registration.session_id)
+            .header("x-otp-invocation-id", invocation_id);
     }
     if workflow_warning.is_some() {
         upstream = upstream
@@ -901,6 +921,7 @@ mod tests {
                     bearer_token: "secret".into(),
                     workflow_tool_name: Some("handoff_to_agent".into()),
                     workflow_prepare_url: Some(format!("http://{upstream}/prepare")),
+                    caller_context: false,
                 },
                 access: HarnessToolAccess::EntireServer,
             }],
@@ -1088,6 +1109,7 @@ mod tests {
                     bearer_token: "managed-secret".into(),
                     workflow_tool_name: None,
                     workflow_prepare_url: None,
+                    caller_context: false,
                 },
                 access,
             }],

@@ -370,6 +370,10 @@ pub(crate) struct ManagedMcpUpstreamDescriptor {
     pub(crate) workflow_tool_name: Option<String>,
     #[serde(default)]
     pub(crate) workflow_prepare_url: Option<String>,
+    /// The Harness injects its trusted Session and invocation identity for this product-owned
+    /// endpoint. The caller may never provide those values.
+    #[serde(default)]
+    pub(crate) caller_context: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

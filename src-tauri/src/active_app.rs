@@ -64,6 +64,11 @@ pub(crate) fn run() {
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
+            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
+            let otp_installations =
+                crate::otp_host::installations::OtpInstallationService::from_database(
+                    database.clone(),
+                );
             let harness_catalog =
                 crate::harness_engine::catalog_service::HarnessCatalogService::from_database(
                     database.clone(),
@@ -73,6 +78,12 @@ pub(crate) fn run() {
             let harness_engine = crate::harness_engine::HarnessEngineService::open_system(
                 database.clone(),
                 managed_mcp_upstreams.clone(),
+            )?;
+            harness_engine.attach_agent_mcp_provisioner(
+                crate::otp_host::job_agent::JobAgentMcpProvisioner::new(
+                    otp_registry.clone(),
+                    otp_installations.clone(),
+                ),
             )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
@@ -101,7 +112,7 @@ pub(crate) fn run() {
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier,
+                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(),
             )?;
             app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(execution_targets));
             let session_event_adapter = Arc::new(
@@ -147,6 +158,7 @@ pub(crate) fn run() {
                         ),
                     ),
                     capability_profiles,
+                    otp_registry.clone(),
                 ),
             );
             app.manage(
@@ -161,7 +173,12 @@ pub(crate) fn run() {
                     database.clone(),
                 )),
                 session_event_adapter, repository.clone(),
-            ).with_record_observer(Arc::new(move |instance_id| {
+            )
+            .with_session_control(Arc::new(crate::otp_host::session_control::AgentSessionControl {
+                application: application.clone(),
+                repository: repository.clone(),
+            }))
+            .with_record_observer(Arc::new(move |instance_id| {
                 let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
@@ -169,16 +186,26 @@ pub(crate) fn run() {
                 crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone(), crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()))
             )));
             app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
-            let (workflow_mcp, workflow_mcp_owner) =
-                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&workflow_execution))?;
-            let workflow_mcp_registration = managed_mcp_upstreams.register(workflow_mcp)?;
-            if let Err(workflow_mcp_owner) = managed_mcp_upstreams
-                .retain_owner(&workflow_mcp_registration, workflow_mcp_owner)
-            {
-                workflow_mcp_owner.stop();
-                managed_mcp_upstreams.unregister(&workflow_mcp_registration);
-                return Err("Unable to retain the Workflow MCP server.".into());
+            let (otp_mcp, otp_mcp_owner) =
+                crate::otp_host::mcp::start_server(otp_registry.clone(), Arc::downgrade(&workflow_execution))?;
+            let mut otp_mcp = otp_mcp.into_iter();
+            let owner_descriptor = otp_mcp
+                .next()
+                .ok_or("The imported OTPs expose no MCP endpoints.")?;
+            let owner_registration = managed_mcp_upstreams.register(owner_descriptor)?;
+            if let Err(owner) = managed_mcp_upstreams.retain_owner(&owner_registration, otp_mcp_owner) {
+                owner.stop();
+                managed_mcp_upstreams.unregister(&owner_registration);
+                return Err("Unable to retain the OTP MCP server.".into());
             }
+            for descriptor in otp_mcp {
+                let registration = managed_mcp_upstreams.register(descriptor)?;
+                let _ = registration;
+            }
+            app.manage(crate::otp_host::catalogue::OtpCatalogueTauriState::new(otp_registry));
+            app.manage(crate::otp_host::installations::OtpInstallationTauriState::new(
+                otp_installations,
+            ));
             app.manage(crate::harness_engine::HarnessEngineTauriState::new(
                 harness_engine,
             ));
@@ -380,6 +407,9 @@ pub(crate) fn run() {
             crate::workflows::authoring_transport::activate_workflow_recipe,
             crate::workflows::authoring_transport::compile_workflow_recipe_instance,
             crate::workflows::execution_transport::dispatch_workflow_user_request,
+            crate::otp_host::catalogue::list_otp_catalogue,
+            crate::otp_host::installations::read_job_agent_otp_installation,
+            crate::otp_host::installations::save_job_agent_otp_installation,
             crate::repository_catalog::transport::repository_catalog_overview,
             crate::repository_catalog::transport::register_repository_directory,
             crate::repository_catalog::transport::register_codex_repository,

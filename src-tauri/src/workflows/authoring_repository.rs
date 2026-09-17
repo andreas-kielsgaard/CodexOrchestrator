@@ -242,10 +242,9 @@ fn encode_draft(draft: &WorkflowRecipeDraft) -> Result<String, String> {
 }
 
 fn decode_draft(value: &str) -> Result<WorkflowRecipeDraft, String> {
-    let draft: WorkflowRecipeDraft = serde_json::from_str(value)
+    let value = serde_json::from_str(value)
         .map_err(|error| format!("Unable to decode Workflow recipe: {error}"))?;
-    draft.validate_storable()?;
-    Ok(draft)
+    super::authoring::decode_recipe_value(value)
 }
 
 fn expect_one(changed: usize, missing: &str) -> Result<(), String> {
@@ -275,6 +274,11 @@ mod tests {
             name: "Review".into(),
             revision,
             starting_node_id: None,
+            entry_action: crate::otp_api::CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
+            entry_configuration: serde_json::json!({}),
             nodes: vec![super::super::authoring::WorkflowAuthoringNode {
                 node_id: "reviewer".into(),
                 name: "Reviewer".into(),
@@ -288,6 +292,7 @@ mod tests {
                 },
                 initial_prompt: None,
                 agent_identity_id: None,
+                agent_mcp_configuration: Default::default(),
             }],
             connections: Vec::new(),
         }

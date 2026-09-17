@@ -1,8 +1,8 @@
+use super::compiled_plan::WorkflowCompiledPlan;
 use super::{
     authoring::{WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary},
     authoring_service::WorkflowAuthoringService,
 };
-use crate::session_events::SessionEventDefinition;
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
@@ -116,7 +116,7 @@ pub(crate) fn activate_workflow_recipe(
 pub(crate) fn compile_workflow_recipe_instance(
     state: State<'_, WorkflowAuthoringTauriState>,
     input: CompileWorkflowRecipeInstanceInput,
-) -> Result<Vec<SessionEventDefinition>, String> {
+) -> Result<WorkflowCompiledPlan, String> {
     state
         .service
         .compile_active_for_instance(&input.recipe_id, &input.instance_id)

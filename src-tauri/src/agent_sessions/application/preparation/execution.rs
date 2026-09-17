@@ -225,6 +225,7 @@ impl AgentSessionApplication {
             runtime_profile.clone(),
             SessionCreationRequest {
                 contract_version: 1,
+                agent_mcp_configuration: Default::default(),
                 node_profile: NodeProfile {
                     contract_version: 1,
                     allowed_capabilities: capability.allowed_capabilities.clone(),

@@ -7,11 +7,13 @@ describe('Tauri Workflow Authoring client', () => {
     const invoke = vi.fn().mockResolvedValue(null);
     const client = createTauriWorkflowAuthoringClient(invoke);
     const draft: WorkflowRecipeDraftDto = {
-      contractVersion: 1,
+      contractVersion: 2,
       recipeId: 'review',
       name: 'Review',
       revision: 2,
       startingNodeId: 'reviewer',
+      entryAction: { package: 'workflow', tool: 'prompt_agent' },
+      entryConfiguration: {},
       nodes: [
         {
           nodeId: 'reviewer',

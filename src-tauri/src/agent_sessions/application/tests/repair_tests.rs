@@ -7,16 +7,13 @@ use crate::harness_engine::{
     session_binding::SessionProfileHarnessAuthority,
     sidecar::HarnessSidecarClient,
 };
-use crate::session_events::SessionEventStore;
 use crate::{
     execution_configuration::{CapabilityProfileService, SqliteCapabilityProfileRepository},
     workflows::{
         authoring::{WorkflowAuthoringConnection, WorkflowAuthoringNode},
         authoring_repository::SqliteWorkflowAuthoringRepository,
         authoring_service::WorkflowAuthoringService,
-        compiled_plan::{
-            WorkflowConnectionPromptInput, WorkflowConnectionTargetPlan, WorkflowConnectionTrigger,
-        },
+        compiled_plan::WorkflowConnectionPromptInput,
         execution::WorkflowExecutionService,
         instance_domain::*,
         instances::{RecipeInstance, WorkflowInstanceStore},
@@ -54,7 +51,6 @@ struct Fixture {
     runtime: Arc<FakeRuntime>,
     notifier: Arc<WorkflowNotifier>,
     sessions: Arc<AgentSessionApplication>,
-    profiles: Arc<CapabilityProfileService>,
     direct: AgentSessionApplication,
     authoring: Arc<WorkflowAuthoringService>,
     execution: Arc<WorkflowExecutionService>,
@@ -297,6 +293,7 @@ impl Fixture {
                 database.clone(),
             )),
             profiles.clone(),
+            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         ));
         let execution = Arc::new(WorkflowExecutionService::new(
             authoring.clone(),
@@ -307,10 +304,12 @@ impl Fixture {
         ));
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
         if mediated {
-            let (descriptor, owner) =
-                crate::workflows::mcp::start_session_event_server(Arc::downgrade(&execution))
-                    .unwrap();
-            let registration = registry.register(descriptor).unwrap();
+            let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
+                crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
+                Arc::downgrade(&execution),
+            )
+            .unwrap();
+            let registration = registry.register(descriptors.remove(0)).unwrap();
             assert!(registry.retain_owner(&registration, owner).is_ok());
         }
         let direct = sessions.as_ref().clone();
@@ -320,7 +319,6 @@ impl Fixture {
             runtime,
             notifier,
             sessions,
-            profiles,
             direct,
             authoring,
             execution,
@@ -360,23 +358,34 @@ impl Fixture {
                 node_profile: test_session_creation_request().node_profile,
                 initial_prompt: Some(format!("Initial for {id}")),
                 agent_identity_id: None,
+                agent_mcp_configuration: Default::default(),
             })
             .collect();
-        let mut prompt_inputs = vec![WorkflowConnectionPromptInput::InvocationOutput];
+        let mut prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
+            field: "output".into(),
+        }];
         if let Some(file) = file {
-            prompt_inputs.push(WorkflowConnectionPromptInput::ReferencedContent {
-                reference: ReferenceIdentity::new("file", "path", file).unwrap(),
-            });
+            prompt_inputs.push(WorkflowConnectionPromptInput::FileContent { path: file.into() });
         }
         state.draft.connections = vec![WorkflowAuthoringConnection {
             connection_id: "a-to-b".into(),
             name: "Review the plan".into(),
             source_node_id: "a".into(),
             destination_node_id: "b".into(),
-            trigger: WorkflowConnectionTrigger::InvocationCompleted,
+            trigger: crate::otp_api::OutputRef {
+                capability: crate::otp_api::CapabilityRef {
+                    package: "workflow".into(),
+                    tool: "on_invocation_completed".into(),
+                },
+                output: "completed".into(),
+            },
             prompt_inputs,
             prompt_text: "Review the result".into(),
-            target: WorkflowConnectionTargetPlan::default(),
+            action: crate::otp_api::CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
+            configuration: serde_json::json!({}),
         }];
         state = self.authoring.save_draft(state.draft).unwrap();
         self.authoring.activate(&state.draft.recipe_id).unwrap();
@@ -570,468 +579,4 @@ fn invalid_standalone_override_leaves_no_session_or_launch() {
     assert!(fixture.launches().is_empty());
 }
 
-#[test]
-fn stored_instance_drives_normal_completion_and_existing_sessions_ignore_deleted_profiles() {
-    let fixture = Fixture::new();
-    let instance = fixture.instance(None);
-    assert!(fixture.launches().is_empty());
-    let reopened =
-        WorkflowInstanceStore::open(&fixture.folder.path().join("repair.sqlite")).unwrap();
-    assert_eq!(reopened.load(&instance.id).unwrap(), instance);
-    let first = fixture
-        .execution
-        .dispatch_user_request(
-            &instance.recipe.recipe_id,
-            &instance.id,
-            "Make a plan".into(),
-        )
-        .unwrap();
-    assert_eq!(
-        fixture.launches().len(),
-        2,
-        "normal runtime notification must launch B"
-    );
-    assert!(fixture.notifier.errors.lock().unwrap().is_empty());
-    let entries = fixture.execution.instance_sessions(&instance).unwrap();
-    assert_eq!(entries.len(), 2);
-    let b = entries
-        .iter()
-        .find(|entry| entry.logical_address.as_ref().unwrap().subject.id() == "b")
-        .unwrap();
-    let b_id = AgentSessionId::new(b.session.id()).unwrap();
-    let b_history = fixture.sessions.load_session(&b_id).unwrap();
-    assert_eq!(
-        b_history.invocations[0].invocation.submitted_text,
-        "Plan from this invocation\n\nReview the result"
-    );
-    assert_eq!(
-        b_history.session.working_directory.as_deref(),
-        Some(instance.target.worktree.path.as_str())
-    );
-    let before = b_history.session.session_profile.clone();
-    let a_id = AgentSessionId::new(first.group.created_session.unwrap().id()).unwrap();
-    fixture
-        .profiles
-        .create(
-            "replacement-default".into(),
-            "Replacement".into(),
-            test_selected_runtime_profile().exposure,
-        )
-        .unwrap();
-    fixture
-        .profiles
-        .set_default_profile("replacement-default")
-        .unwrap();
-    fixture.profiles.delete("test-capabilities").unwrap();
-    fixture
-        .direct
-        .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
-            sandbox_mode: None,
-            session_id: a_id.clone(),
-            submitted_text: "User follow-up".into(),
-            model: Some("user-only".into()),
-            reasoning_mode: Some("medium".into()),
-        })
-        .unwrap();
-    fixture
-        .execution
-        .dispatch_user_request(
-            &instance.recipe.recipe_id,
-            &instance.id,
-            "Workflow follow-up".into(),
-        )
-        .unwrap();
-    assert_eq!(fixture.launches().len(), 6);
-    assert!(fixture.notifier.errors.lock().unwrap().is_empty());
-    let after = fixture.sessions.load_session(&b_id).unwrap();
-    assert_eq!(after.session.session_profile, before);
-    assert!(after.invocations.iter().all(|turn| turn
-        .invocation
-        .requested_options
-        .model
-        .as_deref()
-        == Some("node-default")));
-    let launches = fixture.launches();
-    assert!(launches.iter().skip(2).all(|launch| launch
-        .launch_extension
-        .as_ref()
-        .is_none_or(|extension| extension.initial_prompt_prefix.is_none())));
-    let a_history = fixture.sessions.load_session(&a_id).unwrap();
-    let terminal = a_history.invocations.last().unwrap().invocation.clone();
-    fixture
-        .execution
-        .on_agent_notification(&AgentSessionNotification::InvocationTerminal {
-            session_id: a_id,
-            invocation: terminal,
-        })
-        .unwrap();
-    assert_eq!(
-        fixture.launches().len(),
-        6,
-        "duplicate completion must not dispatch again"
-    );
-    let new_instance = fixture
-        .execution
-        .create_instance(
-            &instance.recipe.recipe_id,
-            instance.recipe.revision,
-            "Another".into(),
-            fixture.target(),
-        )
-        .unwrap();
-    assert!(fixture
-        .execution
-        .dispatch_user_request(
-            &instance.recipe.recipe_id,
-            &new_instance.id,
-            "New birth".into()
-        )
-        .is_err());
-    assert!(fixture
-        .execution
-        .instance_sessions(&new_instance)
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
-fn missing_prompt_file_records_handoff_failure_without_changing_sender_completion() {
-    let fixture = Fixture::new();
-    let instance = fixture.instance(Some("missing.txt"));
-    let first = fixture
-        .execution
-        .dispatch_user_request(
-            &instance.recipe.recipe_id,
-            &instance.id,
-            "Make a plan".into(),
-        )
-        .unwrap();
-    assert_eq!(fixture.launches().len(), 1);
-    let id = AgentSessionId::new(first.group.created_session.unwrap().id()).unwrap();
-    assert_eq!(
-        fixture.sessions.load_session(&id).unwrap().invocations[0]
-            .invocation
-            .status,
-        AgentInvocationStatus::Completed
-    );
-    assert!(fixture
-        .execution
-        .instances
-        .attempts(&instance.id)
-        .unwrap()
-        .iter()
-        .any(|attempt| attempt
-            .error
-            .as_ref()
-            .is_some_and(|error| error.contains("missing.txt"))));
-}
-
-#[test]
-fn existing_instance_keeps_recipe_after_reactivation_and_second_instance_is_isolated() {
-    let fixture = Fixture::new();
-    let original = fixture.instance(None);
-    let mut changed = fixture
-        .authoring
-        .load(&original.recipe.recipe_id)
-        .unwrap()
-        .draft;
-    changed.connections.clear();
-    changed.nodes[0].initial_prompt = Some("Changed initial prompt".into());
-    changed = fixture.authoring.save_draft(changed).unwrap().draft;
-    fixture.authoring.activate(&changed.recipe_id).unwrap();
-    let next = fixture
-        .execution
-        .create_instance(
-            &changed.recipe_id,
-            changed.revision,
-            "Next".into(),
-            fixture.target(),
-        )
-        .unwrap();
-    fixture
-        .execution
-        .dispatch_user_request(&changed.recipe_id, &original.id, "Old run".into())
-        .unwrap();
-    fixture
-        .execution
-        .dispatch_user_request(&changed.recipe_id, &next.id, "New run".into())
-        .unwrap();
-    assert_eq!(
-        fixture
-            .execution
-            .instance_sessions(&original)
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(fixture.execution.instance_sessions(&next).unwrap().len(), 1);
-    let launches = fixture.launches();
-    assert_eq!(
-        launches[0]
-            .launch_extension
-            .as_ref()
-            .unwrap()
-            .initial_prompt_prefix
-            .as_ref()
-            .unwrap()
-            .content,
-        "Initial for a"
-    );
-    assert_eq!(
-        launches[2]
-            .launch_extension
-            .as_ref()
-            .unwrap()
-            .initial_prompt_prefix
-            .as_ref()
-            .unwrap()
-            .content,
-        "Changed initial prompt"
-    );
-}
-
-#[test]
-fn prompt_files_are_read_and_fixed_prompt_references_survive_in_delivery_records() {
-    let fixture = Fixture::new();
-    std::fs::write(
-        fixture.folder.path().join("plan.md"),
-        "Actual file contents",
-    )
-    .unwrap();
-    let instance = fixture.instance(Some("plan.md"));
-    fixture
-        .execution
-        .dispatch_user_request(&instance.recipe.recipe_id, &instance.id, "Plan".into())
-        .unwrap();
-    assert!(fixture.notifier.errors.lock().unwrap().is_empty());
-    let launches = fixture.launches();
-    assert!(launches[1].submitted_text.contains("Actual file contents"));
-    let store =
-        SqliteSessionEventStore::open(&fixture.folder.path().join("repair.sqlite")).unwrap();
-    let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
-    let group = attempts
-        .iter()
-        .find(|attempt| attempt.source_session_id.is_some())
-        .unwrap()
-        .event_group
-        .as_ref()
-        .unwrap();
-    let records = store.deliveries_for_group(group).unwrap();
-    assert!(records[0].prompt_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "prompt_field" && text == "Review the result")));
-    assert!(records[0].included_created_session_contributions.iter().any(|source| matches!(source, crate::session_events::PromptSource::ReferencedContent { reference, text } if reference.kind() == "prompt_field" && text == "Initial for b")));
-}
-
-#[test]
-fn invalid_source_pairs_and_escaping_file_references_do_not_launch_receiver() {
-    let fixture = Fixture::new();
-    let instance = fixture.instance(None);
-    let mut draft = instance.recipe.clone();
-    draft.connections[0].prompt_inputs = vec![WorkflowConnectionPromptInput::McpArgument {
-        name: "promptText".into(),
-    }];
-    let saved = fixture.authoring.save_draft(draft).unwrap();
-    assert!(fixture
-        .authoring
-        .activate_revision(&saved.draft.recipe_id, saved.draft.revision)
-        .is_err());
-    let outside = tempfile::NamedTempFile::new().unwrap();
-    let escape = fixture.instance(Some(outside.path().to_str().unwrap()));
-    fixture
-        .execution
-        .dispatch_user_request(&escape.recipe.recipe_id, &escape.id, "Plan".into())
-        .unwrap();
-    assert_eq!(fixture.launches().len(), 1);
-    assert!(fixture
-        .execution
-        .instances
-        .attempts(&escape.id)
-        .unwrap()
-        .iter()
-        .any(|attempt| attempt
-            .error
-            .as_ref()
-            .is_some_and(|error| error.contains("outside"))));
-}
-
-#[tokio::test]
-async fn pinned_mcp_binding_reaches_the_real_event_receiver_and_rejects_injected_routing() {
-    let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, true);
-    let baseline = fixture.instance(None);
-    let mut draft = baseline.recipe.clone();
-    let tools = [(
-        "workflow_handoff".into(),
-        ["handoff_to_agent".into()].into_iter().collect(),
-    )]
-    .into_iter()
-    .collect();
-    draft.nodes[0].node_profile.allowed_capabilities.mcp_tools = tools;
-    draft.connections[0].trigger = WorkflowConnectionTrigger::McpCall {
-        server: ReferenceIdentity::new("mcp", "server", "workflow_handoff").unwrap(),
-        tool: ReferenceIdentity::new("mcp", "tool", "handoff_to_agent").unwrap(),
-    };
-    draft.connections[0].prompt_inputs = vec![
-        WorkflowConnectionPromptInput::McpArgument {
-            name: "promptText".into(),
-        },
-        WorkflowConnectionPromptInput::McpArgument {
-            name: "filePaths".into(),
-        },
-    ];
-    draft = fixture.authoring.save_draft(draft).unwrap().draft;
-    fixture
-        .authoring
-        .activate_revision(&draft.recipe_id, draft.revision)
-        .unwrap();
-    let instance = fixture
-        .execution
-        .create_instance(
-            &draft.recipe_id,
-            draft.revision,
-            "MCP run".into(),
-            fixture.target(),
-        )
-        .unwrap();
-    fixture
-        .execution
-        .dispatch_user_request(&draft.recipe_id, &instance.id, "Plan".into())
-        .unwrap();
-    assert_eq!(fixture.launches().len(), 1);
-    let launch = fixture.launches().remove(0);
-    let extension = launch.launch_extension.as_ref().unwrap();
-    assert!(!extension
-        .config_overrides
-        .iter()
-        .any(|value| value.starts_with("mcp_servers=")));
-    let url = extension
-        .managed_mcp_servers
-        .iter()
-        .find(|server| server.name == "session_capability_1")
-        .unwrap()
-        .url
-        .clone();
-    let rpc = |name: &str, arguments: serde_json::Value| {
-        reqwest::Client::new().post(&url).json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}})).send()
-    };
-    let denied: serde_json::Value = rpc("not_allowed", json!({}))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert!(
-        denied.get("error").is_some() || denied.pointer("/result/isError") == Some(&json!(true))
-    );
-    let injected: serde_json::Value = rpc("handoff_to_agent", json!({"promptText":"Wrong route","filePaths":[],"_workflowInvocation":{"sourceInvocationId":"other-instance"}})).await.unwrap().json().await.unwrap();
-    assert_eq!(injected["result"]["isError"], true);
-    assert_eq!(fixture.launches().len(), 1);
-    let response: serde_json::Value = rpc(
-        "handoff_to_agent",
-        json!({"promptText":"Review this","filePaths":["plan.md"]}),
-    )
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-    assert_eq!(response["result"]["isError"], false, "{response}");
-    assert_eq!(
-        response["result"]["structuredContent"]["filePaths"],
-        json!(["plan.md"])
-    );
-    assert_eq!(fixture.launches().len(), 2);
-    let receiver = fixture.launches()[1].session_id.clone();
-    assert_eq!(
-        fixture
-            .sessions
-            .load_session(&receiver)
-            .unwrap()
-            .invocations[0]
-            .invocation
-            .submitted_text,
-        "Review this\n\nplan.md\n\nReview the result"
-    );
-    assert_eq!(
-        fixture
-            .execution
-            .instance_sessions(&instance)
-            .unwrap()
-            .len(),
-        2
-    );
-    assert!(fixture
-        .execution
-        .instance_sessions(&baseline)
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
-fn application_event_entry_uses_the_source_instance_and_configured_field() {
-    let fixture = Fixture::new();
-    let baseline = fixture.instance(None);
-    let mut draft = baseline.recipe.clone();
-    let event_kind = ReferenceIdentity::new("application", "event_kind", "plan_ready").unwrap();
-    draft.connections[0].trigger = WorkflowConnectionTrigger::ApplicationEvent {
-        event_kind: event_kind.clone(),
-    };
-    draft.connections[0].prompt_inputs =
-        vec![WorkflowConnectionPromptInput::ApplicationEventField {
-            field: "context".into(),
-        }];
-    draft = fixture.authoring.save_draft(draft).unwrap().draft;
-    fixture
-        .authoring
-        .activate_revision(&draft.recipe_id, draft.revision)
-        .unwrap();
-    let instance = fixture
-        .execution
-        .create_instance(
-            &draft.recipe_id,
-            draft.revision,
-            "Event run".into(),
-            fixture.target(),
-        )
-        .unwrap();
-    let first = fixture
-        .execution
-        .dispatch_user_request(&draft.recipe_id, &instance.id, "Plan".into())
-        .unwrap();
-    let source = first.group.created_session.unwrap();
-    assert_eq!(fixture.launches().len(), 1);
-    let trigger = crate::session_events::SessionEventOccurrenceTrigger::ApplicationEvent {
-        event: ReferenceIdentity::new("application", "event", "ready-1").unwrap(),
-        event_kind,
-        fields: [("context".into(), "Ready to review".into())]
-            .into_iter()
-            .collect(),
-    };
-    assert_eq!(
-        fixture
-            .execution
-            .receive_source_event(&source, "ready-1", trigger.clone())
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        fixture
-            .execution
-            .receive_source_event(&source, "ready-1", trigger)
-            .unwrap(),
-        0
-    );
-    assert_eq!(fixture.launches().len(), 2);
-    assert!(fixture
-        .execution
-        .instance_sessions(&baseline)
-        .unwrap()
-        .is_empty());
-    let receiver = &fixture.launches()[1].session_id;
-    assert_eq!(
-        fixture.sessions.load_session(receiver).unwrap().invocations[0]
-            .invocation
-            .submitted_text,
-        "Ready to review\n\nReview the result"
-    );
-}
-
-mod navigation_tests;
+// Workflow routing is covered by otp_packages::workflow tests.

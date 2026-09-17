@@ -16,9 +16,10 @@ impl HarnessEngineService {
         &self,
         binding: &HarnessBindingRecord,
     ) -> Result<SidecarBindingRegistration, String> {
-        let resolved = binding
-            .parsed_plan()?
-            .resolve(|name| self.upstreams.resolve(name))?;
+        let resolved = binding.parsed_plan()?.resolve(|name| {
+            self.upstreams
+                .resolve_for_session(Some(&binding.session_id), name)
+        })?;
         SidecarBindingRegistration::from_record(binding, &resolved)
     }
     fn proxy_extension(

@@ -15,7 +15,7 @@ pub(crate) mod transport;
 
 pub(crate) use domain::ManagedMcpUpstreamDescriptor;
 pub(crate) use service::{
-    HarnessEngineService, HarnessEngineTauriState, ManagedMcpUpstreamOwner,
-    ManagedMcpUpstreamRegistry,
+    AgentMcpUpstreamProvisioner, HarnessEngineService, HarnessEngineTauriState,
+    ManagedMcpUpstreamOwner, ManagedMcpUpstreamRegistry,
 };
 pub(crate) mod session_binding;

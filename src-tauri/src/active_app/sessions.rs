@@ -11,7 +11,11 @@ use crate::{
     harness_engine::{catalog_service::HarnessCatalogService, HarnessEngineService},
     native_profiles::NativeProfileService,
 };
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::Arc,
+};
 
 pub(super) struct SessionServices {
     pub(super) application: Arc<AgentSessionApplication>,
@@ -29,6 +33,7 @@ pub(super) fn compose(
     harness_catalog: HarnessCatalogService,
     harness_engine: Arc<HarnessEngineService>,
     notifier: Arc<dyn AgentSessionNotifier>,
+    product_tools: BTreeMap<String, BTreeSet<String>>,
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
     let local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime> =
@@ -39,8 +44,13 @@ pub(super) fn compose(
             native_profiles.clone(),
             &workspaces,
             local_runtime.clone(),
+            product_tools,
         )?;
-    let execution_targets = Arc::new(crate::execution_targets::ExecutionTargetService::new(database, endpoints.clone(), capability_profiles.clone()));
+    let execution_targets = Arc::new(crate::execution_targets::ExecutionTargetService::new(
+        database,
+        endpoints.clone(),
+        capability_profiles.clone(),
+    ));
     let providers = Arc::new(SystemAgentSessionProviders);
     let application = Arc::new(
         AgentSessionApplication::new(

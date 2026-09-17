@@ -72,6 +72,7 @@ mod tests {
                     bearer_token: "secret".into(),
                     workflow_tool_name: Some("handoff_to_agent".into()),
                     workflow_prepare_url: Some("http://obsolete/prepare".into()),
+                    caller_context: false,
                 },
                 access: HarnessToolAccess::SelectedTools {
                     tool_names: vec!["continuation".into()],

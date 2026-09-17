@@ -8,7 +8,9 @@ use super::{
 };
 use crate::{
     execution_configuration::{CapabilityProfile, CapabilityProfileService},
-    session_events::SessionEventDefinition,
+    otp_api::{CapabilityRef, Entrypoint},
+    otp_host::OtpRegistry,
+    workflows::compiled_plan::WorkflowCompiledPlan,
 };
 use std::{collections::BTreeMap, sync::Arc};
 use uuid::Uuid;
@@ -16,17 +18,37 @@ use uuid::Uuid;
 pub(crate) struct WorkflowAuthoringService {
     repository: Arc<dyn WorkflowAuthoringRepository>,
     capability_profiles: Arc<CapabilityProfileService>,
+    pub(crate) registry: Arc<OtpRegistry>,
 }
 
 impl WorkflowAuthoringService {
     pub(crate) fn new(
         repository: Arc<dyn WorkflowAuthoringRepository>,
         capability_profiles: Arc<CapabilityProfileService>,
+        registry: Arc<OtpRegistry>,
     ) -> Self {
         Self {
             repository,
             capability_profiles,
+            registry,
         }
+    }
+
+    fn default_action(&self) -> Result<CapabilityRef, String> {
+        self.registry
+            .catalogue()
+            .into_iter()
+            .find_map(|package| {
+                package
+                    .tools
+                    .into_iter()
+                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action { .. }))
+                    .map(|tool| CapabilityRef {
+                        package: package.id,
+                        tool: tool.id,
+                    })
+            })
+            .ok_or("Import an OTP with an agent action before creating a Workflow".into())
     }
 
     pub(crate) fn list(&self) -> Result<Vec<WorkflowRecipeSummary>, String> {
@@ -41,11 +63,13 @@ impl WorkflowAuthoringService {
 
     pub(crate) fn create(&self, name: String) -> Result<WorkflowRecipeState, String> {
         let draft = WorkflowRecipeDraft {
+            entry_configuration: serde_json::json!({}),
             contract_version: WORKFLOW_RECIPE_CONTRACT_VERSION,
             recipe_id: format!("workflow-recipe-{}", Uuid::new_v4()),
             name,
             revision: 1,
             starting_node_id: None,
+            entry_action: self.default_action()?,
             nodes: Vec::new(),
             connections: Vec::new(),
         };
@@ -127,7 +151,7 @@ impl WorkflowAuthoringService {
         &self,
         recipe_id: &str,
         instance_id: &str,
-    ) -> Result<Vec<SessionEventDefinition>, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         let state = self.load(recipe_id)?;
         let active = state
             .active
@@ -139,10 +163,10 @@ impl WorkflowAuthoringService {
         &self,
         recipe: &WorkflowRecipeDraft,
         instance_id: &str,
-    ) -> Result<Vec<SessionEventDefinition>, String> {
+    ) -> Result<WorkflowCompiledPlan, String> {
         let profiles = self.load_capability_profiles(recipe)?;
         let input = recipe.compilation_input(instance_id, &profiles)?;
-        WorkflowCompiler::compile(input).map_err(|error| error.to_string())
+        WorkflowCompiler::compile(input, &self.registry).map_err(|error| error.to_string())
     }
 
     fn load_capability_profiles(
@@ -172,6 +196,7 @@ fn copy_configurable_node_state(
     destination.node_profile = source.node_profile.clone();
     destination.initial_prompt = source.initial_prompt.clone();
     destination.agent_identity_id = source.agent_identity_id.clone();
+    destination.agent_mcp_configuration = source.agent_mcp_configuration.clone();
 }
 
 #[cfg(test)]
@@ -182,25 +207,29 @@ mod tests {
         RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
         SelectedRuntimeProfileSourceError,
     };
+
+    struct FixedRuntimeSource(RuntimeProfileSnapshot);
+
+    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
+        fn selected_runtime_profile(
+            &self,
+        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+            Ok(self.0.clone())
+        }
+    }
     use crate::workflows::{
         authoring::WorkflowAuthoringNode, authoring_repository::SqliteWorkflowAuthoringRepository,
     };
 
-    struct RuntimeSource;
-
-    impl SelectedRuntimeProfileSource for RuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-            Ok(RuntimeProfileSnapshot {
-                contract_version: 1,
-                profile_ref: "native-codex:selected".into(),
-                exposure: capabilities(),
-                locked: RuntimeSelections {
-                    sandbox_mode: Some(SandboxMode::WorkspaceWrite),
-                    ..RuntimeSelections::default()
-                },
-            })
+    fn runtime_profile() -> RuntimeProfileSnapshot {
+        RuntimeProfileSnapshot {
+            contract_version: 1,
+            profile_ref: "orchestration:configured-runtime/v1".into(),
+            exposure: capabilities(),
+            locked: RuntimeSelections {
+                sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                ..RuntimeSelections::default()
+            },
         }
     }
 
@@ -216,7 +245,7 @@ mod tests {
     fn service() -> WorkflowAuthoringService {
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(RuntimeSource),
+            Arc::new(FixedRuntimeSource(runtime_profile())),
         ));
         profiles
             .create(
@@ -228,6 +257,7 @@ mod tests {
         WorkflowAuthoringService::new(
             Arc::new(SqliteWorkflowAuthoringRepository::in_memory()),
             profiles,
+            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         )
     }
 
@@ -249,6 +279,7 @@ mod tests {
             },
             initial_prompt: Some(format!("You are {name}.")),
             agent_identity_id: None,
+            agent_mcp_configuration: Default::default(),
         }
     }
 
@@ -265,7 +296,7 @@ mod tests {
             .compile_active_for_instance(&active.draft.recipe_id, "instance-1")
             .unwrap();
 
-        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions.nodes.len(), 1);
         assert_eq!(active.active.unwrap().revision, 2);
     }
 

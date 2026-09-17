@@ -12,6 +12,7 @@ import type { AgentSessionProfileClient } from '../../application/agentSessions'
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type { IdentityManagementClient } from '../../application/identities';
+import type { OtpCatalogueReader } from '../../application/otp';
 import type {
   WorkflowAuthoringClient,
   WorkflowRecipeDraftDto,
@@ -20,7 +21,9 @@ import type {
 } from '../../application/workflowAuthoring';
 import { useExecutionConfigurationCatalog } from '../executionConfiguration';
 import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
+import { WorkflowDestinationActionPicker } from './WorkflowDestinationActionPicker';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
+import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { RecipeInstanceCreationDialog } from './RecipeInstanceCreationDialog';
 import { WorkflowInstanceView } from '../workflowInstances';
@@ -32,6 +35,7 @@ export interface WorkflowAuthoringScreenProps {
   readonly client: WorkflowAuthoringClient;
   readonly executionConfigurationClient: ExecutionConfigurationClient;
   readonly identityClient?: IdentityManagementClient;
+  readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<WorkflowRecipeDraftDto>;
   readonly instanceClient?: WorkflowInstanceClient;
   readonly targetSelector?: ComponentType<RepoBranchWorktreeTargetSelectorProps>;
@@ -49,6 +53,7 @@ export function WorkflowAuthoringScreen({
   client,
   executionConfigurationClient,
   identityClient,
+  readOtpCatalogue,
   workspace: providedWorkspace,
   instanceClient,
   targetSelector: TargetSelector,
@@ -83,7 +88,11 @@ export function WorkflowAuthoringScreen({
     profileValues,
     identities,
     error: catalogError,
-  } = useExecutionConfigurationCatalog(executionConfigurationClient, identityClient);
+  } = useExecutionConfigurationCatalog(
+    executionConfigurationClient,
+    identityClient,
+    readOtpCatalogue,
+  );
   const [selection, setSelection] = useState<WorkflowEditorSelection>({
     kind: 'node',
     id: null,
@@ -361,6 +370,38 @@ export function WorkflowAuthoringScreen({
               </div>
             </header>
 
+            <CollapsibleSection
+              title="Initial destination"
+              description="The first request uses the same destination action as a connection."
+              className="workflow-entry-destination"
+              defaultExpanded={false}
+            >
+              <label>
+                Destination node
+                <select
+                  value={draft.startingNodeId ?? ''}
+                  onChange={(event) =>
+                    editDraft({ ...draft, startingNodeId: event.target.value || null })
+                  }
+                >
+                  <option value="">Choose a node</option>
+                  {draft.nodes.map((node) => (
+                    <option key={node.nodeId} value={node.nodeId}>
+                      {node.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <WorkflowDestinationActionPicker
+                packages={runtime?.catalogs.otpPackages ?? []}
+                action={draft.entryAction}
+                configuration={draft.entryConfiguration ?? {}}
+                onChange={(entryAction, entryConfiguration) =>
+                  editDraft({ ...draft, entryAction, entryConfiguration })
+                }
+              />
+            </CollapsibleSection>
+
             <div className="workflow-authoring-screen__body">
               <WorkflowCanvas
                 key={draft.recipeId}
@@ -448,16 +489,20 @@ export function WorkflowAuthoringScreen({
                         name: `${draft.nodes.find((node) => node.nodeId === sourceNodeId)?.name} → ${draft.nodes.find((node) => node.nodeId === destinationNodeId)?.name}`,
                         sourceNodeId,
                         destinationNodeId,
-                        trigger: { kind: 'invocation_completed' },
-                        promptInputs: [{ kind: 'invocation_output' }],
-                        promptText: '',
-                        target: {
-                          cardinality: 'first',
-                          ordering: 'newest',
-                          running: 'any',
-                          createdBy: null,
-                          missing: 'create',
+                        trigger: {
+                          capability: {
+                            package: 'workflow',
+                            tool: 'on_invocation_completed',
+                          },
+                          output: 'completed',
                         },
+                        promptInputs: [{ kind: 'output_field', field: 'output' }],
+                        promptText: '',
+                        action: {
+                          package: 'workflow',
+                          tool: 'prompt_agent',
+                        },
+                        configuration: {},
                       },
                     ],
                   });
@@ -536,6 +581,7 @@ export function WorkflowAuthoringScreen({
                                   nodeProfile: source.nodeProfile,
                                   initialPrompt: source.initialPrompt,
                                   agentIdentityId: source.agentIdentityId,
+                                  agentMcpConfiguration: source.agentMcpConfiguration,
                                 }
                               : candidate,
                           ),
@@ -546,6 +592,7 @@ export function WorkflowAuthoringScreen({
                     <WorkflowConnectionEditor
                       connection={selectedConnection}
                       nodes={draft.nodes}
+                      packages={runtime?.catalogs.otpPackages ?? []}
                       onChange={(connection) =>
                         editDraft({
                           ...draft,

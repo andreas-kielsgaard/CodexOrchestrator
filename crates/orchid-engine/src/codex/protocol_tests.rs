@@ -37,6 +37,27 @@ fn normalizes_mcp_started_and_completed_without_requiring_raw_payload_parsing() 
         ToolResultClassification::Succeeded
     );
 }
+
+#[test]
+fn exposes_completed_file_changes_without_treating_tool_arguments_as_authorship() {
+    let mut protocol = CodexJsonlProtocol::default();
+    let mut output = protocol.push(
+        br#"{"type":"item.completed","item":{"type":"file_change","status":"completed","changes":[{"path":"docs/spec.md","kind":"add"},{"path":"src/app.ts","kind":"update"}]}}"#,
+    );
+    output.extend(protocol.finish());
+    let changes = output[0].events[0]
+        .normalized
+        .as_ref()
+        .and_then(|event| event.details.as_ref())
+        .and_then(|details| details.get("fileChanges"));
+    assert_eq!(
+        changes,
+        Some(&serde_json::json!([
+            {"path":"docs/spec.md","operation":"create"},
+            {"path":"src/app.ts","operation":"edit"}
+        ]))
+    );
+}
 #[test]
 fn frames_jsonl_across_arbitrary_byte_chunks_and_marks_final_output() {
     let fixture: ChunkFixture = serde_json::from_str(include_str!(
