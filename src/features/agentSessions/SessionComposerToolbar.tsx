@@ -17,20 +17,12 @@ export interface SessionComposerToolbarProps {
   defaultReasoning?: string | null;
   pending: boolean;
   onProfile(id: string): void;
-  onDevice(id: string): void;
+  onDevice(): void;
   onWorktree(): void;
   onOptions(value: PerMessageRuntimeSelection): void;
   onPreview(): void;
 }
 export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
-  const devices = [
-    ...new Map(
-      props.profiles.map((profile) => {
-        const execution = profile.execution ?? localExecutionBinding;
-        return [execution.deviceId, execution] as const;
-      }),
-    ).values(),
-  ];
   const workspace = props.selection?.workspace;
   const worktreeLabel =
     workspace?.kind === 'existing'
@@ -64,21 +56,16 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
               ))}
           </select>
         </label>
-        <label className="session-composer-toolbar__select">
+        <button
+          type="button"
+          className="session-composer-toolbar__device"
+          aria-label={`Destination device: ${props.selection?.execution.deviceName ?? 'Choose device'}`}
+          onClick={props.onDevice}
+          title="Compare this conversation’s worktree on another device"
+        >
           <Monitor size={16} aria-hidden="true" />
-          <select
-            aria-label="Device"
-            value={props.deviceId ?? ''}
-            onChange={(event) => props.onDevice(event.target.value)}
-          >
-            <option value="">Device</option>
-            {devices.map((device) => (
-              <option key={device.deviceId} value={device.deviceId}>
-                {device.deviceName}
-              </option>
-            ))}
-          </select>
-        </label>
+          <span>{props.selection?.execution.deviceName ?? 'Destination device'}</span>
+        </button>
         <button
           className="session-composer-toolbar__worktree"
           aria-label={

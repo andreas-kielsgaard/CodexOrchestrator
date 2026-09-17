@@ -13,6 +13,7 @@ import { SessionComposerToolbar } from './SessionComposerToolbar';
 import { SessionPreparationPanel } from './SessionPreparationPanel';
 import { preparationPreview } from './preparationPreview';
 import { SessionTargetDialog } from './SessionTargetDialog';
+import { DeviceContinuationDialog } from './DeviceContinuationDialog';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
 import type {
   SessionNavigationCommandRequest,
@@ -95,6 +96,7 @@ export function StandaloneAgentSessionScreen({
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
   const [targetPicker, setTargetPicker] = useState<{ deviceId?: string } | null>(null);
+  const [deviceContinuationOpen, setDeviceContinuationOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
     kind: 'initial',
@@ -342,7 +344,7 @@ export function StandaloneAgentSessionScreen({
         }
         pending={pending}
         onProfile={targetDraft.chooseProfile}
-        onDevice={targetDraft.chooseDevice}
+        onDevice={() => setDeviceContinuationOpen(true)}
         onWorktree={() => setTargetPicker({ deviceId: targetDraft.deviceId ?? undefined })}
         onOptions={view.setSelection}
         onPreview={() => setPreviewOpen(!previewOpen)}
@@ -424,6 +426,15 @@ export function StandaloneAgentSessionScreen({
             targetDraft.setSelection(next);
             setTargetPicker(null);
           }}
+        />
+      )}
+      {deviceContinuationOpen && executionTargetClient && branchSource && (
+        <DeviceContinuationDialog
+          client={executionTargetClient}
+          source={branchSource}
+          sourceTarget={currentTarget ?? targetDraft.target}
+          onChooseDevice={targetDraft.chooseDevice}
+          onClose={() => setDeviceContinuationOpen(false)}
         />
       )}
       {importOpen && importClient && (

@@ -17,12 +17,15 @@ export function BranchGraphBrowser({
   onSelect,
   onRange,
   branchesOnly = false,
+  contextualTarget,
 }: {
   readonly source: BranchReadSource;
   readonly repositoryId: string;
   readonly selectedTarget: ReviewTarget | null;
   readonly branchesOnly?: boolean;
-  readonly onSelect: (target: ReviewTarget) => void;
+  /** Keeps one branch highlighted while the graph supplies repository context. */
+  readonly contextualTarget?: ReviewTarget | null;
+  readonly onSelect?: (target: ReviewTarget) => void;
   readonly onRange?: (segment: GraphConnection, source: ReviewBranch) => void;
 }) {
   const [graph, setGraph] = useState<BranchGraphData>();
@@ -53,7 +56,10 @@ export function BranchGraphBrowser({
         setSelected(
           (previous) =>
             next.targets.find((item) => {
-              const source = previous?.target ?? (selectedTarget && sourceTarget(selectedTarget));
+              const source =
+                contextualTarget ??
+                previous?.target ??
+                (selectedTarget && sourceTarget(selectedTarget));
               return (
                 source &&
                 (targetKey(item.target) === targetKey(source) ||
@@ -71,7 +77,7 @@ export function BranchGraphBrowser({
     return () => {
       cancelled = true;
     };
-  }, [source, repositoryId, limit, selectedTarget, branchesOnly]);
+  }, [source, repositoryId, limit, selectedTarget, branchesOnly, contextualTarget]);
   return (
     <section className="branch-graph-browser" aria-label="Branch history">
       <div className="branch-graph__toolbar">
@@ -98,7 +104,9 @@ export function BranchGraphBrowser({
           preview={preview}
           frameVersion={frameVersion}
           onPreview={setPreview}
-          onSelect={setSelected}
+          onSelect={(target) => {
+            if (!contextualTarget) setSelected(target);
+          }}
           onRange={
             onRange
               ? (segment) => {
@@ -118,8 +126,12 @@ export function BranchGraphBrowser({
       )}
       <footer className="branch-graph__footer">
         <div>
-          <strong>{(preview ?? selected)?.displayName ?? 'Choose a branch'}</strong>
-          <p>{(preview ?? selected)?.tip.subject}</p>
+          <strong>
+            {contextualTarget
+              ? selected?.displayName
+              : ((preview ?? selected)?.displayName ?? 'Choose a branch')}
+          </strong>
+          <p>{contextualTarget ? selected?.tip.subject : (preview ?? selected)?.tip.subject}</p>
           {graph?.hasMore && (
             <button
               type="button"
@@ -131,14 +143,16 @@ export function BranchGraphBrowser({
             </button>
           )}
         </div>
-        <button
-          type="button"
-          className="worktree-review__primary"
-          disabled={!selected}
-          onClick={() => selected && onSelect(selected.target)}
-        >
-          Use {selected?.target.kind === 'worktree' ? 'worktree' : 'branch'}
-        </button>
+        {!contextualTarget && onSelect && (
+          <button
+            type="button"
+            className="worktree-review__primary"
+            disabled={!selected}
+            onClick={() => selected && onSelect(selected.target)}
+          >
+            Use {selected?.target.kind === 'worktree' ? 'worktree' : 'branch'}
+          </button>
+        )}
       </footer>
     </section>
   );

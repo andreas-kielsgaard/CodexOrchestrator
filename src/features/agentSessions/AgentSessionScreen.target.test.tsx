@@ -35,9 +35,9 @@ it('preserves the prompt while choosing a remote worktree and uses the shared ta
     await screen.findByRole('textbox', { name: 'Message' }),
     'Work on the remote checkout',
   );
-  fireEvent.change(screen.getByRole('combobox', { name: 'Device' }), {
-    target: { value: 'remote' },
-  });
+  await user.click(screen.getByRole('button', { name: /Destination device/ }));
+  await user.click(await screen.findByRole('button', { name: /Remote server/ }));
+  await user.click(screen.getByRole('button', { name: 'Use device' }));
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {
@@ -192,9 +192,9 @@ it('keeps New session and its remote target draft open while existing history re
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Preserve this remote prompt' },
   });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Device' }), {
-    target: { value: 'remote' },
-  });
+  await user.click(screen.getByRole('button', { name: /Destination device/ }));
+  await user.click(await screen.findByRole('button', { name: /Remote server/ }));
+  await user.click(screen.getByRole('button', { name: 'Use device' }));
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {

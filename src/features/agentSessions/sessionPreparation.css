@@ -16,7 +16,8 @@
   min-width: 0;
 }
 .session-composer-toolbar__select,
-.session-composer-toolbar__worktree {
+.session-composer-toolbar__worktree,
+.session-composer-toolbar__device {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -39,6 +40,15 @@
 .session-composer-toolbar__worktree {
   max-width: 300px;
   text-align: left;
+}
+.session-composer-toolbar__device {
+  max-width: 180px;
+  cursor: pointer;
+}
+.session-composer-toolbar__device span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .session-composer-toolbar__worktree span {
   overflow: hidden;
