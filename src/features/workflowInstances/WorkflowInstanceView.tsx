@@ -130,18 +130,10 @@ export function WorkflowInstanceView({
     ? attemptsForConnection(details.attempts, selectedConnection.connectionId)
     : [];
   const unassignedAttempts = attemptsWithoutElement(details.attempts);
+  const canLoadEvents = true;
 
-  const loadAttempt = async (
-    eventGroup: NonNullable<(typeof details.attempts)[number]['eventGroup']>,
-  ) => {
-    if (!queryClient) return;
-    setError(null);
-    try {
-      const value = await queryClient.loadRecordedEvent(eventGroup);
-      if (mounted.current) setEventResult(value);
-    } catch (cause) {
-      if (mounted.current) setError(String(cause));
-    }
+  const loadAttempt = (eventGroup: SessionEventResultDto) => {
+    setEventResult(eventGroup);
   };
 
   return (
@@ -281,7 +273,7 @@ export function WorkflowInstanceView({
                 )}
                 attempts={attemptsForNode(details.attempts, selectedNode.nodeId)}
                 eventResult={eventResult}
-                canLoadEvents={Boolean(queryClient)}
+                canLoadEvents
                 requestText={requestText}
                 busy={busy}
                 onRequestText={setRequestText}
@@ -302,9 +294,9 @@ export function WorkflowInstanceView({
                     });
                     if (!mounted.current) return;
                     setRequestText('');
-                    setEventResult(result);
+                    setEventResult(result.eventGroups[0] ?? null);
                     await load();
-                    const sessionId = result.deliveries[0]?.targetSession.id;
+                    const sessionId = result.eventGroups[0]?.deliveries[0]?.targetSession.id;
                     if (sessionId && mounted.current) {
                       setSelection({ kind: 'session', id: sessionId, nodeId: selectedNode.nodeId });
                     }
@@ -322,7 +314,7 @@ export function WorkflowInstanceView({
                 destinationName={nodeById(details, selectedConnection.destinationNodeId)?.name}
                 attempts={selectedConnectionAttempts}
                 eventResult={eventResult}
-                canLoadEvents={Boolean(queryClient)}
+                canLoadEvents
                 onLoadAttempt={loadAttempt}
               />
             ) : null}
@@ -373,9 +365,7 @@ function NodeInspector({
   readonly busy: boolean;
   onRequestText(value: string): void;
   onOpenSession(sessionId: string): void;
-  onLoadAttempt(
-    eventGroup: NonNullable<WorkflowInstanceDetails['attempts'][number]['eventGroup']>,
-  ): void;
+  onLoadAttempt(eventGroup: SessionEventResultDto): void;
   onSend(): void;
 }) {
   const sessions = sessionsForNode(details.sessions, node.nodeId);
@@ -520,9 +510,7 @@ function ConnectionInspector({
   readonly attempts: readonly WorkflowInstanceDetails['attempts'][number][];
   readonly eventResult: SessionEventResultDto | null;
   readonly canLoadEvents: boolean;
-  onLoadAttempt(
-    eventGroup: NonNullable<WorkflowInstanceDetails['attempts'][number]['eventGroup']>,
-  ): void;
+  onLoadAttempt(eventGroup: SessionEventResultDto): void;
 }) {
   return (
     <div className="workflow-instance-view__connection-inspector">
@@ -558,9 +546,7 @@ function AttemptList({
   readonly attempts: readonly WorkflowInstanceDetails['attempts'][number][];
   readonly canLoadEvents: boolean;
   readonly emptyMessage?: string;
-  onLoadAttempt(
-    eventGroup: NonNullable<WorkflowInstanceDetails['attempts'][number]['eventGroup']>,
-  ): void;
+  onLoadAttempt(eventGroup: SessionEventResultDto): void;
 }) {
   if (!attempts.length) return <p>{emptyMessage}</p>;
   return attempts.map((attempt) => (
@@ -568,8 +554,8 @@ function AttemptList({
       key={attempt.id}
       type="button"
       className="workflow-instance-view__attempt"
-      disabled={!attempt.eventGroup || !canLoadEvents}
-      onClick={() => attempt.eventGroup && onLoadAttempt(attempt.eventGroup)}
+      disabled={!attempt.eventGroups.length || !canLoadEvents}
+      onClick={() => attempt.eventGroups[0] && onLoadAttempt(attempt.eventGroups[0])}
     >
       <strong>{attemptStatus(attempt)}</strong>
       <span>{new Date(attempt.createdAt).toLocaleString()}</span>

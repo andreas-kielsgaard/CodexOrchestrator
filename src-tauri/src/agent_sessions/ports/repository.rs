@@ -298,6 +298,14 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         invocation_id: &AgentInvocationId,
     ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError>;
+
+    fn file_history_at_scope(
+        &self,
+        scope: &crate::session_events::ReferenceIdentity,
+    ) -> Result<Vec<crate::agent_sessions::file_history::SessionFileChange>, RepositoryError> {
+        let _ = scope;
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

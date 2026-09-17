@@ -275,7 +275,15 @@ impl CodexJsonlProtocol {
                     }
                     "command_execution" | "file_change" | "web_search" | "plan_update" => {
                         let text = item_text(item);
-                        let details = json!({"itemType": item_type, "eventType": event});
+                        let mut details = json!({"itemType": item_type, "eventType": event});
+                        if item_type == "file_change"
+                            && event == "item.completed"
+                            && item.get("status").and_then(Value::as_str) == Some("completed")
+                        {
+                            if let Some(changes) = reported_file_changes(item) {
+                                details["fileChanges"] = changes;
+                            }
+                        }
                         events.push(draft(
                             raw,
                             normalized(
@@ -392,6 +400,28 @@ fn draft(raw_payload: Value, normalized: NormalizedRuntimeEvent) -> RuntimeEvent
         raw_payload,
         normalized: Some(normalized),
     }
+}
+
+/// The engine records completed Codex file-change evidence in normalized details.
+/// Consumers may persist it under their own session identity; a tool argument never
+/// establishes authorship.
+fn reported_file_changes(item: &Map<String, Value>) -> Option<Value> {
+    let changes = item.get("changes")?.as_array()?;
+    let changes = changes
+        .iter()
+        .filter_map(|change| {
+            let change = change.as_object()?;
+            let path = change.get("path")?.as_str()?.trim();
+            let operation = match change.get("kind")?.as_str()? {
+                "add" => "create",
+                "update" => "edit",
+                "delete" => "delete",
+                _ => return None,
+            };
+            (!path.is_empty()).then(|| json!({"path": path, "operation": operation}))
+        })
+        .collect::<Vec<_>>();
+    (!changes.is_empty()).then_some(Value::Array(changes))
 }
 
 fn normalized(

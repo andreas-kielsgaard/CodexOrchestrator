@@ -1,4 +1,5 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
 import type { RepositoryBranchSource } from '../../application/branches';
 import {
   localExecutionBinding,
@@ -24,6 +25,8 @@ export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
   readonly targetClient?: ExecutionTargetClient;
   readonly branchSource?: RepositoryBranchSource;
+  /** Design-time package descriptions group selectable MCP tools without probing them. */
+  readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
 }
 
@@ -64,6 +67,7 @@ export function ExecutionConfigurationScreen({
   client,
   targetClient,
   branchSource,
+  readOtpCatalogue,
   workspace: providedWorkspace,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
@@ -71,6 +75,7 @@ export function ExecutionConfigurationScreen({
   const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
+  const [otpPackages, setOtpPackages] = useState<readonly OtpPackageDto[]>([]);
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
   const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
   const selectedRef = useRef(selectedId);
@@ -113,14 +118,18 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles, nextDefault] = await Promise.all([
+      const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages] = await Promise.all([
         targetClient ? Promise.resolve(EMPTY_RUNTIME) : client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
         client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
+        // The catalogue is local design-time metadata. A read failure must not
+        // prevent a capability profile from being viewed or edited.
+        readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
       ]);
       setRuntime(nextRuntime);
       setDefaultProfileId(nextDefault);
       setProfiles(nextProfiles);
+      setOtpPackages(nextOtpPackages);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
@@ -144,7 +153,7 @@ export function ExecutionConfigurationScreen({
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, targetClient, discover]);
+  }, [client, workspace, targetClient, discover, readOtpCatalogue]);
 
   useEffect(() => {
     void load();
@@ -156,9 +165,9 @@ export function ExecutionConfigurationScreen({
     () =>
       (() => {
         const view = runtimeProfileViewModel(runtime);
-        return view;
+        return { ...view, catalogs: { ...view.catalogs, otpPackages } };
       })(),
-    [runtime],
+    [runtime, otpPackages],
   );
 
   const selectProfile = (profile: CapabilityProfileDto) => {

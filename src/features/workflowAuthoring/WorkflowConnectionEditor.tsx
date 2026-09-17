@@ -1,41 +1,42 @@
 import type {
-  SessionEventTriggerBindingDto,
-  TargetSelectionDto,
-} from '../../application/sessionEvents';
-import type {
   WorkflowAuthoringConnectionDto,
   WorkflowAuthoringNodeDto,
-  WorkflowConnectionPromptInputDto,
-  WorkflowConnectionTriggerDto,
+  OtpPackageDto,
 } from '../../application/workflowAuthoring';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
-import {
-  PromptSourceListEditor,
-  TargetSelectionEditor,
-  TriggerBindingEditor,
-} from '../sessionEvents';
+import { WorkflowPromptInputsEditor } from './WorkflowPromptInputsEditor';
+import { WorkflowTriggerPicker } from './WorkflowTriggerPicker';
+import { WorkflowDestinationActionPicker } from './WorkflowDestinationActionPicker';
+import { offeredActions, offeredOutputs, capabilityKey, outputKey } from './otpPresentation';
 
 export function WorkflowConnectionEditor({
   connection,
   nodes,
+  packages,
   onChange,
 }: {
   readonly connection: WorkflowAuthoringConnectionDto;
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
+  readonly packages: readonly OtpPackageDto[];
   readonly onChange: (connection: WorkflowAuthoringConnectionDto) => void;
 }) {
-  const trigger = workflowTriggerToEventTrigger(connection.trigger);
-  const target = workflowTargetToEventTarget(connection);
+  const outputs = offeredOutputs(packages);
+  const actions = offeredActions(packages);
+  const selectedOutput = outputs.find(
+    (item) => outputKey(item.ref) === outputKey(connection.trigger),
+  );
+  const selectedAction = actions.find(
+    (item) => capabilityKey(item.ref) === capabilityKey(connection.action),
+  );
   return (
     <div className="workflow-connection-editor">
       <header>
         <p>Workflow connection</p>
         <h1>{connection.name}</h1>
-        <span>Compiles into a Session Event definition.</span>
       </header>
       <CollapsibleSection
         title="Connection"
-        description="The visual edge determines the source and destination node."
+        description="Choose the source and output node."
         className="execution-configuration__section"
       >
         <div className="workflow-connection-editor__grid">
@@ -62,7 +63,7 @@ export function WorkflowConnectionEditor({
             </select>
           </label>
           <label>
-            <span>Destination node</span>
+            <span>Output node</span>
             <select
               value={connection.destinationNodeId}
               onChange={(event) =>
@@ -80,125 +81,56 @@ export function WorkflowConnectionEditor({
       </CollapsibleSection>
       <CollapsibleSection
         title="Trigger"
-        description="The source node address is derived when the recipe compiles."
+        description="An output from the selected source node starts this connection."
         className="execution-configuration__section"
       >
-        <TriggerBindingEditor
-          value={trigger}
-          hideInvocationSourceAddress
-          allowedKinds={['invocation_completed', 'mcp_call', 'application_event']}
-          onChange={(next) =>
-            onChange({
-              ...connection,
-              trigger: eventTriggerToWorkflowTrigger(
-                next.kind === 'mcp_call' && !next.server.id && !next.tool.id
-                  ? {
-                      kind: 'mcp_call',
-                      server: { namespace: 'mcp', kind: 'server', id: 'workflow_handoff' },
-                      tool: { namespace: 'mcp', kind: 'tool', id: 'handoff_to_agent' },
-                    }
-                  : next,
-              ),
-            })
-          }
-        />
+        <WorkflowTriggerPicker connection={connection} packages={packages} onChange={onChange} />
+        {selectedOutput && (
+          <p>
+            Offered fields:{' '}
+            {Object.entries(selectedOutput.output.schema.properties ?? {})
+              .map(([key, schema]) => key + ' (' + schema.type + ')')
+              .join(', ')}
+          </p>
+        )}
       </CollapsibleSection>
+      {selectedAction?.tool.entrypoint.kind === 'action' &&
+        selectedAction.tool.entrypoint.usesPrompt !== false && (
+          <CollapsibleSection
+            title="Prompt logic"
+            description="Include these inputs in order, followed by the fixed prompt."
+            className="execution-configuration__section"
+          >
+            <WorkflowPromptInputsEditor
+              value={connection.promptInputs}
+              nodes={nodes}
+              output={selectedOutput?.output}
+              onChange={(promptInputs) => onChange({ ...connection, promptInputs })}
+            />
+            <label className="workflow-connection-editor__prompt">
+              <span>Fixed connection prompt</span>
+              <textarea
+                rows={5}
+                value={connection.promptText}
+                onChange={(event) =>
+                  onChange({ ...connection, promptText: event.currentTarget.value })
+                }
+              />
+            </label>
+          </CollapsibleSection>
+        )}
       <CollapsibleSection
-        title="Prompt logic"
-        description="Sources are materialized in order; fixed connection text is appended last."
+        title="Destination action"
+        description="Choose what to do with Sessions of the output node."
         className="execution-configuration__section"
       >
-        <PromptSourceListEditor
-          value={connection.promptInputs}
-          allowedKinds={[
-            ...(connection.trigger.kind === 'invocation_completed'
-              ? ['invocation_output' as const]
-              : []),
-            ...(connection.trigger.kind === 'mcp_call' ? ['mcp_argument' as const] : []),
-            ...(connection.trigger.kind === 'application_event'
-              ? ['application_event_field' as const]
-              : []),
-            'referenced_content',
-          ]}
-          onChange={(value) =>
-            onChange({
-              ...connection,
-              promptInputs: value.map((source) =>
-                source.kind === 'referenced_content' && !source.reference.id
-                  ? { ...source, reference: { namespace: 'file', kind: 'path', id: '' } }
-                  : source,
-              ) as readonly WorkflowConnectionPromptInputDto[],
-            })
-          }
-        />
-        <label className="workflow-connection-editor__prompt">
-          <span>Fixed connection prompt</span>
-          <textarea
-            rows={5}
-            value={connection.promptText}
-            onChange={(event) => onChange({ ...connection, promptText: event.currentTarget.value })}
-          />
-        </label>
-      </CollapsibleSection>
-      <CollapsibleSection
-        title="Session addressing"
-        description={`The destination node “${nodes.find((node) => node.nodeId === connection.destinationNodeId)?.name ?? connection.destinationNodeId}” supplies the logical address.`}
-        className="execution-configuration__section"
-      >
-        <TargetSelectionEditor
-          value={target}
-          hideTargetAddress
-          onChange={(next) =>
-            onChange({
-              ...connection,
-              target: {
-                cardinality: next.cardinality,
-                ordering: next.ordering,
-                running: next.running,
-                createdBy: next.createdBy,
-                missing: next.missing,
-              },
-            })
-          }
+        <WorkflowDestinationActionPicker
+          action={connection.action}
+          configuration={connection.configuration}
+          packages={packages}
+          onChange={(action, configuration) => onChange({ ...connection, action, configuration })}
         />
       </CollapsibleSection>
     </div>
   );
-}
-
-function workflowTriggerToEventTrigger(
-  trigger: WorkflowConnectionTriggerDto,
-): SessionEventTriggerBindingDto {
-  return trigger.kind === 'invocation_completed' ? { ...trigger, sourceAddress: null } : trigger;
-}
-
-function eventTriggerToWorkflowTrigger(
-  trigger: SessionEventTriggerBindingDto,
-): WorkflowConnectionTriggerDto {
-  if (trigger.kind === 'user_request') return { kind: 'invocation_completed' };
-  if (trigger.kind === 'invocation_completed') return { kind: trigger.kind };
-  return trigger;
-}
-
-function workflowTargetToEventTarget(
-  connection: WorkflowAuthoringConnectionDto,
-): TargetSelectionDto {
-  return {
-    target: {
-      kind: 'logical',
-      address: {
-        scope: {
-          namespace: 'orchestrator.workflow_instances',
-          kind: 'workflow_instance',
-          id: 'derived-at-compile',
-        },
-        subject: {
-          namespace: 'orchestrator.workflow_nodes',
-          kind: 'workflow_node',
-          id: connection.destinationNodeId,
-        },
-      },
-    },
-    ...connection.target,
-  };
 }

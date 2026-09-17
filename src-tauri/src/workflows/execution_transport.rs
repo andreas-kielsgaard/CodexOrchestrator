@@ -1,5 +1,5 @@
 use super::execution::WorkflowExecutionService;
-use crate::session_events::SessionEventResult;
+use super::instances::WorkflowActionResult;
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
@@ -21,18 +21,25 @@ pub(crate) struct DispatchWorkflowUserRequestInput {
     instance_id: String,
     text: String,
     node_id: Option<String>,
+    #[serde(default = "empty_object")]
+    data: serde_json::Value,
+}
+
+fn empty_object() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 #[tauri::command]
 pub(crate) fn dispatch_workflow_user_request(
     state: State<'_, WorkflowExecutionTauriState>,
     input: DispatchWorkflowUserRequestInput,
-) -> Result<SessionEventResult, String> {
+) -> Result<WorkflowActionResult, String> {
     state.service.dispatch_node_user_request(
         &input.recipe_id,
         &input.instance_id,
         input.node_id.as_deref(),
         input.text,
+        input.data,
     )
 }
 
@@ -106,6 +113,21 @@ mod tests {
                 "model": "codex-a"
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn user_request_transport_accepts_structured_data() {
+        let input = serde_json::from_value::<DispatchWorkflowUserRequestInput>(serde_json::json!({
+            "recipeId": "recipe-review",
+            "instanceId": "instance-1",
+            "text": "Review this",
+            "data": {"sourceUrl": "https://example.test"}
+        }))
+        .unwrap();
+        assert_eq!(
+            input.data,
+            serde_json::json!({"sourceUrl": "https://example.test"})
         );
     }
 }

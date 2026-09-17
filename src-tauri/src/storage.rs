@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 53;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 54;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -460,8 +460,12 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 }
 
 fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), String> {
-    connection.execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA).map_err(|e| e.to_string())?;
-    connection.execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA).map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA)
+        .map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -490,9 +494,15 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
              DROP TABLE IF EXISTS workflow_types;",
         )
         .map_err(|error| format!("Unable to retire Workflow V1 storage: {error}"))?;
-    connection.execute_batch(crate::agent_sessions::repository::IMPORT_SCHEMA).map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::agent_sessions::repository::IMPORT_SCHEMA)
+        .map_err(|e| e.to_string())?;
     crate::agent_sessions::repository::ensure_agent_session_ownership_schema(connection)?;
     crate::agent_sessions::repository::initialize_session_address_storage(connection)?;
+    connection
+        .execute_batch(crate::agent_sessions::repository::file_history::SCHEMA)
+        .map_err(|error| format!("Unable to initialize Agent Session file history: {error}"))?;
+    crate::otp_host::installations::initialize_otp_installation_storage(connection)?;
     crate::execution_configuration::initialize_capability_profile_storage(connection)?;
     crate::harness_engine::catalog_repository::initialize_harness_catalog_storage(connection)?;
     crate::identities::repository::initialize_identity_storage(connection)?;
@@ -534,6 +544,14 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         )
         .map(|table_count| table_count == 9)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
+    let otp_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_session_file_changes','otp_job_agent_installation')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 2)
+        .map_err(|error| format!("Unable to inspect OTP storage schema: {error}"))?;
     let workflow_v1_schema_is_absent = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workflow_types','workflow_roles','workflow_effective_recipes','workflow_nodes','workflow_connections','workflow_instances','workflow_instance_sessions','workflow_activations','workflow_connection_activations')",
@@ -596,10 +614,14 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         [], |row| row.get(0)).map_err(|e| e.to_string())?;
     let preparation_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let target_transition_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_target_transitions','sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    Ok(preparation_schema_is_present && target_transition_schema_is_present && import_schema_is_present && native_profile_schema_is_present
+    Ok(preparation_schema_is_present
+        && target_transition_schema_is_present
+        && import_schema_is_present
+        && native_profile_schema_is_present
         && epic_settlement_schema_is_present
         && product_decision_schema_is_present
         && replacement_workflow_schema_is_present
+        && otp_schema_is_present
         && workflow_v1_schema_is_absent
         && session_navigation_schema_is_present
         && session_profile_schema_is_present

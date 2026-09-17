@@ -8,6 +8,7 @@
 
 pub(crate) mod application;
 pub(crate) mod domain;
+pub(crate) mod file_history;
 pub(crate) mod ports;
 pub(crate) mod references;
 pub(crate) mod repository;

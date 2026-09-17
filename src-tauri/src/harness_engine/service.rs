@@ -29,6 +29,7 @@ pub(crate) struct ManagedMcpUpstreamRegistry {
 
 struct ManagedMcpUpstreamRegistration {
     id: String,
+    session_id: Option<String>,
     descriptor: ManagedMcpUpstreamDescriptor,
     owner: Option<Box<dyn ManagedMcpUpstreamOwner>>,
 }
@@ -37,9 +38,39 @@ pub(crate) trait ManagedMcpUpstreamOwner: Send {
     fn stop(self: Box<Self>);
 }
 
+/// A product extension can provision a managed upstream for one Session before its Harness is
+/// bound. Provisioning must not contact the upstream; use-time failures remain MCP tool errors.
+pub(crate) trait AgentMcpUpstreamProvisioner: Send + Sync {
+    fn provision(
+        &self,
+        session_id: &AgentSessionId,
+        profile: &crate::execution_configuration::SessionCreationResolution,
+        upstreams: &ManagedMcpUpstreamRegistry,
+    ) -> Result<(), String>;
+}
+
 impl ManagedMcpUpstreamRegistry {
     pub(crate) fn register(
         &self,
+        descriptor: ManagedMcpUpstreamDescriptor,
+    ) -> Result<String, String> {
+        self.register_with_scope(None, descriptor)
+    }
+
+    pub(crate) fn register_for_session(
+        &self,
+        session_id: &str,
+        descriptor: ManagedMcpUpstreamDescriptor,
+    ) -> Result<String, String> {
+        if session_id.trim().is_empty() {
+            return Err("Managed MCP Session ID is required.".to_string());
+        }
+        self.register_with_scope(Some(session_id.to_string()), descriptor)
+    }
+
+    fn register_with_scope(
+        &self,
+        session_id: Option<String>,
         descriptor: ManagedMcpUpstreamDescriptor,
     ) -> Result<String, String> {
         let name = descriptor.name.trim();
@@ -56,6 +87,7 @@ impl ManagedMcpUpstreamRegistry {
             .or_default()
             .push(ManagedMcpUpstreamRegistration {
                 id: registration_id.clone(),
+                session_id,
                 descriptor,
                 owner: None,
             });
@@ -99,15 +131,63 @@ impl ManagedMcpUpstreamRegistry {
     }
 
     pub(super) fn resolve(&self, name: &str) -> Result<ManagedMcpUpstreamDescriptor, String> {
+        self.resolve_for_session(None, name)
+    }
+
+    pub(crate) fn resolve_scoped(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<ManagedMcpUpstreamDescriptor, String> {
         self.descriptors
             .lock()
             .map_err(|_| "Managed MCP upstream registry is unavailable.".to_string())?
             .get(name)
-            .and_then(|registrations| registrations.last())
+            .and_then(|registrations| {
+                registrations
+                    .iter()
+                    .rev()
+                    .find(|registration| registration.session_id.as_deref() == Some(session_id))
+            })
             .map(|registration| registration.descriptor.clone())
             .ok_or_else(|| {
                 format!(
                     "Harness MCP server {name} has no application-owned managed upstream. Register the required product server before launching the Session."
+                )
+            })
+    }
+
+    pub(super) fn resolve_for_session(
+        &self,
+        session_id: Option<&str>,
+        name: &str,
+    ) -> Result<ManagedMcpUpstreamDescriptor, String> {
+        let descriptors = self
+            .descriptors
+            .lock()
+            .map_err(|_| "Managed MCP upstream registry is unavailable.".to_string())?;
+        let registrations = descriptors.get(name).ok_or_else(|| {
+            format!(
+                "Harness MCP server {name} has no application-owned managed upstream. Register the required product server before launching the Session."
+            )
+        })?;
+        if let Some(session_id) = session_id {
+            if let Some(registration) = registrations
+                .iter()
+                .rev()
+                .find(|registration| registration.session_id.as_deref() == Some(session_id))
+            {
+                return Ok(registration.descriptor.clone());
+            }
+        }
+        registrations
+            .iter()
+            .rev()
+            .find(|registration| registration.session_id.is_none())
+            .map(|registration| registration.descriptor.clone())
+            .ok_or_else(|| {
+                format!(
+                    "Harness MCP server {name} has no application-owned managed upstream for this Session."
                 )
             })
     }
@@ -134,6 +214,7 @@ pub(crate) struct HarnessEngineService {
     pub(super) repository: Arc<dyn HarnessBindingRepository>,
     pub(super) sidecar: Arc<dyn HarnessSidecarClient>,
     pub(super) upstreams: Arc<ManagedMcpUpstreamRegistry>,
+    agent_mcp_provisioner: Mutex<Option<Arc<dyn AgentMcpUpstreamProvisioner>>>,
 }
 
 impl HarnessEngineService {
@@ -143,6 +224,14 @@ impl HarnessEngineService {
         profile: &crate::execution_configuration::SessionCreationResolution,
     ) -> Result<(), String> {
         profile.verify_digest().map_err(|error| error.to_string())?;
+        if let Some(provisioner) = self
+            .agent_mcp_provisioner
+            .lock()
+            .map_err(|_| "Agent MCP provisioner is unavailable.".to_string())?
+            .clone()
+        {
+            provisioner.provision(session_id, profile, &self.upstreams)?;
+        }
         let snapshot = serde_json::to_string(profile).map_err(|error| error.to_string())?;
         if let Some(binding) = self.repository.current_for_session(session_id.as_str())? {
             binding.verify_digest()?;
@@ -216,8 +305,24 @@ impl HarnessEngineService {
             repository,
             sidecar,
             upstreams,
+            agent_mcp_provisioner: Mutex::new(None),
         });
         Ok(service)
+    }
+
+    pub(crate) fn attach_agent_mcp_provisioner(
+        &self,
+        provisioner: Arc<dyn AgentMcpUpstreamProvisioner>,
+    ) -> Result<(), String> {
+        let mut slot = self
+            .agent_mcp_provisioner
+            .lock()
+            .map_err(|_| "Agent MCP provisioner is unavailable.".to_string())?;
+        if slot.is_some() {
+            return Err("An Agent MCP provisioner is already attached.".into());
+        }
+        *slot = Some(provisioner);
+        Ok(())
     }
 
     pub(crate) fn shutdown(&self) -> Result<(), String> {
@@ -394,6 +499,7 @@ mod tests {
                     allowed_capabilities: capabilities,
                     pinned_defaults: RuntimeSelections::default(),
                 },
+                agent_mcp_configuration: Default::default(),
             },
         )
         .unwrap()
@@ -411,6 +517,7 @@ mod tests {
                 bearer_token: "upstream-secret".into(),
                 workflow_tool_name: None,
                 workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
         let service =
@@ -505,6 +612,7 @@ mod tests {
                 bearer_token: "old-secret".into(),
                 workflow_tool_name: Some("handoff_to_agent".into()),
                 workflow_prepare_url: Some("http://localhost/prepare".into()),
+                caller_context: false,
             })
             .unwrap();
         let first = HarnessEngineService::new(
@@ -549,6 +657,7 @@ mod tests {
                     bearer_token: secret.into(),
                     workflow_tool_name: Some("handoff_to_agent".into()),
                     workflow_prepare_url: Some("http://localhost/prepare".into()),
+                    caller_context: false,
                 })
                 .unwrap();
             next.prepare_launch(&session, &AgentInvocationId::new(invocation).unwrap(), None)
@@ -578,6 +687,7 @@ mod tests {
                 bearer_token: "first".into(),
                 workflow_tool_name: None,
                 workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
         let second = registry
@@ -587,6 +697,7 @@ mod tests {
                 bearer_token: "second".into(),
                 workflow_tool_name: None,
                 workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
 
@@ -594,6 +705,34 @@ mod tests {
             registry.resolve("plan_builder").unwrap().bearer_token,
             "second"
         );
+        let scoped = registry
+            .register_for_session(
+                "session-a",
+                ManagedMcpUpstreamDescriptor {
+                    name: "plan_builder".into(),
+                    url: "http://127.0.0.1:41003/mcp".into(),
+                    bearer_token: "session-a".into(),
+                    workflow_tool_name: None,
+                    workflow_prepare_url: None,
+                    caller_context: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            registry
+                .resolve_for_session(Some("session-a"), "plan_builder")
+                .unwrap()
+                .bearer_token,
+            "session-a"
+        );
+        assert_eq!(
+            registry
+                .resolve_for_session(Some("session-b"), "plan_builder")
+                .unwrap()
+                .bearer_token,
+            "second"
+        );
+        registry.unregister(&scoped);
         registry.unregister(&second);
         assert_eq!(
             registry.resolve("plan_builder").unwrap().bearer_token,
@@ -621,6 +760,7 @@ mod tests {
                 bearer_token: "secret".into(),
                 workflow_tool_name: None,
                 workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
         let stopped = Arc::new(AtomicBool::new(false));

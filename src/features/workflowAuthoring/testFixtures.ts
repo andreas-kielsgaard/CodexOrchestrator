@@ -1,3 +1,6 @@
+import catalogue from './otpCatalogue.fixture.json';
+import type { OtpPackageDto } from '../../application/workflowAuthoring';
+export const otpCatalogue = catalogue as unknown as readonly OtpPackageDto[];
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
@@ -29,7 +32,8 @@ export const repairProfile: CapabilityProfileDto = {
 };
 export function repairRecipe(id = 'review', name = 'Review workflow'): WorkflowRecipeStateDto {
   const draft: WorkflowRecipeStateDto['draft'] = {
-    contractVersion: 1,
+    contractVersion: 2,
+    entryAction: { package: 'workflow', tool: 'prompt_agent' },
     recipeId: id,
     name,
     revision: 1,
@@ -125,7 +129,9 @@ export function repairClients() {
     copyNodeConfiguration: async () => {
       throw new Error('Copy edits the local draft.');
     },
-    compileRecipeInstance: async () => [],
+    compileRecipeInstance: async () => {
+      throw new Error('Use a stored instance.');
+    },
     dispatchUserRequest: async () => {
       throw new Error('Use a stored instance.');
     },

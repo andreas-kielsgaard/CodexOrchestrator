@@ -1,4 +1,5 @@
 import type { ExecutionBindingDto } from '../../application/executionTargets/contracts';
+import type { OtpPackageDto } from '../../application/otp';
 import type { PresentableIdentity } from '../identities';
 import type { CatalogState } from '../../components/CatalogSelect';
 import type {
@@ -13,6 +14,7 @@ export type CapabilitySetViewModel = CapabilitySetDto;
 export type RuntimeSelectionsViewModel = RuntimeSelectionsDto;
 
 export interface RuntimeCapabilityCatalogs {
+  readonly otpPackages?: readonly OtpPackageDto[];
   readonly models: CatalogState;
   readonly reasoningModes: CatalogState;
   readonly sandboxModes: CatalogState<SandboxModeDto>;

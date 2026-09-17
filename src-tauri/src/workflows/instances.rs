@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 use uuid::Uuid;
 
+use crate::otp_api::{InvocationContext, OutputRef, SessionRequest};
 use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const WORKFLOW_INSTANCE_SCHEMA: &str = r#"
@@ -36,12 +37,56 @@ pub(crate) struct WorkflowEventAttempt {
     pub(crate) id: String,
     pub(crate) instance_id: String,
     pub(crate) definition_ref: ReferenceIdentity,
+    #[serde(default = "legacy_invocation_context")]
+    pub(crate) context: InvocationContext,
     #[serde(default)]
-    pub(crate) workflow_element_ref: Option<ReferenceIdentity>,
-    pub(crate) source_session_id: Option<String>,
+    pub(crate) output: Option<OutputRef>,
+    #[serde(default)]
+    pub(crate) payload: serde_json::Value,
     pub(crate) created_at: String,
-    pub(crate) event_group: Option<ReferenceIdentity>,
+    #[serde(default)]
+    pub(crate) session_requests: Vec<SessionRequest>,
+    #[serde(default)]
+    pub(crate) stop_outcomes: Vec<SessionStopOutcome>,
+    #[serde(default)]
+    pub(crate) message: String,
+    #[serde(default)]
+    pub(crate) event_groups: Vec<SessionEventResult>,
+    #[serde(default)]
     pub(crate) error: Option<String>,
+}
+
+fn legacy_invocation_context() -> InvocationContext {
+    InvocationContext {
+        instance_id: "legacy".into(),
+        occurrence_id: "legacy".into(),
+        capability: crate::otp_api::CapabilityRef {
+            package: "workflow".into(),
+            tool: "on_invocation_completed".into(),
+        },
+        source: None,
+        connection_id: None,
+        output_node_id: None,
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionStopOutcome {
+    pub(crate) node_id: String,
+    pub(crate) session_id: String,
+    pub(crate) invocation_id: Option<String>,
+    pub(crate) status: String,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowActionResult {
+    pub(crate) attempt_id: String,
+    pub(crate) event_groups: Vec<SessionEventResult>,
+    pub(crate) stop_outcomes: Vec<SessionStopOutcome>,
+    pub(crate) message: String,
 }
 
 pub(crate) struct WorkflowInstanceStore {
@@ -144,10 +189,7 @@ impl WorkflowInstanceStore {
         let result = query
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(|error| error.to_string())?
-            .map(|row| {
-                serde_json::from_str(&row.map_err(|error| error.to_string())?)
-                    .map_err(|error| error.to_string())
-            })
+            .map(|row| decode_instance(&row.map_err(|error| error.to_string())?))
             .collect();
         result
         })
@@ -164,7 +206,7 @@ impl WorkflowInstanceStore {
                 .optional()
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("Workflow instance `{id}` does not exist"))?;
-            serde_json::from_str(&value).map_err(|error| error.to_string())
+            decode_instance(&value)
         })
     }
 
@@ -180,7 +222,7 @@ impl WorkflowInstanceStore {
         result: &Result<SessionEventResult, String>,
     ) -> Result<(), String> {
         match result {
-            Ok(result) => attempt.event_group = Some(result.group.event_group_id.clone()),
+            Ok(result) => attempt.event_groups.push(result.clone()),
             Err(error) => attempt.error = Some(error.clone()),
         }
         self.write("finish Workflow event attempt", |transaction| {
@@ -190,6 +232,21 @@ impl WorkflowInstanceStore {
                     params![
                         attempt.id,
                         serde_json::to_string(&attempt).map_err(|error| error.to_string())?
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn update_attempt(&self, attempt: &WorkflowEventAttempt) -> Result<(), String> {
+        self.write("update Workflow event attempt", |transaction| {
+            transaction
+                .execute(
+                    "UPDATE workflow_recipe_attempts SET record_json=?2 WHERE id=?1",
+                    params![
+                        attempt.id,
+                        serde_json::to_string(attempt).map_err(|error| error.to_string())?
                     ],
                 )
                 .map_err(|error| error.to_string())?;
@@ -214,6 +271,21 @@ impl WorkflowInstanceStore {
     }
 }
 
+fn decode_instance(value: &str) -> Result<RecipeInstance, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(value).map_err(|error| error.to_string())?;
+    let recipe = value
+        .get_mut("recipe")
+        .ok_or("Workflow instance has no recipe")?
+        .take();
+    *value
+        .get_mut("recipe")
+        .ok_or("Workflow instance has no recipe")? =
+        serde_json::to_value(super::authoring::decode_recipe_value(recipe)?)
+            .map_err(|error| error.to_string())?;
+    serde_json::from_value(value).map_err(|error| error.to_string())
+}
+
 pub(crate) fn initialize_workflow_instance_storage(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(WORKFLOW_INSTANCE_SCHEMA)
@@ -232,18 +304,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn older_attempt_records_load_without_an_element_owner() {
+    fn older_attempt_records_load_with_a_safe_legacy_context() {
         let attempt: WorkflowEventAttempt = serde_json::from_value(serde_json::json!({
             "id": "attempt-1",
             "instanceId": "instance-1",
             "definitionRef": {"namespace": "workflow", "kind": "event_definition", "id": "definition-1"},
-            "sourceSessionId": null,
             "createdAt": "2026-09-08T00:00:00Z",
-            "eventGroup": null,
             "error": null
         }))
         .unwrap();
 
-        assert!(attempt.workflow_element_ref.is_none());
+        assert_eq!(attempt.context.occurrence_id, "legacy");
     }
 }

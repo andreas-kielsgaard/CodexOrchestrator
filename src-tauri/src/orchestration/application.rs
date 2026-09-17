@@ -946,6 +946,7 @@ mod tests {
                 bearer_token: "secret".into(),
                 workflow_tool_name: None,
                 workflow_prepare_url: None,
+                caller_context: false,
             })
             .unwrap();
         let stops = Arc::new(Mutex::new(0));

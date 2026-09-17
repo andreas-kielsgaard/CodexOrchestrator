@@ -31,6 +31,7 @@ import type { SessionEventQueryClient } from '../application/sessionEvents';
 import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
 
 import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
+import type { OtpCatalogueReader, OtpInstallationClient } from '../application/otp';
 
 import type { WorkflowInstanceClient } from '../application/workflowInstances';
 
@@ -193,6 +194,10 @@ export interface AppProps {
 
   readonly workflowInstanceClient?: WorkflowInstanceClient;
 
+  readonly otpCatalogueReader?: OtpCatalogueReader;
+
+  readonly otpInstallationClient?: OtpInstallationClient;
+
   readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
 
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
@@ -306,6 +311,10 @@ export function App({
   workflowAuthoringClient,
 
   workflowInstanceClient,
+
+  otpCatalogueReader,
+
+  otpInstallationClient,
 
   draftCloseGuard,
 
@@ -1630,6 +1639,8 @@ export function App({
         <ExecutionConfigurationScreen
           client={executionConfigurationClient}
 
+          readOtpCatalogue={otpCatalogueReader}
+
           targetClient={executionTargetClient}
 
           branchSource={branchSource}
@@ -1642,6 +1653,8 @@ export function App({
         currentProductDestination.kind === 'workflow' ? (
         <WorkflowAuthoringScreen
           client={workflowAuthoringClient}
+
+          readOtpCatalogue={otpCatalogueReader}
 
           executionConfigurationClient={executionConfigurationClient}
 
@@ -1800,6 +1813,10 @@ export function App({
       ) : surface === 'native-settings' && nativeProfileClient ? (
         <TechnicalSettingsScreen
           nativeClient={nativeProfileClient}
+
+          readOtpCatalogue={otpCatalogueReader}
+
+          otpInstallations={otpInstallationClient}
 
           executionClient={executionConfigurationClient}
 

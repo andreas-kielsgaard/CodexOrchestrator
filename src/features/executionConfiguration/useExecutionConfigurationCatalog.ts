@@ -4,6 +4,7 @@ import type {
   ExecutionConfigurationClient,
 } from '../../application/executionConfiguration';
 import type { IdentityManagementClient } from '../../application/identities';
+import type { OtpCatalogueReader } from '../../application/otp';
 import { runtimeProfileViewModel } from './presentation';
 import type {
   AgentIdentityOption,
@@ -15,6 +16,7 @@ import type {
 export function useExecutionConfigurationCatalog(
   client: ExecutionConfigurationClient,
   identityClient?: IdentityManagementClient,
+  readOtpCatalogue?: OtpCatalogueReader,
 ) {
   const [runtime, setRuntime] = useState<RuntimeProfileViewModel | null>(null);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileOption[]>([]);
@@ -29,12 +31,16 @@ export function useExecutionConfigurationCatalog(
     setLoading(true);
     setError(null);
     try {
-      const [runtimeSnapshot, capabilityProfiles, identityCatalog] = await Promise.all([
+      const [runtimeSnapshot, capabilityProfiles, identityCatalog, otpPackages] = await Promise.all([
         client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
         identityClient?.list() ?? Promise.resolve([]),
+        // OTP availability is resolved when an agent uses a tool. The
+        // designer can still edit profiles and recipes without catalogue data.
+        readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
       ]);
-      setRuntime(runtimeProfileViewModel(runtimeSnapshot));
+      const runtime = runtimeProfileViewModel(runtimeSnapshot);
+      setRuntime({ ...runtime, catalogs: { ...runtime.catalogs, otpPackages } });
       setProfileValues(
         new Map(capabilityProfiles.map((profile) => [profile.capabilityProfileId, profile])),
       );
@@ -58,7 +64,7 @@ export function useExecutionConfigurationCatalog(
     } finally {
       setLoading(false);
     }
-  }, [client, identityClient]);
+  }, [client, identityClient, readOtpCatalogue]);
 
   useEffect(() => {
     void reload();

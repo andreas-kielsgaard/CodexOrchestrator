@@ -1,0 +1,142 @@
+.otp-picker {
+  width: min(850px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  padding: 0;
+  border: 1px solid #ccd7d0;
+  border-radius: 14px;
+  color: #18362d;
+  background: #fffdfa;
+  box-shadow: 0 24px 80px #102e2940;
+}
+.otp-picker::backdrop {
+  background: #142d2866;
+}
+.otp-picker > header,
+.otp-picker > footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+}
+.otp-picker > header {
+  justify-content: space-between;
+  border-bottom: 1px solid #dce4dd;
+}
+.otp-picker h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.otp-picker > footer {
+  justify-content: flex-end;
+  border-top: 1px solid #dce4dd;
+}
+.otp-picker > footer > span {
+  margin-right: auto;
+}
+.otp-picker button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #cbd8cf;
+  border-radius: 7px;
+  padding: 8px 12px;
+  color: inherit;
+  background: white;
+}
+.otp-picker button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.otp-picker button:focus-visible,
+.otp-picker input:focus-visible {
+  outline: 2px solid #176b51;
+  outline-offset: 2px;
+}
+.otp-picker > footer > button:last-child {
+  background: #205943;
+  color: white;
+}
+.otp-picker__body {
+  display: grid;
+  grid-template-columns: minmax(180px, 29%) minmax(0, 1fr);
+  min-height: 320px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.otp-picker__body nav {
+  padding: 16px 10px;
+  background: #f3f6f1;
+  border-right: 1px solid #dce4dd;
+}
+.otp-picker__group > button {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-weight: 700;
+}
+.otp-picker__group ul {
+  list-style: none;
+  margin: 4px 0 14px;
+  padding: 0 0 0 8px;
+}
+.otp-picker__group li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.otp-picker__group li button {
+  flex: 1;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+.otp-picker__group li button[aria-pressed='true'] {
+  background: #deebe1;
+  border-color: #b6ccbd;
+}
+.otp-picker__details {
+  padding: 24px;
+  overflow-wrap: anywhere;
+}
+.otp-picker__details h3 {
+  margin-top: 0;
+}
+.otp-picker__details dt {
+  font-weight: 600;
+  margin-top: 14px;
+}
+.otp-picker__details dd {
+  margin: 6px 0;
+}
+.otp-picker__details pre {
+  white-space: pre-wrap;
+  background: #f3f6f1;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.82rem;
+}
+.otp-picker__missing {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+  padding: 12px;
+}
+.otp-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+}
+.otp-selection__summary {
+  flex: 1;
+  min-width: 160px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .otp-picker__body {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+  .otp-picker__details {
+    padding: 16px;
+  }
+}

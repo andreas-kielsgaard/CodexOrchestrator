@@ -3,6 +3,7 @@ pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
 mod target_transition;
 pub(crate) use target_transition::SCHEMA as TARGET_TRANSITION_SCHEMA;
 mod addressing;
+pub(crate) mod file_history;
 mod mapping;
 mod organization;
 pub(crate) use organization::write_placement;
@@ -179,19 +180,61 @@ impl SqliteAgentSessionRepository {
 }
 
 impl AgentSessionRepository for SqliteAgentSessionRepository {
-    fn current_execution_resolution(&self, id: &AgentSessionId) -> Result<Option<crate::execution_configuration::SessionCreationResolution>,RepositoryError> {
+    fn current_execution_resolution(
+        &self,
+        id: &AgentSessionId,
+    ) -> Result<Option<crate::execution_configuration::SessionCreationResolution>, RepositoryError>
+    {
         self.read("read current execution resolution",|c| {
             let json:Option<String>=c.query_row("SELECT resolution_json FROM agent_session_current_execution WHERE session_id=?1",[id.as_str()],|row|row.get(0)).optional().map_err(sql_unavailable("read current resolution"))?;
             json.map(|j|serde_json::from_str(&j).map_err(|e|RepositoryError::new(RepositoryErrorKind::InvalidState,e.to_string()))).transpose()
         })
     }
 
-    fn accept_preparation(&self, session: Option<(AgentSession, Option<crate::agent_sessions::organization::SessionPlacement>)>, invocation: AgentInvocation, preparation: super::preparation::SessionPreparation) -> Result<(), RepositoryError> { self.accept_preparation_record(session, invocation, preparation) }
-    fn preparation(&self, id: &AgentInvocationId) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> { self.read_preparation(id) }
-    fn latest_preparation(&self, id: &AgentSessionId) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> { self.read_latest_preparation(id) }
-    fn save_preparation(&self, preparation: &super::preparation::SessionPreparation) -> Result<(), RepositoryError> { self.save_preparation_record(preparation) }
-    fn commit_prepared_binding(&self, preparation: &super::preparation::SessionPreparation, binding: AgentRuntimeBinding, at: DateTime<Utc>) -> Result<AgentSession, RepositoryError> { self.commit_prepared_binding_record(preparation, binding, at) }
-    fn retry_preparation(&self, id: &AgentInvocationId, at: DateTime<Utc>) -> Result<(), RepositoryError> { self.retry_preparation_record(id, at) }
+    fn accept_preparation(
+        &self,
+        session: Option<(
+            AgentSession,
+            Option<crate::agent_sessions::organization::SessionPlacement>,
+        )>,
+        invocation: AgentInvocation,
+        preparation: super::preparation::SessionPreparation,
+    ) -> Result<(), RepositoryError> {
+        self.accept_preparation_record(session, invocation, preparation)
+    }
+    fn preparation(
+        &self,
+        id: &AgentInvocationId,
+    ) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> {
+        self.read_preparation(id)
+    }
+    fn latest_preparation(
+        &self,
+        id: &AgentSessionId,
+    ) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> {
+        self.read_latest_preparation(id)
+    }
+    fn save_preparation(
+        &self,
+        preparation: &super::preparation::SessionPreparation,
+    ) -> Result<(), RepositoryError> {
+        self.save_preparation_record(preparation)
+    }
+    fn commit_prepared_binding(
+        &self,
+        preparation: &super::preparation::SessionPreparation,
+        binding: AgentRuntimeBinding,
+        at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.commit_prepared_binding_record(preparation, binding, at)
+    }
+    fn retry_preparation(
+        &self,
+        id: &AgentInvocationId,
+        at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        self.retry_preparation_record(id, at)
+    }
     fn target_transition(
         &self,
         session_id: &AgentSessionId,
@@ -580,6 +623,7 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
             validate_next_event(&event.invocation_id, previous.as_ref(), &event)
                 .map_err(contract_error)?;
             insert_event(transaction, &event)?;
+            file_history::append(transaction, &event)?;
             Ok(event)
         })
     }
@@ -590,6 +634,15 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<Vec<AgentRuntimeEvent>, RepositoryError> {
         self.read("list Agent Session runtime events", |connection| {
             list_events_from(connection, invocation_id)
+        })
+    }
+
+    fn file_history_at_scope(
+        &self,
+        scope: &crate::session_events::ReferenceIdentity,
+    ) -> Result<Vec<crate::agent_sessions::file_history::SessionFileChange>, RepositoryError> {
+        self.read("read Agent Session file history", |connection| {
+            file_history::query(connection, scope)
         })
     }
 }
@@ -608,13 +661,20 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
             .execute_batch(AGENT_SESSION_SCHEMA)
             .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     }
-    connection.execute_batch(PREPARATION_SCHEMA).map_err(|e| e.to_string())?;
-    connection.execute_batch(TARGET_TRANSITION_SCHEMA).map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(PREPARATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(TARGET_TRANSITION_SCHEMA)
+        .map_err(|e| e.to_string())?;
     ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(IMPORT_SCHEMA)
         .map_err(|e| e.to_string())?;
     initialize_session_address_storage(connection)?;
+    connection
+        .execute_batch(file_history::SCHEMA)
+        .map_err(|error| format!("Unable to initialize Agent Session file history: {error}"))?;
     connection
         .execute_batch(SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
