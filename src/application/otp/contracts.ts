@@ -26,6 +26,8 @@ export interface OtpToolDto {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly expectedBehavior: string;
+  readonly recommendedUsage: string;
   readonly entrypoint:
     | { readonly kind: 'mcp'; readonly inputSchema: Readonly<Record<string, unknown>> }
     | { readonly kind: 'session_event'; readonly event: 'invocation_terminal' }
@@ -38,16 +40,38 @@ export interface OtpAgentMcpToolDto {
   readonly name: string;
   readonly description: string;
   readonly capability: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly outputSchema: Readonly<Record<string, unknown>>;
+  readonly expectedBehavior: string;
+  readonly recommendedUsage: string;
+  readonly requiredGrants: readonly string[];
+}
+export interface OtpAgentMcpCapabilityGroupDto {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+}
+export interface OtpAgentMcpGrantDto {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly capability: string;
+  readonly transition: string;
 }
 export interface OtpAgentMcpServerDto {
   readonly serverName: string;
   readonly name: string;
   readonly description: string;
+  readonly capabilityGroups: readonly OtpAgentMcpCapabilityGroupDto[];
   readonly tools: readonly OtpAgentMcpToolDto[];
+  readonly grants: readonly OtpAgentMcpGrantDto[];
   readonly configuration: readonly OtpConfigurationFieldDto[];
 }
 export interface OtpPackageDto {
   readonly id: string;
+  readonly name: string;
+  readonly summary: string;
+  readonly description: string;
   readonly contractVersion: number;
   readonly requestedHandles: readonly ('definitions' | 'node_sessions' | 'emit_output')[];
   readonly tools: readonly OtpToolDto[];

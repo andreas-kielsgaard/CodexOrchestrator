@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WorkflowAuthoringScreen } from './WorkflowAuthoringScreen';
-import { repairClients } from './testFixtures';
+import { otpCatalogue, repairClients } from './testFixtures';
 
 it('discovers continuation fields and saves ordered file selections for multiple nodes', async () => {
   const user = userEvent.setup();
@@ -31,6 +31,7 @@ it('discovers continuation fields and saves ordered file selections for multiple
   const element = (
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
     />
   );

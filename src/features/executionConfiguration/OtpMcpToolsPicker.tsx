@@ -14,6 +14,7 @@ type ManagedTool =
   | {
       readonly kind: 'agent_mcp';
       readonly pkg: OtpPackageDto;
+      readonly server: OtpPackageDto['agentMcpServers'][number];
       readonly serverName: string;
       readonly serverLabel: string;
       readonly tool: OtpPackageDto['agentMcpServers'][number]['tools'][number];
@@ -52,6 +53,7 @@ export function OtpMcpToolsPicker({
               {
                 kind: 'agent_mcp',
                 pkg,
+                server,
                 serverName: server.serverName,
                 serverLabel: server.name,
                 tool,
@@ -121,13 +123,7 @@ export function OtpMcpToolsPicker({
               );
             }
             if (owned.kind === 'workflow') return <OtpElementDetails tool={owned.tool} />;
-            return (
-              <>
-                <h3>{owned.tool.name}</h3>
-                <p>{owned.tool.description}</p>
-                <p>Job capability: {owned.tool.capability.replaceAll('_', ' ')}.</p>
-              </>
-            );
+            return <OtpElementDetails endpoint={owned.tool} server={owned.server} />;
           }}
           onClose={() => setOpen(false)}
           onConfirm={(next) => {

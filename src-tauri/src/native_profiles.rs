@@ -2289,8 +2289,7 @@ impl NativeProfileService {
         ).map_err(|error| error.to_string())?;
         if transitioned != 1 {
             return Err(
-                "MCP reporting receipt does not match one current application-owned probe"
-                    .into(),
+                "MCP reporting receipt does not match one current application-owned probe".into(),
             );
         }
         transaction.execute(
@@ -2371,7 +2370,9 @@ impl NativeProfileService {
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to terminalize native MCP reporting probe: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to terminalize native MCP reporting probe: {error}")
+            })?;
         let now = Utc::now().to_rfc3339();
         let transitioned = transaction
             .execute(
@@ -2380,7 +2381,9 @@ impl NativeProfileService {
             )
             .map_err(|error| error.to_string())?;
         if transitioned != 1 {
-            return Err("The application-owned MCP reporting probe could not be terminalized".into());
+            return Err(
+                "The application-owned MCP reporting probe could not be terminalized".into(),
+            );
         }
         transaction
             .execute(
@@ -2443,13 +2446,17 @@ impl NativeProfileService {
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("CODEX_HOME"))
         {
-            return Err("Only the application-selected native profile may supply CODEX_HOME".into());
+            return Err(
+                "Only the application-selected native profile may supply CODEX_HOME".into(),
+            );
         }
         let resolved = self.resolve_selected_home()?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("Unable to bind managed Agent Session native profile: {error}"))?;
+            .map_err(|error| {
+                format!("Unable to bind managed Agent Session native profile: {error}")
+            })?;
         let binding = transaction
             .query_row(
                 "SELECT profile_id,filesystem_identity FROM agent_session_native_profile_bindings WHERE session_id=?1",
@@ -2466,7 +2473,10 @@ impl NativeProfileService {
             }
             None => {
                 if resuming {
-                    return Err("Managed Agent Session resume requires a durable native profile binding".into());
+                    return Err(
+                        "Managed Agent Session resume requires a durable native profile binding"
+                            .into(),
+                    );
                 }
                 transaction.execute(
                     "INSERT INTO agent_session_native_profile_bindings (session_id,profile_id,filesystem_identity,bound_at) VALUES (?1,?2,?3,?4)",
@@ -2485,7 +2495,12 @@ impl NativeProfileService {
             .map_err(|error| format!("Unable to load managed Agent Session native launch provenance: {error}"))?;
         match provenance {
             Some((bound_session, profile_id, identity, key, bound_mode)) => {
-                if bound_session != session_id || profile_id != resolved.profile_id || identity != resolved.filesystem_identity || key != "CODEX_HOME" || bound_mode != mode {
+                if bound_session != session_id
+                    || profile_id != resolved.profile_id
+                    || identity != resolved.filesystem_identity
+                    || key != "CODEX_HOME"
+                    || bound_mode != mode
+                {
                     return Err("Managed Agent Session native launch provenance conflicts with its durable profile binding".into());
                 }
             }
@@ -2496,8 +2511,13 @@ impl NativeProfileService {
                 ).map_err(|error| format!("Unable to persist managed Agent Session native launch provenance: {error}"))?;
             }
         }
-        transaction.commit().map_err(|error| format!("Unable to commit managed Agent Session native profile binding: {error}"))?;
-        extension.environment.push(("CODEX_HOME".into(), resolved.home.to_string_lossy().into_owned()));
+        transaction.commit().map_err(|error| {
+            format!("Unable to commit managed Agent Session native profile binding: {error}")
+        })?;
+        extension.environment.push((
+            "CODEX_HOME".into(),
+            resolved.home.to_string_lossy().into_owned(),
+        ));
         Ok(extension)
     }
 
@@ -2647,7 +2667,8 @@ impl NativeProfileService {
         &self,
         id: &str,
     ) -> Result<NativeFullAccessCanaryProjectionDto, String> {
-        let target = NativeLaunchTarget::application_owned(self.full_access_canary_work_root(id)?, false)?;
+        let target =
+            NativeLaunchTarget::application_owned(self.full_access_canary_work_root(id)?, false)?;
         let launch = self.project_launch(id, &target)?;
         if launch.mode != ExecutionMode::DangerFullAccess {
             return Err(
@@ -4353,7 +4374,9 @@ fn load_full_access_canary_attempt(
         .transpose()
         .map_err(|_| "Native full-access canary violates its durable invariant")?;
     let timestamps_ordered = launch.as_ref().is_none_or(|launch| launch >= &requested)
-        && deadline.as_ref().is_none_or(|deadline| deadline >= &requested)
+        && deadline
+            .as_ref()
+            .is_none_or(|deadline| deadline >= &requested)
         && settled.as_ref().is_none_or(|settled| {
             settled >= &requested && launch.as_ref().is_none_or(|launch| settled >= launch)
         });
@@ -4425,8 +4448,10 @@ fn load_full_access_canary_attempt(
         || !valid_optional_timestamp(&settled_at)
         || receipt_observed != 0 && receipt_observed != 1
         || !timestamps_ordered
-        || (!matches!(disposition.as_str(), "legacy_unverified" | "recovered_unobserved")
-            && deadline_at.is_none())
+        || (!matches!(
+            disposition.as_str(),
+            "legacy_unverified" | "recovered_unobserved"
+        ) && deadline_at.is_none())
         || (!matches!(
             disposition.as_str(),
             "legacy_unverified" | "recovered_unobserved"
@@ -4450,10 +4475,8 @@ fn load_full_access_canary_attempt(
                 || receipt_observed != 0
                 || !cleanup_settled))
         || (disposition == "terminal_failed" && !terminal_failed_shape)
-        || (matches!(disposition.as_str(), "timed_out" | "cancelled")
-            && !cancelled_shape)
-        || (disposition == "recovered_unobserved"
-            && !(cancelled_shape || legacy_recovered_shape))
+        || (matches!(disposition.as_str(), "timed_out" | "cancelled") && !cancelled_shape)
+        || (disposition == "recovered_unobserved" && !(cancelled_shape || legacy_recovered_shape))
         || (disposition == "cleanup_failed" && !cleanup_failed_shape)
         || (disposition == "legacy_unverified" && !legacy_shape)
     {
@@ -4920,9 +4943,8 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet, NativeCodexCapabilityExposure,
-        NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
-        SelectedRuntimeProfileSource,
+        CapabilitySet, NativeCodexCapabilityExposure, NativeCodexSelectedRuntimeProfileSource,
+        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
     };
     use std::sync::Barrier;
     use std::thread;
@@ -5274,16 +5296,26 @@ mod tests {
         let first = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &first.id);
         let first_home = first.home_path.clone();
-        let prepared = service.prepare_managed_agent_session_launch(
-            "session-1", "invocation-1", false,
-            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                additional_args: vec!["--role-config".into()],
-                environment: vec![("ROLE_ENV".into(), "preserved".into())],
-                initial_prompt_prefix: None,
-            }),
-        ).expect("fresh launch binding");
-        assert!(prepared.environment.iter().any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
-        assert!(prepared.environment.iter().any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
+        let prepared = service
+            .prepare_managed_agent_session_launch(
+                "session-1",
+                "invocation-1",
+                false,
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    additional_args: vec!["--role-config".into()],
+                    environment: vec![("ROLE_ENV".into(), "preserved".into())],
+                    initial_prompt_prefix: None,
+                }),
+            )
+            .expect("fresh launch binding");
+        assert!(prepared
+            .environment
+            .iter()
+            .any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
+        assert!(prepared
+            .environment
+            .iter()
+            .any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
         let provenance: String = service.connection().unwrap().query_row(
             "SELECT printf('%s:%s:%s',profile_id,environment_key,invocation_mode) FROM agent_session_native_profile_launch_provenance WHERE invocation_id='invocation-1'",
             [], |row| row.get(0),
@@ -5302,20 +5334,29 @@ mod tests {
         let reopened = NativeProfileService::open(
             directory.path().join("active.sqlite"),
             directory.path().join("app"),
-        ).expect("reopen profile service");
-        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-2", true, None).is_ok());
+        )
+        .expect("reopen profile service");
+        assert!(reopened
+            .prepare_managed_agent_session_launch("session-1", "invocation-2", true, None)
+            .is_ok());
 
         let second = selected_profile_ready_except_mcp(&reopened);
         mark_mcp_ready(&reopened, &second.id);
-        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-3", true, None).is_err());
-        assert!(reopened.prepare_managed_agent_session_launch(
-            "session-2", "invocation-4", false,
-            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                additional_args: vec![],
-                environment: vec![("CODEX_HOME".into(), "foreign".into())],
-                initial_prompt_prefix: None,
-            }),
-        ).is_err());
+        assert!(reopened
+            .prepare_managed_agent_session_launch("session-1", "invocation-3", true, None)
+            .is_err());
+        assert!(reopened
+            .prepare_managed_agent_session_launch(
+                "session-2",
+                "invocation-4",
+                false,
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    additional_args: vec![],
+                    environment: vec![("CODEX_HOME".into(), "foreign".into())],
+                    initial_prompt_prefix: None,
+                }),
+            )
+            .is_err());
     }
 
     #[test]
@@ -6438,7 +6479,9 @@ mod tests {
     fn system_cli_port_observes_the_allowlisted_full_access_receipt_value() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("selected-home");
-        let parent = directory.path().join("application-owned-full-access-canary");
+        let parent = directory
+            .path()
+            .join("application-owned-full-access-canary");
         let work = parent.join("work");
         let receipt_root = parent.join("receipt");
         fs::create_dir_all(&home).unwrap();
@@ -6458,7 +6501,11 @@ mod tests {
         };
         let settled = port
             .run(&NativeCliInvocation {
-                args: vec!["/d".into(), "/c".into(), ".\\write-full-access-receipt.cmd".into()],
+                args: vec![
+                    "/d".into(),
+                    "/c".into(),
+                    ".\\write-full-access-receipt.cmd".into(),
+                ],
                 cwd: work.clone(),
                 codex_home: home.clone(),
                 environment: native_windows_cli_environment(&home),
@@ -7254,8 +7301,14 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
-        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "removed");
+        assert_eq!(
+            invalidated.full_access_canary_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            invalidated.full_access_canary_attempt.cleanup_disposition,
+            "removed"
+        );
         assert!(!invalidated.full_access_canary_attempt.receipt_observed);
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(!receipt.exists());
@@ -7272,7 +7325,8 @@ mod tests {
     }
 
     #[test]
-    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly() {
+    fn continuity_cancellation_records_full_access_receipt_cleanup_failure_without_deleting_broadly(
+    ) {
         let directory = tempfile::tempdir().unwrap();
         let mut service = NativeProfileService::open(
             directory.path().join("active.sqlite"),
@@ -7304,8 +7358,14 @@ mod tests {
         let query = reopened.query().unwrap();
         let invalidated = &query.profiles[0];
 
-        assert_eq!(invalidated.full_access_canary_attempt.disposition, "cancelled");
-        assert_eq!(invalidated.full_access_canary_attempt.cleanup_disposition, "failed");
+        assert_eq!(
+            invalidated.full_access_canary_attempt.disposition,
+            "cancelled"
+        );
+        assert_eq!(
+            invalidated.full_access_canary_attempt.cleanup_disposition,
+            "failed"
+        );
         assert_eq!(invalidated.readiness.danger_full_access_canary, "blocked");
         assert!(receipt.is_dir());
     }
@@ -7642,7 +7702,11 @@ mod tests {
             .is_err());
         assert!(reporting.calls.lock().unwrap().is_empty());
         assert_eq!(
-            service.profile(&profile.id).unwrap().readiness.mcp_reporting,
+            service
+                .profile(&profile.id)
+                .unwrap()
+                .readiness
+                .mcp_reporting,
             "not_assessed"
         );
     }
@@ -8099,10 +8163,8 @@ mod tests {
         let second = service.create_dedicated().unwrap();
         let (creation_ready_sender, creation_ready_receiver) = std::sync::mpsc::channel();
         let (selection_start_sender, selection_start_receiver) = std::sync::mpsc::channel();
-        let (selection_committed_sender, selection_committed_receiver) =
-            std::sync::mpsc::channel();
-        let (creation_continue_sender, creation_continue_receiver) =
-            std::sync::mpsc::channel();
+        let (selection_committed_sender, selection_committed_receiver) = std::sync::mpsc::channel();
+        let (creation_continue_sender, creation_continue_receiver) = std::sync::mpsc::channel();
 
         let selecting = {
             let service = service.clone();

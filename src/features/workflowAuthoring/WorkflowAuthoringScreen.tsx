@@ -13,6 +13,7 @@ import type { AgentSessionClient } from '../../application/agentSessions';
 import type { AgentSessionProfileClient } from '../../application/agentSessionProfiles';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
+import type { OtpCatalogueReader } from '../../application/otp';
 import type { IdentityManagementClient } from '../../application/identities';
 import type {
   WorkflowAuthoringClient,
@@ -39,6 +40,7 @@ import './workflowAuthoring.css';
 
 export interface WorkflowAuthoringScreenProps {
   readonly client: WorkflowAuthoringClient;
+  readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly executionConfigurationClient: ExecutionConfigurationClient;
   readonly identityClient?: IdentityManagementClient;
   readonly workspace?: DraftWorkspace<WorkflowRecipeDraftDto>;
@@ -55,6 +57,7 @@ export interface WorkflowAuthoringScreenProps {
 
 export function WorkflowAuthoringScreen({
   client,
+  readOtpCatalogue,
   executionConfigurationClient,
   identityClient,
   workspace: providedWorkspace,
@@ -161,7 +164,7 @@ export function WorkflowAuthoringScreen({
     let active = true;
     setBusy(true);
     setError(null);
-    void Promise.all([loadCatalogs(), loadSummaries(), client.listCapabilities()])
+    void Promise.all([loadCatalogs(), loadSummaries(), readOtpCatalogue?.() ?? Promise.resolve([])])
       .then(([, recipes, capabilities]) => {
         if (active) setPackages(capabilities);
         if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
@@ -173,7 +176,7 @@ export function WorkflowAuthoringScreen({
       active = false;
       openTicket.current += 1;
     };
-  }, [client, loadCatalogs, loadSummaries, openRecipe]);
+  }, [client, loadCatalogs, loadSummaries, openRecipe, readOtpCatalogue]);
 
   useEffect(() => {
     if (recipeId && recipeId !== selectedRef.current) void openRecipe(recipeId);

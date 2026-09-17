@@ -147,7 +147,11 @@ impl HarnessCatalogRepository for SqliteHarnessCatalogRepository {
             .lock()?
             .execute(
                 "UPDATE harnesses SET metadata_json=?2,updated_at=?3 WHERE harness_id=?1",
-                params![harness_id.as_str(), encode(metadata)?, updated_at.to_rfc3339()],
+                params![
+                    harness_id.as_str(),
+                    encode(metadata)?,
+                    updated_at.to_rfc3339()
+                ],
             )
             .map_err(|error| format!("Unable to update Harness metadata: {error}"))?;
         expect_one(changed, "Harness does not exist")
@@ -350,7 +354,13 @@ fn harness_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HarnessRow> {
 }
 
 fn draft_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DraftRow> {
-    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    ))
 }
 
 fn version_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VersionRow> {
@@ -534,7 +544,10 @@ mod tests {
         .unwrap();
         repository.publish(&version, Some(1)).unwrap();
 
-        assert_eq!(repository.version(&version.reference).unwrap(), Some(version));
+        assert_eq!(
+            repository.version(&version.reference).unwrap(),
+            Some(version)
+        );
         assert_eq!(repository.draft(&id).unwrap(), None);
     }
 
@@ -559,16 +572,17 @@ mod tests {
         .unwrap();
         repository.publish(&first, None).unwrap();
         repository.publish(&second, None).unwrap();
-        let replacement = HarnessVersionReplacement::new(
-            first.reference.clone(),
-            second.reference.clone(),
-        )
-        .unwrap();
+        let replacement =
+            HarnessVersionReplacement::new(first.reference.clone(), second.reference.clone())
+                .unwrap();
 
         repository
             .order_replacement(&replacement, Utc::now())
             .unwrap();
 
-        assert_eq!(repository.replacement(&first.reference).unwrap(), Some(replacement));
+        assert_eq!(
+            repository.replacement(&first.reference).unwrap(),
+            Some(replacement)
+        );
     }
 }

@@ -1,8 +1,8 @@
 use super::*;
 mod continuation_tests;
-mod stop_tests;
 #[cfg(feature = "live-tests")]
 mod live_continuation;
+mod stop_tests;
 use crate::harness_engine::{
     domain::SidecarBindingRegistration,
     proxy::{run_proxy_listener, ProxyBindings},
@@ -152,13 +152,21 @@ impl Fixture {
             profiles.clone(),
             crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
         ));
-        let execution = Arc::new(WorkflowExecutionService::new(
-            authoring.clone(),
-            events,
-            Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
-            adapter,
-            repository.clone(),
-        ).with_session_control(Arc::new(crate::otp_host::session_control::AgentSessionControl { application: sessions.clone(), repository: repository.clone() })));
+        let execution = Arc::new(
+            WorkflowExecutionService::new(
+                authoring.clone(),
+                events,
+                Arc::new(WorkflowInstanceStore::open(&database).unwrap()),
+                adapter,
+                repository.clone(),
+            )
+            .with_session_control(Arc::new(
+                crate::otp_host::session_control::AgentSessionControl {
+                    application: sessions.clone(),
+                    repository: repository.clone(),
+                },
+            )),
+        );
         *notifier.execution.lock().unwrap() = Some(Arc::downgrade(&execution));
         if mediated {
             let (mut descriptors, owner) = crate::otp_host::mcp::start_server(
@@ -457,7 +465,15 @@ fn stored_instance_drives_normal_completion_and_existing_sessions_ignore_deleted
         Some(instance.target.worktree.path.as_str())
     );
     let before = b_history.session.session_profile.clone();
-    let a_id = AgentSessionId::new(first.event_groups[0].group.created_session.clone().unwrap().id()).unwrap();
+    let a_id = AgentSessionId::new(
+        first.event_groups[0]
+            .group
+            .created_session
+            .clone()
+            .unwrap()
+            .id(),
+    )
+    .unwrap();
     fixture.profiles.delete("test-capabilities").unwrap();
     fixture
         .direct
@@ -542,7 +558,15 @@ fn missing_prompt_file_records_handoff_failure_without_changing_sender_completio
         )
         .unwrap();
     assert_eq!(fixture.launches().len(), 1);
-    let id = AgentSessionId::new(first.event_groups[0].group.created_session.clone().unwrap().id()).unwrap();
+    let id = AgentSessionId::new(
+        first.event_groups[0]
+            .group
+            .created_session
+            .clone()
+            .unwrap()
+            .id(),
+    )
+    .unwrap();
     assert_eq!(
         fixture.sessions.load_session(&id).unwrap().invocations[0]
             .invocation

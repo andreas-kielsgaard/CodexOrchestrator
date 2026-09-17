@@ -109,7 +109,10 @@ impl CodexMcpInjection {
 
     pub(crate) fn is_exact_work_unit_implementer_reporting_transport(&self) -> bool {
         if self.configuration_args.len() != 18
-            || self.configuration_args.chunks_exact(2).any(|pair| pair[0] != "-c")
+            || self
+                .configuration_args
+                .chunks_exact(2)
+                .any(|pair| pair[0] != "-c")
         {
             return false;
         }
@@ -145,7 +148,9 @@ impl CodexMcpInjection {
             value
                 .strip_prefix(&expected[0])
                 .is_some_and(|variable| !variable.is_empty())
-        }) && expected[1..].iter().all(|expected| values.contains(&expected.as_str()))
+        }) && expected[1..]
+            .iter()
+            .all(|expected| values.contains(&expected.as_str()))
     }
 }
 
@@ -756,9 +761,10 @@ mod tests {
                 .count(),
             9
         );
-        assert!(injection.configuration_args.iter().any(|value| {
-            value == "sandbox_workspace_write.network_access=true"
-        }));
+        assert!(injection
+            .configuration_args
+            .iter()
+            .any(|value| { value == "sandbox_workspace_write.network_access=true" }));
         assert!(injection
             .configuration_args
             .iter()
@@ -768,7 +774,8 @@ mod tests {
             .iter()
             .find(|value| value.contains(".enabled_tools="))
             .expect("managed tool allow list");
-        assert!(tools.ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
+        assert!(tools
+            .ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
         assert!(injection
             .configuration_args
             .iter()
@@ -1200,12 +1207,13 @@ mod tests {
         assert!(descriptor.url.starts_with("http://127.0.0.1:"));
         assert!(!descriptor.bearer_token.is_empty());
         let registry = crate::harness_engine::ManagedMcpUpstreamRegistry::default();
-        registry.register(descriptor.clone()).expect("register descriptor");
+        registry
+            .register(descriptor.clone())
+            .expect("register descriptor");
         let harness_snapshot = "{\"harnessName\":\"Plan review\"}".to_string();
-        let mediation_plan = serde_json::to_string(
-            &crate::harness_engine::domain::HarnessMediationPlan {
-                contract_version:
-                    crate::harness_engine::domain::MEDIATION_PLAN_VERSION.to_string(),
+        let mediation_plan =
+            serde_json::to_string(&crate::harness_engine::domain::HarnessMediationPlan {
+                contract_version: crate::harness_engine::domain::MEDIATION_PLAN_VERSION.to_string(),
                 exposures: vec![crate::harness_engine::domain::HarnessMcpExposurePlan {
                     configured_server_name: "plan_builder".into(),
                     proxy_server_name: "workflow_harness_1".into(),
@@ -1214,9 +1222,8 @@ mod tests {
                         tool_names: vec![SUBMIT_TOOL.into()],
                     },
                 }],
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let mut bindings = crate::harness_engine::proxy::ProxyBindings::default();
         let token = bindings
             .register(crate::harness_engine::domain::SidecarBindingRegistration {
@@ -1235,9 +1242,7 @@ mod tests {
                 source_node_id: "node-1".into(),
             })
             .unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_address = listener.local_addr().unwrap();
         let proxy_cancel = CancellationToken::new();
         tokio::spawn(crate::harness_engine::proxy::run_proxy_listener(
@@ -1247,15 +1252,7 @@ mod tests {
         ));
         let proxy_url = crate::harness_engine::proxy::proxy_url(proxy_address, &token, 0);
         let client = reqwest::Client::new();
-        let initialized = post(
-            &client,
-            &proxy_url,
-            None,
-            None,
-            None,
-            initialize(),
-        )
-        .await;
+        let initialized = post(&client, &proxy_url, None, None, None, initialize()).await;
         assert!(initialized.status().is_success());
         let session = initialized
             .headers()

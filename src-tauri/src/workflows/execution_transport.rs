@@ -125,6 +125,9 @@ mod tests {
             "data": {"sourceUrl": "https://example.test"}
         }))
         .unwrap();
-        assert_eq!(input.data, serde_json::json!({"sourceUrl": "https://example.test"}));
+        assert_eq!(
+            input.data,
+            serde_json::json!({"sourceUrl": "https://example.test"})
+        );
     }
 }

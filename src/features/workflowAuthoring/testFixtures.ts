@@ -99,7 +99,6 @@ export function repairClients() {
     },
   };
   const authoring: WorkflowAuthoringClient = {
-    listCapabilities: async () => structuredClone(otpCatalogue),
     listRecipes: async () =>
       states.map(({ draft, active, updatedAt }) => ({
         recipeId: draft.recipeId,

@@ -282,6 +282,9 @@ pub(crate) fn run() {
             app.manage(crate::otp_host::installations::OtpInstallationTauriState::new(
                 otp_installations.clone(),
             ));
+            app.manage(crate::otp_host::catalogue::OtpCatalogueTauriState::new(
+                otp_registry.clone(),
+            ));
             let workflow_authoring = Arc::new(
                 crate::workflows::authoring_service::WorkflowAuthoringService::new(
                     Arc::new(
@@ -533,8 +536,8 @@ pub(crate) fn run() {
             crate::harness_engine::transport::resolve_harness_version,
             crate::otp_host::installations::read_job_agent_otp_installation,
             crate::otp_host::installations::save_job_agent_otp_installation,
+            crate::otp_host::catalogue::list_otp_catalogue,
             crate::workflows::authoring_transport::list_workflow_recipes,
-            crate::workflows::authoring_transport::list_workflow_capabilities,
             crate::workflows::authoring_transport::load_workflow_recipe,
             crate::workflows::authoring_transport::create_workflow_recipe,
             crate::workflows::authoring_transport::save_workflow_recipe_draft,

@@ -1,17 +1,1467 @@
 [
   {
+    "agentMcpServers": [
+      {
+        "capabilityGroups": [
+          {
+            "description": "Read source context and save reviewable suggestions without changing the registry.",
+            "id": "source_discovery",
+            "name": "Source discovery"
+          },
+          {
+            "description": "Read and maintain source records while keeping execution disabled.",
+            "id": "source_registry",
+            "name": "Source registry"
+          },
+          {
+            "description": "Capture bounded public evidence and inspect artifacts used to author recipes.",
+            "id": "source_calibration",
+            "name": "Source calibration"
+          },
+          {
+            "description": "Create, review, approve, and adopt constrained source recipe candidates.",
+            "id": "recipe_authoring",
+            "name": "Recipe authoring"
+          },
+          {
+            "description": "Prepare, test, enable, disable, and inspect guarded execution projections.",
+            "id": "source_execution",
+            "name": "Source execution"
+          },
+          {
+            "description": "Read usable-session status without revealing credentials or browser control.",
+            "id": "source_session_status",
+            "name": "Source session status"
+          }
+        ],
+        "configuration": [
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "registryConfigure",
+            "label": "Allow source registry configuration",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "calibrationCalibrate",
+            "label": "Allow source calibration",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "recipeAuthor",
+            "label": "Allow recipe authoring",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "recipeApprove",
+            "label": "Allow recipe approval",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "recipeAdopt",
+            "label": "Allow recipe adoption",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "executionConfigure",
+            "label": "Allow execution projection configuration",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "executionTest",
+            "label": "Allow safe source tests",
+            "when": null
+          },
+          {
+            "choices": [
+              "deny",
+              "allow"
+            ],
+            "defaultValue": "deny",
+            "key": "executionEnable",
+            "label": "Allow source enablement",
+            "when": null
+          }
+        ],
+        "description": "A local MCP service delivered only to configured agent sessions, with capability-scoped endpoints and default-deny mutation grants.",
+        "grants": [
+          {
+            "capability": "source_registry",
+            "description": "Create, update, archive, and restore source records.",
+            "id": "registryConfigure",
+            "label": "Allow source registry configuration",
+            "transition": "configure"
+          },
+          {
+            "capability": "source_calibration",
+            "description": "Capture public calibration evidence for a source.",
+            "id": "calibrationCalibrate",
+            "label": "Allow source calibration",
+            "transition": "calibrate"
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Create, update, and reject pending recipe candidates.",
+            "id": "recipeAuthor",
+            "label": "Allow recipe authoring",
+            "transition": "author_recipe"
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Approve a pending recipe candidate into a validated recipe.",
+            "id": "recipeApprove",
+            "label": "Allow recipe approval",
+            "transition": "approve_recipe"
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Adopt an approved recipe for a source.",
+            "id": "recipeAdopt",
+            "label": "Allow recipe adoption",
+            "transition": "adopt_recipe"
+          },
+          {
+            "capability": "source_execution",
+            "description": "Prepare, refresh, and disable execution projections.",
+            "id": "executionConfigure",
+            "label": "Allow execution projection configuration",
+            "transition": "configure"
+          },
+          {
+            "capability": "source_execution",
+            "description": "Run guarded source tests without normal run outputs.",
+            "id": "executionTest",
+            "label": "Allow safe source tests",
+            "transition": "test"
+          },
+          {
+            "capability": "source_execution",
+            "description": "Enable a source when current readiness checks pass.",
+            "id": "executionEnable",
+            "label": "Allow source enablement",
+            "transition": "enable"
+          }
+        ],
+        "name": "Job Agent MCP",
+        "serverName": "job_agent",
+        "tools": [
+          {
+            "capability": "source_discovery",
+            "description": "Read compact source registry, health, value, and readiness summaries.",
+            "expectedBehavior": "Read compact source registry, health, value, and readiness summaries. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_catalog",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "kinds": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "statuses": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "name": "Get source catalog",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "sources": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source discovery stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_discovery",
+            "description": "Read one source's lifecycle, candidates, readiness, calibration summaries, and session status.",
+            "expectedBehavior": "Read one source's lifecycle, candidates, readiness, calibration summaries, and session status. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_detail",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get source detail",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "readiness": {
+                  "type": "object"
+                },
+                "session": {
+                  "type": "object"
+                },
+                "source": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source discovery stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_discovery",
+            "description": "Prepare profile-derived discovery context with existing sources and disqualified domains.",
+            "expectedBehavior": "Prepare profile-derived discovery context with existing sources and disqualified domains. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_discovery_context",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "focus": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "name": "Get source discovery context",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "context": {
+                  "type": "object"
+                },
+                "context_id": {
+                  "type": "string"
+                },
+                "focus": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source discovery stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_discovery",
+            "description": "Validate and save a review-only source suggestion set.",
+            "expectedBehavior": "Validate and save a review-only source suggestion set. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "submit_source_suggestions",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "context_id": {
+                  "type": "string"
+                },
+                "suggestions": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "context_id",
+                "suggestions"
+              ],
+              "type": "object"
+            },
+            "name": "Submit source suggestions",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "disqualified": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "result_id": {
+                  "type": "string"
+                },
+                "suggestions": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source discovery stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_registry",
+            "description": "Read complete source setup state, blockers, revision tokens, and allowed next actions.",
+            "expectedBehavior": "Read complete source setup state, blockers, revision tokens, and allowed next actions. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_setup_state",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get source setup state",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "blockers": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "object"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source registry stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_registry",
+            "description": "Create one public source registry record in a disabled state.",
+            "expectedBehavior": "Create one public source registry record in a disabled state. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "create_source",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "url"
+              ],
+              "type": "object"
+            },
+            "name": "Create source",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "object"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source registry stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "registryConfigure"
+            ]
+          },
+          {
+            "capability": "source_registry",
+            "description": "Update source name, public URL, notes, or status using a current revision.",
+            "expectedBehavior": "Update source name, public URL, notes, or status using a current revision. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "update_source",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Update source",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "object"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source registry stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "registryConfigure"
+            ]
+          },
+          {
+            "capability": "source_registry",
+            "description": "Archive a source and disable any existing execution projection.",
+            "expectedBehavior": "Archive a source and disable any existing execution projection. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "archive_source",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Archive source",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "object"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source registry stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "registryConfigure"
+            ]
+          },
+          {
+            "capability": "source_registry",
+            "description": "Restore an archived source without enabling execution.",
+            "expectedBehavior": "Restore an archived source without enabling execution. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "restore_source",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Restore source",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source": {
+                  "type": "object"
+                },
+                "state": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source registry stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "registryConfigure"
+            ]
+          },
+          {
+            "capability": "source_calibration",
+            "description": "Capture bounded public calibration evidence for an existing source.",
+            "expectedBehavior": "Capture bounded public calibration evidence for an existing source. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "capture_source_calibration",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "capture_detail": {
+                  "type": "boolean"
+                },
+                "max_candidates": {
+                  "type": "number"
+                },
+                "rendered": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Capture source calibration",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "artifact": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source calibration stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "calibrationCalibrate"
+            ]
+          },
+          {
+            "capability": "source_calibration",
+            "description": "List saved calibration artifacts associated with one source.",
+            "expectedBehavior": "List saved calibration artifacts associated with one source. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "list_source_artifacts",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "List source artifacts",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "artifacts": {
+                  "items": {
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source calibration stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_calibration",
+            "description": "Read bounded evidence from a listed calibration artifact.",
+            "expectedBehavior": "Read bounded evidence from a listed calibration artifact. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_recipe_evidence",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "artifact_id": {
+                  "type": "string"
+                },
+                "chunk_size": {
+                  "type": "number"
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "source_id": {
+                  "type": "string"
+                },
+                "view": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "artifact_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get recipe evidence",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "cursor": {
+                  "type": "number"
+                },
+                "evidence": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source calibration stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Validate a constrained recipe proposal against saved evidence and save a pending candidate.",
+            "expectedBehavior": "Validate a constrained recipe proposal against saved evidence and save a pending candidate. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "create_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "artifact_id": {
+                  "type": "string"
+                },
+                "proposal": {
+                  "type": "object"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "artifact_id",
+                "proposal"
+              ],
+              "type": "object"
+            },
+            "name": "Create recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "candidate": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "recipeAuthor"
+            ]
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Read a saved recipe candidate with revision, validation, and quality evidence.",
+            "expectedBehavior": "Read a saved recipe candidate with revision, validation, and quality evidence. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "candidate_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "candidate": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Replace a pending candidate proposal using its current revision.",
+            "expectedBehavior": "Replace a pending candidate proposal using its current revision. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "update_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "artifact_id": {
+                  "type": "string"
+                },
+                "candidate_id": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "type": "string"
+                },
+                "proposal": {
+                  "type": "object"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "candidate_id",
+                "artifact_id",
+                "proposal",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Update recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "candidate": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "recipeAuthor"
+            ]
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Reject a pending candidate with an optional reason.",
+            "expectedBehavior": "Reject a pending candidate with an optional reason. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "reject_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "candidate_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Reject recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "candidate": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "recipeAuthor"
+            ]
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Approve a pending candidate into a validated recipe and preview health.",
+            "expectedBehavior": "Approve a pending candidate into a validated recipe and preview health. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "approve_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "candidate_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Approve recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "candidate": {
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "recipe": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "recipeApprove"
+            ]
+          },
+          {
+            "capability": "recipe_authoring",
+            "description": "Adopt an approved recipe and optionally prepare a disabled projection.",
+            "expectedBehavior": "Adopt an approved recipe and optionally prepare a disabled projection. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "adopt_recipe_candidate",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "candidate_id": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "type": "string"
+                },
+                "prepare_execution": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "candidate_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Adopt recipe candidate",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "projection": {
+                  "type": "object"
+                },
+                "recipe": {
+                  "type": "object"
+                },
+                "source": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the recipe authoring stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "recipeAdopt"
+            ]
+          },
+          {
+            "capability": "source_execution",
+            "description": "Create a disabled execution projection from an adopted source recipe.",
+            "expectedBehavior": "Create a disabled execution projection from an adopted source recipe. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "prepare_execution_projection",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Prepare execution projection",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "projection": {
+                  "type": "object"
+                },
+                "readiness": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "executionConfigure"
+            ]
+          },
+          {
+            "capability": "source_execution",
+            "description": "Refresh a disabled execution projection from the selected recipe.",
+            "expectedBehavior": "Refresh a disabled execution projection from the selected recipe. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "refresh_execution_projection",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Refresh execution projection",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "projection": {
+                  "type": "object"
+                },
+                "readiness": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "executionConfigure"
+            ]
+          },
+          {
+            "capability": "source_execution",
+            "description": "Read source health, execution alignment, test findings, blockers, and warnings.",
+            "expectedBehavior": "Read source health, execution alignment, test findings, blockers, and warnings. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_readiness",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get source readiness",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "readiness": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": []
+          },
+          {
+            "capability": "source_execution",
+            "description": "Run the configured adapter without normal run outputs.",
+            "expectedBehavior": "Run the configured adapter without normal run outputs. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "run_safe_source_test",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "confirm_existing_session_use": {
+                  "type": "boolean"
+                },
+                "confirm_test": {
+                  "type": "boolean"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Run safe source test",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "readiness": {
+                  "type": "object"
+                },
+                "result": {
+                  "type": "object"
+                },
+                "session": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "executionTest"
+            ]
+          },
+          {
+            "capability": "source_execution",
+            "description": "Enable a tested source only when existing readiness checks pass.",
+            "expectedBehavior": "Enable a tested source only when existing readiness checks pass. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "enable_source_when_ready",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Enable source when ready",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "readiness": {
+                  "type": "object"
+                },
+                "source": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "executionEnable"
+            ]
+          },
+          {
+            "capability": "source_execution",
+            "description": "Disable a source execution projection without removing source history.",
+            "expectedBehavior": "Disable a source execution projection without removing source history. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "disable_source",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_revision": {
+                  "type": "string"
+                },
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "expected_revision"
+              ],
+              "type": "object"
+            },
+            "name": "Disable source",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "projection": {
+                  "type": "object"
+                },
+                "source": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source execution stage when the node's instructions need this result.",
+            "requiredGrants": [
+              "executionConfigure"
+            ]
+          },
+          {
+            "capability": "source_session_status",
+            "description": "Read whether a source has a usable session without revealing credentials or browser control.",
+            "expectedBehavior": "Read whether a source has a usable session without revealing credentials or browser control. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
+            "id": "get_source_session_status",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id"
+              ],
+              "type": "object"
+            },
+            "name": "Get source session status",
+            "outputSchema": {
+              "additionalProperties": true,
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "session": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "ok",
+                "message"
+              ],
+              "type": "object"
+            },
+            "recommendedUsage": "Use during the source session status stage when the node's instructions need this result.",
+            "requiredGrants": []
+          }
+        ]
+      }
+    ],
+    "contractVersion": 1,
+    "description": "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, and preparing controlled source execution.",
+    "id": "job_agent",
+    "name": "Job Agent",
+    "requestedHandles": [],
+    "summary": "Guarded local source setup operations for configured agent sessions.",
+    "tools": []
+  },
+  {
     "agentMcpServers": [],
     "contractVersion": 1,
+    "description": "Provides the routing-facing capabilities used to continue a Workflow, respond to agent activity, and request work from destination-node sessions.",
     "id": "workflow",
+    "name": "Workflow",
     "requestedHandles": [
       "definitions",
       "node_sessions",
       "emit_output"
     ],
+    "summary": "Workflow triggers, observed session events, and destinations.",
     "tools": [
       {
         "configuration": [],
-        "description": "Trigger connections configured for this call from this node. Follow your instructions for when to call it.",
+        "description": "Trigger connections configured for this call from this node. Follow your instructions for when to call it. Optionally supply output file paths or structured data.",
         "entrypoint": {
           "inputSchema": {
             "additionalProperties": false,
@@ -30,6 +1480,7 @@
           },
           "kind": "mcp"
         },
+        "expectedBehavior": "Emits the continuation output in the trusted context of the calling node, then lets the Workflow engine route only connections configured for that source node and trigger.",
         "id": "trigger_workflow_continuation",
         "name": "Workflow continuation",
         "outputs": [
@@ -68,7 +1519,8 @@
               "type": "object"
             }
           }
-        ]
+        ],
+        "recommendedUsage": "Use after the agent has completed the work or discussion its node instructions require. Supply output file paths or structured data only when downstream connections use them."
       },
       {
         "configuration": [],
@@ -95,6 +1547,7 @@
           },
           "kind": "mcp"
         },
+        "expectedBehavior": "Emits one handoff output containing the declared file paths, prompt text, and trusted source-node identity for configured connections to consume.",
         "id": "handoff_to_agent",
         "name": "Handoff to agent",
         "outputs": [
@@ -133,7 +1586,8 @@
               "type": "object"
             }
           }
-        ]
+        ],
+        "recommendedUsage": "Use when the node's instructions call for an explicit handoff and its configured connections expect the supplied files or prompt text."
       },
       {
         "configuration": [],
@@ -142,6 +1596,7 @@
           "event": "invocation_terminal",
           "kind": "session_event"
         },
+        "expectedBehavior": "Observes a terminal invocation recorded by the product and emits its text output with the source-node identity.",
         "id": "on_invocation_completed",
         "name": "Invocation completed",
         "outputs": [
@@ -174,7 +1629,8 @@
               "type": "object"
             }
           }
-        ]
+        ],
+        "recommendedUsage": "Use when a connection should continue from an invocation ending, without requiring an agent MCP call."
       },
       {
         "configuration": [
@@ -268,6 +1724,7 @@
           "kind": "action",
           "usesPrompt": true
         },
+        "expectedBehavior": "Resolves destination-node sessions from its configuration and requests prompt delivery through the Workflow engine.",
         "id": "prompt_agent",
         "name": "Prompt agent",
         "outputs": [
@@ -279,7 +1736,8 @@
               "type": "object"
             }
           }
-        ]
+        ],
+        "recommendedUsage": "Use as a connection or entry destination when the next step requires an agent session to receive constructed prompt material."
       },
       {
         "configuration": [
@@ -299,6 +1757,7 @@
           "kind": "action",
           "usesPrompt": false
         },
+        "expectedBehavior": "Selects one running destination-node session according to its configuration and requests cancellation of its current invocation.",
         "id": "stop_session",
         "name": "Stop session",
         "outputs": [
@@ -310,7 +1769,8 @@
               "type": "object"
             }
           }
-        ]
+        ],
+        "recommendedUsage": "Use when a Workflow needs to stop active work in a destination-node session while retaining that session for later prompts."
       }
     ]
   }

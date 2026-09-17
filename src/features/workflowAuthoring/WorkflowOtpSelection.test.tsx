@@ -12,6 +12,7 @@ it('shares the destination picker for initial requests and saves stop configurat
   render(
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
     />,
   );

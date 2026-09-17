@@ -205,7 +205,7 @@ fn product_imports_define_available_tools() {
 
 #[test]
 fn catalogue_serialization_supplies_the_designer_fixture() {
-    let registry = crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap();
+    let registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"]).unwrap();
     let value = serde_json::to_value(registry.catalogue()).unwrap();
     if let Ok(path) = std::env::var("OTP_CATALOGUE_FIXTURE_OUTPUT") {
         std::fs::write(path, serde_json::to_string_pretty(&value).unwrap()).unwrap();

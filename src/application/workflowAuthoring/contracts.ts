@@ -2,7 +2,7 @@ import type { WorkflowActionResult } from '../workflowInstances';
 import type { NodeProfileDto } from '../executionConfiguration';
 import type { ReferenceIdentityDto } from '../sessionEvents';
 
-import type { OtpCapabilityRefDto, OtpOutputRefDto, OtpPackageDto } from '../otp';
+import type { OtpCapabilityRefDto, OtpOutputRefDto } from '../otp';
 export type * from '../otp';
 
 export type WorkflowConnectionPromptInputDto =
@@ -109,7 +109,6 @@ export interface DispatchWorkflowUserRequestInput {
 }
 
 export interface WorkflowAuthoringClient {
-  listCapabilities(): Promise<readonly OtpPackageDto[]>;
   listRecipes(): Promise<readonly WorkflowRecipeSummaryDto[]>;
   loadRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
   createRecipe(name: string): Promise<WorkflowRecipeStateDto>;

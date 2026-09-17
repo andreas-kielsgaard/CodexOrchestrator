@@ -7,7 +7,7 @@ import type { SessionEventQueryClient } from '../application/sessionEvents';
 import type { WorkflowAuthoringClient } from '../application/workflowAuthoring';
 import type { WorkflowRecipeDraftDto } from '../application/workflowAuthoring';
 import type { WorkflowInstanceClient } from '../application/workflowInstances';
-import type { OtpInstallationClient } from '../application/otp';
+import type { OtpCatalogueReader, OtpInstallationClient } from '../application/otp';
 import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
 import { DraftWorkspace } from '../components/draftWorkspace';
 import { useDraftCloseWarning } from '../components/useDraftCloseWarning';
@@ -120,6 +120,7 @@ export interface AppProps {
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
   readonly workflowInstanceClient?: WorkflowInstanceClient;
   readonly otpInstallationClient?: OtpInstallationClient;
+  readonly otpCatalogueReader?: OtpCatalogueReader;
   readonly draftCloseGuard?: import('../application/draftCloseGuard').DraftCloseGuard;
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
   readonly identityManagementClient?: IdentityManagementClient;
@@ -178,6 +179,7 @@ export function App({
   workflowAuthoringClient,
   workflowInstanceClient,
   otpInstallationClient,
+  otpCatalogueReader,
   draftCloseGuard,
   executionConfigurationClient,
   identityManagementClient,
@@ -1106,7 +1108,7 @@ export function App({
       ) : surface === 'capability-profiles' && executionConfigurationClient ? (
         <ExecutionConfigurationScreen
           client={executionConfigurationClient}
-          readOtpCatalogue={workflowAuthoringClient?.listCapabilities}
+          readOtpCatalogue={otpCatalogueReader}
           workspace={capabilityDrafts}
         />
       ) : surface === 'workflows' &&
@@ -1115,6 +1117,7 @@ export function App({
         currentProductDestination.kind === 'workflow' ? (
         <WorkflowAuthoringScreen
           client={workflowAuthoringClient}
+          readOtpCatalogue={otpCatalogueReader}
           executionConfigurationClient={executionConfigurationClient}
           identityClient={identityManagementClient}
           workspace={workflowDrafts}
@@ -1200,8 +1203,8 @@ export function App({
       ) : surface === 'native-settings' && nativeProfileClient ? (
         <TechnicalSettingsScreen
           client={nativeProfileClient}
-          readOtpCatalogue={workflowAuthoringClient?.listCapabilities}
-                  otpInstallations={otpInstallationClient}
+          readOtpCatalogue={otpCatalogueReader}
+          otpInstallations={otpInstallationClient}
         />
       ) : (
         harnessManagementPreviewSurface

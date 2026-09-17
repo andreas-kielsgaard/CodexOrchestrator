@@ -6,7 +6,7 @@ import type {
 } from '../../application/workflowAuthoring';
 import { DraftWorkspace } from '../../components/draftWorkspace';
 import { WorkflowAuthoringScreen } from './WorkflowAuthoringScreen';
-import { repairClients } from './testFixtures';
+import { otpCatalogue, repairClients } from './testFixtures';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,6 +24,7 @@ it('activates saved text without discarding the dirty draft and retains it acros
   const element = (
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
       workspace={workspace}
     />
@@ -50,6 +51,7 @@ it('a late save keeps later typing and does not return to the previous recipe', 
   render(
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
     />,
   );
@@ -82,6 +84,7 @@ it('uses the canvas for adding, connecting, copying, moving and undoing node edi
   render(
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
     />,
   );
@@ -120,6 +123,7 @@ it('limits node choices to the selected profile and shows a removed default', as
   render(
     <WorkflowAuthoringScreen
       client={fixture.authoring}
+      readOtpCatalogue={async () => otpCatalogue}
       executionConfigurationClient={fixture.configuration}
     />,
   );

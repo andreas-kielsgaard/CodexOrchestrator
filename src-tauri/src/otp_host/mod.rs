@@ -127,6 +127,7 @@ impl OtpRegistry {
     }
 }
 
+pub(crate) mod catalogue;
 pub(crate) mod installations;
 pub(crate) mod job_agent;
 pub(crate) mod mcp;

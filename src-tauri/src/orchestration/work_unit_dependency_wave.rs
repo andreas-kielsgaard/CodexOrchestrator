@@ -98,11 +98,13 @@ pub(crate) fn reconcile_work_unit_dependency_wave(
         .map_err(|error| error.to_string())?;
     let mut graph_issues = std::collections::HashMap::new();
     for (_, materialization_id, accepted_revision_id, _) in &units {
-        graph_issues.entry(materialization_id.clone()).or_insert(graph_issue(
-            &transaction,
-            materialization_id,
-            accepted_revision_id,
-        )?);
+        graph_issues
+            .entry(materialization_id.clone())
+            .or_insert(graph_issue(
+                &transaction,
+                materialization_id,
+                accepted_revision_id,
+            )?);
     }
     for (work_unit_id, materialization_id, accepted_revision_id, sprint_id) in units {
         if let Some(issue) = graph_issues.get(&materialization_id).and_then(Clone::clone) {
@@ -139,14 +141,29 @@ pub(crate) fn reconcile_work_unit_dependency_wave(
 pub(crate) fn reconcile_work_slice_execution_settlement(
     connection: &mut Connection,
 ) -> Result<(), String> {
-    connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).map_err(|e| e.to_string())?;
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    let materializations = tx.prepare(
-        "SELECT materialization_id,planning_point_id,accepted_revision_id
+    connection
+        .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let materializations = tx
+        .prepare(
+            "SELECT materialization_id,planning_point_id,accepted_revision_id
            FROM work_unit_materializations WHERE settled_at IS NOT NULL
            ORDER BY authorization_recorded_at,materialization_id",
-    ).map_err(|e| e.to_string())?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
-        .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     for (materialization, planning_point, revision) in materializations {
         let persisted_attention = existing_attention(&tx, &materialization)?;
         let graph_issue = graph_issue(&tx, &materialization, &revision)?;
@@ -160,13 +177,17 @@ pub(crate) fn reconcile_work_slice_execution_settlement(
             .map(str::to_owned)
             .or(graph_issue)
             .or(execution_issue(&tx, &materialization, &revision)?)
-            .or(if terminal_targets.is_empty()
-                && persisted_attention.as_deref() != Some("work_unit_terminal_execution_failure")
-                && stalled_generation(&tx, &materialization, &revision)? {
-                Some("stalled_execution_generation".into())
-            } else {
-                None
-            });
+            .or(
+                if terminal_targets.is_empty()
+                    && persisted_attention.as_deref()
+                        != Some("work_unit_terminal_execution_failure")
+                    && stalled_generation(&tx, &materialization, &revision)?
+                {
+                    Some("stalled_execution_generation".into())
+                } else {
+                    None
+                },
+            );
         project_execution_states(&tx, &materialization, &revision, graph_wide.as_deref())?;
         if let Some(code) = graph_wide {
             exact_attention(&tx, &materialization, &code)?;
@@ -175,11 +196,17 @@ pub(crate) fn reconcile_work_slice_execution_settlement(
         if !terminal_targets.is_empty()
             || persisted_attention.as_deref() == Some("work_unit_terminal_execution_failure")
         {
-            exact_attention(&tx, &materialization, "work_unit_terminal_execution_failure")?;
+            exact_attention(
+                &tx,
+                &materialization,
+                "work_unit_terminal_execution_failure",
+            )?;
             continue;
         }
         let complete = graph_is_complete(&tx, &materialization, &revision)?;
-        if !complete { continue; }
+        if !complete {
+            continue;
+        }
         let fingerprint = graph_fingerprint(&tx, &materialization, &revision)?;
         let at = chrono::Utc::now().to_rfc3339();
         exact_insert(&tx,
@@ -217,18 +244,37 @@ fn existing_attention(
     .map_err(|error| error.to_string())
 }
 
-fn exact_insert(tx: &rusqlite::Transaction<'_>, insert: &str, insert_params: impl rusqlite::Params, exact: &str, exact_params: impl rusqlite::Params) -> Result<(), String> {
+fn exact_insert(
+    tx: &rusqlite::Transaction<'_>,
+    insert: &str,
+    insert_params: impl rusqlite::Params,
+    exact: &str,
+    exact_params: impl rusqlite::Params,
+) -> Result<(), String> {
     match tx.execute(insert, insert_params) {
         Ok(1) => Ok(()),
         Ok(_) => Err("execution_settlement_insert_invalid".into()),
-        Err(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::ConstraintViolation => {
-            if tx.query_row(exact, exact_params, |r| r.get::<_, bool>(0)).map_err(|e| e.to_string())? { Ok(()) } else { Err("execution_settlement_replay_conflict".into()) }
+        Err(rusqlite::Error::SqliteFailure(error, _))
+            if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            if tx
+                .query_row(exact, exact_params, |r| r.get::<_, bool>(0))
+                .map_err(|e| e.to_string())?
+            {
+                Ok(())
+            } else {
+                Err("execution_settlement_replay_conflict".into())
+            }
         }
         Err(error) => Err(error.to_string()),
     }
 }
 
-fn exact_attention(tx: &rusqlite::Transaction<'_>, materialization: &str, code: &str) -> Result<(), String> {
+fn exact_attention(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    code: &str,
+) -> Result<(), String> {
     let at = chrono::Utc::now().to_rfc3339();
     exact_insert(tx,
         "INSERT INTO work_slice_execution_attentions(materialization_id,code,recorded_at) VALUES(?1,?2,?3)",
@@ -258,14 +304,21 @@ fn exact_work_unit_attention(
 /// A graph problem is global to a materialization: allowing one apparently-independent lane to
 /// continue would make a later terminal claim ambiguous.  Pending (missing) contributions are
 /// intentionally not errors here; they remain a waiting fact until their prerequisite settles.
-fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<Option<String>, String> {
+fn graph_issue(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    revision: &str,
+) -> Result<Option<String>, String> {
     let invalid_unit: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM work_units WHERE materialization_id=?1 AND accepted_revision_id<>?2)",
         params![materialization, revision], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if invalid_unit { return Ok(Some("canonical_work_unit_correlation_invalid".into())); }
-    let invalid_edge: bool = tx.query_row(
-        "SELECT EXISTS(
+    if invalid_unit {
+        return Ok(Some("canonical_work_unit_correlation_invalid".into()));
+    }
+    let invalid_edge: bool = tx
+        .query_row(
+            "SELECT EXISTS(
            SELECT 1 FROM work_unit_relationships r
            LEFT JOIN work_units d ON d.work_unit_id=r.from_id
            LEFT JOIN work_units p ON p.work_unit_id=r.to_id
@@ -273,14 +326,20 @@ fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: 
              AND (d.work_unit_id IS NULL OR p.work_unit_id IS NULL
                   OR d.materialization_id<>?1 OR p.materialization_id<>?1
                   OR d.accepted_revision_id<>?2 OR p.accepted_revision_id<>?2))",
-        params![materialization, revision], |r| r.get(0),
-    ).map_err(|e| e.to_string())?;
-    if invalid_edge { return Ok(Some("canonical_dependency_edge_invalid".into())); }
+            params![materialization, revision],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if invalid_edge {
+        return Ok(Some("canonical_dependency_edge_invalid".into()));
+    }
     let duplicate: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM work_unit_relationships WHERE materialization_id=?1 AND relationship_kind='depends_on' GROUP BY from_id,to_id HAVING COUNT(*)<>1)",
         [materialization], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if duplicate { return Ok(Some("duplicate_canonical_dependency_edge".into())); }
+    if duplicate {
+        return Ok(Some("duplicate_canonical_dependency_edge".into()));
+    }
     let cyclic: bool = tx.query_row(
         "WITH RECURSIVE walk(start,node) AS (
            SELECT from_id,to_id FROM work_unit_relationships WHERE materialization_id=?1 AND relationship_kind='depends_on'
@@ -290,7 +349,9 @@ fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: 
          ) SELECT EXISTS(SELECT 1 FROM walk WHERE start=node)",
         [materialization], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if cyclic { return Ok(Some("canonical_dependency_cycle".into())); }
+    if cyclic {
+        return Ok(Some("canonical_dependency_cycle".into()));
+    }
     let invalid_contribution: bool = tx.query_row(
         "SELECT EXISTS(
            SELECT 1 FROM work_unit_prerequisite_contributions c
@@ -309,7 +370,9 @@ fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: 
                   OR s.settlement_id IS NULL))",
         params![materialization, revision], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if invalid_contribution { return Ok(Some("prerequisite_contribution_correlation_invalid".into())); }
+    if invalid_contribution {
+        return Ok(Some("prerequisite_contribution_correlation_invalid".into()));
+    }
     let duplicate_contribution: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM work_unit_prerequisite_contributions c JOIN work_units d ON d.work_unit_id=c.dependent_work_unit_id WHERE d.materialization_id=?1 GROUP BY c.relationship_id HAVING COUNT(*)<>1)",
         [materialization], |r| r.get(0),
@@ -317,7 +380,10 @@ fn graph_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: 
     Ok(duplicate_contribution.then_some("duplicate_prerequisite_contribution".into()))
 }
 
-fn execution_attention_targets(tx: &rusqlite::Transaction<'_>, materialization: &str) -> Result<Vec<(String, String)>, String> {
+fn execution_attention_targets(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+) -> Result<Vec<(String, String)>, String> {
     tx.prepare(
         "WITH terminal_failure AS (
            WITH latest_attempt AS (
@@ -359,12 +425,18 @@ fn execution_attention_targets(tx: &rusqlite::Transaction<'_>, materialization: 
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
-fn execution_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, _revision: &str) -> Result<Option<String>, String> {
+fn execution_issue(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    _revision: &str,
+) -> Result<Option<String>, String> {
     let integration_attention: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM accepted_work_unit_integrations i JOIN work_units u ON u.work_unit_id=i.work_unit_id WHERE u.materialization_id=?1 AND (i.stage='attention' OR i.attention_code IS NOT NULL))",
         [materialization], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if integration_attention { return Ok(Some("accepted_integration_attention".into())); }
+    if integration_attention {
+        return Ok(Some("accepted_integration_attention".into()));
+    }
     let impossible: bool = tx.query_row(
         "SELECT EXISTS(
            SELECT 1 FROM work_unit_settlements s JOIN work_units u ON u.work_unit_id=s.work_unit_id
@@ -375,7 +447,11 @@ fn execution_issue(tx: &rusqlite::Transaction<'_>, materialization: &str, _revis
     Ok(impossible.then_some("impossible_terminal_mixture".into()))
 }
 
-fn graph_is_complete(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<bool, String> {
+fn graph_is_complete(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    revision: &str,
+) -> Result<bool, String> {
     if existing_attention(tx, materialization)?.is_some() {
         return Ok(false);
     }
@@ -383,14 +459,20 @@ fn graph_is_complete(tx: &rusqlite::Transaction<'_>, materialization: &str, revi
         "SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2)",
         params![materialization, revision], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if unresolved_handback { return Ok(false); }
+    if unresolved_handback {
+        return Ok(false);
+    }
     let units: i64 = tx.query_row("SELECT COUNT(*) FROM work_units WHERE materialization_id=?1 AND accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if units == 0 { return Ok(false); }
+    if units == 0 {
+        return Ok(false);
+    }
     let settled: i64 = tx.query_row(
         "SELECT COUNT(*) FROM work_units u JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id JOIN accepted_work_unit_integrations i ON i.integration_id=s.integration_id AND i.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND i.stage='settled' AND i.settled_at IS NOT NULL",
         params![materialization, revision], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if settled != units { return Ok(false); }
+    if settled != units {
+        return Ok(false);
+    }
     let edges: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_relationships WHERE materialization_id=?1 AND relationship_kind='depends_on'", [materialization], |r| r.get(0)).map_err(|e| e.to_string())?;
     let contributions: i64 = tx.query_row(
         "SELECT COUNT(*) FROM work_unit_prerequisite_contributions c JOIN work_unit_relationships r ON r.relationship_id=c.relationship_id JOIN work_units d ON d.work_unit_id=c.dependent_work_unit_id JOIN work_units p ON p.work_unit_id=c.prerequisite_work_unit_id JOIN accepted_work_unit_integrations i ON i.integration_id=c.integration_id AND i.work_unit_id=p.work_unit_id JOIN work_unit_settlements s ON s.integration_id=i.integration_id AND s.work_unit_id=p.work_unit_id WHERE r.materialization_id=?1 AND r.relationship_kind='depends_on' AND d.accepted_revision_id=?2 AND p.accepted_revision_id=?2 AND i.stage='settled' AND i.settled_at IS NOT NULL",
@@ -399,14 +481,24 @@ fn graph_is_complete(tx: &rusqlite::Transaction<'_>, materialization: &str, revi
     Ok(contributions == edges)
 }
 
-fn stalled_generation(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<bool, String> {
+fn stalled_generation(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    revision: &str,
+) -> Result<bool, String> {
     let units: i64 = tx.query_row("SELECT COUNT(*) FROM work_units WHERE materialization_id=?1 AND accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
     let settled: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_settlements s JOIN work_units u ON u.work_unit_id=s.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if units == 0 || settled == units { return Ok(false); }
+    if units == 0 || settled == units {
+        return Ok(false);
+    }
     let evaluated: i64 = tx.query_row("SELECT COUNT(*) FROM work_unit_dependency_activation_intents i JOIN work_units u ON u.work_unit_id=i.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND i.materialization_id=u.materialization_id AND i.accepted_revision_id=u.accepted_revision_id", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if evaluated != units { return Ok(false); }
+    if evaluated != units {
+        return Ok(false);
+    }
     let handback: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2)", params![materialization, revision], |r| r.get(0)).map_err(|e| e.to_string())?;
-    if handback { return Ok(false); }
+    if handback {
+        return Ok(false);
+    }
     let ready: i64 = tx.query_row(
         "SELECT COUNT(*) FROM work_units u JOIN work_unit_dependency_activation_intents i ON i.work_unit_id=u.work_unit_id AND i.materialization_id=u.materialization_id AND i.accepted_revision_id=u.accepted_revision_id LEFT JOIN work_unit_handler_activations h ON h.work_unit_id=u.work_unit_id AND h.materialization_id=u.materialization_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 AND s.settlement_id IS NULL AND i.eligibility_state='eligible' AND h.work_unit_id IS NULL",
         params![materialization, revision], |r| r.get(0),
@@ -425,7 +517,11 @@ fn stalled_generation(tx: &rusqlite::Transaction<'_>, materialization: &str, rev
     Ok(ready == 0 && active == 0 && retry == 0)
 }
 
-fn graph_fingerprint(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str) -> Result<String, String> {
+fn graph_fingerprint(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    revision: &str,
+) -> Result<String, String> {
     let values = tx.prepare(
         "SELECT u.work_unit_id,i.integration_id,s.settlement_id FROM work_units u JOIN accepted_work_unit_integrations i ON i.work_unit_id=u.work_unit_id JOIN work_unit_settlements s ON s.integration_id=i.integration_id AND s.work_unit_id=u.work_unit_id WHERE u.materialization_id=?1 AND u.accepted_revision_id=?2 ORDER BY u.work_unit_id",
     ).map_err(|e| e.to_string())?.query_map(params![materialization, revision], |r| Ok(format!("{}:{}:{}", r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
@@ -435,12 +531,22 @@ fn graph_fingerprint(tx: &rusqlite::Transaction<'_>, materialization: &str, revi
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     let mut hasher = sha2::Sha256::new();
     use sha2::Digest;
-    hasher.update(materialization.as_bytes()); hasher.update([0]); hasher.update(revision.as_bytes());
-    for value in values.into_iter().chain(edges) { hasher.update([0]); hasher.update(value.as_bytes()); }
+    hasher.update(materialization.as_bytes());
+    hasher.update([0]);
+    hasher.update(revision.as_bytes());
+    for value in values.into_iter().chain(edges) {
+        hasher.update([0]);
+        hasher.update(value.as_bytes());
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn project_execution_states(tx: &rusqlite::Transaction<'_>, materialization: &str, revision: &str, graph_attention: Option<&str>) -> Result<(), String> {
+fn project_execution_states(
+    tx: &rusqlite::Transaction<'_>,
+    materialization: &str,
+    revision: &str,
+    graph_attention: Option<&str>,
+) -> Result<(), String> {
     let units = tx.prepare("SELECT work_unit_id FROM work_units WHERE materialization_id=?1 AND accepted_revision_id=?2 ORDER BY lane_ordinal,work_unit_id")
         .map_err(|e| e.to_string())?.query_map(params![materialization, revision], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
@@ -460,9 +566,11 @@ fn project_execution_states(tx: &rusqlite::Transaction<'_>, materialization: &st
             params![unit, materialization, revision],
             |row| row.get(0),
         ).optional().map_err(|e| e.to_string())?;
-        let (state, reason) = if let Some(reason) = graph_attention { ("attention", Some(reason.to_owned())) }
-        else if let Some(reason) = targeted_attention { ("attention", Some(reason)) }
-        else {
+        let (state, reason) = if let Some(reason) = graph_attention {
+            ("attention", Some(reason.to_owned()))
+        } else if let Some(reason) = targeted_attention {
+            ("attention", Some(reason))
+        } else {
             let settled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_settlements s JOIN accepted_work_unit_integrations i ON i.integration_id=s.integration_id JOIN work_units u ON u.work_unit_id=s.work_unit_id WHERE s.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3 AND i.work_unit_id=?1 AND i.stage='settled' AND i.settled_at IS NOT NULL)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
             let handed_back: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_no_progress_handbacks h JOIN work_units u ON u.work_unit_id=h.work_unit_id WHERE h.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
             let retry: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=u.work_unit_id WHERE r.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3 AND s.settlement_id IS NULL AND r.ordinal=(SELECT MAX(current.ordinal) FROM work_unit_retry_attempts current WHERE current.work_unit_id=r.work_unit_id) AND r.retry_ready_at IS NULL AND r.failure_reason IS NULL)", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
@@ -472,7 +580,22 @@ fn project_execution_states(tx: &rusqlite::Transaction<'_>, materialization: &st
                  SELECT 1 FROM work_unit_retry_attempts r JOIN work_units u ON u.work_unit_id=r.work_unit_id LEFT JOIN work_unit_settlements s ON s.work_unit_id=r.work_unit_id WHERE r.work_unit_id=?1 AND u.materialization_id=?2 AND u.accepted_revision_id=?3 AND s.settlement_id IS NULL AND r.ordinal=(SELECT MAX(current.ordinal) FROM work_unit_retry_attempts current WHERE current.work_unit_id=r.work_unit_id) AND r.retry_ready_at IS NOT NULL AND r.failure_reason IS NULL
               )", params![unit,materialization,revision], |r| r.get(0)).map_err(|e| e.to_string())?;
             let intent: Option<(String, Option<String>)> = tx.query_row("SELECT eligibility_state,blocked_reason FROM work_unit_dependency_activation_intents WHERE work_unit_id=?1 AND materialization_id=?2 AND accepted_revision_id=?3", params![unit,materialization,revision], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(|e| e.to_string())?;
-            if settled { ("settled", None) } else if handed_back { ("handed_back", Some("work_unit_handed_back".into())) } else if retry { ("retry_authorized", None) } else if active { ("active", None) } else if matches!(intent.as_ref(), Some((state, _)) if state == "eligible") { ("ready", None) } else { ("waiting_on_prerequisites", intent.and_then(|(_, reason)| reason)) }
+            if settled {
+                ("settled", None)
+            } else if handed_back {
+                ("handed_back", Some("work_unit_handed_back".into()))
+            } else if retry {
+                ("retry_authorized", None)
+            } else if active {
+                ("active", None)
+            } else if matches!(intent.as_ref(), Some((state, _)) if state == "eligible") {
+                ("ready", None)
+            } else {
+                (
+                    "waiting_on_prerequisites",
+                    intent.and_then(|(_, reason)| reason),
+                )
+            }
         };
         let at = chrono::Utc::now().to_rfc3339();
         if existing.is_some() {
@@ -782,16 +905,39 @@ mod tests {
 
     fn settle(connection: &Connection, unit: &str) {
         let integration = format!("integration-{unit}");
-        connection.execute("INSERT INTO accepted_work_unit_integrations VALUES(?1,?2,'settled','t',NULL)", params![integration, unit]).unwrap();
-        connection.execute("INSERT INTO work_unit_settlements VALUES(?1,?2,?3)", params![format!("settlement-{unit}"), unit, integration]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO accepted_work_unit_integrations VALUES(?1,?2,'settled','t',NULL)",
+                params![integration, unit],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_settlements VALUES(?1,?2,?3)",
+                params![format!("settlement-{unit}"), unit, integration],
+            )
+            .unwrap();
         let edges = connection.prepare("SELECT relationship_id,from_id FROM work_unit_relationships WHERE relationship_kind='depends_on' AND to_id=?1 ORDER BY relationship_id").unwrap().query_map([unit], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         for (edge, dependent) in edges {
-            connection.execute("INSERT INTO work_unit_prerequisite_contributions VALUES(?1,?2,?3,?4,?5)", params![format!("contribution-{edge}"), unit, dependent, format!("integration-{unit}"), edge]).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO work_unit_prerequisite_contributions VALUES(?1,?2,?3,?4,?5)",
+                    params![
+                        format!("contribution-{edge}"),
+                        unit,
+                        dependent,
+                        format!("integration-{unit}"),
+                        edge
+                    ],
+                )
+                .unwrap();
         }
     }
 
     fn intent(connection: &Connection, unit: &str, state: &str, reason: Option<&str>) {
-        connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        connection
+            .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+            .unwrap();
         connection.execute(
             "INSERT OR REPLACE INTO work_unit_dependency_activation_intents(work_unit_id,materialization_id,accepted_revision_id,eligibility_state,blocked_reason,eligibility_recorded_at,activation_intended_at) VALUES(?1,'materialization','revision',?2,?3,'t',CASE WHEN ?2='eligible' THEN 't' END)",
             params![unit, state, reason],
@@ -881,12 +1027,34 @@ mod tests {
     fn multi_root_multi_level_graph_settles_each_terminal_fact_exactly_once() {
         let mut connection = settlement_fixture();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_graph_completions", [], |r| r.get(0)).unwrap(), 0);
-        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] { settle(&connection, unit); }
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_graph_completions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
+        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] {
+            settle(&connection, unit);
+        }
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(connection.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 1, "{table}");
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                        .get(0))
+                    .unwrap(),
+                1,
+                "{table}"
+            );
         }
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_execution_states WHERE execution_state='settled'", [], |r| r.get(0)).unwrap(), 5);
     }
@@ -896,8 +1064,26 @@ mod tests {
         let mut connection = settlement_fixture();
         connection.execute("INSERT INTO work_unit_relationships VALUES('root-a-leaf','materialization','depends_on','root-a','leaf')", []).unwrap();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "canonical_dependency_cycle");
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |r| r.get(0)).unwrap(), 0);
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "canonical_dependency_cycle"
+        );
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_settlements",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_execution_states WHERE execution_state='attention'", [], |r| r.get(0)).unwrap(), 5);
     }
 
@@ -905,27 +1091,48 @@ mod tests {
     fn concurrent_reopen_replays_one_execution_settlement() {
         let database = tempfile::NamedTempFile::new().unwrap();
         let connection = Connection::open(database.path()).unwrap();
-        connection.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+        connection
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .unwrap();
         seed_settlement(&connection);
-        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] { settle(&connection, unit); }
+        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] {
+            settle(&connection, unit);
+        }
         drop(connection);
         let barrier = Arc::new(Barrier::new(3));
-        let callers = (0..2).map(|_| {
-            let path = database.path().to_path_buf();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                let mut connection = Connection::open(path).unwrap();
-                connection.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
-                barrier.wait();
-                reconcile_work_slice_execution_settlement(&mut connection)
+        let callers = (0..2)
+            .map(|_| {
+                let path = database.path().to_path_buf();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut connection = Connection::open(path).unwrap();
+                    connection
+                        .busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    barrier.wait();
+                    reconcile_work_slice_execution_settlement(&mut connection)
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         barrier.wait();
-        for caller in callers { caller.join().unwrap().unwrap(); }
+        for caller in callers {
+            caller.join().unwrap().unwrap();
+        }
         let mut reopened = Connection::open(database.path()).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 1, "{table}");
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                reopened
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                        .get(0))
+                    .unwrap(),
+                1,
+                "{table}"
+            );
         }
     }
 
@@ -934,15 +1141,30 @@ mod tests {
         let database = tempfile::NamedTempFile::new().unwrap();
         let connection = Connection::open(database.path()).unwrap();
         seed_settlement(&connection);
-        connection.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        connection
+            .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+            .unwrap();
         connection.execute("INSERT INTO work_slice_execution_attentions VALUES('materialization','test_attention','t')", []).unwrap();
-        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] { settle(&connection, unit); }
+        for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] {
+            settle(&connection, unit);
+        }
         drop(connection);
         let mut reopened = Connection::open(database.path()).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 0, "{table}");
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                reopened
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                        .get(0))
+                    .unwrap(),
+                0,
+                "{table}"
+            );
         }
         assert_eq!(reopened.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "attention");
     }
@@ -952,22 +1174,63 @@ mod tests {
         let mut connection = settlement_fixture();
         intent(&connection, "root-a", "eligible", None);
         intent(&connection, "root-b", "eligible", None);
-        intent(&connection, "middle-a", "blocked", Some("missing_prerequisite_contributions:middle-a-root-a"));
-        intent(&connection, "middle-b", "blocked", Some("missing_prerequisite_contributions:middle-b-root-b"));
-        intent(&connection, "leaf", "blocked", Some("missing_prerequisite_contributions:leaf-middle-a"));
-        connection.execute("INSERT INTO work_unit_handler_activations VALUES('root-b','materialization','t')", []).unwrap();
+        intent(
+            &connection,
+            "middle-a",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-a-root-a"),
+        );
+        intent(
+            &connection,
+            "middle-b",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-b-root-b"),
+        );
+        intent(
+            &connection,
+            "leaf",
+            "blocked",
+            Some("missing_prerequisite_contributions:leaf-middle-a"),
+        );
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES('root-b','materialization','t')",
+                [],
+            )
+            .unwrap();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
         let states = connection.prepare("SELECT work_unit_id,execution_state FROM work_unit_execution_states ORDER BY work_unit_id").unwrap().query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
         assert!(states.contains(&(String::from("root-a"), String::from("ready"))));
         assert!(states.contains(&(String::from("root-b"), String::from("active"))));
-        assert!(states.contains(&(String::from("middle-a"), String::from("waiting_on_prerequisites"))));
-        assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), 0);
+        assert!(states.contains(&(
+            String::from("middle-a"),
+            String::from("waiting_on_prerequisites")
+        )));
+        assert_eq!(
+            connection
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
         connection.execute_batch("DELETE FROM work_unit_handler_activations; UPDATE work_unit_dependency_activation_intents SET eligibility_state='blocked',blocked_reason='activation_terminal_without_current_progress',activation_intended_at=NULL").unwrap();
         let tx = connection.transaction().unwrap();
         assert!(stalled_generation(&tx, "materialization", "revision").unwrap());
         tx.rollback().unwrap();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "stalled_execution_generation");
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "stalled_execution_generation"
+        );
     }
 
     #[test]
@@ -975,16 +1238,39 @@ mod tests {
         let mut connection = settlement_fixture();
         connection.execute("INSERT INTO work_unit_prerequisite_contributions VALUES('bad','ghost','middle-a','integration-ghost','middle-a-root-a')", []).unwrap();
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "prerequisite_contribution_correlation_invalid");
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "prerequisite_contribution_correlation_invalid"
+        );
         let mut foreign = settlement_fixture();
         foreign.execute("INSERT INTO work_units VALUES('foreign-unit','foreign-materialization','foreign-revision',0)", []).unwrap();
         foreign.execute("INSERT INTO work_unit_prerequisite_contributions VALUES('foreign','foreign-unit','middle-a','integration-foreign','middle-a-root-a')", []).unwrap();
         reconcile_work_slice_execution_settlement(&mut foreign).unwrap();
-        assert_eq!(foreign.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "prerequisite_contribution_correlation_invalid");
+        assert_eq!(
+            foreign
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "prerequisite_contribution_correlation_invalid"
+        );
         let mut correlation = settlement_fixture();
-        correlation.execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA).unwrap();
+        correlation
+            .execute_batch(WORK_UNIT_DEPENDENCY_WAVE_SCHEMA)
+            .unwrap();
         correlation.execute("INSERT INTO work_unit_execution_states VALUES('root-a','foreign-materialization','revision','ready',NULL,'t')", []).unwrap();
-        assert_eq!(reconcile_work_slice_execution_settlement(&mut correlation).unwrap_err(), "work_unit_execution_state_correlation_invalid");
+        assert_eq!(
+            reconcile_work_slice_execution_settlement(&mut correlation).unwrap_err(),
+            "work_unit_execution_state_correlation_invalid"
+        );
     }
 
     #[test]
@@ -992,14 +1278,44 @@ mod tests {
         let mut connection = settlement_fixture();
         intent(&connection, "root-a", "eligible", None);
         intent(&connection, "root-b", "eligible", None);
-        intent(&connection, "middle-a", "blocked", Some("missing_prerequisite_contributions:middle-a-root-a"));
-        intent(&connection, "middle-b", "blocked", Some("missing_prerequisite_contributions:middle-b-root-b"));
-        intent(&connection, "leaf", "blocked", Some("missing_prerequisite_contributions:leaf-middle-a"));
-        connection.execute("INSERT INTO work_unit_retry_attempts VALUES('middle-a',1,'t',NULL)", []).unwrap();
-        connection.execute("INSERT INTO work_unit_no_progress_handbacks VALUES('middle-b')", []).unwrap();
+        intent(
+            &connection,
+            "middle-a",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-a-root-a"),
+        );
+        intent(
+            &connection,
+            "middle-b",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-b-root-b"),
+        );
+        intent(
+            &connection,
+            "leaf",
+            "blocked",
+            Some("missing_prerequisite_contributions:leaf-middle-a"),
+        );
+        connection
+            .execute(
+                "INSERT INTO work_unit_retry_attempts VALUES('middle-a',1,'t',NULL)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_no_progress_handbacks VALUES('middle-b')",
+                [],
+            )
+            .unwrap();
         settle(&connection, "leaf");
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        for (unit, expected) in [("root-a", "ready"), ("middle-a", "active"), ("middle-b", "handed_back"), ("leaf", "settled")] {
+        for (unit, expected) in [
+            ("root-a", "ready"),
+            ("middle-a", "active"),
+            ("middle-b", "handed_back"),
+            ("leaf", "settled"),
+        ] {
             assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id=?1", [unit], |r| r.get(0)).unwrap(), expected, "{unit}");
         }
     }
@@ -1014,15 +1330,38 @@ mod tests {
         intent(&connection, "middle-a", "blocked", Some("test"));
         intent(&connection, "middle-b", "blocked", Some("test"));
         intent(&connection, "leaf", "blocked", Some("test"));
-        connection.execute("INSERT INTO work_unit_handler_activations VALUES('root-a','materialization',NULL)", []).unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES('root-a','materialization',NULL)",
+                [],
+            )
+            .unwrap();
         drop(connection);
         let mut reopened = Connection::open(database.path()).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
         assert_eq!(reopened.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "active");
-        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), 0);
+        assert_eq!(
+            reopened
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
         reopened.execute("UPDATE work_unit_handler_activations SET handler_ready_at='t' WHERE work_unit_id='root-a'", []).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
-        assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), 0);
+        assert_eq!(
+            reopened
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -1031,16 +1370,41 @@ mod tests {
         let connection = Connection::open(database.path()).unwrap();
         seed_settlement(&connection);
         intent(&connection, "root-a", "eligible", None);
-        connection.execute("INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')", []).unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')",
+                [],
+            )
+            .unwrap();
         connection.execute("INSERT INTO work_unit_implementer_activations VALUES('root-a','implementer_launch_not_accepted')", []).unwrap();
         drop(connection);
         let mut reopened = Connection::open(database.path()).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
         reconcile_work_slice_execution_settlement(&mut reopened).unwrap();
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "work_unit_terminal_execution_failure");
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "work_unit_terminal_execution_failure"
+        );
         assert_eq!(reopened.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "attention");
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 0, "{table}");
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                reopened
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                        .get(0))
+                    .unwrap(),
+                0,
+                "{table}"
+            );
         }
     }
 
@@ -1049,14 +1413,33 @@ mod tests {
         let mut recovered = settlement_fixture();
         intent(&recovered, "root-a", "eligible", None);
         recovered.execute("INSERT INTO work_unit_implementer_activations VALUES('root-a','old_implementer_failure')", []).unwrap();
-        recovered.execute("INSERT INTO work_unit_retry_attempts VALUES('root-a',1,'t',NULL)", []).unwrap();
+        recovered
+            .execute(
+                "INSERT INTO work_unit_retry_attempts VALUES('root-a',1,'t',NULL)",
+                [],
+            )
+            .unwrap();
         reconcile_work_slice_execution_settlement(&mut recovered).unwrap();
-        assert_eq!(recovered.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), 0);
+        assert_eq!(
+            recovered
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(recovered.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "active");
 
         let mut in_progress = settlement_fixture();
         intent(&in_progress, "root-a", "eligible", None);
-        in_progress.execute("INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')", []).unwrap();
+        in_progress
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')",
+                [],
+            )
+            .unwrap();
         in_progress.execute_batch("INSERT INTO work_unit_retry_attempts VALUES('root-a',1,'t',NULL); INSERT INTO work_unit_retry_attempts VALUES('root-a',2,NULL,NULL);").unwrap();
         reconcile_work_slice_execution_settlement(&mut in_progress).unwrap();
         assert_eq!(in_progress.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "retry_authorized");
@@ -1083,16 +1466,35 @@ mod tests {
     fn blocked_activation_remains_waiting_and_does_not_mask_a_stall() {
         let mut connection = settlement_fixture();
         for unit in ["root-a", "root-b", "middle-a", "middle-b", "leaf"] {
-            intent(&connection, unit, "blocked", Some("missing_prerequisite_contributions"));
+            intent(
+                &connection,
+                unit,
+                "blocked",
+                Some("missing_prerequisite_contributions"),
+            );
         }
-        connection.execute("INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')", []).unwrap();
+        connection
+            .execute(
+                "INSERT INTO work_unit_handler_activations VALUES('root-a','materialization','t')",
+                [],
+            )
+            .unwrap();
         let tx = connection.transaction().unwrap();
         assert!(stalled_generation(&tx, "materialization", "revision").unwrap());
         project_execution_states(&tx, "materialization", "revision", None).unwrap();
         tx.commit().unwrap();
         assert_eq!(connection.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "waiting_on_prerequisites");
         reconcile_work_slice_execution_settlement(&mut connection).unwrap();
-        assert_eq!(connection.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "stalled_execution_generation");
+        assert_eq!(
+            connection
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "stalled_execution_generation"
+        );
     }
 
     #[test]
@@ -1102,9 +1504,24 @@ mod tests {
         seed_settlement(&connection);
         intent(&connection, "root-a", "eligible", None);
         intent(&connection, "root-b", "eligible", None);
-        intent(&connection, "middle-a", "blocked", Some("missing_prerequisite_contributions:middle-a-root-a"));
-        intent(&connection, "middle-b", "blocked", Some("missing_prerequisite_contributions:middle-b-root-b"));
-        intent(&connection, "leaf", "blocked", Some("missing_prerequisite_contributions:leaf-middle-a"));
+        intent(
+            &connection,
+            "middle-a",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-a-root-a"),
+        );
+        intent(
+            &connection,
+            "middle-b",
+            "blocked",
+            Some("missing_prerequisite_contributions:middle-b-root-b"),
+        );
+        intent(
+            &connection,
+            "leaf",
+            "blocked",
+            Some("missing_prerequisite_contributions:leaf-middle-a"),
+        );
         connection.execute("INSERT INTO work_unit_implementer_activations VALUES('root-a','implementer_failure')", []).unwrap();
         drop(connection);
         let mut reopened = Connection::open(database.path()).unwrap();
@@ -1114,9 +1531,29 @@ mod tests {
         assert_eq!(reopened.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='middle-a'", [], |r| r.get(0)).unwrap(), "waiting_on_prerequisites");
         assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_execution_attentions WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), 1);
         assert_eq!(reopened.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_unit_execution_attentions WHERE work_unit_id<>'root-a'", [], |r| r.get(0)).unwrap(), 0);
-        assert_eq!(reopened.query_row::<String, _, _>("SELECT code FROM work_slice_execution_attentions", [], |r| r.get(0)).unwrap(), "work_unit_terminal_execution_failure");
-        for table in ["work_slice_execution_graph_completions", "work_slice_execution_settlements", "work_slice_planning_point_execution_settlements"] {
-            assert_eq!(reopened.query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap(), 0, "{table}");
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>(
+                    "SELECT code FROM work_slice_execution_attentions",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            "work_unit_terminal_execution_failure"
+        );
+        for table in [
+            "work_slice_execution_graph_completions",
+            "work_slice_execution_settlements",
+            "work_slice_planning_point_execution_settlements",
+        ] {
+            assert_eq!(
+                reopened
+                    .query_row::<i64, _, _>(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                        .get(0))
+                    .unwrap(),
+                0,
+                "{table}"
+            );
         }
         drop(reopened);
         let mut replay = Connection::open(database.path()).unwrap();
@@ -1124,6 +1561,15 @@ mod tests {
         reconcile_work_slice_execution_settlement(&mut replay).unwrap();
         assert_eq!(replay.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-a'", [], |r| r.get(0)).unwrap(), "attention");
         assert_eq!(replay.query_row::<String, _, _>("SELECT execution_state FROM work_unit_execution_states WHERE work_unit_id='root-b'", [], |r| r.get(0)).unwrap(), "ready");
-        assert_eq!(replay.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_execution_settlements", [], |r| r.get(0)).unwrap(), 0);
+        assert_eq!(
+            replay
+                .query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM work_slice_execution_settlements",
+                    [],
+                    |r| r.get(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 }

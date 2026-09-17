@@ -48,9 +48,7 @@ impl super::confirmation::ButtonInitiationContextScheduler for OrchestrationAppl
 
 pub(crate) trait ManagedPlanBuilderInvocationHandle: Send {
     fn injection(&self) -> &CodexMcpInjection;
-    fn upstream_descriptor(
-        &self,
-    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+    fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
         None
     }
     fn bind_agent_invocation(&self, invocation_id: AgentInvocationId);
@@ -72,9 +70,7 @@ impl ManagedPlanBuilderInvocationHandle for ProductionManagedInvocation {
     fn injection(&self) -> &CodexMcpInjection {
         &self.0.injection
     }
-    fn upstream_descriptor(
-        &self,
-    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+    fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
         Some(self.0.upstream_descriptor())
     }
     fn bind_agent_invocation(&self, invocation_id: AgentInvocationId) {
@@ -104,9 +100,7 @@ impl ManagedPlanBuilderInvocationHandle for RegisteredManagedInvocation {
         self.inner.injection()
     }
 
-    fn upstream_descriptor(
-        &self,
-    ) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
+    fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
         self.inner.upstream_descriptor()
     }
 
@@ -193,13 +187,7 @@ impl ManagedPlanBuilderService {
         registry: Arc<ManagedPlanBuilderRegistry>,
         confirmations: Arc<InitiationConfirmationCoordinator>,
     ) -> Arc<Self> {
-        Self::new_with_managed_mcp_upstreams(
-            orchestration,
-            sessions,
-            registry,
-            confirmations,
-            None,
-        )
+        Self::new_with_managed_mcp_upstreams(orchestration, sessions, registry, confirmations, None)
     }
 
     pub(crate) fn new_with_managed_mcp_upstreams(
@@ -207,9 +195,7 @@ impl ManagedPlanBuilderService {
         sessions: Arc<AgentSessionApplication>,
         registry: Arc<ManagedPlanBuilderRegistry>,
         confirmations: Arc<InitiationConfirmationCoordinator>,
-        managed_mcp_upstreams: Option<
-            Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>,
-        >,
+        managed_mcp_upstreams: Option<Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             orchestration,

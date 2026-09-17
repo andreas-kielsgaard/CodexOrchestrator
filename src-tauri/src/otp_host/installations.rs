@@ -154,15 +154,24 @@ impl OtpInstallationService {
             .and_then(Value::as_array)
             .ok_or("Job Agent manifest has no tools.")?
             .iter()
-            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-            .collect::<std::collections::BTreeSet<_>>();
+            .map(|tool| {
+                Ok((
+                    tool.get("name")
+                        .and_then(Value::as_str)
+                        .ok_or("Job Agent manifest tool has no name.")?,
+                    tool.get("capability")
+                        .and_then(Value::as_str)
+                        .ok_or("Job Agent manifest tool has no capability.")?,
+                ))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, &str>>()?;
         let local = declared
             .tools
             .iter()
-            .map(|tool| tool.id.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
+            .map(|tool| (tool.id.as_str(), tool.capability.as_str()))
+            .collect::<std::collections::BTreeMap<_, _>>();
         if remote != local {
-            return Err("Job Agent bridge tools do not match the imported OTP package.".into());
+            return Err("Job Agent bridge tools or capability groups do not match the imported OTP package.".into());
         }
         Ok(())
     }

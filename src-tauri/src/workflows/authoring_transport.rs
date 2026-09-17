@@ -66,13 +66,6 @@ pub(crate) fn list_workflow_recipes(
 }
 
 #[tauri::command]
-pub(crate) fn list_workflow_capabilities(
-    state: State<'_, WorkflowAuthoringTauriState>,
-) -> Vec<crate::otp_api::PackageDescriptor> {
-    state.service.registry.catalogue()
-}
-
-#[tauri::command]
 pub(crate) fn load_workflow_recipe(
     state: State<'_, WorkflowAuthoringTauriState>,
     input: LoadWorkflowRecipeInput,

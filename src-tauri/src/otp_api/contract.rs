@@ -19,6 +19,9 @@ pub(crate) struct OutputRef {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PackageDescriptor {
     pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub description: String,
     pub contract_version: u32,
     pub requested_handles: Vec<Handle>,
     pub tools: Vec<ToolDescriptor>,
@@ -39,6 +42,8 @@ pub(crate) struct ToolDescriptor {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub expected_behavior: String,
+    pub recommended_usage: String,
     pub entrypoint: Entrypoint,
     pub outputs: Vec<OutputDescriptor>,
     pub configuration: Vec<ConfigurationField>,
@@ -52,8 +57,28 @@ pub(crate) struct AgentMcpServerDescriptor {
     pub server_name: String,
     pub name: String,
     pub description: String,
+    pub capability_groups: Vec<AgentMcpCapabilityGroupDescriptor>,
     pub tools: Vec<AgentMcpToolDescriptor>,
+    pub grants: Vec<AgentMcpGrantDescriptor>,
     pub configuration: Vec<ConfigurationField>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentMcpCapabilityGroupDescriptor {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentMcpGrantDescriptor {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub capability: String,
+    pub transition: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,6 +88,11 @@ pub(crate) struct AgentMcpToolDescriptor {
     pub name: String,
     pub description: String,
     pub capability: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub expected_behavior: String,
+    pub recommended_usage: String,
+    pub required_grants: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
