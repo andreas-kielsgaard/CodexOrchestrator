@@ -77,11 +77,21 @@ pub fn list_worktrees(
             let WorktreeLocation::Available(location) = item.location else {
                 return None;
             };
+            let status = repository.status().status(location.path()).ok()?;
+            let committed_at = repository
+                .commits()
+                .facts(location.path(), &item.head)
+                .ok()?
+                .committed_at;
             Some(WorktreeInstance {
                 handle: item.id.as_str().into(),
                 path: location.path().to_string_lossy().into_owned(),
                 branch_ref: item.head_ref.map(|branch| branch.as_str().into()),
                 head: Some(item.head.as_str().into()),
+                dirty: status.staged_paths > 0
+                    || status.unstaged_paths > 0
+                    || status.untracked_paths > 0,
+                head_committed_at: Some(committed_at),
             })
         })
         .collect())

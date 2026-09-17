@@ -129,6 +129,11 @@
   border-color: #547a47;
   box-shadow: inset 3px 0 #547a47;
 }
+
+.session-target-instance.is-branch-match {
+  border-color: var(--accent, #3d7b6d);
+  background: color-mix(in srgb, var(--accent, #3d7b6d) 9%, transparent);
+}
 .session-target-instance > span {
   display: flex;
   flex-direction: column;

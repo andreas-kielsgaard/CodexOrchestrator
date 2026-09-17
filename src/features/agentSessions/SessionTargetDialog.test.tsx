@@ -32,6 +32,47 @@ it('requires repository and branch before listing grouped devices, then returns 
   expect(onSelect).toHaveBeenCalledWith(remoteTarget);
   expect(fixture.client.listTargets).toHaveBeenCalledWith('repository-one', remoteTarget.branchRef);
 });
+
+it('selecting a branch selects its only matching worktree', async () => {
+  const user = userEvent.setup();
+  const fixture = sessionTargetFixtures();
+  const onSelect = vi.fn();
+  render(
+    <SessionTargetDialog client={fixture.client} source={fixture.source} selected={null} onClose={() => {}} onSelect={onSelect} />,
+  );
+  fireEvent.change(await screen.findByLabelText('Target repository'), {
+    target: { value: 'repository-one' },
+  });
+  await user.click(await screen.findByRole('button', { name: /^codex\/durable-review / }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Use worktree' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Use worktree' }));
+  expect(onSelect).toHaveBeenCalledWith(remoteTarget);
+});
+
+it('highlights multiple matching worktrees and requires an instance choice', async () => {
+  const user = userEvent.setup();
+  const fixture = sessionTargetFixtures();
+  fixture.devices[1] = {
+    ...fixture.devices[1],
+    profiles: [{
+      ...fixture.devices[1].profiles[0],
+      instances: [fixture.devices[1].profiles[0].instances[0], {
+        ...fixture.devices[1].profiles[0].instances[0], worktreeId: 'second-instance', path: '/root/projects/orchid/worktrees/review-copy',
+      }],
+    }],
+  };
+  render(
+    <SessionTargetDialog client={fixture.client} source={fixture.source} selected={null} onClose={() => {}} onSelect={() => {}} />,
+  );
+  fireEvent.change(await screen.findByLabelText('Target repository'), {
+    target: { value: 'repository-one' },
+  });
+  await user.click(await screen.findByRole('button', { name: /^codex\/durable-review / }));
+  const matches = await screen.findAllByRole('button', { name: new RegExp('/root/projects/orchid/worktrees/review') });
+  expect(matches).toHaveLength(2);
+  expect(matches.every((button) => button.classList.contains('is-branch-match'))).toBe(true);
+  expect(screen.getByRole('button', { name: 'Use worktree' })).toBeDisabled();
+});
 it('uses the shared graph inside the same dialog and distinguishes unavailable devices from empty ones', async () => {
   const user = userEvent.setup();
   const fixture = sessionTargetFixtures();

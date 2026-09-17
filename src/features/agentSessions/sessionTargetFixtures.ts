@@ -81,6 +81,8 @@ export function sessionTargetFixtures() {
               worktreeId: remoteTarget.worktreeId,
               path: remoteTarget.path,
               head: remoteTarget.head,
+              dirty: false,
+              headCommittedAt: tipCommit.committedAt,
               branchRef: remoteTarget.branchRef,
             },
           ],

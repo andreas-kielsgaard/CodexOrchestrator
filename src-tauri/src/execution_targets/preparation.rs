@@ -305,6 +305,8 @@ impl ExecutionTargetService {
                         path,
                         branch_ref: None,
                         head: None,
+                        dirty: false,
+                        head_committed_at: None,
                     },
                 )
             }

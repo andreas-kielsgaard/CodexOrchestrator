@@ -54,6 +54,8 @@ export interface TargetWorktreeDto {
   readonly worktreeId: string;
   readonly path: string;
   readonly head: string | null;
+  readonly dirty?: boolean;
+  readonly headCommittedAt?: string | null;
   readonly branchRef: string;
   readonly sisterLock?: SisterWorktreeLockDto | null;
   readonly isSister?: boolean | null;

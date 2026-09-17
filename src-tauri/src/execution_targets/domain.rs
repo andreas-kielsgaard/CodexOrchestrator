@@ -84,6 +84,8 @@ pub(crate) struct TargetWorktree {
     pub(crate) worktree_id: String,
     pub(crate) path: String,
     pub(crate) head: Option<String>,
+    pub(crate) dirty: bool,
+    pub(crate) head_committed_at: Option<String>,
     pub(crate) branch_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sister_lock: Option<super::sisters::SisterWorktreeLock>,

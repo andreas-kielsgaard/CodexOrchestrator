@@ -20,6 +20,8 @@ import type {
   SessionExecutionSelectionDto,
 } from '../../application/executionTargets/contracts';
 import { toSessionExecutionTarget } from '../../application/executionTargets/presentation';
+import { orderTargetBranches } from '../../application/executionTargets/presentation';
+import type { ProfileWorktreeTargetsDto } from '../../application/executionTargets/contracts';
 import '../worktreeReview/worktreeReview.css';
 export function SessionTargetDialog({
   client,
@@ -48,6 +50,10 @@ export function SessionTargetDialog({
   const [loadingRepositories, setLoadingRepositories] = useState(true);
   const [repositoryId, setRepositoryId] = useState(selected?.repositoryId ?? '');
   const [branches, setBranches] = useState<readonly ReviewBranch[]>([]);
+  const [referenceTarget, setReferenceTarget] = useState<ReviewTarget | null>(null);
+  const [inventoryProfiles, setInventoryProfiles] = useState<
+    readonly ProfileWorktreeTargetsDto[]
+  >([]);
   const [branchRef, setBranchRef] = useState(selected?.branchRef ?? '');
   const [devices, setDevices] = useState<readonly ExecutionTargetDeviceDto[]>([]);
   const [candidate, setCandidate] = useState(selected);
@@ -88,8 +94,15 @@ export function SessionTargetDialog({
       .branchGraph(repositoryId)
       .then(
         (graph) => {
-          if (current)
+          if (current) {
             setBranches(graph.targets.filter((branch) => branch.target.kind === 'branch'));
+            setReferenceTarget(graph.referenceTarget);
+            const defaultBranch =
+              graph.referenceTarget?.kind === 'branch'
+                ? graph.referenceTarget.branchRef
+                : null;
+            if (defaultBranch) setBranchRef((currentBranch) => currentBranch || defaultBranch);
+          }
         },
         (error) => {
           if (current) setRepositoryError(String(error));
@@ -102,6 +115,26 @@ export function SessionTargetDialog({
       current = false;
     };
   }, [source, repositoryId]);
+  useEffect(() => {
+    let current = true;
+    setInventoryProfiles([]);
+    if (!repositoryId) return;
+    const scope = deviceId ? { kind: 'device' as const, deviceId } : { kind: 'local' as const };
+    void client.listWorktreeChoices(scope).then(
+      (choices) => {
+        if (current)
+          setInventoryProfiles(
+            choices.find((choice) => choice.repositoryId === repositoryId)?.profiles ?? [],
+          );
+      },
+      () => {
+        if (current) setInventoryProfiles([]);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, deviceId, repositoryId]);
   useEffect(() => {
     let current = true;
     setDevices([]);
@@ -126,6 +159,32 @@ export function SessionTargetDialog({
       current = false;
     };
   }, [client, repositoryId, branchRef, refresh]);
+  useEffect(() => {
+    if (candidate || loadingDevices || !branchRef) return;
+    const matches = devices
+      .filter((device) => !deviceId || device.deviceId === deviceId)
+      .flatMap((device) => device.profiles)
+      .filter(
+        (item) =>
+          !item.error &&
+          (!capabilityProfileId || item.capabilityProfileId === capabilityProfileId),
+      )
+      .flatMap((profile) => profile.instances.map((instance) => ({ profile, instance })))
+      .filter(
+        ({ instance }) =>
+          !instance.sisterLock || instance.sisterLock.ownerSessionId === sessionId,
+      );
+    if (matches.length === 1)
+      setCandidate(toSessionExecutionTarget(repositoryId, matches[0].profile, matches[0].instance));
+  }, [
+    branchRef,
+    candidate,
+    capabilityProfileId,
+    deviceId,
+    devices,
+    loadingDevices,
+    repositoryId,
+  ]);
   useEffect(() => {
     if (!deviceId || !onSelectSelection || loadingDevices || !branchRef) return;
     const key = `${repositoryId}:${branchRef}:${deviceId}`;
@@ -159,6 +218,10 @@ export function SessionTargetDialog({
   const selectedBranch = useMemo<ReviewTarget | null>(
     () => (branchRef ? { kind: 'branch', repositoryId, branchRef } : null),
     [repositoryId, branchRef],
+  );
+  const orderedBranches = useMemo(
+    () => orderTargetBranches(branches, referenceTarget, inventoryProfiles),
+    [branches, inventoryProfiles, referenceTarget],
   );
   const candidateAvailable =
     candidate &&
@@ -260,7 +323,7 @@ export function SessionTargetDialog({
               ) : (
                 <BranchBrowser
                   repositoryId={repositoryId}
-                  branches={branches}
+                  branches={orderedBranches}
                   selectedTarget={selectedBranch}
                   onBranchChange={chooseBranch}
                   onOpenGraph={() => setGraphOpen(true)}
@@ -361,7 +424,7 @@ export function SessionTargetDialog({
                               <button
                                 key={instance.worktreeId}
                                 type="button"
-                                className="session-target-instance"
+                                className={`session-target-instance${!candidate && branchRef ? ' is-branch-match' : ''}`}
                                 aria-pressed={active}
                                 disabled={Boolean(locked)}
                                 onClick={() =>

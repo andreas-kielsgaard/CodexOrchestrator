@@ -45,6 +45,8 @@ fn instance(root: &str, name: &str, branch: Option<&str>) -> WorktreeInstance {
         path: format!("{root}/{name}"),
         branch_ref: branch.map(str::to_owned),
         head: Some("0123456789abcdef".into()),
+        dirty: false,
+        head_committed_at: Some("2026-01-01T00:00:00Z".into()),
     }
 }
 

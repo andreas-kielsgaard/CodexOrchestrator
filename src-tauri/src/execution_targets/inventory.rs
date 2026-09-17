@@ -113,6 +113,8 @@ fn profile_targets(
                         worktree_id: instance.handle,
                         path: instance.path,
                         head: instance.head,
+                        dirty: instance.dirty,
+                        head_committed_at: instance.head_committed_at,
                         branch_ref,
                         sister_lock: None,
                         is_sister: None,

@@ -5,6 +5,7 @@ import {
 } from '../../application/executionTargets/contracts';
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import { targetWorktreeLabel } from '../../application/executionTargets/presentation';
 import './sessionPreparation.css';
 export interface SessionComposerToolbarProps {
   profiles: readonly CapabilityProfileDto[];
@@ -27,11 +28,11 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
   const worktreeLabel =
     workspace?.kind === 'existing'
       ? workspace.target.branchRef
-        ? `${workspace.target.branchRef.replace(/^refs\/heads\//, '')} · ${workspace.target.path.split(/[\\/]/).filter(Boolean).at(-1)}`
+        ? targetWorktreeLabel(workspace.target.branchRef, workspace.target.path)
         : 'Session folder'
       : workspace?.kind === 'create'
         ? `${workspace.branchRef.replace(/^refs\/heads\//, '')} · new at ${workspace.commit.slice(0, 8)}`
-        : 'Worktree';
+        : 'Select branch';
   return (
     <>
       <div className="session-composer-toolbar__targets">
@@ -41,8 +42,9 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
             aria-label="Capability Profile"
             value={props.selection?.capabilityProfileId ?? ''}
             onChange={(event) => props.onProfile(event.target.value)}
+            disabled={props.profiles.length === 0}
           >
-            <option value="">Capability Profile</option>
+            {props.profiles.length === 0 && <option value="">No Capability Profiles</option>}
             {props.profiles
               .filter(
                 (profile) =>

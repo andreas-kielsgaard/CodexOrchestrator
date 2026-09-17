@@ -148,6 +148,9 @@ pub struct WorktreeInstance {
     pub path: String,
     pub branch_ref: Option<String>,
     pub head: Option<String>,
+    #[serde(default)]
+    pub dirty: bool,
+    pub head_committed_at: Option<String>,
 }
 
 /// Counts and byte estimates for one layer of a Git working tree.

@@ -2,6 +2,8 @@ import type {
   ExecutionBindingDto,
   SessionExecutionTargetDto,
 } from './contracts';
+import { targetWorktreeLabel } from './targetOrdering';
+export { orderTargetBranches, targetWorktreeLabel } from './targetOrdering';
 
 export function toSessionExecutionTarget(
   repositoryId: string,
@@ -39,7 +41,7 @@ export function presentExecutionTarget(
       target.capabilityProfileId,
       target.worktreeId,
     ]),
-    label: `${branch} · ${directory}`,
+    label: targetWorktreeLabel(target.branchRef, target.path),
     description: `${repositoryName} · ${profileName} · ${target.path} · #${target.worktreeId.slice(-10)}`,
     keywords: [
       branch,
