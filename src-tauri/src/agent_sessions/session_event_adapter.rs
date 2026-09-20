@@ -126,6 +126,7 @@ impl SessionDirectory for AgentSessionEventAdapter {
                         capability_profile: profile,
                         node_profile: intent.node_profile,
                         agent_mcp_configuration: intent.agent_mcp_configuration,
+                        session_skill_inputs: Vec::new(),
                     },
                     Some(intent.working_directory),
                     Some(intent.title),

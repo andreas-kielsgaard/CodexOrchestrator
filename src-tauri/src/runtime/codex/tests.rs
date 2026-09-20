@@ -335,7 +335,7 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
     };
     let extension = RuntimeLaunchExtension {
         managed_mcp_servers: Vec::new(),
-        skill_roots: Vec::new(),
+        skill_inputs: Vec::new(),
         ignore_user_rules: false,
         reasoning_mode: None,
         config_overrides: vec![
@@ -371,7 +371,7 @@ fn resume_places_child_configuration_before_the_session_id() {
     let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     let extension = RuntimeLaunchExtension {
         managed_mcp_servers: Vec::new(),
-        skill_roots: Vec::new(),
+        skill_inputs: Vec::new(),
         ignore_user_rules: false,
         reasoning_mode: None,
         config_overrides: vec!["mcp_servers.plan_builder.required=true".into()],
@@ -402,7 +402,7 @@ fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume
     let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     let extension = RuntimeLaunchExtension {
         managed_mcp_servers: Vec::new(),
-        skill_roots: Vec::new(),
+        skill_inputs: Vec::new(),
         ignore_user_rules: false,
         reasoning_mode: Some("high".into()),
         config_overrides: vec!["model_reasoning_effort=\"low\"".into()],

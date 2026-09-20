@@ -1,7 +1,6 @@
 #![allow(unused_imports)]
 
 mod capability_profile;
-mod configured_runtime;
 mod defaults;
 mod inventory;
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
@@ -16,16 +15,18 @@ mod resolution;
 mod runtime_profile;
 mod service;
 mod session_profile;
+mod session_skills;
 pub(crate) mod transport;
 
-pub(crate) use capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION};
-pub(crate) use configured_runtime::{configured_runtime_profile, ConfiguredRuntimeProfileSource};
+pub(crate) use capability_profile::{
+    CapabilityProfile, ModelAllowance, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
+};
 pub(crate) use creation_intent::SessionCreationIntent;
 pub(crate) use native_codex::NativeCodexSelectedRuntimeProfileSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
-    CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
-    SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
+    CapabilityProfileRepository, CapabilityProfileRepositoryError, RuntimeSkillRoot,
+    SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,
@@ -41,6 +42,7 @@ pub(crate) use runtime_profile::{
 };
 pub(crate) use service::{CapabilityProfileService, CapabilityProfileServiceError};
 pub(crate) use session_profile::SessionProfile;
+pub(crate) use session_skills::{compile_session_skill_inputs, validate_session_skill_inputs};
 
 #[cfg(test)]
 mod tests;

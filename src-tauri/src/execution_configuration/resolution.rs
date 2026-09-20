@@ -8,6 +8,7 @@ use super::{
     },
     session_profile::SessionProfile,
 };
+use crate::agent_sessions::ports::RuntimeSkillInput;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -26,6 +27,8 @@ pub(crate) struct SessionCreationRequest {
     pub(crate) node_profile: NodeProfile,
     #[serde(default)]
     pub(crate) agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub(crate) session_skill_inputs: Vec<RuntimeSkillInput>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -196,6 +199,7 @@ impl SessionProfileResolver {
             request.capability_profile.revision,
             request.node_profile.allowed_capabilities,
             request.agent_mcp_configuration,
+            request.session_skill_inputs,
             pinned_defaults,
         );
         let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;

@@ -1,5 +1,7 @@
 use super::{
-    capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
+    capability_profile::{
+        CapabilityProfile, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
+    },
     ports::{
         CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
     },
@@ -8,6 +10,7 @@ use super::{
     },
 };
 use std::{error::Error, fmt, sync::Arc};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct CapabilityProfileService {
@@ -166,10 +169,55 @@ impl CapabilityProfileService {
         defaults: super::RuntimeSelections,
         execution: crate::execution_targets::domain::ExecutionBinding,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        self.create_with_routes(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            defaults,
+            execution,
+            Vec::new(),
+            None,
+        )
+    }
+
+    pub(crate) fn create_generated_with_routes(
+        &self,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+        execution: crate::execution_targets::domain::ExecutionBinding,
+        route_policies: Vec<ProfileRoutePolicy>,
+        default_route_id: Option<String>,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        self.create_with_routes(
+            Uuid::new_v4().to_string(),
+            name,
+            allowed_capabilities,
+            defaults,
+            execution,
+            route_policies,
+            default_route_id,
+        )
+    }
+
+    pub(crate) fn create_with_routes(
+        &self,
+        capability_profile_id: String,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+        execution: crate::execution_targets::domain::ExecutionBinding,
+        route_policies: Vec<ProfileRoutePolicy>,
+        default_route_id: Option<String>,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        let execution = selected_route_execution(&route_policies, default_route_id.as_deref())
+            .unwrap_or(execution);
         let capability_profile = CapabilityProfile {
             execution,
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults,
+            route_policies,
+            default_route_id,
             capability_profile_id,
             name,
             revision: 1,
@@ -220,15 +268,40 @@ impl CapabilityProfileService {
         execution: crate::execution_targets::domain::ExecutionBinding,
     ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
         let current = self.read(capability_profile_id)?;
+        self.update_with_routes(
+            capability_profile_id,
+            name,
+            allowed_capabilities,
+            defaults,
+            execution,
+            current.route_policies,
+            current.default_route_id,
+        )
+    }
+
+    pub(crate) fn update_with_routes(
+        &self,
+        capability_profile_id: &str,
+        name: String,
+        allowed_capabilities: CapabilitySet,
+        defaults: super::RuntimeSelections,
+        execution: crate::execution_targets::domain::ExecutionBinding,
+        route_policies: Vec<ProfileRoutePolicy>,
+        default_route_id: Option<String>,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        let current = self.read(capability_profile_id)?;
         let revision = current.revision.checked_add(1).ok_or_else(|| {
             CapabilityProfileServiceError::RevisionOverflow {
                 capability_profile_id: capability_profile_id.into(),
             }
         })?;
         let replacement = CapabilityProfile {
-            execution,
+            execution: selected_route_execution(&route_policies, default_route_id.as_deref())
+                .unwrap_or(execution),
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults,
+            route_policies,
+            default_route_id,
             capability_profile_id: current.capability_profile_id,
             name,
             revision,
@@ -261,19 +334,41 @@ impl CapabilityProfileService {
         capability_profile
             .validate()
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
-        let runtime_profile = self.runtime_for_binding(&capability_profile.execution, None)?;
-        if let Some(capability) = capability_profile
-            .allowed_capabilities
-            .first_capability_outside(&runtime_profile.exposure)
-        {
-            return Err(CapabilityProfileServiceError::WidensRuntime(capability));
+        let executions = if capability_profile.route_policies.is_empty() {
+            vec![&capability_profile.execution]
+        } else {
+            capability_profile
+                .route_policies
+                .iter()
+                .map(|route| &route.execution)
+                .collect()
+        };
+        for execution in executions {
+            let runtime_profile = self.runtime_for_binding(execution, None)?;
+            if let Some(capability) = capability_profile
+                .allowed_capabilities
+                .first_capability_outside(&runtime_profile.exposure)
+            {
+                return Err(CapabilityProfileServiceError::WidensRuntime(capability));
+            }
+            validate_selection_availability(
+                &runtime_profile.locked,
+                &capability_profile.allowed_capabilities,
+            )
+            .map_err(CapabilityProfileServiceError::ExcludesRuntimeLock)?;
         }
-        validate_selection_availability(
-            &runtime_profile.locked,
-            &capability_profile.allowed_capabilities,
-        )
-        .map_err(CapabilityProfileServiceError::ExcludesRuntimeLock)
+        Ok(())
     }
+}
+
+fn selected_route_execution(
+    routes: &[ProfileRoutePolicy],
+    default_route_id: Option<&str>,
+) -> Option<crate::execution_targets::domain::ExecutionBinding> {
+    routes
+        .iter()
+        .find(|route| Some(route.route_id.as_str()) == default_route_id)
+        .map(|route| route.execution.clone())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

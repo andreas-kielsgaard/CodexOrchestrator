@@ -10,11 +10,10 @@ impl AgentSessionApplication {
         let Some(workspaces) = &self.workspaces else {
             return extension;
         };
-        let mut extension = extension.unwrap_or_default();
-        let root = workspaces.skills_root();
-        if !extension.skill_roots.contains(&root) {
-            extension.skill_roots.push(root);
-        }
+        let extension = extension.unwrap_or_default();
+        // Workspace skills are selected by the session capability manifest. Adding the root here
+        // would make every workspace skill ambient and would no longer affect app-server launch.
+        let _ = workspaces;
         Some(extension)
     }
     pub(crate) fn resolve_working_directory(

@@ -9,8 +9,8 @@ use super::{
     CreateAgentSessionCommand, SendAgentSessionMessageCommand,
 };
 use crate::execution_configuration::{
-    DirectUserInvocationRequest, DirectUserInvocationResolution, NodeProfile, SandboxMode,
-    SessionCreationRequest, SessionProfileResolver,
+    validate_session_skill_inputs, DirectUserInvocationRequest, DirectUserInvocationResolution,
+    NodeProfile, SandboxMode, SessionCreationRequest, SessionProfileResolver,
 };
 impl AgentSessionApplication {
     /// Standalone defaults are application-owned, not a hidden Workflow node. Resolve before
@@ -97,6 +97,18 @@ impl AgentSessionApplication {
                         e.to_string(),
                     )
                 })?;
+            let session_skill_inputs = self
+                .compile_capability_skill_inputs(
+                    &capability,
+                    &target.execution.configuration_ref,
+                    Some(&target.path),
+                )
+                .map_err(|error| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        error,
+                    )
+                })?;
             let resolution = SessionProfileResolver::resolve_snapshot(
                 runtime.clone(),
                 SessionCreationRequest {
@@ -108,6 +120,7 @@ impl AgentSessionApplication {
                         pinned_defaults: Default::default(),
                     },
                     capability_profile: capability,
+                    session_skill_inputs,
                 },
             )
             .map_err(SessionConfigurationError::resolution)?;
@@ -127,6 +140,7 @@ impl AgentSessionApplication {
             },
         )
         .map_err(SessionConfigurationError::resolution)?;
+        let pinned_skill_inputs = resolution.session_profile().session_skill_inputs().to_vec();
         let session = self
             .prepare_session_with_id(
                 CreateAgentSessionCommand {
@@ -161,6 +175,7 @@ impl AgentSessionApplication {
                 sandbox_mode,
             },
             invocation_resolution,
+            &pinned_skill_inputs,
         )
     }
 
@@ -206,16 +221,33 @@ impl AgentSessionApplication {
             },
         )
         .map_err(SessionConfigurationError::resolution)?;
-        self.send_resolved_direct_user_message(command, invocation_resolution)
+        self.send_resolved_direct_user_message(
+            command,
+            invocation_resolution,
+            pinned
+                .creation_resolution
+                .session_profile()
+                .session_skill_inputs(),
+        )
     }
 
     fn send_resolved_direct_user_message(
         &self,
         command: SendDirectUserAgentSessionMessageCommand,
         invocation_resolution: DirectUserInvocationResolution,
+        session_skill_inputs: &[crate::agent_sessions::ports::RuntimeSkillInput],
     ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
         let requested_options = runtime_options(&invocation_resolution.selections);
-        let launch_extension = reasoning_launch_extension(&invocation_resolution.selections);
+        let selected_skills =
+            validate_session_skill_inputs(session_skill_inputs).map_err(|error| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::InvalidInvocationSelection,
+                    error,
+                )
+            })?;
+        let mut launch_extension =
+            reasoning_launch_extension(&invocation_resolution.selections).unwrap_or_default();
+        launch_extension.skill_inputs = selected_skills;
         let acknowledgement = self
             .send_message_with_launch_extension(
                 SendAgentSessionMessageCommand {
@@ -225,7 +257,7 @@ impl AgentSessionApplication {
                     working_directory: None,
                     requested_options: Some(requested_options),
                 },
-                launch_extension,
+                Some(launch_extension),
             )
             .map_err(SessionConfigurationError::agent_session)?;
         Ok(SendDirectUserAgentSessionMessageResult {

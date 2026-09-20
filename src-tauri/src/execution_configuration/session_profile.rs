@@ -1,6 +1,7 @@
 use super::runtime_profile::{
     validate_identifier, validate_selection_availability, CapabilitySet, RuntimeSelections,
 };
+use crate::agent_sessions::ports::RuntimeSkillInput;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -18,6 +19,9 @@ pub(crate) struct SessionProfile {
     node_capabilities: CapabilitySet,
     #[serde(default)]
     agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
+    /// Immutable skill manifest compiled at session instantiation.
+    #[serde(default)]
+    session_skill_inputs: Vec<RuntimeSkillInput>,
     pinned_defaults: RuntimeSelections,
 }
 
@@ -30,6 +34,7 @@ impl SessionProfile {
         capability_profile_revision: u64,
         node_capabilities: CapabilitySet,
         agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
+        session_skill_inputs: Vec<RuntimeSkillInput>,
         pinned_defaults: RuntimeSelections,
     ) -> Self {
         Self {
@@ -41,6 +46,7 @@ impl SessionProfile {
             capability_profile_revision,
             node_capabilities,
             agent_mcp_configuration,
+            session_skill_inputs,
             pinned_defaults,
         }
     }
@@ -71,6 +77,10 @@ impl SessionProfile {
 
     pub(crate) fn agent_mcp_configuration(&self) -> &BTreeMap<String, serde_json::Value> {
         &self.agent_mcp_configuration
+    }
+
+    pub(crate) fn session_skill_inputs(&self) -> &[RuntimeSkillInput] {
+        &self.session_skill_inputs
     }
 
     pub(crate) fn pinned_defaults(&self) -> &RuntimeSelections {

@@ -4,6 +4,7 @@ import type { PresentableIdentity } from '../identities';
 import type { CatalogState } from '../../components/CatalogSelect';
 import type {
   CapabilitySetDto,
+  ProfileRoutePolicyDto,
   RuntimeSelectionsDto,
   SandboxModeDto,
 } from '../../application/executionConfiguration';
@@ -38,6 +39,8 @@ export interface CapabilityProfileDraft {
   readonly name: string;
   readonly revision: number | null;
   readonly allowedCapabilities: CapabilitySetViewModel;
+  readonly routePolicies: readonly ProfileRoutePolicyDto[];
+  readonly defaultRouteId: string | null;
 }
 
 /** A non-secret local projection of one Codex harness and its bound inference source. */
@@ -46,6 +49,10 @@ export interface HarnessInferenceRouteOption {
   readonly selected: boolean;
   readonly label: string;
   readonly sourceLabel: string;
+  /** Separate labels let the profile editor present the actual route topology. */
+  readonly deviceLabel?: string;
+  readonly harnessLabel?: string;
+  readonly inferenceLabel?: string;
   readonly detail: string;
   readonly execution: ExecutionBindingDto;
 }

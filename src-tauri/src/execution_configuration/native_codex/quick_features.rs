@@ -4,6 +4,7 @@ use crate::execution_configuration::{
 use crate::runtime::codex::app_server::environment::CodexEnvironment;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> RuntimeQuickFeatures {
     let mut result = RuntimeQuickFeatures {
@@ -73,6 +74,42 @@ pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> Runtime
         });
     }
     result
+}
+
+/// Orchid-owned roots are deliberately not registered with Codex's global skill discovery.
+/// We enumerate their immutable `SKILL.md` files locally and later deliver selected entries as
+/// explicit turn inputs.
+pub(super) fn append_owned_root_skills(result: &mut RuntimeQuickFeatures, roots: &[PathBuf]) {
+    let mut discovered = BTreeMap::<String, String>::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path().join("SKILL.md");
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            discovered.insert(name, path.to_string_lossy().into_owned());
+        }
+    }
+    for (name, path) in discovered {
+        if result.skills.iter().any(|skill| skill.name == name) {
+            result.limitations.push(format!(
+                "Skill '{name}' is available from multiple roots and is not selected automatically."
+            ));
+            continue;
+        }
+        result.skills.push(QuickSkill {
+            id: path,
+            invocation_text: format!("${name}"),
+            name,
+            description: "Orchid-owned skill".into(),
+        });
+    }
 }
 
 fn array(value: &Value) -> impl Iterator<Item = &Value> {

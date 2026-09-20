@@ -2,7 +2,8 @@
 use super::*;
 use crate::agent_sessions::application::update_sink::PersistedRuntimeUpdateSink;
 use crate::execution_configuration::{
-    DirectUserInvocationRequest, NodeProfile, SessionCreationRequest, SessionProfileResolver,
+    validate_session_skill_inputs, DirectUserInvocationRequest, NodeProfile,
+    SessionCreationRequest, SessionProfileResolver,
 };
 impl AgentSessionApplication {
     pub(super) fn run_preparation(
@@ -221,6 +222,13 @@ impl AgentSessionApplication {
         let runtime_profile = profiles
             .runtime_for_binding(&destination.execution, Some(&destination.path))
             .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let session_skill_inputs = self
+            .compile_capability_skill_inputs(
+                &capability,
+                &destination.execution.configuration_ref,
+                Some(&destination.path),
+            )
+            .map_err(AgentSessionApplicationError::invalid)?;
         let creation = SessionProfileResolver::resolve_snapshot(
             runtime_profile.clone(),
             SessionCreationRequest {
@@ -232,9 +240,11 @@ impl AgentSessionApplication {
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,
+                session_skill_inputs,
             },
         )
         .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let pinned_skill_inputs = creation.session_profile().session_skill_inputs().to_vec();
         let resolution = SessionProfileResolver::resolve_direct_user_snapshot(
             runtime_profile,
             &creation,
@@ -299,7 +309,11 @@ impl AgentSessionApplication {
         let preflight = runtime
             .preflight_invocation(mode, &requested)
             .map_err(AgentSessionApplicationError::runtime)?;
-        let mut extension = reasoning_launch_extension(&resolution.selections);
+        let selected_skills = validate_session_skill_inputs(&pinned_skill_inputs)
+            .map_err(AgentSessionApplicationError::invalid)?;
+        let mut extension = reasoning_launch_extension(&resolution.selections).unwrap_or_default();
+        extension.skill_inputs = selected_skills;
+        let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);
             if let Some(authority) = &self.native_profile_launch_authority {

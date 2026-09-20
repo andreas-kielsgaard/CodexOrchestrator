@@ -5284,7 +5284,7 @@ mod tests {
         let prepared = service.prepare_managed_agent_session_launch(
             "session-1", "invocation-1", false,
             Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                 config_overrides: vec!["--role-config".into()],
                 environment: vec![("ROLE_ENV".into(), "preserved".into())],
                 initial_prompt_prefix: None,
@@ -5322,7 +5322,7 @@ mod tests {
         assert!(reopened.prepare_managed_agent_session_launch(
             "session-2", "invocation-4", false,
             Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                 config_overrides: vec![],
                 environment: vec![("CODEX_HOME".into(), "foreign".into())],
                 initial_prompt_prefix: None,

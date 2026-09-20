@@ -1,6 +1,13 @@
 use super::{capability_profile::CapabilityProfile, runtime_profile::RuntimeProfileSnapshot};
 use std::{error::Error, fmt};
 
+/// A master skill folder that a runtime source makes eligible for an explicit session manifest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeSkillRoot {
+    pub(crate) group_id: String,
+    pub(crate) path: std::path::PathBuf,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilityProfileRepositoryError {
     AlreadyExists(String),
@@ -90,6 +97,12 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn skill_roots_for_configuration(
+        &self,
+        _reference: &str,
+    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
+        Ok(Vec::new())
+    }
     fn configuration_home(
         &self,
         _reference: &str,

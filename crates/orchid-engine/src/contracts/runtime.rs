@@ -29,8 +29,9 @@ pub struct RuntimeLaunchExtension {
     pub reasoning_mode: Option<String>,
     /// Explicit existing Harness intent; never inherited by ordinary sessions.
     pub ignore_user_rules: bool,
-    /// Additional native discovery roots for this invocation only.
-    pub skill_roots: Vec<String>,
+    /// Skills selected by Orchid for this invocation. The provider adapter delivers these as
+    /// explicit inputs instead of mutating a Codex home or asking the runtime to discover roots.
+    pub skill_inputs: Vec<RuntimeSkillInput>,
     /// Codex KEY=TOML_VALUE overrides; this cannot carry process flags.
     pub config_overrides: Vec<String>,
     pub environment: Vec<(String, String)>,
@@ -44,6 +45,16 @@ pub struct RuntimeLaunchExtension {
 pub struct RuntimeManagedMcpServer {
     pub name: String,
     pub url: String,
+}
+
+/// One immutable skill selection from Orchid's session capability manifest.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSkillInput {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub content_sha256: String,
 }
 
 /// Explicit, non-user provenance delivered before an initial user query.

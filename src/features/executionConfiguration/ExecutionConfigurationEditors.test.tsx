@@ -78,6 +78,8 @@ function ControlledCapabilityEditor({ onSave }: { onSave(profile: CapabilityProf
     name: '',
     revision: null,
     allowedCapabilities: emptyCapabilities,
+    routePolicies: [],
+    defaultRouteId: null,
   });
   return (
     <CapabilityProfileEditor
@@ -111,22 +113,19 @@ describe('Execution Configuration editors', () => {
     const onSave = vi.fn();
     render(<ControlledCapabilityEditor onSave={onSave} />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Capability profile ID' }), 'reviewer');
     await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Reviewer');
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'Capability profile harness and inference source' }),
-      'local-codex:review',
+    await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+    await user.click(screen.getByRole('button', { name: 'Add route' }));
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    await user.click(
+      within(screen.getByText('gpt-5.6').closest('li') as HTMLElement).getByRole('button', {
+        name: 'Add',
+      }),
     );
-    await user.click(screen.getByRole('checkbox', { name: 'GPT 5.6' }));
-    await user.click(screen.getByRole('button', { name: 'Set MCP tools' }));
-    await user.click(screen.getByRole('button', { name: 'MCP server: orchestrator' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Include Message Session' }));
-    await user.click(screen.getByRole('button', { name: 'Apply selection' }));
     await user.click(screen.getByRole('button', { name: 'Create profile' }));
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
-        capabilityProfileId: 'reviewer',
         name: 'Reviewer',
         execution: {
           deviceId: 'local',
@@ -135,16 +134,18 @@ describe('Execution Configuration editors', () => {
           configurationRef: 'review',
           connection: { kind: 'local' },
         },
-        allowedCapabilities: expect.objectContaining({
-          models: ['gpt-5.6'],
-          mcpTools: { orchestrator: ['session-message'] },
-        }),
+        routePolicies: expect.arrayContaining([
+          expect.objectContaining({
+            modelAllowances: expect.arrayContaining([
+              expect.objectContaining({ modelId: 'gpt-5.6' }),
+            ]),
+          }),
+        ]),
       }),
     );
   });
 
-  it('shows unavailable runtime catalogs without inventing editable options', () => {
-    const reason = 'Skill discovery is controlled by the selected Codex profile.';
+  it('presents editable MCP and skill groups rather than individual runtime entries', () => {
     render(
       <CapabilityProfileEditor
         profile={{
@@ -152,24 +153,17 @@ describe('Execution Configuration editors', () => {
           name: 'Reviewer',
           revision: 2,
           allowedCapabilities: emptyCapabilities,
+          routePolicies: [],
+          defaultRouteId: null,
         }}
-        runtime={{
-          ...runtime,
-          catalogs: {
-            ...runtime.catalogs,
-            skills: {
-              availability: 'unavailable',
-              options: [],
-              reason,
-            },
-          },
-        }}
+        runtime={runtime}
         onChange={() => undefined}
       />,
     );
 
-    expect(screen.getByText(reason)).toBeVisible();
-    expect(screen.getByRole('group', { name: /Skills/ })).toBeDisabled();
+    expect(
+      screen.getByText('Add a route to choose where sessions using this profile run.'),
+    ).toBeVisible();
   });
 
   it('keeps node edits controlled and delegates copy semantics to the caller', async () => {

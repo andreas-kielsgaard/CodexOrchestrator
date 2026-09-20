@@ -4,7 +4,9 @@ use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
     ports::RuntimeLaunchExtension,
 };
-use crate::execution_configuration::{RuntimeSelections, SandboxMode};
+use crate::execution_configuration::{
+    compile_session_skill_inputs, CapabilityProfile, RuntimeSelections, SandboxMode,
+};
 
 pub(crate) fn runtime_options(selections: &RuntimeSelections) -> AgentRuntimeOptions {
     AgentRuntimeOptions {
@@ -25,7 +27,7 @@ pub(crate) fn reasoning_launch_extension(
         .as_ref()
         .map(|reasoning| RuntimeLaunchExtension {
             managed_mcp_servers: Vec::new(),
-            skill_roots: Vec::new(),
+            skill_inputs: Vec::new(),
             ignore_user_rules: false,
             reasoning_mode: Some(reasoning.clone()),
             ..RuntimeLaunchExtension::default()
@@ -98,6 +100,28 @@ impl fmt::Display for SessionConfigurationError {
 impl Error for SessionConfigurationError {}
 
 impl AgentSessionApplication {
+    pub(super) fn compile_capability_skill_inputs(
+        &self,
+        capability: &CapabilityProfile,
+        configuration_ref: &str,
+        cwd: Option<&str>,
+    ) -> Result<Vec<crate::agent_sessions::ports::RuntimeSkillInput>, String> {
+        if capability
+            .default_route()
+            .is_none_or(|route| route.skill_groups.is_empty())
+        {
+            return Ok(Vec::new());
+        }
+        let source = self.profile_source().map_err(|error| error.to_string())?;
+        let features = source
+            .quick_features_for_configuration(configuration_ref, cwd)
+            .map_err(|error| error.to_string())?;
+        let roots = source
+            .skill_roots_for_configuration(configuration_ref)
+            .map_err(|error| error.to_string())?;
+        compile_session_skill_inputs(capability, &features, &roots)
+    }
+
     pub(crate) fn create_default_session(
         &self,
         command: CreateAgentSessionCommand,
@@ -145,6 +169,18 @@ impl AgentSessionApplication {
             .profile_source()?
             .selected_runtime_profile_at(working_directory)
             .map_err(|error| SessionConfigurationError::resolution(error.into()))?;
+        let session_skill_inputs = self
+            .compile_capability_skill_inputs(
+                &capability,
+                &capability.execution.configuration_ref,
+                working_directory,
+            )
+            .map_err(|error| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::MissingPinnedProfile,
+                    error,
+                )
+            })?;
         let resolution = SessionProfileResolver::resolve_snapshot(
             runtime.clone(),
             SessionCreationRequest {
@@ -156,6 +192,7 @@ impl AgentSessionApplication {
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,
+                session_skill_inputs,
             },
         )
         .map_err(SessionConfigurationError::resolution)?;

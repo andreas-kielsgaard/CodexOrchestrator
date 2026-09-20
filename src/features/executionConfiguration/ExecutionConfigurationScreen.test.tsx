@@ -32,16 +32,17 @@ it('preserves typing during a save, even after selecting another profile', async
       }),
   );
   render(<ExecutionConfigurationScreen client={fixture.configuration} />);
-  const name = await screen.findByRole('textbox', { name: 'Capability profile name' });
+  await user.click(await screen.findByRole('button', { name: /Review capabilities Revision 1/ }));
+  const name = screen.getByRole('textbox', { name: 'Capability profile name' });
   fireEvent.change(name, { target: { value: 'Submitted' } });
   await user.click(screen.getByRole('button', { name: 'Save new revision' }));
   fireEvent.change(name, { target: { value: 'Later typing' } });
-  await user.click(screen.getByRole('button', { name: /Other capabilities other/ }));
+  await user.click(screen.getByRole('button', { name: /Other capabilities Revision 1/ }));
   await act(async () => finish({ ...fixture.profiles[0], name: 'Submitted', revision: 2 }));
   expect(screen.getByRole('textbox', { name: 'Capability profile name' })).toHaveValue(
     'Other capabilities',
   );
-  await user.click(screen.getByRole('button', { name: /Review capabilities review/ }));
+  await user.click(screen.getByRole('button', { name: /Review capabilities Revision 1/ }));
   expect(screen.getByRole('textbox', { name: 'Capability profile name' })).toHaveValue(
     'Later typing',
   );
@@ -56,17 +57,20 @@ it('retains a new unsaved profile across remount and failed save', async () => {
     throw new Error('Save failed');
   });
   const element = (
-    <ExecutionConfigurationScreen client={fixture.configuration} workspace={workspace} />
+    <ExecutionConfigurationScreen
+      client={fixture.configuration}
+      workspace={workspace}
+      nativeProfileClient={nativeProfiles}
+    />
   );
   const mounted = render(element);
-  await screen.findByRole('textbox', { name: 'Capability profile name' });
+  await screen.findByRole('button', { name: 'New profile' });
   await user.click(screen.getByRole('button', { name: 'New profile' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Capability profile name' }), {
     target: { value: 'Unfinished' },
   });
-  fireEvent.change(screen.getByRole('textbox', { name: 'Capability profile ID' }), {
-    target: { value: 'unfinished' },
-  });
+  await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+  await user.click(screen.getByRole('button', { name: 'Add route' }));
   await user.click(screen.getByRole('button', { name: 'Create profile' }));
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Save failed'));
   mounted.unmount();
@@ -74,7 +78,7 @@ it('retains a new unsaved profile across remount and failed save', async () => {
   expect(await screen.findByRole('textbox', { name: 'Capability profile name' })).toHaveValue(
     'Unfinished',
   );
-  expect(screen.getByRole('textbox', { name: 'Capability profile ID' })).toBeEnabled();
+  expect(screen.queryByRole('textbox', { name: 'Capability profile ID' })).not.toBeInTheDocument();
 });
 
 it('projects each active local Codex home as a profile route without exposing credentials', async () => {
@@ -86,10 +90,11 @@ it('projects each active local Codex home as a profile route without exposing cr
     />,
   );
 
-  const route = await screen.findByRole('combobox', {
-    name: 'Capability profile harness and inference source',
-  });
-  expect(route).toHaveValue('local-codex:team');
-  expect(screen.getByText(/C:\/codex-team.*account is configured/i)).toBeVisible();
+  await screen.findByRole('button', { name: 'New profile' });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'New profile' }));
+  await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
+  expect(screen.getByText('OpenAI account via Codex CLI')).toBeVisible();
   expect(screen.queryByText(/SSH/i)).not.toBeInTheDocument();
 });

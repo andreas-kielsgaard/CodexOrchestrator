@@ -1,6 +1,6 @@
 //! Selected native environment discovery. Defaults remain absent so Codex resolves them at launch.
 use super::{
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
+    ports::{RuntimeSkillRoot, SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
     runtime_profile::{RuntimeProfileSnapshot, SandboxMode},
 };
 use crate::{
@@ -14,6 +14,7 @@ pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
     service: Arc<NativeProfileService>,
     product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     reader: Arc<dyn CodexEnvironmentSource>,
+    orchid_skill_roots: Vec<std::path::PathBuf>,
 }
 
 impl NativeCodexSelectedRuntimeProfileSource {
@@ -25,9 +26,11 @@ impl NativeCodexSelectedRuntimeProfileSource {
             service,
             product_tools,
             reader: Arc::new(CodexEnvironmentReader::new("codex")),
+            orchid_skill_roots: Vec::new(),
         }
     }
     pub(crate) fn with_skill_roots(mut self, roots: Vec<String>) -> Self {
+        self.orchid_skill_roots = roots.iter().map(std::path::PathBuf::from).collect();
         self.reader = Arc::new(CodexEnvironmentReader::new("codex").with_skill_roots(roots));
         self
     }
@@ -39,6 +42,30 @@ impl NativeCodexSelectedRuntimeProfileSource {
 }
 
 impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
+    fn skill_roots_for_configuration(
+        &self,
+        reference: &str,
+    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
+        let home = self
+            .service
+            .resolve_configuration_home(reference)
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)?
+            .home;
+        let mut roots = vec![RuntimeSkillRoot {
+            group_id: "codex-profile-skills".into(),
+            path: home.join("skills"),
+        }];
+        roots.extend(
+            self.orchid_skill_roots
+                .iter()
+                .cloned()
+                .map(|path| RuntimeSkillRoot {
+                    group_id: "orchid-skills".into(),
+                    path,
+                }),
+        );
+        Ok(roots)
+    }
     fn configuration_home(
         &self,
         reference: &str,
@@ -67,10 +94,10 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
-        Ok(quick_features::project(
-            format!("native-codex:{}", selected.profile_id),
-            &native,
-        ))
+        let mut features =
+            quick_features::project(format!("native-codex:{}", selected.profile_id), &native);
+        quick_features::append_owned_root_skills(&mut features, &self.orchid_skill_roots);
+        Ok(features)
     }
     fn resolve_configuration_ref(
         &self,
@@ -129,18 +156,22 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
-        Ok(with_temporary_danger_full_access(orchid_engine::configuration::runtime_profile(
-            &native,
-            format!("native-codex:{}", selected.profile_id),
-            self.product_tools.clone(),
-        )))
+        Ok(with_temporary_danger_full_access(
+            orchid_engine::configuration::runtime_profile(
+                &native,
+                format!("native-codex:{}", selected.profile_id),
+                self.product_tools.clone(),
+            ),
+        ))
     }
 }
 
 /// Sandboxing moves to Capability Profiles in a later slice. Until then, Orchid launches its
 /// native Codex harnesses with one explicit full-access policy rather than pretending this is a
 /// CODEX_HOME setting.
-fn with_temporary_danger_full_access(mut profile: RuntimeProfileSnapshot) -> RuntimeProfileSnapshot {
+fn with_temporary_danger_full_access(
+    mut profile: RuntimeProfileSnapshot,
+) -> RuntimeProfileSnapshot {
     profile.exposure.sandbox_modes = [SandboxMode::DangerFullAccess].into_iter().collect();
     profile.locked.sandbox_mode = Some(SandboxMode::DangerFullAccess);
     profile

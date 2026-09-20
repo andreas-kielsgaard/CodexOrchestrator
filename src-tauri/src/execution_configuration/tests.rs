@@ -75,6 +75,8 @@ fn capability_profile() -> CapabilityProfile {
         execution: Default::default(),
         contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
         defaults: Default::default(),
+        route_policies: Vec::new(),
+        default_route_id: None,
         capability_profile_id: "implementation".into(),
         name: "Implementation".into(),
         revision: 3,
@@ -112,6 +114,7 @@ fn creation_request() -> SessionCreationRequest {
         capability_profile: capability_profile(),
         node_profile: node_profile(),
         agent_mcp_configuration: Default::default(),
+        session_skill_inputs: Vec::new(),
     }
 }
 
@@ -417,6 +420,8 @@ fn required_default_profile_is_atomic_retained_and_cannot_be_deleted() {
         revision: 1,
         allowed_capabilities: Default::default(),
         defaults: Default::default(),
+        route_policies: Vec::new(),
+        default_route_id: None,
     };
     let second = super::CapabilityProfile {
         capability_profile_id: "second".into(),

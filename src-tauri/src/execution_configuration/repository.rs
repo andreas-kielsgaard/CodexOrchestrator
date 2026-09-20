@@ -420,6 +420,8 @@ mod tests {
             execution: Default::default(),
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults: Default::default(),
+            route_policies: Vec::new(),
+            default_route_id: None,
             capability_profile_id: id.into(),
             name: format!("{id} profile"),
             revision,

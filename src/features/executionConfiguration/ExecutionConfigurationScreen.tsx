@@ -8,6 +8,7 @@ import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
+  ProfileRoutePolicyDto,
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
 import { CapabilityProfileEditor } from './CapabilityProfileEditor';
@@ -40,6 +41,28 @@ const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
 };
 
 function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft {
+  const legacyRoute: ProfileRoutePolicyDto | undefined = profile.execution
+    ? {
+        routeId: `${profile.capabilityProfileId}:legacy`,
+        execution: profile.execution,
+        modelAllowances: profile.allowedCapabilities.models.map((modelId) => ({
+          modelId,
+          minimumReasoning: profile.allowedCapabilities.reasoningModes[0] ?? 'none',
+          maximumReasoning:
+            profile.allowedCapabilities.reasoningModes.at(-1) ??
+            profile.allowedCapabilities.reasoningModes[0] ??
+            'none',
+        })),
+        mcpGroups: [],
+        skillGroups: [],
+        defaults: profile.defaults ?? { model: null, reasoningMode: null, sandboxMode: null },
+      }
+    : undefined;
+  const routePolicies = profile.routePolicies?.length
+    ? profile.routePolicies
+    : legacyRoute
+      ? [legacyRoute]
+      : [];
   return {
     capabilityProfileId: profile.capabilityProfileId,
     name: profile.name,
@@ -47,6 +70,8 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     allowedCapabilities: profile.allowedCapabilities,
     defaults: profile.defaults,
     execution: profile.execution,
+    routePolicies,
+    defaultRouteId: profile.defaultRouteId ?? routePolicies[0]?.routeId ?? null,
   };
 }
 
@@ -59,6 +84,8 @@ function newDraft(
     name: '',
     revision: null,
     allowedCapabilities: runtime.exposure,
+    routePolicies: [],
+    defaultRouteId: null,
     ...(execution ? { execution } : {}),
   };
 }
@@ -73,6 +100,9 @@ function localHarnessRoutes(
       selected: profile.selected,
       label: profile.selected ? 'This device · selected Codex CLI' : 'This device · Codex CLI',
       sourceLabel: 'OpenAI via Codex CLI',
+      deviceLabel: 'This device',
+      harnessLabel: 'Codex CLI',
+      inferenceLabel: 'OpenAI account via Codex CLI',
       detail: `${profile.homePath} · the account is configured in this Codex home`,
       execution: {
         deviceId: 'local',
@@ -130,26 +160,24 @@ export function ExecutionConfigurationScreen({
     try {
       const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] =
         await Promise.all([
-        client.loadSelectedRuntimeProfile(),
-        client.listCapabilityProfiles(),
-        client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
-        // The catalogue is local design-time metadata. A read failure must not
-        // prevent a capability profile from being viewed or edited.
-        readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
-        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
-      ]);
+          client.loadSelectedRuntimeProfile(),
+          client.listCapabilityProfiles(),
+          client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
+          // The catalogue is local design-time metadata. A read failure must not
+          // prevent a capability profile from being viewed or edited.
+          readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
+          nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
+        ]);
       const nextRoutes = localHarnessRoutes(nativeProfiles);
-      const defaultRoute =
-        nextRoutes.find((route) => route.label.includes('selected')) ?? nextRoutes[0];
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
-        : (nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current) ??
-          nextProfiles[0]);
-      const nextDraft = workspace.load(
-        selected?.capabilityProfileId ?? '$new',
-        selected ? draftFromProfile(selected) : newDraft(nextRuntime, defaultRoute?.execution),
-      );
+        : nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current);
+      const nextDraft = selected
+        ? workspace.load(selected.capabilityProfileId, draftFromProfile(selected))
+        : hasNewDraft
+          ? workspace.load('$new', newDraft(nextRuntime))
+          : newDraft(nextRuntime);
       setRuntime(nextRuntime);
       setDefaultProfileId(nextDefault);
       setProfiles(nextProfiles);
@@ -203,11 +231,12 @@ export function ExecutionConfigurationScreen({
       const saved =
         next.revision === null
           ? await client.createCapabilityProfile({
-              capabilityProfileId: next.capabilityProfileId.trim(),
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
               ...(next.execution ? { execution: next.execution } : {}),
+              routePolicies: next.routePolicies,
+              defaultRouteId: next.defaultRouteId,
             })
           : await client.updateCapabilityProfile({
               capabilityProfileId: next.capabilityProfileId,
@@ -215,6 +244,8 @@ export function ExecutionConfigurationScreen({
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
               ...(next.execution ? { execution: next.execution } : {}),
+              routePolicies: next.routePolicies,
+              defaultRouteId: next.defaultRouteId,
             });
       const working = workspace.acceptSave(
         key,
@@ -254,18 +285,10 @@ export function ExecutionConfigurationScreen({
       workspace.discard(selectedId);
       const nextProfiles = await client.listCapabilityProfiles();
       setProfiles(nextProfiles);
-      const next = nextProfiles[0];
-      setSelectedId(next?.capabilityProfileId ?? null);
-      selectedRef.current = next?.capabilityProfileId ?? null;
-      workspace.selectedKey = selectedRef.current;
-      setDraft(
-        workspace.load(
-          selectedRef.current ?? '$new',
-          next
-            ? draftFromProfile(next)
-            : newDraft(runtime, routes.find((route) => route.label.includes('selected'))?.execution),
-        ),
-      );
+      setSelectedId(null);
+      selectedRef.current = null;
+      workspace.selectedKey = null;
+      setDraft(newDraft(runtime));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -292,15 +315,7 @@ export function ExecutionConfigurationScreen({
             selectedRef.current = null;
             workspace.selectedKey = null;
             setSelectedId(null);
-            setDraft(
-              workspace.load(
-                '$new',
-                newDraft(
-                  runtime,
-                  routes.find((route) => route.label.includes('selected'))?.execution,
-                ),
-              ),
-            );
+            setDraft(workspace.load('$new', newDraft(runtime)));
             setError(null);
           }}
         >
@@ -346,7 +361,6 @@ export function ExecutionConfigurationScreen({
               onClick={() => selectProfile(profile)}
             >
               <strong>{profile.name}</strong>
-              <span>{profile.capabilityProfileId}</span>
               <small>Revision {profile.revision}</small>
             </button>
           ))}
@@ -354,16 +368,19 @@ export function ExecutionConfigurationScreen({
         </nav>
       </aside>
       <section className="execution-configuration-screen__workspace">
-        <NativeCapabilityInventory
-          key={JSON.stringify(selectedRouteExecution)}
-          client={client}
-          loadInventory={
-            executionTargetClient && selectedRouteExecution
-              ? async () =>
-                  (await executionTargetClient.loadRuntime(selectedRouteExecution)).nativeInventory
-              : undefined
-          }
-        />
+        {selectedId || workspace.read('$new') ? (
+          <NativeCapabilityInventory
+            key={JSON.stringify(selectedRouteExecution)}
+            client={client}
+            loadInventory={
+              executionTargetClient && selectedRouteExecution
+                ? async () =>
+                    (await executionTargetClient.loadRuntime(selectedRouteExecution))
+                      .nativeInventory
+                : undefined
+            }
+          />
+        ) : null}
         {selectedId && selectedId === defaultProfileId && (
           <p>Choose another default before deleting this profile.</p>
         )}
@@ -375,14 +392,23 @@ export function ExecutionConfigurationScreen({
         {loading ? <p className="execution-configuration-screen__loading">Loading…</p> : null}
         {!loading ? (
           <>
-            <CapabilityProfileEditor
-              profile={draft}
-              runtime={runtimeView}
-              routes={routes}
-              saving={saving}
-              onChange={editDraft}
-              onSave={(next) => void save(next)}
-            />
+            {selectedId || workspace.read('$new') ? (
+              <CapabilityProfileEditor
+                profile={draft}
+                runtime={runtimeView}
+                routes={routes}
+                saving={saving}
+                onChange={editDraft}
+                onSave={(next) => void save(next)}
+              />
+            ) : (
+              <div className="execution-configuration-screen__empty-state">
+                <h2>Choose a Capability Profile</h2>
+                <p>
+                  Select a saved profile, or create one to configure its routes and capabilities.
+                </p>
+              </div>
+            )}
             {selectedId ? (
               <button
                 className="execution-configuration-screen__delete"

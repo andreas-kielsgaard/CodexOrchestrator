@@ -27,28 +27,9 @@ pub(super) fn compose(
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
     );
-    let declared = Arc::new(ConfiguredRuntimeProfileSource::new(
-        configured_runtime_profile(CapabilitySet {
-            mcp_tools: product_tools,
-            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
-                .into_iter()
-                .collect(),
-            reasoning_modes: [
-                "low".to_string(),
-                "medium".to_string(),
-                "high".to_string(),
-                "xhigh".to_string(),
-                "max".to_string(),
-                "ultra".to_string(),
-            ]
-            .into_iter()
-            .collect(),
-            ..CapabilitySet::default()
-        }),
-    ));
     let service = Arc::new(CapabilityProfileService::new(
         Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
-        declared,
+        source.clone(),
     ));
     Ok((source, service, endpoints))
 }

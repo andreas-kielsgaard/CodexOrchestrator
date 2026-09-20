@@ -1410,7 +1410,7 @@ impl PostConfirmationTransitionService {
                     let mut config_overrides = bootstrap_harness.runtime_config_overrides();
                     config_overrides.extend(managed.injection().config_overrides.clone());
                     let extension = RuntimeLaunchExtension {
-                        managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                        managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![managed.injection().environment.clone()],
                         initial_prompt_prefix: Some(bootstrap_harness.initial_prompt_prefix()),
@@ -1571,7 +1571,7 @@ impl PostConfirmationTransitionService {
                     let mut config_overrides = harness.runtime_config_overrides();
                     config_overrides.extend(injection.config_overrides);
                     let extension = RuntimeLaunchExtension {
-                        managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                        managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![injection.environment],
                         initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
@@ -1693,7 +1693,7 @@ impl PostConfirmationTransitionService {
                             },
                         },
                         Some(RuntimeLaunchExtension {
-                            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+                            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                             config_overrides,
                             environment: vec![injection.environment],
                             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),

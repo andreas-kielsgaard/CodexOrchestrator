@@ -175,6 +175,46 @@ fn preparation_retains_native_identity_and_cwd_without_delivering_until_release(
     drop(calls);
     runtime.shutdown().unwrap();
 }
+
+#[test]
+fn preparation_delivers_selected_skills_as_explicit_turn_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let skill = directory.path().join("SKILL.md");
+    std::fs::write(&skill, "---\nname: review\n---\n").unwrap();
+    let factory = Arc::new(Factory::default());
+    let runtime = CodexAppServerRuntime::new("fake", factory.clone());
+    let mut request = request(directory.path());
+    request.launch_extension = Some(RuntimeLaunchExtension {
+        skill_inputs: vec![RuntimeSkillInput {
+            id: skill.to_string_lossy().into_owned(),
+            name: "review".into(),
+            path: skill.to_string_lossy().into_owned(),
+            content_sha256: "pinned-for-adapter-test".into(),
+        }],
+        ..Default::default()
+    });
+    let id = request.invocation_id.clone();
+    runtime
+        .prepare_invocation(request, None, Arc::new(Sink::default()))
+        .unwrap();
+    runtime.deliver_prepared_invocation(&id).unwrap();
+    let child = factory.0.lock().unwrap()[0].clone();
+    let request = child
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|request| request["method"] == "turn/start")
+        .cloned()
+        .unwrap();
+    assert_eq!(request["params"]["input"][0]["type"], "skill");
+    assert_eq!(request["params"]["input"][0]["name"], "review");
+    assert_eq!(
+        request["params"]["input"][1]["text"],
+        "frozen original prompt"
+    );
+    runtime.shutdown().unwrap();
+}
 #[test]
 fn cancel_during_native_initialization_never_delivers_a_prompt() {
     let directory = tempfile::tempdir().unwrap();

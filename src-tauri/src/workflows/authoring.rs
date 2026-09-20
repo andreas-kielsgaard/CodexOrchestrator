@@ -369,6 +369,7 @@ impl WorkflowRecipeDraft {
                         capability_profile: capability_profile.clone(),
                         node_profile: node.node_profile.clone(),
                         agent_mcp_configuration: node.agent_mcp_configuration.clone(),
+                        session_skill_inputs: Vec::new(),
                     })
                 } else {
                     WorkflowSessionCreation::AtBirth(
@@ -581,6 +582,8 @@ mod tests {
             execution: Default::default(),
             contract_version: crate::execution_configuration::CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults: Default::default(),
+            route_policies: Vec::new(),
+            default_route_id: None,
             capability_profile_id: "capability-default".into(),
             name: "Default".into(),
             revision: 1,
@@ -648,7 +651,10 @@ mod tests {
         assert_eq!(recipe.contract_version, WORKFLOW_RECIPE_CONTRACT_VERSION);
         assert_eq!(recipe.entry_action.tool, "prompt_agent");
         assert!(recipe.nodes[0].agent_mcp_configuration.is_empty());
-        assert_eq!(recipe.connections[0].trigger.capability.tool, "handoff_to_agent");
+        assert_eq!(
+            recipe.connections[0].trigger.capability.tool,
+            "handoff_to_agent"
+        );
         assert_eq!(recipe.connections[0].trigger.output, "handoff");
         assert!(matches!(
             recipe.connections[0].prompt_inputs.as_slice(),

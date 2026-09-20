@@ -56,7 +56,9 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
             let mut cursor = Value::Null;
             loop {
                 let page = connection
-                    .call("model/list", json!({"cursor":cursor,"includeHidden":false}))?;
+                    // Capability Profiles need the complete account-visible model catalogue, not
+                    // merely the subset Codex happens to surface in its compact picker.
+                    .call("model/list", json!({"cursor":cursor,"includeHidden":true}))?;
                 if let Some(data) = page["data"].as_array() {
                     models.extend(data.iter().cloned());
                 }
@@ -101,9 +103,6 @@ impl CodexEnvironmentReader {
         cwd: Option<PathBuf>,
         read: impl FnOnce(&Connection) -> Result<T, RuntimePortError>,
     ) -> Result<T, RuntimePortError> {
-        super::client::with_connection(&self.program, home, cwd, |connection| {
-            super::capability_roots::apply_skill_roots(connection, &self.skill_roots)?;
-            read(connection)
-        })
+        super::client::with_connection(&self.program, home, cwd, read)
     }
 }

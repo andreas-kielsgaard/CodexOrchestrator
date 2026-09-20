@@ -457,6 +457,8 @@ fn test_session_creation_request() -> SessionCreationRequest {
             execution: Default::default(),
             contract_version: 1,
             defaults: Default::default(),
+            route_policies: Vec::new(),
+            default_route_id: None,
             capability_profile_id: "test-capabilities".into(),
             name: "Test capabilities".into(),
             revision: 1,
@@ -472,6 +474,7 @@ fn test_session_creation_request() -> SessionCreationRequest {
             },
         },
         agent_mcp_configuration: Default::default(),
+        session_skill_inputs: Vec::new(),
     }
 }
 
@@ -829,7 +832,7 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
             message(&session.id, "fresh"),
             Some(RuntimeLaunchExtension {
                 managed_mcp_servers: Vec::new(),
-                skill_roots: Vec::new(),
+                skill_inputs: Vec::new(),
                 ignore_user_rules: false,
                 reasoning_mode: None,
                 config_overrides: vec![],
