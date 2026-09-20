@@ -92,8 +92,9 @@ function newDraft(
 
 function localHarnessRoutes(
   query: Awaited<ReturnType<NativeProfileClient['load']>> | null,
+  selectedRuntime: RuntimeProfileSnapshotDto,
 ): readonly HarnessInferenceRouteOption[] {
-  return (query?.profiles ?? [])
+  const catalogued = (query?.profiles ?? [])
     .filter((profile) => profile.lifecycle === 'active')
     .map((profile) => ({
       id: `local-codex:${profile.id}`,
@@ -112,6 +113,31 @@ function localHarnessRoutes(
         connection: { kind: 'local' as const },
       },
     }));
+  const configurationRef = selectedRuntime.profileRef.startsWith('native-codex:')
+    ? selectedRuntime.profileRef.slice('native-codex:'.length)
+    : null;
+  if (!configurationRef) return catalogued;
+  const selectedRoute: HarnessInferenceRouteOption = {
+    id: `local-codex:${configurationRef}`,
+    selected: true,
+    label: 'This device · selected Codex CLI',
+    sourceLabel: 'OpenAI via Codex CLI',
+    deviceLabel: 'This device',
+    harnessLabel: 'Codex CLI',
+    inferenceLabel: 'OpenAI account via Codex CLI',
+    detail: 'The selected Codex profile on this device',
+    execution: {
+      deviceId: 'local',
+      deviceName: 'This device',
+      provider: 'codex' as const,
+      configurationRef,
+      connection: { kind: 'local' as const },
+    },
+  };
+  return [
+    selectedRoute,
+    ...catalogued.filter((route) => route.execution.configurationRef !== configurationRef),
+  ];
 }
 
 export function ExecutionConfigurationScreen({
@@ -164,11 +190,12 @@ export function ExecutionConfigurationScreen({
           client.listCapabilityProfiles(),
           client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
           // The catalogue is local design-time metadata. A read failure must not
-          // prevent a capability profile from being viewed or edited.
+          // prevent a capability profile from being viewed or edited. The selected
+          // native runtime remains an available local route below.
           readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
           nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
         ]);
-      const nextRoutes = localHarnessRoutes(nativeProfiles);
+      const nextRoutes = localHarnessRoutes(nativeProfiles, nextRuntime);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined

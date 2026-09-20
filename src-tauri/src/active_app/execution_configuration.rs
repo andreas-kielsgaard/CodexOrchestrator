@@ -27,9 +27,12 @@ pub(super) fn compose(
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
     );
-    let service = Arc::new(CapabilityProfileService::new(
-        Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
-        source.clone(),
-    ));
+    let service = Arc::new(
+        CapabilityProfileService::new(
+            Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
+            source.clone(),
+        )
+        .with_endpoints(endpoints.clone()),
+    );
     Ok((source, service, endpoints))
 }

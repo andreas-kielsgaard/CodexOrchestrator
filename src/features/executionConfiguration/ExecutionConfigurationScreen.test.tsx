@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import { DraftWorkspace } from '../../components/draftWorkspace';
-import { repairClients } from '../workflowAuthoring/testFixtures';
+import { repairClients, repairRuntime } from '../workflowAuthoring/testFixtures';
 import { ExecutionConfigurationScreen } from './ExecutionConfigurationScreen';
 import type { CapabilityProfileDraft } from './types';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
@@ -97,4 +97,66 @@ it('projects each active local Codex home as a profile route without exposing cr
   expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
   expect(screen.getByText('OpenAI account via Codex CLI')).toBeVisible();
   expect(screen.queryByText(/SSH/i)).not.toBeInTheDocument();
+});
+
+it('uses the selected native runtime as a route when the optional native catalogue cannot load', async () => {
+  const user = userEvent.setup();
+  const fixture = repairClients();
+  fixture.configuration.createCapabilityProfile = vi.fn(
+    fixture.configuration.createCapabilityProfile,
+  );
+  fixture.configuration.loadSelectedRuntimeProfile = async () => ({
+    ...repairRuntime,
+    profileRef: 'native-codex:current-local-profile',
+  });
+  const unavailableNativeProfiles = {
+    load: vi.fn(async () => {
+      throw new Error('native profile catalogue unavailable');
+    }),
+  } as unknown as NativeProfileClient;
+  render(
+    <ExecutionConfigurationScreen
+      client={fixture.configuration}
+      nativeProfileClient={unavailableNativeProfiles}
+    />,
+  );
+
+  await user.click(await screen.findByRole('button', { name: 'New profile' }));
+  await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue(
+    'local-codex:current-local-profile',
+  );
+  await user.click(screen.getByRole('button', { name: 'Add route' }));
+  await user.click(screen.getByRole('button', { name: 'Add model' }));
+  await user.click(
+    within(screen.getByText('model-a').closest('li') as HTMLElement).getByRole('button', {
+      name: 'Add',
+    }),
+  );
+  await user.type(
+    screen.getByRole('textbox', { name: 'Capability profile name' }),
+    'Local profile',
+  );
+  await user.click(screen.getByRole('button', { name: 'Create profile' }));
+
+  await waitFor(() =>
+    expect(fixture.configuration.createCapabilityProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Local profile',
+        defaultRouteId: expect.any(String),
+        routePolicies: [
+          expect.objectContaining({
+            execution: expect.objectContaining({ configurationRef: 'current-local-profile' }),
+            modelAllowances: [
+              expect.objectContaining({
+                modelId: 'model-a',
+                minimumReasoning: 'medium',
+                maximumReasoning: 'high',
+              }),
+            ],
+          }),
+        ],
+      }),
+    ),
+  );
 });
