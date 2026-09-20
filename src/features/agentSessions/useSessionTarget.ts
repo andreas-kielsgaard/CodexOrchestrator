@@ -10,6 +10,12 @@ import {
   type SessionExecutionSelectionDto,
   type SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
+import type { SessionFolderTarget } from '../../application/agentSessions/organization';
+import {
+  composerDraftCacheKey,
+  readCachedComposerDraft,
+  writeCachedComposerDraft,
+} from './composerDraftCache';
 
 export function selectionForTarget(
   target: SessionExecutionTargetDto,
@@ -26,8 +32,10 @@ export function useSessionTarget(
   profiles: ExecutionConfigurationClient | undefined,
   sessionId: string | null,
   draftId?: string,
+  folderTarget?: SessionFolderTarget | null,
 ) {
   const [selection, setSelectionState] = useState<SessionExecutionSelectionDto | null>(null);
+  const [hydratedCacheKey, setHydratedCacheKey] = useState<string | null>(null);
   const [availableProfiles, setAvailableProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto | null>(null);
@@ -35,19 +43,23 @@ export function useSessionTarget(
   const [error, setError] = useState<string | null>(null);
   const dirty = useRef(false);
   const acknowledgedSession = useRef<string | null>(null);
-  const context = sessionId ?? draftId;
-  const contextRef = useRef(context);
+  const cacheKey = composerDraftCacheKey(sessionId, folderTarget);
+  const contextRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (contextRef.current === context) return;
-    contextRef.current = context;
+    if (contextRef.current === cacheKey) return;
+    contextRef.current = cacheKey;
+    setHydratedCacheKey(null);
     if (sessionId && sessionId === acknowledgedSession.current) {
       acknowledgedSession.current = null;
+      setHydratedCacheKey(cacheKey);
       return;
     }
-    dirty.current = false;
-    setSelectionState(null);
-    setDeviceId(null);
-  }, [context, sessionId]);
+    const cachedSelection = readCachedComposerDraft(cacheKey)?.executionSelection ?? null;
+    dirty.current = cachedSelection !== null;
+    setSelectionState(cachedSelection);
+    setDeviceId(cachedSelection?.execution.deviceId ?? null);
+    setHydratedCacheKey(cacheKey);
+  }, [sessionId, cacheKey]);
   useEffect(() => {
     let current = true;
     if (!profiles) return;
@@ -85,6 +97,10 @@ export function useSessionTarget(
     setSelectionState(next);
     if (next) setDeviceId(next.execution.deviceId);
   }, []);
+  useEffect(() => {
+    if (hydratedCacheKey !== cacheKey) return;
+    writeCachedComposerDraft(cacheKey, { executionSelection: selection });
+  }, [cacheKey, hydratedCacheKey, selection]);
   const setTarget = useCallback(
     (target: SessionExecutionTargetDto | null) =>
       setSelection(target ? selectionForTarget(target) : null),

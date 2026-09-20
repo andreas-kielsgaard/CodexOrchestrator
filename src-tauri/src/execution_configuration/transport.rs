@@ -21,6 +21,12 @@ pub(crate) struct CapabilityProfileIdInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeProfileInventoryInput {
+    profile_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateCapabilityProfileInput {
     #[serde(default)]
     execution: crate::execution_targets::domain::ExecutionBinding,
@@ -48,6 +54,17 @@ pub(crate) fn load_native_capability_inventory(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<super::NativeCapabilityInventory, String> {
     state.service.native_inventory().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_native_profile_capability_inventory(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: NativeProfileInventoryInput,
+) -> Result<super::NativeCapabilityInventory, String> {
+    state
+        .service
+        .native_inventory_for_configuration(&input.profile_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

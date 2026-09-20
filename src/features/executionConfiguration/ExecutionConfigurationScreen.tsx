@@ -1,12 +1,7 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { RepositoryBranchSource } from '../../application/branches';
-import {
-  localExecutionBinding,
-  type ExecutionTargetClient,
-  type ExecutionBindingDto,
-} from '../../application/executionTargets/contracts';
-import { RepositoryDeviceLocationEditor } from './RepositoryDeviceLocationEditor';
+import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
+import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
@@ -18,16 +13,17 @@ import type {
 import { CapabilityProfileEditor } from './CapabilityProfileEditor';
 import { NativeCapabilityInventory } from './NativeCapabilityInventory';
 import { runtimeProfileViewModel } from './presentation';
-import type { CapabilityProfileDraft } from './types';
+import type { CapabilityProfileDraft, HarnessInferenceRouteOption } from './types';
 import './mountedExecutionConfiguration.css';
 
 export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
-  readonly targetClient?: ExecutionTargetClient;
-  readonly branchSource?: RepositoryBranchSource;
   /** Design-time package descriptions group selectable MCP tools without probing them. */
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
+  /** Native profiles are projected into non-secret local harness/source routes. */
+  readonly nativeProfileClient?: NativeProfileClient;
+  readonly executionTargetClient?: ExecutionTargetClient;
 }
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
@@ -54,21 +50,46 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
   };
 }
 
-function newDraft(runtime: RuntimeProfileSnapshotDto): CapabilityProfileDraft {
+function newDraft(
+  runtime: RuntimeProfileSnapshotDto,
+  execution?: CapabilityProfileDraft['execution'],
+): CapabilityProfileDraft {
   return {
     capabilityProfileId: '',
     name: '',
     revision: null,
     allowedCapabilities: runtime.exposure,
+    ...(execution ? { execution } : {}),
   };
+}
+
+function localHarnessRoutes(
+  query: Awaited<ReturnType<NativeProfileClient['load']>> | null,
+): readonly HarnessInferenceRouteOption[] {
+  return (query?.profiles ?? [])
+    .filter((profile) => profile.lifecycle === 'active')
+    .map((profile) => ({
+      id: `local-codex:${profile.id}`,
+      selected: profile.selected,
+      label: profile.selected ? 'This device · selected Codex CLI' : 'This device · Codex CLI',
+      sourceLabel: 'OpenAI via Codex CLI',
+      detail: `${profile.homePath} · the account is configured in this Codex home`,
+      execution: {
+        deviceId: 'local',
+        deviceName: 'This device',
+        provider: 'codex' as const,
+        configurationRef: profile.id,
+        connection: { kind: 'local' as const },
+      },
+    }));
 }
 
 export function ExecutionConfigurationScreen({
   client,
-  targetClient,
-  branchSource,
   readOtpCatalogue,
   workspace: providedWorkspace,
+  nativeProfileClient,
+  executionTargetClient,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
   const workspace = providedWorkspace ?? localWorkspace;
@@ -76,84 +97,75 @@ export function ExecutionConfigurationScreen({
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [otpPackages, setOtpPackages] = useState<readonly OtpPackageDto[]>([]);
+  const [routes, setRoutes] = useState<readonly HarnessInferenceRouteOption[]>([]);
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
   const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
   const selectedRef = useRef(selectedId);
+  const loadRouteRuntime = useCallback(
+    async (execution: CapabilityProfileDraft['execution']) => {
+      if (!execution || !executionTargetClient) return;
+      try {
+        const observed = await executionTargetClient.loadRuntime(execution);
+        setRuntime(observed.runtimeProfile);
+      } catch (caught) {
+        setError(`The selected harness could not be observed: ${errorMessage(caught)}`);
+      }
+    },
+    [executionTargetClient],
+  );
   const editDraft = (next: CapabilityProfileDraft) => {
-    if (JSON.stringify(next.execution) !== JSON.stringify(draft.execution)) {
-      discoveryGeneration.current++;
-      setDiscovering(false);
-      setRuntime(EMPTY_RUNTIME);
-    }
     workspace.edit(selectedRef.current ?? '$new', next);
     setDraft(next);
+    if (JSON.stringify(next.execution) !== JSON.stringify(draft.execution))
+      void loadRouteRuntime(next.execution);
   };
   useDraftCloseWarning(() => workspace.dirty());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discovering, setDiscovering] = useState(false);
-  const discoveryGeneration = useRef(0);
-  const discover = useCallback(
-    async (execution?: ExecutionBindingDto) => {
-      const generation = ++discoveryGeneration.current;
-      setDiscovering(true);
-      setRuntime(EMPTY_RUNTIME);
-      setError(null);
-      try {
-        const next = targetClient
-          ? (await targetClient.loadRuntime(execution ?? localExecutionBinding)).runtimeProfile
-          : await client.loadSelectedRuntimeProfile();
-        if (generation === discoveryGeneration.current) setRuntime(next);
-      } catch (cause) {
-        if (generation === discoveryGeneration.current) setError(errorMessage(cause));
-      } finally {
-        if (generation === discoveryGeneration.current) setDiscovering(false);
-      }
-    },
-    [client, targetClient],
-  );
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages] = await Promise.all([
-        targetClient ? Promise.resolve(EMPTY_RUNTIME) : client.loadSelectedRuntimeProfile(),
+      const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] =
+        await Promise.all([
+        client.loadSelectedRuntimeProfile(),
         client.listCapabilityProfiles(),
         client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
         // The catalogue is local design-time metadata. A read failure must not
         // prevent a capability profile from being viewed or edited.
         readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
+        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
       ]);
-      setRuntime(nextRuntime);
-      setDefaultProfileId(nextDefault);
-      setProfiles(nextProfiles);
-      setOtpPackages(nextOtpPackages);
+      const nextRoutes = localHarnessRoutes(nativeProfiles);
+      const defaultRoute =
+        nextRoutes.find((route) => route.label.includes('selected')) ?? nextRoutes[0];
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
         : (nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current) ??
           nextProfiles[0]);
+      const nextDraft = workspace.load(
+        selected?.capabilityProfileId ?? '$new',
+        selected ? draftFromProfile(selected) : newDraft(nextRuntime, defaultRoute?.execution),
+      );
+      setRuntime(nextRuntime);
+      setDefaultProfileId(nextDefault);
+      setProfiles(nextProfiles);
+      setOtpPackages(nextOtpPackages);
+      setRoutes(nextRoutes);
       setSelectedId(selected?.capabilityProfileId ?? null);
       selectedRef.current = selected?.capabilityProfileId ?? null;
       workspace.selectedKey = selectedRef.current;
-      setDraft(
-        workspace.load(
-          selectedRef.current ?? '$new',
-          selected ? draftFromProfile(selected) : newDraft(nextRuntime),
-        ),
-      );
-      if (targetClient)
-        void discover(
-          workspace.read(selectedRef.current ?? '$new')?.execution ?? selected?.execution,
-        );
+      setDraft(nextDraft);
+      await loadRouteRuntime(nextDraft.execution);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, targetClient, discover, readOtpCatalogue]);
+  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadRouteRuntime]);
 
   useEffect(() => {
     void load();
@@ -169,15 +181,17 @@ export function ExecutionConfigurationScreen({
       })(),
     [runtime, otpPackages],
   );
+  const selectedRouteExecution =
+    draft.execution ?? routes.find((route) => route.selected)?.execution;
 
   const selectProfile = (profile: CapabilityProfileDto) => {
     selectedRef.current = profile.capabilityProfileId;
     workspace.selectedKey = profile.capabilityProfileId;
     setSelectedId(profile.capabilityProfileId);
-    setDraft(workspace.load(profile.capabilityProfileId, draftFromProfile(profile)));
+    const next = workspace.load(profile.capabilityProfileId, draftFromProfile(profile));
+    setDraft(next);
+    void loadRouteRuntime(next.execution);
     setError(null);
-    if (targetClient)
-      void discover(workspace.read(profile.capabilityProfileId)?.execution ?? profile.execution);
   };
 
   const save = async (next: CapabilityProfileDraft) => {
@@ -247,7 +261,9 @@ export function ExecutionConfigurationScreen({
       setDraft(
         workspace.load(
           selectedRef.current ?? '$new',
-          next ? draftFromProfile(next) : newDraft(runtime),
+          next
+            ? draftFromProfile(next)
+            : newDraft(runtime, routes.find((route) => route.label.includes('selected'))?.execution),
         ),
       );
     } catch (caught) {
@@ -276,9 +292,16 @@ export function ExecutionConfigurationScreen({
             selectedRef.current = null;
             workspace.selectedKey = null;
             setSelectedId(null);
-            setDraft(workspace.load('$new', newDraft(runtime)));
+            setDraft(
+              workspace.load(
+                '$new',
+                newDraft(
+                  runtime,
+                  routes.find((route) => route.label.includes('selected'))?.execution,
+                ),
+              ),
+            );
             setError(null);
-            if (targetClient) void discover();
           }}
         >
           <Plus size={16} aria-hidden="true" />
@@ -307,7 +330,6 @@ export function ExecutionConfigurationScreen({
               {profiles.map((profile) => (
                 <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
                   {profile.name}
-                  {profile.execution?.connection.kind === 'ssh' ? ' · requires a worktree' : ''}
                 </option>
               ))}
             </select>
@@ -333,13 +355,12 @@ export function ExecutionConfigurationScreen({
       </aside>
       <section className="execution-configuration-screen__workspace">
         <NativeCapabilityInventory
-          key={JSON.stringify(draft.execution)}
+          key={JSON.stringify(selectedRouteExecution)}
           client={client}
           loadInventory={
-            targetClient
+            executionTargetClient && selectedRouteExecution
               ? async () =>
-                  (await targetClient.loadRuntime(draft.execution ?? localExecutionBinding))
-                    .nativeInventory
+                  (await executionTargetClient.loadRuntime(selectedRouteExecution)).nativeInventory
               : undefined
           }
         />
@@ -356,40 +377,8 @@ export function ExecutionConfigurationScreen({
           <>
             <CapabilityProfileEditor
               profile={draft}
-              connectionDetails={
-                targetClient ? (
-                  <>
-                    <div className="execution-connection-actions">
-                      <button
-                        type="button"
-                        disabled={discovering}
-                        onClick={() => void discover(draft.execution)}
-                      >
-                        {discovering ? 'Reading device capabilities…' : 'Read device capabilities'}
-                      </button>
-                      {runtime.profileRef !== 'unavailable' && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            editDraft({ ...draft, allowedCapabilities: runtime.exposure })
-                          }
-                        >
-                          Use discovered capabilities
-                        </button>
-                      )}
-                    </div>
-                    {branchSource && (
-                      <RepositoryDeviceLocationEditor
-                        key={draft.execution?.deviceId ?? 'local'}
-                        execution={draft.execution ?? localExecutionBinding}
-                        client={targetClient}
-                        source={branchSource}
-                      />
-                    )}
-                  </>
-                ) : undefined
-              }
               runtime={runtimeView}
+              routes={routes}
               saving={saving}
               onChange={editDraft}
               onSave={(next) => void save(next)}

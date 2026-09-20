@@ -24,6 +24,14 @@ impl CapabilityProfileService {
             .native_inventory()
             .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
     }
+    pub(crate) fn native_inventory_for_configuration(
+        &self,
+        reference: &str,
+    ) -> Result<super::NativeCapabilityInventory, CapabilityProfileServiceError> {
+        self.runtime_profile_source
+            .inventory_for_configuration(reference, None)
+            .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
+    }
     pub(crate) fn default_profile_id(
         &self,
     ) -> Result<Option<String>, CapabilityProfileServiceError> {

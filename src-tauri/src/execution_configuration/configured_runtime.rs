@@ -11,13 +11,13 @@ use super::{
 pub(crate) fn configured_runtime_profile(
     mut capabilities: CapabilitySet,
 ) -> RuntimeProfileSnapshot {
-    capabilities.sandbox_modes = [SandboxMode::WorkspaceWrite].into_iter().collect();
+    capabilities.sandbox_modes = [SandboxMode::DangerFullAccess].into_iter().collect();
     RuntimeProfileSnapshot {
         contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
         profile_ref: "orchestration:configured-runtime/v1".into(),
         exposure: capabilities,
         locked: RuntimeSelections {
-            sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+            sandbox_mode: Some(SandboxMode::DangerFullAccess),
             ..RuntimeSelections::default()
         },
     }

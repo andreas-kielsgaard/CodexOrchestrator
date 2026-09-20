@@ -34,13 +34,6 @@ export function RuntimeDefaultsFields({
         lockedValue={locked?.reasoningMode}
         onChange={(reasoningMode) => onChange({ ...value, reasoningMode })}
       />
-      <DefaultSelection
-        label="Default sandbox"
-        catalog={withinExposure(catalogs.sandboxModes, allowed.sandboxModes)}
-        value={value.sandboxMode}
-        lockedValue={locked?.sandboxMode}
-        onChange={(sandboxMode) => onChange({ ...value, sandboxMode })}
-      />
     </div>
   );
 }

@@ -40,6 +40,16 @@ export interface CapabilityProfileDraft {
   readonly allowedCapabilities: CapabilitySetViewModel;
 }
 
+/** A non-secret local projection of one Codex harness and its bound inference source. */
+export interface HarnessInferenceRouteOption {
+  readonly id: string;
+  readonly selected: boolean;
+  readonly label: string;
+  readonly sourceLabel: string;
+  readonly detail: string;
+  readonly execution: ExecutionBindingDto;
+}
+
 export interface CapabilityProfileOption {
   readonly id: string;
   readonly label: string;

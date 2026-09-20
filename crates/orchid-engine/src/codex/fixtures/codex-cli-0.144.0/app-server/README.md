@@ -1,8 +1,12 @@
-# Codex app-server 0.144.0 contract
+# Historical Codex app-server 0.144.0 contract
+
+This is a parser fixture for CLI 0.144.0, not the active production protocol. The active CLI
+0.154 protocol rejects `skills/extraRoots/set`; Orchid no longer sends it. Skill discovery comes
+from the selected native Codex configuration until a compatible discovery-root contract exists.
 
 Verified with the installed Windows `codex-cli 0.144.0` on 2026-09-09. The executable contract is `scripts/codex-app-server-contract.node-test.mjs`; it is opt-in through `CODEX_APP_SERVER_CONTRACT_PROGRAM` and uses a disposable home and local Responses provider. Production-adapter peer fixtures are in `runtime/codex/app_server/tests.rs`. Neither fixture is a captured user conversation.
 
-Supported execution sequence: `initialize` / `initialized`, `skills/extraRoots/set`, `thread/start` or `thread/read` + `thread/resume`, `turn/start`, confirmed `turn/started`, then `turn/steer` with `expectedTurnId` or `turn/interrupt`. JSONL request IDs correlate replies independently of notifications and native request IDs.
+The historical execution sequence was `initialize` / `initialized`, `skills/extraRoots/set`, `thread/start` or `thread/read` + `thread/resume`, `turn/start`, confirmed `turn/started`, then `turn/steer` with `expectedTurnId` or `turn/interrupt`. JSONL request IDs correlate replies independently of notifications and native request IDs.
 
 `turn/steer` includes `clientUserMessageId`. An acknowledged turn ID must match the expected active turn. Turn completion precedes process cleanup; process exit alone is not success.
 

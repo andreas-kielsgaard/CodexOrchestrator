@@ -1662,11 +1662,7 @@ impl NativeProfileService {
         })?;
         for profile in profiles {
             self.revalidate(&profile)?;
-            self.reconcile_sandbox_adoption(&profile.id)?;
             self.reconcile_login_attempt(&profile.id)?;
-            self.reconcile_setup_attempts(&profile.id)?;
-            self.reconcile_full_access_canary(&profile.id)?;
-            self.expire_mcp_probe(&profile.id)?;
         }
         let profiles = self.read("load native profiles", |connection| {
             load_profiles(connection)
@@ -1750,7 +1746,7 @@ impl NativeProfileService {
                 params![id, now],).map_err(|error| format!("Unable to initialize profile readiness: {error}"))?;
         transaction
             .execute(
-                "INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at) VALUES (?1,'workspace_write',?2)",
+                "INSERT INTO native_codex_profile_execution_modes (profile_id,selected_mode,updated_at) VALUES (?1,'danger_full_access',?2)",
                 params![id, now],
             )
             .map_err(| error| format!("Unable to initialize profile execution mode: {error}"))?;
@@ -1780,9 +1776,6 @@ impl NativeProfileService {
             return Err("Only a currently validated native profile can be selected".into());
         }
         let now = Utc::now().to_rfc3339();
-        let profiles = self.read("load native profiles before selection", |connection| {
-            load_profiles(connection)
-        })?;
         self.write("select native profile", |transaction| {
             transaction
                 .execute("UPDATE native_codex_profiles SET selected_at=NULL", [])
@@ -1795,12 +1788,6 @@ impl NativeProfileService {
                 .map_err(|error| error.to_string())?;
             Ok(())
         })?;
-        for unselected in profiles.into_iter().filter(|candidate| candidate.id != id) {
-            if unselected.selected {
-                self.invalidate_sandbox_adoption(&unselected.id)?;
-            }
-            self.reconcile_setup_attempts(&unselected.id)?;
-        }
         self.profile(id).map(Into::into)
     }
 
@@ -1953,7 +1940,7 @@ impl NativeProfileService {
     }
 
     pub(crate) fn refresh_readiness(&self, id: &str) -> Result<NativeProfileDto, String> {
-        let profile = self.require_selected_active(id)?;
+        let profile = self.require_active(id)?;
         self.reconcile_login_attempt(id)?;
         let root = self.ensure_probe_root(id)?;
         let authenticated = self
@@ -1986,6 +1973,17 @@ impl NativeProfileService {
             None,
         )?;
         self.profile(id).map(Into::into)
+    }
+
+    /// Opens only a registered profile directory through the platform's normal file manager.
+    /// The caller supplies an opaque profile id, never an arbitrary filesystem path.
+    pub(crate) fn open_in_explorer(&self, id: &str) -> Result<(), String> {
+        let profile = self.require_active(id)?;
+        Command::new("explorer.exe")
+            .arg(profile.home)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Unable to open the Codex profile in Explorer: {error}"))
     }
 
     pub(crate) fn request_sandbox_initialization(
@@ -4847,6 +4845,14 @@ pub(crate) fn refresh_native_profile_readiness(
     input: NativeProfileIdInput,
 ) -> Result<NativeProfileDto, String> {
     state.service.refresh_readiness(&input.profile_id)
+}
+
+#[tauri::command]
+pub(crate) fn open_native_profile_in_explorer(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativeProfileIdInput,
+) -> Result<(), String> {
+    state.service.open_in_explorer(&input.profile_id)
 }
 #[tauri::command]
 pub(crate) fn request_native_profile_sandbox_initialization(

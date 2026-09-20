@@ -18,6 +18,12 @@ import type {
   PinnedAgentSessionProfileDto,
 } from '../../application/agentSessions';
 import { samePreparedConfiguration } from './sessionPreparationState';
+import {
+  clearCachedComposerDraft,
+  composerDraftCacheKey,
+  readCachedComposerDraft,
+  writeCachedComposerDraft,
+} from './composerDraftCache';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 
@@ -87,8 +93,13 @@ export function useAgentSession(
   options: UseAgentSessionOptions,
 ): AgentSessionWorkspaceController {
   const selectedSessionId = options.selectedSessionId;
+  const composerCacheKey = composerDraftCacheKey(selectedSessionId, options.folderTarget);
+  const composerCacheKeyRef = useRef(composerCacheKey);
   const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
   const [draft, setDraft] = useState('');
+  const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
   const acceptedOptionsRef = useRef<string | null>(null);
@@ -127,7 +138,11 @@ export function useAgentSession(
         setDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
-        setWorkingDirectory(next.session.workingDirectory ?? '');
+        setWorkingDirectory(
+          readCachedComposerDraft(composerCacheKeyRef.current)?.workingDirectory ??
+            next.session.workingDirectory ??
+            '',
+        );
         invocationIdsRef.current = new Set(next.invocations.map(({ invocation }) => invocation.id));
       }
       return next;
@@ -198,7 +213,7 @@ export function useAgentSession(
     [loadSelected],
   );
 
-  const startNewSession = useCallback(() => {
+  const startNewSession = useCallback((cached = readCachedComposerDraft(composerCacheKeyRef.current)) => {
     loadGenerationRef.current += 1;
     selectedIdRef.current = null;
     setDetails(null);
@@ -206,8 +221,8 @@ export function useAgentSession(
     setCurrentProfile(null);
     acceptedOptionsRef.current = null;
     invocationIdsRef.current = new Set();
-    setWorkingDirectory('');
-    setDraft('');
+    setWorkingDirectory(cached?.workingDirectory ?? '');
+    setDraft(cached?.text ?? '');
     setError(null);
     setLoading(false);
   }, []);
@@ -217,10 +232,26 @@ export function useAgentSession(
   const contextRef = useRef(contextKey);
   contextRef.current = contextKey;
   useEffect(() => {
+    setHydratedComposerCacheKey(null);
+    const cached = readCachedComposerDraft(composerCacheKey);
+    composerCacheKeyRef.current = composerCacheKey;
     if (selectedSessionId) {
+      setDraft(cached?.text ?? '');
       if (selectedIdRef.current !== selectedSessionId) void selectSession(selectedSessionId);
-    } else startNewSession();
-  }, [selectedSessionId, draftKey, selectSession, startNewSession]);
+    } else startNewSession(cached);
+    setHydratedComposerCacheKey(composerCacheKey);
+  }, [selectedSessionId, draftKey, composerCacheKey, selectSession, startNewSession]);
+
+  useEffect(() => {
+    if (hydratedComposerCacheKey !== composerCacheKey) return;
+    const timer = window.setTimeout(() => {
+      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
+    };
+  }, [composerCacheKey, draft, hydratedComposerCacheKey, workingDirectory]);
 
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
@@ -245,7 +276,9 @@ export function useAgentSession(
       const preparingNow = isSessionPreparing(preparation);
       if (preparingNow) return;
       const sendContext = contextRef.current;
+      const sendCacheKey = composerCacheKeyRef.current;
       const existingSessionId = selectedIdRef.current;
+      let acceptedDelivery = false;
       sendingRef.current = true;
       setSending(true);
       setError(null);
@@ -275,8 +308,7 @@ export function useAgentSession(
             text: submittedText,
           });
           if (outcome.state === 'accepted' || outcome.state === 'uncertain') {
-            if (clearComposer && selectedIdRef.current === existingSessionId)
-              setDraft((current) => (current === value ? '' : current));
+            acceptedDelivery = outcome.state === 'accepted';
           }
           if (outcome.state !== 'accepted')
             setError(
@@ -354,18 +386,26 @@ export function useAgentSession(
                         : {}),
                     });
         acceptedOptionsRef.current = preparedOptions;
+        acceptedDelivery = true;
         if (!options.preparedExecution) options.execution?.afterAccepted();
         if (!existingSessionId && contextRef.current === sendContext)
           options.onSessionCreated?.(acknowledgement.sessionId);
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
           selectedIdRef.current = acknowledgement.sessionId;
           invocationIdsRef.current.add(acknowledgement.invocationId);
-          if (clearComposer) setDraft((current) => (current === value ? '' : current));
           await loadSelected(acknowledgement.sessionId, true);
         }
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
+        // A controlled owner can switch to the created Session while its acknowledgement is still
+        // settling. Clear again only when this exact sent text is still visible; a user-typed next
+        // draft always wins.
+        if (acceptedDelivery && clearComposer && draftRef.current === value) {
+          draftRef.current = '';
+          setDraft('');
+          clearCachedComposerDraft(sendCacheKey);
+        }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }

@@ -83,6 +83,22 @@ function ControlledCapabilityEditor({ onSave }: { onSave(profile: CapabilityProf
     <CapabilityProfileEditor
       profile={profile}
       runtime={runtime}
+      routes={[
+        {
+          id: 'local-codex:review',
+          selected: true,
+          label: 'This device · Codex CLI',
+          sourceLabel: 'OpenAI via Codex CLI',
+          detail: 'C:/codex-review',
+          execution: {
+            deviceId: 'local',
+            deviceName: 'This device',
+            provider: 'codex',
+            configurationRef: 'review',
+            connection: { kind: 'local' },
+          },
+        },
+      ]}
       onChange={setProfile}
       onSave={onSave}
     />
@@ -97,14 +113,28 @@ describe('Execution Configuration editors', () => {
 
     await user.type(screen.getByRole('textbox', { name: 'Capability profile ID' }), 'reviewer');
     await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Reviewer');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Capability profile harness and inference source' }),
+      'local-codex:review',
+    );
     await user.click(screen.getByRole('checkbox', { name: 'GPT 5.6' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Message Session' }));
+    await user.click(screen.getByRole('button', { name: 'Set MCP tools' }));
+    await user.click(screen.getByRole('button', { name: 'MCP server: orchestrator' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Include Message Session' }));
+    await user.click(screen.getByRole('button', { name: 'Apply selection' }));
     await user.click(screen.getByRole('button', { name: 'Create profile' }));
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         capabilityProfileId: 'reviewer',
         name: 'Reviewer',
+        execution: {
+          deviceId: 'local',
+          deviceName: 'This device',
+          provider: 'codex',
+          configurationRef: 'review',
+          connection: { kind: 'local' },
+        },
         allowedCapabilities: expect.objectContaining({
           models: ['gpt-5.6'],
           mcpTools: { orchestrator: ['session-message'] },
@@ -182,7 +212,7 @@ describe('Execution Configuration editors', () => {
 
     render(<ControlledNode />);
     expect(screen.getByLabelText('Avery, Agent identity')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Default sandbox' })).toBeDisabled();
+    expect(screen.queryByRole('combobox', { name: 'Default sandbox' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Expand Copy node configuration' }));
     const copySection = screen

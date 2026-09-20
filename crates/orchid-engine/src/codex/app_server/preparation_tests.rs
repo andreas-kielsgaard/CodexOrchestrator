@@ -49,7 +49,7 @@ impl SupervisedChild for FakeChild {
         let id = &value["id"];
         match value["method"].as_str() {
             Some("initialize") if self.block_initialize => {},
-            Some("initialize" | "skills/extraRoots/set") => self.output(json!({"id":id,"result":{}})),
+            Some("initialize") => self.output(json!({"id":id,"result":{}})),
             Some("thread/start" | "thread/resume") => self.output(json!({"id":id,"result":{"thread":{"id":"thread-one"},"cwd":value["params"]["cwd"],"model":"native-model","reasoningEffort":"high","approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}})),
             Some("turn/start") => {
                 self.output(json!({"id":id,"result":{"turn":{"id":"turn-one"}}}));
@@ -153,6 +153,12 @@ fn preparation_retains_native_identity_and_cwd_without_delivering_until_release(
         .unwrap()
         .iter()
         .any(|r| r["method"] == "turn/start"));
+    assert!(!child
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|r| r["method"] == "skills/extraRoots/set"));
     assert!(runtime.active_turn(&id).is_err());
     runtime.deliver_prepared_invocation(&id).unwrap();
     assert!(runtime.deliver_prepared_invocation(&id).is_err());

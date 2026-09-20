@@ -4,6 +4,12 @@ import type {
   PinnedAgentSessionProfileDto,
 } from '../../application/agentSessions';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import type { SessionFolderTarget } from '../../application/agentSessions/organization';
+import {
+  composerDraftCacheKey,
+  readCachedComposerDraft,
+  writeCachedComposerDraft,
+} from './composerDraftCache';
 
 const inherited = (): PerMessageRuntimeSelection => ({ model: null, reasoningMode: null });
 
@@ -12,19 +18,25 @@ export function useSessionExecutionSelection(
   client: AgentSessionProfileClient | undefined,
   sessionId: string | null,
   draftId?: string,
+  folderTarget?: SessionFolderTarget | null,
 ) {
   const [profile, setProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState(inherited);
+  const [hydratedCacheKey, setHydratedCacheKey] = useState<string | null>(null);
   const currentSession = useRef(sessionId ?? draftId);
   currentSession.current = sessionId ?? draftId;
-  const previousContext = useRef({ sessionId, draftId });
+  const cacheKey = composerDraftCacheKey(sessionId, folderTarget);
+  const previousContext = useRef<string | null>(null);
   useEffect(() => {
     let active = true;
     setProfile(null);
     setError(null);
-    if (previousContext.current.sessionId || !sessionId) setSelection(inherited());
-    previousContext.current = { sessionId, draftId };
+    setHydratedCacheKey(null);
+    const cached = readCachedComposerDraft(cacheKey)?.runtimeSelection;
+    if (previousContext.current !== cacheKey) setSelection(cached ?? inherited());
+    previousContext.current = cacheKey;
+    setHydratedCacheKey(cacheKey);
     if (client && sessionId)
       void client.loadPinnedProfile(sessionId).then(
         (value) => {
@@ -37,7 +49,11 @@ export function useSessionExecutionSelection(
     return () => {
       active = false;
     };
-  }, [client, sessionId, draftId]);
+  }, [client, sessionId, draftId, cacheKey]);
+  useEffect(() => {
+    if (hydratedCacheKey !== cacheKey) return;
+    writeCachedComposerDraft(cacheKey, { runtimeSelection: selection });
+  }, [cacheKey, hydratedCacheKey, selection]);
   const reloadProfile = useCallback(async () => {
     if (!client || !sessionId) return;
     try {

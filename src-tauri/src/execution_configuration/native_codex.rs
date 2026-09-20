@@ -1,7 +1,7 @@
 //! Selected native environment discovery. Defaults remain absent so Codex resolves them at launch.
 use super::{
     ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
-    runtime_profile::RuntimeProfileSnapshot,
+    runtime_profile::{RuntimeProfileSnapshot, SandboxMode},
 };
 use crate::{
     native_profiles::NativeProfileService,
@@ -129,10 +129,19 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
-        Ok(orchid_engine::configuration::runtime_profile(
+        Ok(with_temporary_danger_full_access(orchid_engine::configuration::runtime_profile(
             &native,
             format!("native-codex:{}", selected.profile_id),
             self.product_tools.clone(),
-        ))
+        )))
     }
+}
+
+/// Sandboxing moves to Capability Profiles in a later slice. Until then, Orchid launches its
+/// native Codex harnesses with one explicit full-access policy rather than pretending this is a
+/// CODEX_HOME setting.
+fn with_temporary_danger_full_access(mut profile: RuntimeProfileSnapshot) -> RuntimeProfileSnapshot {
+    profile.exposure.sandbox_modes = [SandboxMode::DangerFullAccess].into_iter().collect();
+    profile.locked.sandbox_mode = Some(SandboxMode::DangerFullAccess);
+    profile
 }

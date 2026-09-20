@@ -167,9 +167,11 @@ impl SessionProfileResolver {
 
     pub(crate) fn resolve_snapshot(
         runtime_profile: RuntimeProfileSnapshot,
-        request: SessionCreationRequest,
+        mut request: SessionCreationRequest,
     ) -> Result<SessionCreationResolution, ResolutionError> {
         validate_creation_request(&request)?;
+        force_temporary_sandbox_default(&mut request.capability_profile.allowed_capabilities);
+        force_temporary_sandbox_default(&mut request.node_profile.allowed_capabilities);
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
@@ -228,9 +230,7 @@ impl SessionProfileResolver {
             reasoning_mode: request
                 .reasoning_mode
                 .or_else(|| session_profile.pinned_defaults().reasoning_mode.clone()),
-            sandbox_mode: request
-                .sandbox_mode
-                .or(session_profile.pinned_defaults().sandbox_mode),
+            sandbox_mode: Some(crate::execution_configuration::SandboxMode::DangerFullAccess),
         };
         validate_selection_availability(&requested, &runtime.exposure)
             .map_err(ResolutionError::DirectUserSelectionUnavailable)?;
@@ -286,6 +286,12 @@ fn validate_creation_request(request: &SessionCreationRequest) -> Result<(), Res
         .map_err(ResolutionError::InvalidInput)
 }
 
+fn force_temporary_sandbox_default(capabilities: &mut CapabilitySet) {
+    capabilities.sandbox_modes = [crate::execution_configuration::SandboxMode::DangerFullAccess]
+        .into_iter()
+        .collect();
+}
+
 fn validate_direct_user_request(
     request: &DirectUserInvocationRequest,
 ) -> Result<(), ResolutionError> {
@@ -334,9 +340,17 @@ fn resolve_pinned_defaults(
     pinned: &RuntimeSelections,
     available: &CapabilitySet,
 ) -> Result<RuntimeSelections, ResolutionError> {
-    validate_selection_availability(pinned, available)
+    let pinned = RuntimeSelections {
+        sandbox_mode: Some(crate::execution_configuration::SandboxMode::DangerFullAccess),
+        ..pinned.clone()
+    };
+    let mut available = available.clone();
+    available
+        .sandbox_modes
+        .insert(crate::execution_configuration::SandboxMode::DangerFullAccess);
+    validate_selection_availability(&pinned, &available)
         .map_err(ResolutionError::PinnedSelectionUnavailable)?;
-    resolve_locked_selections(locked, pinned)
+    resolve_locked_selections(locked, &pinned)
 }
 
 fn resolve_locked_selections(

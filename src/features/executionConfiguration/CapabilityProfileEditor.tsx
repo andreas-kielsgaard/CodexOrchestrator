@@ -1,17 +1,20 @@
-import type { ReactNode } from 'react';
-import { ExecutionConnectionFields } from './ExecutionConnectionFields';
 import { RuntimeDefaultsFields } from './RuntimeDefaultsFields';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ValidationSummary } from '../../components/ValidationSummary';
 import { CapabilitySetFields } from './CapabilitySetFields';
 import { RuntimeProfileInspector } from './RuntimeProfileInspector';
-import type { CapabilityProfileDraft, RuntimeProfileViewModel } from './types';
+import { HarnessInferenceRouteFields } from './HarnessInferenceRouteFields';
+import type {
+  CapabilityProfileDraft,
+  HarnessInferenceRouteOption,
+  RuntimeProfileViewModel,
+} from './types';
 import './executionConfiguration.css';
 
 export interface CapabilityProfileEditorProps {
   readonly profile: CapabilityProfileDraft;
-  readonly connectionDetails?: ReactNode;
   readonly runtime: RuntimeProfileViewModel;
+  readonly routes?: readonly HarnessInferenceRouteOption[];
   readonly validationErrors?: readonly string[];
   readonly saving?: boolean;
   onChange(profile: CapabilityProfileDraft): void;
@@ -21,8 +24,8 @@ export interface CapabilityProfileEditorProps {
 /** Controlled editor for the reusable capability ceiling applied before node restrictions. */
 export function CapabilityProfileEditor({
   profile,
-  connectionDetails,
   runtime,
+  routes = [],
   validationErrors = [],
   saving = false,
   onChange,
@@ -36,8 +39,8 @@ export function CapabilityProfileEditor({
           <span>Execution configuration</span>
           <h1>{existing ? profile.name : 'New capability profile'}</h1>
           <p>
-            Configure a device, its Codex connection, and the capabilities available to Agent
-            Sessions. Choosing a worktree on this device also selects its Capability Profile.
+            Define the reusable capability ceiling and session defaults available to Agent Sessions.
+            Devices, harnesses, and inference sources are configured separately in Technical Settings.
           </p>
         </div>
         {existing ? (
@@ -76,17 +79,7 @@ export function CapabilityProfileEditor({
         </label>
       </CollapsibleSection>
 
-      <CollapsibleSection
-        title="Device and Codex connection"
-        description="This profile offers capabilities on one device."
-        className="execution-configuration__section"
-      >
-        <ExecutionConnectionFields
-          value={profile.execution}
-          onChange={(execution) => onChange({ ...profile, execution })}
-        />
-        {connectionDetails}
-      </CollapsibleSection>
+      <HarnessInferenceRouteFields profile={profile} routes={routes} onChange={onChange} />
 
       <RuntimeProfileInspector runtime={runtime} defaultExpanded={false} />
 
@@ -98,11 +91,7 @@ export function CapabilityProfileEditor({
         <CapabilitySetFields
           catalogs={runtime.catalogs}
           value={profile.allowedCapabilities}
-          scopeLabel={
-            profile.execution?.connection.kind === 'ssh'
-              ? 'New Agent Sessions targeting this device'
-              : 'Nodes and new Agent Sessions using this profile'
-          }
+          scopeLabel="Nodes and new Agent Sessions using this profile"
           onChange={(allowedCapabilities) => onChange({ ...profile, allowedCapabilities })}
         />
       </CollapsibleSection>

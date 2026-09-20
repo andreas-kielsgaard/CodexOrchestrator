@@ -5,6 +5,21 @@ import { DraftWorkspace } from '../../components/draftWorkspace';
 import { repairClients } from '../workflowAuthoring/testFixtures';
 import { ExecutionConfigurationScreen } from './ExecutionConfigurationScreen';
 import type { CapabilityProfileDraft } from './types';
+import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+
+const nativeProfiles = {
+  load: vi.fn(async () => ({
+    contract: 'native-codex-profile-query/v1' as const,
+    profiles: [
+      {
+        id: 'team',
+        homePath: 'C:/codex-team',
+        lifecycle: 'active',
+        selected: true,
+      },
+    ],
+  })),
+} as unknown as NativeProfileClient;
 
 it('preserves typing during a save, even after selecting another profile', async () => {
   const user = userEvent.setup();
@@ -60,4 +75,21 @@ it('retains a new unsaved profile across remount and failed save', async () => {
     'Unfinished',
   );
   expect(screen.getByRole('textbox', { name: 'Capability profile ID' })).toBeEnabled();
+});
+
+it('projects each active local Codex home as a profile route without exposing credentials', async () => {
+  const fixture = repairClients();
+  render(
+    <ExecutionConfigurationScreen
+      client={fixture.configuration}
+      nativeProfileClient={nativeProfiles}
+    />,
+  );
+
+  const route = await screen.findByRole('combobox', {
+    name: 'Capability profile harness and inference source',
+  });
+  expect(route).toHaveValue('local-codex:team');
+  expect(screen.getByText(/C:\/codex-team.*account is configured/i)).toBeVisible();
+  expect(screen.queryByText(/SSH/i)).not.toBeInTheDocument();
 });

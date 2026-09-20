@@ -51,14 +51,6 @@ export function CapabilitySetFields({
         hint={`${scopeLabel} may expose these skills.`}
         onChange={(skills) => onChange({ ...value, skills })}
       />
-      <CatalogMultiSelect
-        label="Sandbox modes"
-        catalog={catalogs.sandboxModes}
-        values={value.sandboxModes}
-        disabled={disabled}
-        hint={`${scopeLabel} may use these sandbox modes.`}
-        onChange={(sandboxModes) => onChange({ ...value, sandboxModes })}
-      />
     </div>
   );
 }

@@ -1641,9 +1641,9 @@ export function App({
 
           readOtpCatalogue={otpCatalogueReader}
 
-          targetClient={executionTargetClient}
+          nativeProfileClient={nativeProfileClient}
 
-          branchSource={branchSource}
+          executionTargetClient={executionTargetClient}
 
           workspace={capabilityDrafts}
         />
@@ -1819,12 +1819,6 @@ export function App({
           otpInstallations={otpInstallationClient}
 
           executionClient={executionConfigurationClient}
-
-          targetClient={executionTargetClient}
-
-          branchSource={branchSource}
-
-          workspace={capabilityDrafts}
         />
       ) : (
         harnessManagementPreviewSurface

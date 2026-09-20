@@ -1,26 +1,14 @@
-//! Connection-local native discovery roots; neither global configuration nor workspace files change.
+//! Codex-owned skill discovery.
 use super::connection::Connection;
-use crate::contracts::ports::{RuntimePortError, RuntimePortErrorKind};
+use crate::contracts::ports::RuntimePortError;
 
 pub(super) fn apply_skill_roots(
-    connection: &Connection,
-    roots: &[String],
+    _connection: &Connection,
+    _roots: &[String],
 ) -> Result<(), RuntimePortError> {
-    if roots.is_empty() {
-        return Ok(());
-    }
-    if roots
-        .iter()
-        .any(|root| !std::path::Path::new(root).is_absolute())
-    {
-        return Err(RuntimePortError::new(
-            RuntimePortErrorKind::UnsupportedOptions,
-            "Skill roots must be absolute",
-        ));
-    }
-    connection.call(
-        "skills/extraRoots/set",
-        serde_json::json!({"extraRoots":roots}),
-    )?;
+    // CLI 0.154's active app-server protocol no longer accepts this request.
+    // `skills/config/write` configures named skills, not discovery roots, so it
+    // is not a compatible substitute. Native Codex configuration remains the
+    // source of discovery and an optional product root must not block launch.
     Ok(())
 }

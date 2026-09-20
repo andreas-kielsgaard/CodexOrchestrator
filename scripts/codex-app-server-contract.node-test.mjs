@@ -331,7 +331,7 @@ requires_openai_auth = false
 `;
 
 test(
-  'installed app-server: quick features, skill mentions, steering, interruption, resume and native defaults',
+  'installed app-server: quick features, steering, interruption, resume and native defaults',
   {
     skip:
       !executable &&
@@ -345,13 +345,6 @@ test(
     const home = path.join(root, 'home');
     const cwd = path.join(root, 'workspace');
     await Promise.all([mkdir(home), mkdir(cwd)]);
-    const extraRoot = path.join(root, 'orchestration-skills');
-    const extraSkill = path.join(extraRoot, 'orchestrator-contract');
-    await mkdir(extraSkill, { recursive: true });
-    await writeFile(
-      path.join(extraSkill, 'SKILL.md'),
-      '---\nname: orchestrator-contract\ndescription: Exercise the orchestration skill root.\n---\nReply SKILL_ROOT_MARKER.\n',
-    );
     const connections = [];
     t.after(async () => {
       for (const connection of connections) await connection.close();
@@ -369,24 +362,12 @@ test(
       const connection = new AppServer(home, cwd);
       connections.push(connection);
       await connection.start();
-      await connection.call('skills/extraRoots/set', { extraRoots: [extraRoot] });
       return connection;
     };
 
     let server = await connect();
-    const skills = await server.call('skills/list', { cwds: [cwd], forceReload: true });
-    assert.ok(
-      skills.data.some((entry) =>
-        entry.skills.some((skill) => skill.name === 'orchestrator-contract'),
-      ),
-    );
     const models = await server.call('model/list', {});
     assert.ok(models.data.some((model) => model.model === 'gpt-5.6-terra'));
-    const quickSkill = skills.data
-      .flatMap((entry) => entry.skills)
-      .find((skill) => skill.name === 'orchestrator-contract');
-    assert.equal(quickSkill.enabled, true);
-    assert.equal(path.resolve(quickSkill.path), path.resolve(extraSkill, 'SKILL.md'));
     const quickModel = models.data.find((model) => model.model === 'gpt-5.6-terra');
     assert.ok(
       quickModel.supportedReasoningEfforts.some(
@@ -403,14 +384,10 @@ test(
     const turn = (
       await server.call('turn/start', {
         threadId,
-        input: [{ type: 'text', text: '$orchestrator-contract Reply with the fixture result.' }],
+        input: [{ type: 'text', text: 'Reply with the fixture result.' }],
       })
     ).turn;
-    const [firstRequest] = await providerStarted;
-    assert.ok(
-      JSON.stringify(firstRequest.input).includes('SKILL_ROOT_MARKER'),
-      'An explicit skill mention loads its instructions into the provider input',
-    );
+    await providerStarted;
     const steered = await server.call('turn/steer', {
       threadId,
       expectedTurnId: turn.id,
@@ -467,10 +444,14 @@ test(
     assert.equal(
       resumed.model,
       started.model,
-      '0.144.0 keeps the prior model without an explicit resume selection',
+      'Native resume keeps the prior model without an explicit selection',
     );
     assert.equal(resumed.reasoningEffort, started.reasoningEffort);
-    assert.equal(resumed.approvalPolicy, 'never');
+    assert.equal(
+      resumed.approvalPolicy,
+      started.approvalPolicy,
+      'Native resume keeps the prior approval policy without an explicit selection',
+    );
     await server.close();
 
     server = await connect();

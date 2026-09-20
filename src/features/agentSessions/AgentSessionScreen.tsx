@@ -123,6 +123,7 @@ export function StandaloneAgentSessionScreen({
     executionConfigurationClient,
     selectedSessionId,
     draftId,
+    selection.kind === 'draft' ? selection.folderTarget : null,
   );
   const { preserveOnAcknowledgement, adoptCurrent, acceptReady } = targetDraft;
   useEffect(() => {
