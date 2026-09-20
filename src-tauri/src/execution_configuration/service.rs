@@ -456,8 +456,9 @@ mod tests {
     use super::*;
     use crate::execution_configuration::{
         ports::SelectedRuntimeProfileSourceError,
-        repository::InMemoryCapabilityProfileRepository,
+        repository::{InMemoryCapabilityProfileRepository, SqliteCapabilityProfileRepository},
         runtime_profile::{RuntimeSelections, SandboxMode, RUNTIME_PROFILE_CONTRACT_VERSION},
+        ModelAllowance, ProfileRoutePolicy,
     };
     use std::collections::BTreeSet;
 
@@ -508,6 +509,87 @@ mod tests {
             Arc::new(InMemoryCapabilityProfileRepository::default()),
             Arc::new(FixedRuntimeSource(runtime())),
         )
+    }
+
+    fn route(id: &str, configuration_ref: &str) -> ProfileRoutePolicy {
+        ProfileRoutePolicy {
+            route_id: id.into(),
+            execution: crate::execution_targets::domain::ExecutionBinding {
+                configuration_ref: configuration_ref.into(),
+                ..Default::default()
+            },
+            model_allowances: vec![ModelAllowance {
+                model_id: "codex-a".into(),
+                minimum_reasoning: "medium".into(),
+                maximum_reasoning: "high".into(),
+            }],
+            mcp_groups: set(&["codex-profile-mcps"]),
+            skill_groups: set(&["codex-profile-skills"]),
+            defaults: RuntimeSelections {
+                model: Some("codex-a".into()),
+                reasoning_mode: Some("high".into()),
+                sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+            },
+        }
+    }
+
+    #[test]
+    fn generated_route_profile_persists_default_route_and_group_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("capability-profile-flow.sqlite");
+        let repository = Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap());
+        let service = CapabilityProfileService::new(
+            repository.clone(),
+            Arc::new(FixedRuntimeSource(runtime())),
+        );
+        let local = route("local", "selected");
+        let alternate = route("alternate", "other-codex-home");
+
+        let created = service
+            .create_generated_with_routes(
+                "Disposable route flow".into(),
+                allowed(&["codex-a"]),
+                RuntimeSelections::default(),
+                Default::default(),
+                vec![local.clone(), alternate.clone()],
+                Some(alternate.route_id.clone()),
+            )
+            .unwrap();
+        assert!(Uuid::parse_str(&created.capability_profile_id).is_ok());
+        assert_eq!(created.default_route_id.as_deref(), Some("alternate"));
+        assert_eq!(created.execution.configuration_ref, "other-codex-home");
+        assert_eq!(
+            created.default_route().unwrap().mcp_groups,
+            alternate.mcp_groups
+        );
+        assert_eq!(
+            created.default_route().unwrap().skill_groups,
+            alternate.skill_groups
+        );
+
+        let updated = service
+            .update_with_routes(
+                &created.capability_profile_id,
+                created.name.clone(),
+                allowed(&["codex-a"]),
+                RuntimeSelections::default(),
+                Default::default(),
+                vec![local.clone(), alternate],
+                Some(local.route_id.clone()),
+            )
+            .unwrap();
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.default_route_id.as_deref(), Some("local"));
+        assert_eq!(updated.execution.configuration_ref, "selected");
+
+        drop(service);
+        drop(repository);
+        let reopened = SqliteCapabilityProfileRepository::open(&database).unwrap();
+        let persisted = reopened
+            .find(&created.capability_profile_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted, updated);
     }
 
     #[test]
