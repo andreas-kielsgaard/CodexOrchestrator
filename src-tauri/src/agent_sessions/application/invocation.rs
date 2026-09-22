@@ -440,13 +440,21 @@ impl AgentSessionApplication {
         let launch_extension = if remote {
             launch_extension
         } else {
+            let launch_extension = if let Some(profile) = session.session_profile.as_ref() {
+                match super::configuration::pinned_exposure_extension(profile, launch_extension.unwrap_or_default()) {
+                    Ok(extension) => Some(extension),
+                    Err(message) => {
+                        self.finish_preflight_failure(&invocation, RuntimePortError::new(RuntimePortErrorKind::Unavailable, message))?;
+                        return Ok(SendAgentSessionMessageLaunchResult { acknowledgement, launch_accepted: false });
+                    }
+                }
+            } else { launch_extension };
             let launch_extension = self.add_workspace_capabilities(launch_extension);
             let launch_extension = match self.native_profile_launch_authority.as_ref() {
                 Some(authority) => match authority.prepare_configured_launch(
-                    session
-                        .execution_target
-                        .as_ref()
+                    session.execution_target.as_ref()
                         .map(|target| target.execution.configuration_ref.as_str())
+                        .or_else(|| session.session_profile.as_ref().and_then(|profile| profile.session_profile().runtime_profile_ref().strip_prefix("native-codex:")))
                         .unwrap_or("selected"),
                     &session.id,
                     &invocation.id,

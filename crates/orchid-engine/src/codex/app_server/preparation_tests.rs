@@ -177,7 +177,7 @@ fn preparation_retains_native_identity_and_cwd_without_delivering_until_release(
 }
 
 #[test]
-fn preparation_delivers_selected_skills_as_explicit_turn_inputs() {
+fn preparation_does_not_force_invoke_selected_skills() {
     let directory = tempfile::tempdir().unwrap();
     let skill = directory.path().join("SKILL.md");
     std::fs::write(&skill, "---\nname: review\n---\n").unwrap();
@@ -190,6 +190,7 @@ fn preparation_delivers_selected_skills_as_explicit_turn_inputs() {
             name: "review".into(),
             path: skill.to_string_lossy().into_owned(),
             content_sha256: "pinned-for-adapter-test".into(),
+            description: "Review skill".into(),
         }],
         ..Default::default()
     });
@@ -207,12 +208,9 @@ fn preparation_delivers_selected_skills_as_explicit_turn_inputs() {
         .find(|request| request["method"] == "turn/start")
         .cloned()
         .unwrap();
-    assert_eq!(request["params"]["input"][0]["type"], "skill");
-    assert_eq!(request["params"]["input"][0]["name"], "review");
-    assert_eq!(
-        request["params"]["input"][1]["text"],
-        "frozen original prompt"
-    );
+    assert_eq!(request["params"]["input"].as_array().unwrap().len(), 1);
+    assert_eq!(request["params"]["input"][0]["type"], "text");
+    assert_eq!(request["params"]["input"][0]["text"], "frozen original prompt");
     runtime.shutdown().unwrap();
 }
 #[test]

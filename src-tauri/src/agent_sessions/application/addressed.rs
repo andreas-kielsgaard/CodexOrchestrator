@@ -15,7 +15,7 @@ impl AgentSessionApplication {
         addresses: &dyn AgentSessionAddressStore,
         request: SessionCreationSpec,
         session_id: AgentSessionId,
-        creation: SessionCreationRequest,
+        mut creation: SessionCreationRequest,
         working_directory: Option<String>,
         title: Option<String>,
         assigned_identity: Option<AssignedAgentIdentity>,
@@ -31,6 +31,13 @@ impl AgentSessionApplication {
                 .map_err(|e| SessionDirectoryError::new(e.to_string()))?,
             cwd: working_directory.as_deref(),
         };
+        creation.session_skill_inputs = self
+            .compile_capability_skill_inputs(
+                &creation.capability_profile,
+                &creation.capability_profile.execution.configuration_ref,
+                working_directory.as_deref(),
+            )
+            .map_err(SessionDirectoryError::new)?;
         let resolution = SessionProfileResolver::resolve_creation(&source, creation.clone())
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
@@ -108,7 +115,9 @@ impl AgentSessionApplication {
             exposure: profile.attached_runtime_capabilities().clone(),
             locked: profile.attached_runtime_locked().clone(),
         };
-        let expected = SessionProfileResolver::resolve_snapshot(original_runtime, creation.clone())
+        let mut creation = creation.clone();
+        creation.session_skill_inputs = profile.session_skill_inputs().to_vec();
+        let expected = SessionProfileResolver::resolve_snapshot(original_runtime, creation)
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         if &expected != pinned {
             return Err(SessionDirectoryError::new(
@@ -150,10 +159,13 @@ impl AgentSessionApplication {
                 "Session Event delivery requires an immutable pinned Session Profile",
             )
         })?;
-        let source = crate::execution_configuration::WorkingContextProfileSource {
+        let runtime_profile_ref = creation.session_profile().runtime_profile_ref();
+        let configuration_ref = runtime_profile_ref.strip_prefix("native-codex:").unwrap_or(runtime_profile_ref);
+        let source = crate::execution_configuration::PinnedConfigurationProfileSource {
             source: self
                 .profile_source()
                 .map_err(|e| SessionInvocationError::new(e.to_string()))?,
+            configuration_ref,
             cwd: history.session.working_directory.as_deref(),
         };
         let selections = match direct_user_options {

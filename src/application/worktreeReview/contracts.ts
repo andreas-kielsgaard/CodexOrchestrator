@@ -108,6 +108,21 @@ export interface BranchReviewDetail {
   readonly builds: readonly ReviewBuild[];
 }
 
+export interface DetachedWorktreeDetail {
+  readonly worktreeId: WorktreeId;
+  readonly locationLabel: string;
+  readonly head: GitCommit;
+  readonly stagedFiles: number;
+  readonly unstagedFiles: number;
+  readonly untrackedFiles: number;
+  readonly lastActivity: import('../branches').ActivityEstimate | null;
+  readonly recordedBranches: readonly string[];
+  /** Orchid-recorded association or owned-workspace time, not a guessed Git creation date. */
+  readonly firstRecordedAt: string | null;
+  readonly diskSizeBytes: number | null;
+  readonly diskSizeLimited: boolean;
+}
+
 export type CreateBuildSource =
   | {
       readonly kind: 'physical_worktree';
@@ -197,6 +212,12 @@ export interface ReviewOperationAttempt {
   readonly startedAt: string;
   readonly completedAt?: string;
   readonly failure?: BuildAttemptFailure;
+}
+
+export interface BuildLogChunk {
+  readonly text: string;
+  readonly nextOffset: number;
+  readonly truncatedBefore: boolean;
 }
 
 export type BuildOutputState =

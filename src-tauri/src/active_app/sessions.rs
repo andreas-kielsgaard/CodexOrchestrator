@@ -34,6 +34,7 @@ pub(super) fn compose(
     harness_engine: Arc<HarnessEngineService>,
     notifier: Arc<dyn AgentSessionNotifier>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
+    otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
     let local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime> =
@@ -45,6 +46,7 @@ pub(super) fn compose(
             &workspaces,
             local_runtime.clone(),
             product_tools,
+            otp_skill_roots,
         )?;
     let execution_targets = Arc::new(crate::execution_targets::ExecutionTargetService::new(
         database,

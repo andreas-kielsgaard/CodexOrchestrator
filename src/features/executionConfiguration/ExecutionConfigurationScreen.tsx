@@ -4,10 +4,12 @@ import type { ExecutionTargetClient } from '../../application/executionTargets/c
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
+import { localCodexRoutes } from '../../application/executionConfiguration';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
+  ProfileModelCatalogueDto,
   ProfileRoutePolicyDto,
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
@@ -90,56 +92,6 @@ function newDraft(
   };
 }
 
-function localHarnessRoutes(
-  query: Awaited<ReturnType<NativeProfileClient['load']>> | null,
-  selectedRuntime: RuntimeProfileSnapshotDto,
-): readonly HarnessInferenceRouteOption[] {
-  const catalogued = (query?.profiles ?? [])
-    .filter((profile) => profile.lifecycle === 'active')
-    .map((profile) => ({
-      id: `local-codex:${profile.id}`,
-      selected: profile.selected,
-      label: profile.selected ? 'This device · selected Codex CLI' : 'This device · Codex CLI',
-      sourceLabel: 'OpenAI via Codex CLI',
-      deviceLabel: 'This device',
-      harnessLabel: 'Codex CLI',
-      inferenceLabel: 'OpenAI account via Codex CLI',
-      detail: `${profile.homePath} · the account is configured in this Codex home`,
-      execution: {
-        deviceId: 'local',
-        deviceName: 'This device',
-        provider: 'codex' as const,
-        configurationRef: profile.id,
-        connection: { kind: 'local' as const },
-      },
-    }));
-  const configurationRef = selectedRuntime.profileRef.startsWith('native-codex:')
-    ? selectedRuntime.profileRef.slice('native-codex:'.length)
-    : null;
-  if (!configurationRef) return catalogued;
-  const selectedRoute: HarnessInferenceRouteOption = {
-    id: `local-codex:${configurationRef}`,
-    selected: true,
-    label: 'This device · selected Codex CLI',
-    sourceLabel: 'OpenAI via Codex CLI',
-    deviceLabel: 'This device',
-    harnessLabel: 'Codex CLI',
-    inferenceLabel: 'OpenAI account via Codex CLI',
-    detail: 'The selected Codex profile on this device',
-    execution: {
-      deviceId: 'local',
-      deviceName: 'This device',
-      provider: 'codex' as const,
-      configurationRef,
-      connection: { kind: 'local' as const },
-    },
-  };
-  return [
-    selectedRoute,
-    ...catalogued.filter((route) => route.execution.configurationRef !== configurationRef),
-  ];
-}
-
 export function ExecutionConfigurationScreen({
   client,
   readOtpCatalogue,
@@ -154,26 +106,43 @@ export function ExecutionConfigurationScreen({
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [otpPackages, setOtpPackages] = useState<readonly OtpPackageDto[]>([]);
   const [routes, setRoutes] = useState<readonly HarnessInferenceRouteOption[]>([]);
+  const [modelCatalogues, setModelCatalogues] = useState<
+    Readonly<Record<string, ProfileModelCatalogueDto>>
+  >({});
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
   const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
   const selectedRef = useRef(selectedId);
-  const loadRouteRuntime = useCallback(
-    async (execution: CapabilityProfileDraft['execution']) => {
-      if (!execution || !executionTargetClient) return;
+  const loadModelCatalogue = useCallback(
+    async (configurationRef: string) => {
+      if (!client.loadProfileModelCatalogue) return;
       try {
-        const observed = await executionTargetClient.loadRuntime(execution);
-        setRuntime(observed.runtimeProfile);
-      } catch (caught) {
-        setError(`The selected harness could not be observed: ${errorMessage(caught)}`);
+        const catalogue = await client.loadProfileModelCatalogue(configurationRef);
+        setModelCatalogues((current) => ({ ...current, [configurationRef]: catalogue }));
+      } catch (cause) {
+        setModelCatalogues((current) => ({
+          ...current,
+          [configurationRef]: {
+            configurationRef,
+            observedAt: null,
+            models: [],
+            observationError: errorMessage(cause),
+          },
+        }));
       }
     },
-    [executionTargetClient],
+    [client],
   );
   const editDraft = (next: CapabilityProfileDraft) => {
     workspace.edit(selectedRef.current ?? '$new', next);
     setDraft(next);
-    if (JSON.stringify(next.execution) !== JSON.stringify(draft.execution))
-      void loadRouteRuntime(next.execution);
+    for (const route of next.routePolicies) {
+      if (
+        !draft.routePolicies.some(
+          (previous) => previous.execution.configurationRef === route.execution.configurationRef,
+        )
+      )
+        void loadModelCatalogue(route.execution.configurationRef);
+    }
   };
   useDraftCloseWarning(() => workspace.dirty());
   const [loading, setLoading] = useState(true);
@@ -184,18 +153,16 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] =
-        await Promise.all([
-          client.loadSelectedRuntimeProfile(),
-          client.listCapabilityProfiles(),
-          client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
-          // The catalogue is local design-time metadata. A read failure must not
-          // prevent a capability profile from being viewed or edited. The selected
-          // native runtime remains an available local route below.
-          readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
-          nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
-        ]);
-      const nextRoutes = localHarnessRoutes(nativeProfiles, nextRuntime);
+      const [nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] = await Promise.all([
+        client.listCapabilityProfiles(),
+        client.loadDefaultCapabilityProfile?.().catch(() => null) ?? Promise.resolve(null),
+        // The catalogue is local design-time metadata. A read failure must not
+        // prevent a capability profile from being viewed or edited. The selected
+        // native runtime remains an available local route below.
+        readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
+        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
+      ]);
+      const nextRoutes = localCodexRoutes(nativeProfiles?.profiles ?? []);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
@@ -203,9 +170,8 @@ export function ExecutionConfigurationScreen({
       const nextDraft = selected
         ? workspace.load(selected.capabilityProfileId, draftFromProfile(selected))
         : hasNewDraft
-          ? workspace.load('$new', newDraft(nextRuntime))
-          : newDraft(nextRuntime);
-      setRuntime(nextRuntime);
+          ? workspace.load('$new', newDraft(EMPTY_RUNTIME))
+          : newDraft(EMPTY_RUNTIME);
       setDefaultProfileId(nextDefault);
       setProfiles(nextProfiles);
       setOtpPackages(nextOtpPackages);
@@ -214,13 +180,20 @@ export function ExecutionConfigurationScreen({
       selectedRef.current = selected?.capabilityProfileId ?? null;
       workspace.selectedKey = selectedRef.current;
       setDraft(nextDraft);
-      await loadRouteRuntime(nextDraft.execution);
+      for (const reference of new Set(
+        nextProfiles.flatMap((profile) =>
+          (profile.routePolicies ?? []).map((route) => route.execution.configurationRef),
+        ),
+      )) {
+        void loadModelCatalogue(reference);
+      }
+      void client.loadSelectedRuntimeProfile().then(setRuntime, () => setRuntime(EMPTY_RUNTIME));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadRouteRuntime]);
+  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadModelCatalogue]);
 
   useEffect(() => {
     void load();
@@ -245,7 +218,8 @@ export function ExecutionConfigurationScreen({
     setSelectedId(profile.capabilityProfileId);
     const next = workspace.load(profile.capabilityProfileId, draftFromProfile(profile));
     setDraft(next);
-    void loadRouteRuntime(next.execution);
+    for (const route of next.routePolicies)
+      void loadModelCatalogue(route.execution.configurationRef);
     setError(null);
   };
 
@@ -424,6 +398,7 @@ export function ExecutionConfigurationScreen({
                 profile={draft}
                 runtime={runtimeView}
                 routes={routes}
+                modelCatalogues={client.loadProfileModelCatalogue ? modelCatalogues : undefined}
                 saving={saving}
                 onChange={editDraft}
                 onSave={(next) => void save(next)}

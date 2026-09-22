@@ -30,7 +30,15 @@ use crate::{
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use std::{ffi::OsString, sync::Arc};
+use std::{ffi::OsString, io::{Read, Seek, SeekFrom}, sync::Arc};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BuildLogChunkView {
+    pub(crate) text: String,
+    pub(crate) next_offset: u64,
+    pub(crate) truncated_before: bool,
+}
 
 pub(crate) use super::build_presentation::{CreateBuildInput, ReviewBuildView};
 
@@ -42,6 +50,43 @@ pub(crate) struct ReviewBuildCoordinator {
 }
 
 impl ReviewBuildCoordinator {
+    pub(crate) fn read_log(&self, build_id: &str, attempt_id: &str, offset: u64) -> Result<BuildLogChunkView, String> {
+        let build_id = ReviewBuildId::new(build_id).map_err(|error| error.to_string())?;
+        let attempt_id = OperationAttemptId::new(attempt_id).map_err(|error| error.to_string())?;
+        let build = self.database.builds().find(&build_id).map_err(|error| error.to_string())?
+            .ok_or("Build not found")?;
+        let attempt = self.database.attempts().find(&attempt_id).map_err(|error| error.to_string())?
+            .ok_or("Build attempt not found")?;
+        if attempt.build_id != build_id {
+            return Err("Attempt does not belong to this build".into());
+        }
+        if attempt.kind != ReviewOperationKind::Build {
+            return Ok(BuildLogChunkView { text: String::new(), next_offset: 0, truncated_before: false });
+        }
+        let key = attempt_storage_key(&build.source.repository_id, &build_id, &attempt_id)
+            .map_err(|error| error.to_string())?;
+        let path = self.application.review_root().join(key.as_str()).join("build.log");
+        if !path.exists() {
+            return Ok(BuildLogChunkView { text: String::new(), next_offset: 0, truncated_before: false });
+        }
+        let root = self.application.review_root().canonicalize().map_err(|error| error.to_string())?;
+        let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+        if !canonical.starts_with(&root) || !canonical.is_file() {
+            return Err("Build log is outside retained Worktree Review storage".into());
+        }
+        let mut file = std::fs::File::open(canonical).map_err(|error| error.to_string())?;
+        let length = file.metadata().map_err(|error| error.to_string())?.len();
+        let start = if offset == 0 { length.saturating_sub(64 * 1024) } else { offset.min(length) };
+        file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
+        let mut bytes = vec![0; (length - start).min(64 * 1024) as usize];
+        let read = file.read(&mut bytes).map_err(|error| error.to_string())?;
+        bytes.truncate(read);
+        Ok(BuildLogChunkView {
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+            next_offset: start + read as u64,
+            truncated_before: start > 0 && offset == 0,
+        })
+    }
     pub(crate) fn open(application: Arc<WorktreeReviewApplication>) -> Result<Self, String> {
         let database = application.database().map_err(|error| error.message)?;
         let cleanup = WorktreeReviewCleanupService::open_appdata(
@@ -64,6 +109,14 @@ impl ReviewBuildCoordinator {
     }
 
     pub(crate) fn create_build(&self, input: CreateBuildInput) -> Result<ReviewBuildView, String> {
+        self.create_build_with_started(input, |_| {})
+    }
+
+    pub(crate) fn create_build_with_started(
+        &self,
+        input: CreateBuildInput,
+        on_started: impl FnOnce(ReviewBuildView),
+    ) -> Result<ReviewBuildView, String> {
         validate_build_name(&input.name)?;
         let context = self
             .application
@@ -134,6 +187,8 @@ impl ReviewBuildCoordinator {
             .attempts()
             .save(&materialization_attempt)
             .map_err(|error| error.to_string())?;
+
+        on_started(self.view(&build.id)?);
 
         let materialized =
             match self

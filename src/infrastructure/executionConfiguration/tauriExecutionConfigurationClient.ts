@@ -3,6 +3,7 @@ import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
   RuntimeProfileSnapshotDto,
+  ProfileModelCatalogueDto,
 } from '../../application/executionConfiguration';
 
 export type ExecutionConfigurationInvoke = <T>(
@@ -14,6 +15,10 @@ export function createTauriExecutionConfigurationClient(
   invokeCommand: ExecutionConfigurationInvoke = invoke,
 ): ExecutionConfigurationClient {
   return {
+    loadProfileModelCatalogue: (configurationRef) =>
+      invokeCommand<ProfileModelCatalogueDto>('load_profile_model_catalogue', {
+        input: { configurationRef },
+      }),
     loadNativeCapabilityInventory: () => invokeCommand('load_native_capability_inventory'),
     loadDefaultCapabilityProfile: () => invokeCommand('load_default_capability_profile'),
     setDefaultCapabilityProfile: (capabilityProfileId) =>

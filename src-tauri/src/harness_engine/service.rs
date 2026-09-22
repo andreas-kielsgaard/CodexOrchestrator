@@ -214,7 +214,7 @@ pub(crate) struct HarnessEngineService {
     pub(super) repository: Arc<dyn HarnessBindingRepository>,
     pub(super) sidecar: Arc<dyn HarnessSidecarClient>,
     pub(super) upstreams: Arc<ManagedMcpUpstreamRegistry>,
-    agent_mcp_provisioner: Mutex<Option<Arc<dyn AgentMcpUpstreamProvisioner>>>,
+    agent_mcp_provisioners: Mutex<Vec<Arc<dyn AgentMcpUpstreamProvisioner>>>,
 }
 
 impl HarnessEngineService {
@@ -224,12 +224,12 @@ impl HarnessEngineService {
         profile: &crate::execution_configuration::SessionCreationResolution,
     ) -> Result<(), String> {
         profile.verify_digest().map_err(|error| error.to_string())?;
-        if let Some(provisioner) = self
-            .agent_mcp_provisioner
+        let provisioners = self
+            .agent_mcp_provisioners
             .lock()
             .map_err(|_| "Agent MCP provisioner is unavailable.".to_string())?
-            .clone()
-        {
+            .clone();
+        for provisioner in provisioners {
             provisioner.provision(session_id, profile, &self.upstreams)?;
         }
         let snapshot = serde_json::to_string(profile).map_err(|error| error.to_string())?;
@@ -305,7 +305,7 @@ impl HarnessEngineService {
             repository,
             sidecar,
             upstreams,
-            agent_mcp_provisioner: Mutex::new(None),
+            agent_mcp_provisioners: Mutex::new(Vec::new()),
         });
         Ok(service)
     }
@@ -314,14 +314,11 @@ impl HarnessEngineService {
         &self,
         provisioner: Arc<dyn AgentMcpUpstreamProvisioner>,
     ) -> Result<(), String> {
-        let mut slot = self
-            .agent_mcp_provisioner
+        let mut provisioners = self
+            .agent_mcp_provisioners
             .lock()
             .map_err(|_| "Agent MCP provisioner is unavailable.".to_string())?;
-        if slot.is_some() {
-            return Err("An Agent MCP provisioner is already attached.".into());
-        }
-        *slot = Some(provisioner);
+        provisioners.push(provisioner);
         Ok(())
     }
 

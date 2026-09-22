@@ -85,6 +85,9 @@ pub(crate) fn run() {
                     otp_installations.clone(),
                 ),
             )?;
+            harness_engine.attach_agent_mcp_provisioner(
+                crate::execution_configuration::SessionSkillReaderProvisioner::start()?,
+            )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 database.clone(),
@@ -112,7 +115,7 @@ pub(crate) fn run() {
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(),
+                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
             app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(execution_targets));
             let session_event_adapter = Arc::new(
@@ -362,6 +365,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::load_profile_model_catalogue,
             crate::execution_configuration::transport::load_native_capability_inventory,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_targets::transport::list_session_execution_targets,
@@ -449,9 +453,11 @@ pub(crate) fn run() {
             crate::worktree_review::transport::worktree_review_commit_history,
             crate::worktree_review::transport::worktree_review_branch_graph,
             crate::worktree_review::transport::worktree_review_worktree_activity,
+            crate::worktree_review::transport::worktree_review_detached_worktrees,
             crate::worktree_review::transport::associate_worktree_review_worktree,
             crate::worktree_review::transport::create_worktree_review_worktree,
             crate::worktree_review::transport::create_worktree_review_build,
+            crate::worktree_review::transport::worktree_review_build_log,
             crate::worktree_review::transport::worktree_review_open_build
         ])
         .build(tauri::generate_context!())

@@ -236,7 +236,7 @@ impl AgentSessionApplication {
                 agent_mcp_configuration: Default::default(),
                 node_profile: NodeProfile {
                     contract_version: 1,
-                    allowed_capabilities: capability.allowed_capabilities.clone(),
+                    allowed_capabilities: super::super::configuration::default_node_capabilities(&capability),
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,
@@ -313,6 +313,8 @@ impl AgentSessionApplication {
             .map_err(AgentSessionApplicationError::invalid)?;
         let mut extension = reasoning_launch_extension(&resolution.selections).unwrap_or_default();
         extension.skill_inputs = selected_skills;
+        extension = super::super::configuration::pinned_exposure_extension(p.current_resolution.as_ref().expect("resolved creation"), extension)
+            .map_err(AgentSessionApplicationError::invalid)?;
         let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);

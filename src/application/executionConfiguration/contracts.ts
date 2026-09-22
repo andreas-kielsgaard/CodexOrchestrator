@@ -41,6 +41,19 @@ export interface RuntimeProfileSnapshotDto {
   readonly locked: RuntimeSelectionsDto;
 }
 
+export interface ProfileModelCatalogueDto {
+  readonly configurationRef: string;
+  readonly observedAt: string | null;
+  readonly observationError: string | null;
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly description: string;
+    readonly defaultReasoningMode: string | null;
+    readonly reasoningModes: readonly { readonly id: string; readonly description: string }[];
+  }[];
+}
+
 /** Reusable capability ceiling selected by a Workflow node. */
 export interface CapabilityProfileDto {
   readonly execution?: ExecutionBindingDto;
@@ -105,6 +118,7 @@ export interface UpdateCapabilityProfileInput {
 }
 
 export interface ExecutionConfigurationClient {
+  loadProfileModelCatalogue?(configurationRef: string): Promise<ProfileModelCatalogueDto>;
   loadNativeCapabilityInventory?(): Promise<NativeCapabilityInventoryDto>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;

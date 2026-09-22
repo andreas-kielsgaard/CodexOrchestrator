@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { localCodexRoutes } from '../../application/executionConfiguration';
 import type {
   NativeProfile,
   NativeProfileClient,
@@ -11,11 +12,15 @@ function useLocalHarnesses(client: NativeProfileClient) {
     let active = true;
     void client.load().then(
       (query) => {
-        if (active) setHarnesses(query.profiles.filter((profile) => profile.lifecycle === 'active'));
+        if (active) {
+          const routeIds = new Set(
+            localCodexRoutes(query.profiles).map((route) => route.execution.configurationRef),
+          );
+          setHarnesses(query.profiles.filter((profile) => routeIds.has(profile.id)));
+        }
       },
       (cause) => {
-        if (active)
-          setError(cause instanceof Error ? cause.message : String(cause));
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
       },
     );
     return () => {
@@ -38,7 +43,9 @@ export function DeviceSetupOverview({
       <header>
         <p>Execution setup</p>
         <h2 id="device-setup-title">Devices</h2>
-        <span>This device · {harnesses.length} configured harness{harnesses.length === 1 ? '' : 'es'}</span>
+        <span>
+          This device · {harnesses.length} configured harness{harnesses.length === 1 ? '' : 'es'}
+        </span>
       </header>
       <p>
         A device is an Orchid execution identity. Its harnesses run locally; developer access
@@ -52,7 +59,9 @@ export function DeviceSetupOverview({
         >
           <div>
             <p>Harness</p>
-            <h3 id={`local-harness-${harness.id}`}>Codex CLI{harness.selected ? ' · selected' : ''}</h3>
+            <h3 id={`local-harness-${harness.id}`}>
+              Codex CLI{harness.selected ? ' · selected' : ''}
+            </h3>
             <span>Runs on this device</span>
           </div>
           <button type="button" onClick={onOpenCodexHarness}>
@@ -76,7 +85,9 @@ export function DeviceSetupOverview({
           <p>Add a Codex profile to create the first local harness.</p>
         </section>
       ) : null}
-      {error ? <p className="execution-setup-overview__error">Could not load harnesses: {error}</p> : null}
+      {error ? (
+        <p className="execution-setup-overview__error">Could not load harnesses: {error}</p>
+      ) : null}
       <p className="execution-setup-overview__note">
         Enrolled remote Device Agents will appear here when Orchid Network control is available.
       </p>
@@ -84,7 +95,11 @@ export function DeviceSetupOverview({
   );
 }
 
-export function InferenceSourceOverview({ nativeClient }: { readonly nativeClient: NativeProfileClient }) {
+export function InferenceSourceOverview({
+  nativeClient,
+}: {
+  readonly nativeClient: NativeProfileClient;
+}) {
   const { harnesses, error } = useLocalHarnesses(nativeClient);
   return (
     <section className="execution-setup-overview" aria-labelledby="inference-source-title">
@@ -109,8 +124,8 @@ export function InferenceSourceOverview({ nativeClient }: { readonly nativeClien
             <span>Connected to Codex CLI · {harness.homePath}</span>
           </div>
           <p>
-            This is the source binding for one harness configuration. A second account needs its
-            own authenticated Codex profile and therefore a separate harness connection.
+            This is the source binding for one harness configuration. A second account needs its own
+            authenticated Codex profile and therefore a separate harness connection.
           </p>
         </section>
       ))}
@@ -119,7 +134,9 @@ export function InferenceSourceOverview({ nativeClient }: { readonly nativeClien
           No local source is available until a local Codex CLI harness is configured.
         </p>
       ) : null}
-      {error ? <p className="execution-setup-overview__error">Could not load sources: {error}</p> : null}
+      {error ? (
+        <p className="execution-setup-overview__error">Could not load sources: {error}</p>
+      ) : null}
     </section>
   );
 }

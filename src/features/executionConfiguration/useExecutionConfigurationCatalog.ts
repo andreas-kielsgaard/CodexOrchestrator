@@ -31,16 +31,22 @@ export function useExecutionConfigurationCatalog(
     setLoading(true);
     setError(null);
     try {
-      const [runtimeSnapshot, capabilityProfiles, identityCatalog, otpPackages] = await Promise.all([
-        client.loadSelectedRuntimeProfile(),
-        client.listCapabilityProfiles(),
-        identityClient?.list() ?? Promise.resolve([]),
-        // OTP availability is resolved when an agent uses a tool. The
-        // designer can still edit profiles and recipes without catalogue data.
-        readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
-      ]);
-      const runtime = runtimeProfileViewModel(runtimeSnapshot);
-      setRuntime({ ...runtime, catalogs: { ...runtime.catalogs, otpPackages } });
+      const [runtimeSnapshot, capabilityProfiles, identityCatalog, otpPackages] = await Promise.all(
+        [
+          client.loadSelectedRuntimeProfile().catch(() => null),
+          client.listCapabilityProfiles(),
+          identityClient?.list() ?? Promise.resolve([]),
+          // OTP availability is resolved when an agent uses a tool. The
+          // designer can still edit profiles and recipes without catalogue data.
+          readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
+        ],
+      );
+      if (runtimeSnapshot) {
+        const runtime = runtimeProfileViewModel(runtimeSnapshot);
+        setRuntime({ ...runtime, catalogs: { ...runtime.catalogs, otpPackages } });
+      } else {
+        setRuntime(null);
+      }
       setProfileValues(
         new Map(capabilityProfiles.map((profile) => [profile.capabilityProfileId, profile])),
       );

@@ -144,6 +144,34 @@ fn creation_resolves_an_immutable_session_profile() {
 }
 
 #[test]
+fn route_groups_shape_session_exposure_without_enforcing_model_allowances() {
+    let mut request = creation_request();
+    request.capability_profile.route_policies = vec![super::ProfileRoutePolicy {
+        route_id: "local".into(),
+        execution: Default::default(),
+        model_allowances: vec![super::ModelAllowance {
+            model_id: "future-only".into(), minimum_reasoning: "low".into(), maximum_reasoning: "high".into(),
+        }],
+        mcp_groups: set(&["otp:repository:mcps"]),
+        skill_groups: set(&["orchid-skills"]),
+        defaults: RuntimeSelections::default(),
+    }];
+    request.capability_profile.default_route_id = Some("local".into());
+    request.capability_profile.allowed_capabilities = CapabilitySet::default();
+    request.session_skill_inputs = vec![crate::agent_sessions::ports::RuntimeSkillInput {
+        id: "skill".into(), name: "review".into(), path: "/approved/SKILL.md".into(),
+        content_sha256: "pinned".into(), description: "Review".into(),
+    }];
+    let resolution = SessionProfileResolver::resolve_snapshot(runtime_profile(), request).unwrap();
+    let pinned = resolution.session_profile();
+    assert_eq!(pinned.native_mcp_enabled(), Some(false));
+    assert_eq!(pinned.node_capabilities().mcp_tools["repository"], set(&["read"]));
+    assert_eq!(pinned.node_capabilities().mcp_tools["orchid_skills"], set(&["read_skill"]));
+    assert!(pinned.node_capabilities().models.contains("codex-b"));
+    resolution.verify_digest().unwrap();
+}
+
+#[test]
 fn capability_profile_cannot_widen_the_runtime() {
     let source = FixedProfileSource(Ok(runtime_profile()));
     let mut request = creation_request();

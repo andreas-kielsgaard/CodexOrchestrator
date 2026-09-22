@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import { DraftWorkspace } from '../../components/draftWorkspace';
-import { repairClients, repairRuntime } from '../workflowAuthoring/testFixtures';
+import { repairClients } from '../workflowAuthoring/testFixtures';
 import { ExecutionConfigurationScreen } from './ExecutionConfigurationScreen';
 import type { CapabilityProfileDraft } from './types';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
@@ -99,33 +99,42 @@ it('projects each active local Codex home as a profile route without exposing cr
   expect(screen.queryByText(/SSH/i)).not.toBeInTheDocument();
 });
 
-it('uses the selected native runtime as a route when the optional native catalogue cannot load', async () => {
+it('saves a registered route and cached model choice while runtime observation fails', async () => {
   const user = userEvent.setup();
   const fixture = repairClients();
   fixture.configuration.createCapabilityProfile = vi.fn(
     fixture.configuration.createCapabilityProfile,
   );
-  fixture.configuration.loadSelectedRuntimeProfile = async () => ({
-    ...repairRuntime,
-    profileRef: 'native-codex:current-local-profile',
+  fixture.configuration.loadSelectedRuntimeProfile = async () => {
+    throw new Error('Codex runtime unavailable');
+  };
+  fixture.configuration.loadProfileModelCatalogue = async () => ({
+    configurationRef: 'team',
+    observedAt: '2026-09-21T12:00:00Z',
+    models: [
+      {
+        id: 'model-a',
+        label: 'model-a',
+        description: '',
+        defaultReasoningMode: 'medium',
+        reasoningModes: [
+          { id: 'medium', description: '' },
+          { id: 'high', description: '' },
+        ],
+      },
+    ],
+    observationError: 'Codex runtime unavailable',
   });
-  const unavailableNativeProfiles = {
-    load: vi.fn(async () => {
-      throw new Error('native profile catalogue unavailable');
-    }),
-  } as unknown as NativeProfileClient;
   render(
     <ExecutionConfigurationScreen
       client={fixture.configuration}
-      nativeProfileClient={unavailableNativeProfiles}
+      nativeProfileClient={nativeProfiles}
     />,
   );
 
   await user.click(await screen.findByRole('button', { name: 'New profile' }));
   await user.click(screen.getByRole('button', { name: 'Add execution route' }));
-  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue(
-    'local-codex:current-local-profile',
-  );
+  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
   await user.click(screen.getByRole('button', { name: 'Add route' }));
   await user.click(screen.getByRole('button', { name: 'Add model' }));
   await user.click(
@@ -146,7 +155,7 @@ it('uses the selected native runtime as a route when the optional native catalog
         defaultRouteId: expect.any(String),
         routePolicies: [
           expect.objectContaining({
-            execution: expect.objectContaining({ configurationRef: 'current-local-profile' }),
+            execution: expect.objectContaining({ configurationRef: 'team' }),
             modelAllowances: [
               expect.objectContaining({
                 modelId: 'model-a',

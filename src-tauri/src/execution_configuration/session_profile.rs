@@ -23,6 +23,8 @@ pub(crate) struct SessionProfile {
     #[serde(default)]
     session_skill_inputs: Vec<RuntimeSkillInput>,
     pinned_defaults: RuntimeSelections,
+    #[serde(default)]
+    native_mcp_enabled: Option<bool>,
 }
 
 impl SessionProfile {
@@ -36,6 +38,7 @@ impl SessionProfile {
         agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
         session_skill_inputs: Vec<RuntimeSkillInput>,
         pinned_defaults: RuntimeSelections,
+        native_mcp_enabled: Option<bool>,
     ) -> Self {
         Self {
             contract_version: SESSION_PROFILE_CONTRACT_VERSION,
@@ -48,6 +51,7 @@ impl SessionProfile {
             agent_mcp_configuration,
             session_skill_inputs,
             pinned_defaults,
+            native_mcp_enabled,
         }
     }
 
@@ -87,6 +91,10 @@ impl SessionProfile {
         &self.pinned_defaults
     }
 
+    pub(crate) fn native_mcp_enabled(&self) -> Option<bool> {
+        self.native_mcp_enabled
+    }
+
     pub(super) fn validate(&self) -> Result<(), String> {
         if self.contract_version != SESSION_PROFILE_CONTRACT_VERSION {
             return Err(format!(
@@ -122,7 +130,7 @@ impl SessionProfile {
             .validate("Session Profile node capabilities")?;
         self.pinned_defaults
             .validate("Session Profile pinned defaults")?;
-        validate_selection_availability(&self.pinned_defaults, &self.node_capabilities)
+        validate_selection_availability(&self.pinned_defaults, &self.attached_runtime_capabilities)
             .map_err(|capability| format!("Session Profile pins unavailable {capability}"))
     }
 }

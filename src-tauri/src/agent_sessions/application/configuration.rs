@@ -2,7 +2,7 @@
 
 use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
-    ports::RuntimeLaunchExtension,
+    ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use crate::execution_configuration::{
     compile_session_skill_inputs, CapabilityProfile, RuntimeSelections, SandboxMode,
@@ -32,6 +32,41 @@ pub(crate) fn reasoning_launch_extension(
             reasoning_mode: Some(reasoning.clone()),
             ..RuntimeLaunchExtension::default()
         })
+}
+
+pub(super) fn pinned_exposure_extension(
+    profile: &crate::execution_configuration::SessionCreationResolution,
+    mut extension: RuntimeLaunchExtension,
+) -> Result<RuntimeLaunchExtension, String> {
+    let pinned = profile.session_profile();
+    extension.native_mcp_enabled = pinned.native_mcp_enabled();
+    let skills = crate::execution_configuration::validate_session_skill_inputs(
+        pinned.session_skill_inputs(),
+    )?;
+    if !skills.is_empty() {
+        let manifest = skills.iter().map(|skill| format!(
+            "- {}: {}", skill.name, skill.description,
+        )).collect::<Vec<_>>().join("\n");
+        let context = format!("Orchid-approved skills for this session (not invoked automatically). Use the Orchid read_skill tool to read a selected skill when relevant:\n{manifest}");
+        match extension.initial_prompt_prefix.as_mut() {
+            Some(prefix) => prefix.content = format!("{}\n\n{}", prefix.content, context),
+            None => extension.initial_prompt_prefix = Some(InitialPromptPrefix {
+                source: "session_skill_manifest".into(),
+                version: 1,
+                content: context,
+            }),
+        }
+    }
+    extension.skill_inputs = skills;
+    Ok(extension)
+}
+
+pub(super) fn default_node_capabilities(capability: &CapabilityProfile) -> crate::execution_configuration::CapabilitySet {
+    if capability.route_policies.is_empty() {
+        capability.allowed_capabilities.clone()
+    } else {
+        Default::default()
+    }
 }
 
 use super::{
@@ -106,9 +141,12 @@ impl AgentSessionApplication {
         configuration_ref: &str,
         cwd: Option<&str>,
     ) -> Result<Vec<crate::agent_sessions::ports::RuntimeSkillInput>, String> {
-        if capability
-            .default_route()
-            .is_none_or(|route| route.skill_groups.is_empty())
+        let Some(route) = capability.route_policies.iter().find(|route| {
+            route.execution.configuration_ref == configuration_ref
+        }) else {
+            return Ok(Vec::new());
+        };
+        if route.skill_groups.is_empty()
         {
             return Ok(Vec::new());
         }
@@ -119,7 +157,7 @@ impl AgentSessionApplication {
         let roots = source
             .skill_roots_for_configuration(configuration_ref)
             .map_err(|error| error.to_string())?;
-        compile_session_skill_inputs(capability, &features, &roots)
+        compile_session_skill_inputs(route, &features, &roots)
     }
 
     pub(crate) fn create_default_session(
@@ -166,9 +204,14 @@ impl AgentSessionApplication {
             return Err(SessionConfigurationError::new(SessionConfigurationErrorKind::InvalidInvocationSelection, "Select an existing remote worktree before starting a session with this Capability Profile"));
         }
         let runtime = self
-            .profile_source()?
-            .selected_runtime_profile_at(working_directory)
-            .map_err(|error| SessionConfigurationError::resolution(error.into()))?;
+            .capability_profiles
+            .as_ref()
+            .expect("default Capability Profile service is configured")
+            .runtime_for_binding(&capability.execution, working_directory)
+            .map_err(|error| SessionConfigurationError::new(
+                SessionConfigurationErrorKind::InvalidInvocationSelection,
+                format!("Cannot start session on the selected Capability Profile route: {error}"),
+            ))?;
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,
@@ -188,7 +231,7 @@ impl AgentSessionApplication {
                 agent_mcp_configuration: Default::default(),
                 node_profile: NodeProfile {
                     contract_version: 1,
-                    allowed_capabilities: capability.allowed_capabilities.clone(),
+                    allowed_capabilities: default_node_capabilities(&capability),
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,

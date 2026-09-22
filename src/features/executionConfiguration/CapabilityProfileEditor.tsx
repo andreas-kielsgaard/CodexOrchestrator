@@ -3,6 +3,7 @@ import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ValidationSummary } from '../../components/ValidationSummary';
 import type {
   ModelAllowanceDto,
+  ProfileModelCatalogueDto,
   ProfileRoutePolicyDto,
   RuntimeSelectionsDto,
 } from '../../application/executionConfiguration';
@@ -17,6 +18,7 @@ export interface CapabilityProfileEditorProps {
   readonly profile: CapabilityProfileDraft;
   readonly runtime: RuntimeProfileViewModel;
   readonly routes?: readonly HarnessInferenceRouteOption[];
+  readonly modelCatalogues?: Readonly<Record<string, ProfileModelCatalogueDto>>;
   readonly validationErrors?: readonly string[];
   readonly saving?: boolean;
   onChange(profile: CapabilityProfileDraft): void;
@@ -56,7 +58,6 @@ function synchronizeLegacyContract(
   profile: CapabilityProfileDraft,
   routePolicies: readonly ProfileRoutePolicyDto[],
   defaultRouteId: string | null,
-  reasoning: readonly string[],
 ): CapabilityProfileDraft {
   const selected = routePolicies.find((route) => route.routeId === defaultRouteId);
   const allowances = routePolicies.flatMap((route) => route.modelAllowances);
@@ -65,7 +66,7 @@ function synchronizeLegacyContract(
     MODEL_ORDER,
   );
   const reasoningModes = byKnownOrder(
-    allowances.flatMap((allowance) => rangeValues(allowance, reasoning)),
+    allowances.flatMap((allowance) => rangeValues(allowance, REASONING_ORDER)),
     REASONING_ORDER,
   );
   return {
@@ -108,11 +109,18 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
         ];
   return [
     ...root,
-    ...otp.map((packageInfo) => ({
-      id: `otp:${packageInfo.id}:${kind === 'mcp' ? 'mcps' : 'skills'}`,
-      label: `${packageInfo.name} ${kind === 'mcp' ? 'MCP tools' : 'skills'}`,
-      detail: `Provided by the ${packageInfo.name} OTP package.`,
-    })),
+    ...otp
+      .filter((packageInfo) =>
+        kind === 'mcp'
+          ? packageInfo.tools.some((tool) => tool.entrypoint.kind === 'mcp') ||
+            packageInfo.agentMcpServers.length > 0
+          : (packageInfo.skillRoots?.length ?? 0) > 0,
+      )
+      .map((packageInfo) => ({
+        id: `otp:${packageInfo.id}:${kind === 'mcp' ? 'mcps' : 'skills'}`,
+        label: `${packageInfo.name} ${kind === 'mcp' ? 'MCP tools' : 'skills'}`,
+        detail: `Provided by the ${packageInfo.name} OTP package.`,
+      })),
   ];
 }
 
@@ -121,6 +129,7 @@ export function CapabilityProfileEditor({
   profile,
   runtime,
   routes = [],
+  modelCatalogues,
   validationErrors = [],
   saving = false,
   onChange,
@@ -150,8 +159,7 @@ export function CapabilityProfileEditor({
   const changeRoutes = (
     routePolicies: readonly ProfileRoutePolicyDto[],
     defaultRouteId: string | null = profile.defaultRouteId,
-  ) =>
-    onChange(synchronizeLegacyContract(profile, routePolicies, defaultRouteId, reasoningOptions));
+  ) => onChange(synchronizeLegacyContract(profile, routePolicies, defaultRouteId));
 
   const addRoute = (route: HarnessInferenceRouteOption) => {
     const policy: ProfileRoutePolicyDto = {
@@ -270,8 +278,19 @@ export function CapabilityProfileEditor({
                 </p>
                 <RouteCapabilities
                   route={route}
-                  models={modelOptions}
+                  models={
+                    modelCatalogues
+                      ? byKnownOrder(
+                          (modelCatalogues[route.execution.configurationRef]?.models ?? []).map(
+                            (model) => model.id,
+                          ),
+                          MODEL_ORDER,
+                        )
+                      : modelOptions
+                  }
                   reasoning={reasoningOptions}
+                  modelCatalogue={modelCatalogues?.[route.execution.configurationRef]}
+                  routeCatalogueEnabled={modelCatalogues !== undefined}
                   mcpGroups={mcpGroups}
                   skillGroups={skillGroups}
                   onChange={updateRoute}
@@ -323,6 +342,8 @@ interface RouteCapabilitiesProps {
   readonly route: ProfileRoutePolicyDto;
   readonly models: readonly string[];
   readonly reasoning: readonly string[];
+  readonly modelCatalogue?: ProfileModelCatalogueDto;
+  readonly routeCatalogueEnabled: boolean;
   readonly mcpGroups: readonly GroupChoice[];
   readonly skillGroups: readonly GroupChoice[];
   onChange(route: ProfileRoutePolicyDto): void;
@@ -338,11 +359,25 @@ function RouteCapabilities({
   route,
   models,
   reasoning,
+  modelCatalogue,
+  routeCatalogueEnabled,
   mcpGroups,
   skillGroups,
   onChange,
 }: RouteCapabilitiesProps) {
   const [addingModel, setAddingModel] = useState(false);
+  const reasoningFor = (modelId: string, allowance?: ModelAllowanceDto): readonly string[] => {
+    const observed = modelCatalogue?.models
+      .find((model) => model.id === modelId)
+      ?.reasoningModes.map((mode) => mode.id);
+    return byKnownOrder(
+      [
+        ...(routeCatalogueEnabled ? (observed ?? []) : reasoning),
+        ...(allowance ? [allowance.minimumReasoning, allowance.maximumReasoning] : []),
+      ],
+      REASONING_ORDER,
+    );
+  };
   const availableModels = models.filter(
     (model) => !route.modelAllowances.some((entry) => entry.modelId === model),
   );
@@ -368,7 +403,7 @@ function RouteCapabilities({
         <div className="capability-route__section-heading">
           <div>
             <h4 id={`${route.routeId}-models`}>Models and reasoning</h4>
-            <p>Each model has its own permitted reasoning range.</p>
+            <p>Record model-specific reasoning intent for later workflow policy. These ranges do not restrict sessions yet.</p>
           </div>
           <button
             type="button"
@@ -378,18 +413,28 @@ function RouteCapabilities({
             Add model
           </button>
         </div>
+        {routeCatalogueEnabled ? (
+          <p className="capability-route__detail">
+            {modelCatalogue?.observationError
+              ? `${modelCatalogue.observedAt ? `Using model options observed ${new Date(modelCatalogue.observedAt).toLocaleString()}. ` : 'No model options have been observed yet. '}Current discovery failed: ${modelCatalogue.observationError}`
+              : modelCatalogue?.observedAt
+                ? `Model options observed ${new Date(modelCatalogue.observedAt).toLocaleString()}; availability is checked when a session starts.`
+                : 'Loading model options; you can save this route without choosing a model.'}
+          </p>
+        ) : null}
         {route.modelAllowances.length === 0 ? (
-          <p className="capability-route__empty">No models are enabled for this route.</p>
+          <p className="capability-route__empty">No model preferences are recorded for this route.</p>
         ) : null}
         {byKnownOrder(
           route.modelAllowances.map((entry) => entry.modelId),
           MODEL_ORDER,
         ).map((modelId) => {
           const allowance = route.modelAllowances.find((entry) => entry.modelId === modelId)!;
-          const minimumIndex = Math.max(0, reasoning.indexOf(allowance.minimumReasoning));
+          const modelReasoning = reasoningFor(modelId, allowance);
+          const minimumIndex = Math.max(0, modelReasoning.indexOf(allowance.minimumReasoning));
           const maximumIndex = Math.max(
             minimumIndex,
-            reasoning.indexOf(allowance.maximumReasoning),
+            modelReasoning.indexOf(allowance.maximumReasoning),
           );
           return (
             <div className="model-allowance" key={modelId}>
@@ -401,7 +446,7 @@ function RouteCapabilities({
                   value={allowance.minimumReasoning}
                   onChange={(event) => {
                     const nextMinimum = event.currentTarget.value;
-                    const nextIndex = reasoning.indexOf(nextMinimum);
+                    const nextIndex = modelReasoning.indexOf(nextMinimum);
                     updateAllowance(modelId, {
                       minimumReasoning: nextMinimum,
                       maximumReasoning:
@@ -409,7 +454,7 @@ function RouteCapabilities({
                     });
                   }}
                 >
-                  {reasoning.map((value) => (
+                  {modelReasoning.map((value) => (
                     <option key={value} value={value}>
                       {value}
                     </option>
@@ -423,7 +468,7 @@ function RouteCapabilities({
                   value={allowance.maximumReasoning}
                   onChange={(event) => {
                     const nextMaximum = event.currentTarget.value;
-                    const nextIndex = reasoning.indexOf(nextMaximum);
+                    const nextIndex = modelReasoning.indexOf(nextMaximum);
                     updateAllowance(modelId, {
                       minimumReasoning:
                         nextIndex < minimumIndex ? nextMaximum : allowance.minimumReasoning,
@@ -431,7 +476,7 @@ function RouteCapabilities({
                     });
                   }}
                 >
-                  {reasoning.map((value) => (
+                  {modelReasoning.map((value) => (
                     <option key={value} value={value}>
                       {value}
                     </option>
@@ -478,10 +523,13 @@ function RouteCapabilities({
       {addingModel ? (
         <AddModelDialog
           models={availableModels}
-          reasoning={reasoning}
+          reasoningByModel={Object.fromEntries(
+            availableModels.map((model) => [model, reasoningFor(model)]),
+          )}
           onAdd={(modelId) => {
-            const lowest = reasoning[0];
-            const highest = reasoning.at(-1) ?? lowest;
+            const modelReasoning = reasoningFor(modelId);
+            const lowest = modelReasoning[0];
+            const highest = modelReasoning.at(-1) ?? lowest;
             if (lowest && highest) {
               onChange({
                 ...route,
@@ -542,24 +590,31 @@ function GroupToggles({
 
 function AddModelDialog({
   models,
-  reasoning,
+  reasoningByModel,
   onAdd,
   onClose,
 }: {
   models: readonly string[];
-  reasoning: readonly string[];
+  reasoningByModel: Readonly<Record<string, readonly string[]>>;
   onAdd(model: string): void;
   onClose(): void;
 }) {
   return (
     <Dialog title="Add model" onClose={onClose}>
-      <p>Only models reported by this route’s Codex runtime can be added.</p>
+      <p>
+        Choose from the latest observed options for this route. Current availability is checked when
+        a session starts.
+      </p>
       {models.length === 0 ? <p>No additional models are available.</p> : null}
       <ul className="capability-dialog__list">
         {models.map((model) => (
           <li key={model}>
             <span>{model}</span>
-            <button type="button" onClick={() => onAdd(model)} disabled={reasoning.length === 0}>
+            <button
+              type="button"
+              onClick={() => onAdd(model)}
+              disabled={!reasoningByModel[model]?.length}
+            >
               Add
             </button>
           </li>

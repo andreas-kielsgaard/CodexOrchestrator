@@ -189,7 +189,7 @@ describe('WorktreeReviewScreen', () => {
         kind: 'create_owned_build_worktree',
       },
     });
-    expect(await screen.findByText(/Build result recorded/)).toHaveAttribute('role', 'status');
+    expect(await screen.findByText(/Build started/)).toHaveAttribute('role', 'status');
   });
 
   it('allows Create Build without a pre-existing worktree and makes automatic creation explicit', async () => {
@@ -227,7 +227,7 @@ describe('WorktreeReviewScreen', () => {
     renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
-    expect(screen.getByText('Checkouts requiring association')).toBeVisible();
+    expect(screen.getByText('Other existing checkouts')).toBeVisible();
     expect(
       screen.getByText('Detached investigation').closest('.worktree-review__candidate'),
     ).toHaveTextContent('Detached HEAD');
@@ -548,6 +548,8 @@ class FixtureClient implements WorktreeReviewClient {
     };
   };
   worktreeActivity = async () => [];
+  detachedWorktrees = async () => [];
+  readBuildLog = async () => ({ text: '', nextOffset: 0, truncatedBefore: false });
   branchGraph = async (): Promise<BranchGraphData> => ({
     snapshotId: 'snapshot',
     referenceTarget: overviewFixture.branches[0].target,

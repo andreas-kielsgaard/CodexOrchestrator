@@ -336,6 +336,7 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
     let extension = RuntimeLaunchExtension {
         managed_mcp_servers: Vec::new(),
         skill_inputs: Vec::new(),
+        native_mcp_enabled: None,
         ignore_user_rules: false,
         reasoning_mode: None,
         config_overrides: vec![
@@ -372,6 +373,7 @@ fn resume_places_child_configuration_before_the_session_id() {
     let extension = RuntimeLaunchExtension {
         managed_mcp_servers: Vec::new(),
         skill_inputs: Vec::new(),
+        native_mcp_enabled: None,
         ignore_user_rules: false,
         reasoning_mode: None,
         config_overrides: vec!["mcp_servers.plan_builder.required=true".into()],

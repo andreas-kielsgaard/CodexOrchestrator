@@ -8,6 +8,7 @@ import type {
   RuntimeSelectionsDto,
   SandboxModeDto,
 } from '../../application/executionConfiguration';
+export type { HarnessInferenceRouteOption } from '../../application/executionConfiguration';
 
 /** The capability contract is already browser-safe; editors consume it directly. */
 export type CapabilitySetViewModel = CapabilitySetDto;
@@ -41,20 +42,6 @@ export interface CapabilityProfileDraft {
   readonly allowedCapabilities: CapabilitySetViewModel;
   readonly routePolicies: readonly ProfileRoutePolicyDto[];
   readonly defaultRouteId: string | null;
-}
-
-/** A non-secret local projection of one Codex harness and its bound inference source. */
-export interface HarnessInferenceRouteOption {
-  readonly id: string;
-  readonly selected: boolean;
-  readonly label: string;
-  readonly sourceLabel: string;
-  /** Separate labels let the profile editor present the actual route topology. */
-  readonly deviceLabel?: string;
-  readonly harnessLabel?: string;
-  readonly inferenceLabel?: string;
-  readonly detail: string;
-  readonly execution: ExecutionBindingDto;
 }
 
 export interface CapabilityProfileOption {

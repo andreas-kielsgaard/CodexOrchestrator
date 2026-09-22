@@ -1,4 +1,4 @@
-use super::{CapabilityProfile, RuntimeQuickFeatures, RuntimeSkillRoot};
+use super::{ProfileRoutePolicy, RuntimeQuickFeatures, RuntimeSkillRoot};
 use crate::agent_sessions::ports::RuntimeSkillInput;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -6,20 +6,18 @@ use std::path::{Path, PathBuf};
 /// Compile the selected master roots into immutable, explicit Codex skill inputs for one session.
 /// No source folder is copied, linked, or added to CODEX_HOME.
 pub(crate) fn compile_session_skill_inputs(
-    capability: &CapabilityProfile,
+    route: &ProfileRoutePolicy,
     features: &RuntimeQuickFeatures,
     roots: &[RuntimeSkillRoot],
 ) -> Result<Vec<RuntimeSkillInput>, String> {
-    let groups = capability
-        .default_route()
-        .map(|route| &route.skill_groups)
-        .ok_or_else(|| "Capability Profile has no default execution route".to_string())?;
+    let groups = &route.skill_groups;
     if groups.is_empty() {
         return Ok(Vec::new());
     }
     let selected_roots = roots
         .iter()
         .filter(|root| groups.contains(&root.group_id))
+        .filter_map(|root| root.path.canonicalize().ok())
         .collect::<Vec<_>>();
     let mut result = Vec::new();
     for skill in &features.skills {
@@ -29,21 +27,26 @@ pub(crate) fn compile_session_skill_inputs(
         {
             continue;
         }
+        let Ok(path) = path.canonicalize() else { continue };
         if !selected_roots
             .iter()
-            .any(|root| path.starts_with(&root.path))
+            .any(|root| path.starts_with(root))
         {
             continue;
         }
         result.push(RuntimeSkillInput {
-            id: skill.id.clone(),
+            id: path.to_string_lossy().into_owned(),
             name: skill.name.clone(),
             path: path.to_string_lossy().into_owned(),
             content_sha256: sha256_file(&path)?,
+            description: skill.description.clone(),
         });
     }
     result.sort_by(|left, right| left.name.cmp(&right.name).then(left.path.cmp(&right.path)));
     result.dedup_by(|left, right| left.name == right.name && left.path == right.path);
+    if result.windows(2).any(|pair| pair[0].name == pair[1].name) {
+        return Err("Selected skill roots contain duplicate skill names".into());
+    }
     Ok(result)
 }
 
@@ -80,7 +83,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet, ModelAllowance, ProfileRoutePolicy, RuntimeSelections,
+        CapabilityProfile, CapabilitySet, ModelAllowance, ProfileRoutePolicy, RuntimeSelections,
     };
 
     fn capability() -> CapabilityProfile {
@@ -126,7 +129,7 @@ mod tests {
             ..Default::default()
         };
         let inputs = compile_session_skill_inputs(
-            &capability(),
+            capability().default_route().unwrap(),
             &features,
             &[RuntimeSkillRoot {
                 group_id: "orchid-skills".into(),

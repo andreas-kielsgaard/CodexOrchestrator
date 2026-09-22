@@ -28,6 +28,12 @@ impl ProfileRoutePolicy {
         for allowance in &self.model_allowances {
             allowance.validate()?;
         }
+        let mut model_ids = BTreeSet::new();
+        for allowance in &self.model_allowances {
+            if !model_ids.insert(&allowance.model_id) {
+                return Err(format!("Capability Profile route repeats model `{}`", allowance.model_id));
+            }
+        }
         for group in self.mcp_groups.iter().chain(self.skill_groups.iter()) {
             validate_identifier("Capability Profile capability group", "id", group)?;
         }
@@ -56,7 +62,17 @@ impl ModelAllowance {
             "Capability Profile model",
             "maximumReasoning",
             &self.maximum_reasoning,
-        )
+        )?;
+        const ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+        if let (Some(minimum), Some(maximum)) = (
+            ORDER.iter().position(|value| *value == self.minimum_reasoning),
+            ORDER.iter().position(|value| *value == self.maximum_reasoning),
+        ) {
+            if minimum > maximum {
+                return Err(format!("Capability Profile model `{}` has a reversed reasoning range", self.model_id));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -102,8 +118,12 @@ impl CapabilityProfile {
             .validate("Capability Profile allowed capabilities")?;
         self.defaults.validate("Capability Profile defaults")?;
         if !self.route_policies.is_empty() {
+            let mut route_ids = BTreeSet::new();
             for route in &self.route_policies {
                 route.validate()?;
+                if !route_ids.insert(&route.route_id) {
+                    return Err(format!("Capability Profile repeats route `{}`", route.route_id));
+                }
             }
             let default_route = self.default_route_id.as_deref().ok_or_else(|| {
                 "Capability Profile route policies require a default route".to_string()
@@ -118,10 +138,7 @@ impl CapabilityProfile {
         } else if self.default_route_id.is_some() {
             return Err("Capability Profile default route requires route policies".into());
         }
-        super::runtime_profile::validate_selection_availability(
-            &self.defaults,
-            &self.allowed_capabilities,
-        )
+        Ok(())
     }
 
     pub(crate) fn default_route(&self) -> Option<&ProfileRoutePolicy> {

@@ -12,6 +12,7 @@ pub(super) fn compose(
     workspaces: &SessionWorkspaces,
     local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
+    otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<
     (
         Arc<dyn SelectedRuntimeProfileSource>,
@@ -22,7 +23,8 @@ pub(super) fn compose(
 > {
     let source: Arc<dyn SelectedRuntimeProfileSource> = Arc::new(
         NativeCodexSelectedRuntimeProfileSource::new(profiles, product_tools.clone())
-            .with_skill_roots(vec![workspaces.skills_root()]),
+            .with_skill_roots(vec![workspaces.skills_root()])
+            .with_otp_skill_roots(otp_skill_roots),
     );
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),

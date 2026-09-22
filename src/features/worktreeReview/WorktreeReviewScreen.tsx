@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   RegisteredRepository,
   RepositoryCatalogClient,
@@ -8,7 +8,9 @@ import {
   commitSourceContext,
   type AssociateWorktreeRequest,
   type BranchReviewDetail,
+  type DetachedWorktreeDetail,
   type BuildId,
+  type ReviewBuild,
   type CreateBuildRequest,
   type ReviewTarget,
   type WorktreeAssociationCandidate,
@@ -16,6 +18,7 @@ import {
 } from '../../application/worktreeReview';
 import { ProductViewHeader } from '../shared/ProductViewHeader';
 import { BranchNavigator } from './BranchNavigator';
+import { DetachedWorktreeList } from './DetachedWorktreeList';
 import { BuildComposer } from './BuildComposer';
 import { BuildHistory } from './BuildHistory';
 import { ReadinessNotice } from './ReadinessNotice';
@@ -62,7 +65,38 @@ export function WorktreeReviewScreen({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showDetached, setShowDetached] = useState(false);
+  const [detached, setDetached] = useState<readonly DetachedWorktreeDetail[]>([]);
+  const [detachedLoading, setDetachedLoading] = useState(false);
+  const [detachedError, setDetachedError] = useState<string | null>(null);
   const [openingBuildId, setOpeningBuildId] = useState<BuildId>();
+  const [liveBuilds, setLiveBuilds] = useState<readonly ReviewBuild[]>([]);
+  const hasRunningBuild = liveBuilds.some(
+    (build) => build.latestAttempt?.executionState === 'running',
+  );
+  useEffect(() => {
+    setLiveBuilds(detail?.builds ?? []);
+  }, [detail]);
+  useEffect(() => {
+    if (!target || (busy !== 'create-build' && !hasRunningBuild)) return;
+    let active = true;
+    const poll = () => {
+      void client
+        .targetDetail(target)
+        .then((fresh) => {
+          if (active) setLiveBuilds(fresh.builds);
+        })
+        .catch(() => {
+          /* the primary action reports its own failure */
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 1200);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [client, target, busy, hasRunningBuild]);
   const disabled = loading || busy !== null;
   const selectedWorktree = detail?.worktrees.find(
     (worktree) =>
@@ -89,11 +123,13 @@ export function WorktreeReviewScreen({
   const history = useCommitHistory(client, query);
 
   async function selectTarget(target: ReviewTarget) {
+    setShowDetached(false);
     setError(null);
     setNotice(null);
     await selection.selectTarget(target);
   }
   async function changeRepository(id: string) {
+    setShowDetached(false);
     setError(null);
     setNotice(null);
     await selection.selectRepository(id);
@@ -113,6 +149,7 @@ export function WorktreeReviewScreen({
     document.addEventListener('pointerdown', moved);
     try {
       await selection.refresh();
+      if (showDetached) await viewDetached();
     } finally {
       requestAnimationFrame(() => {
         document.removeEventListener('focusin', moved);
@@ -125,6 +162,19 @@ export function WorktreeReviewScreen({
         )
           button.focus();
       });
+    }
+  }
+  async function viewDetached() {
+    if (!repositoryId) return;
+    setShowDetached(true);
+    setDetachedLoading(true);
+    setDetachedError(null);
+    try {
+      setDetached(await client.detachedWorktrees(repositoryId));
+    } catch (cause) {
+      setDetachedError(message(cause));
+    } finally {
+      setDetachedLoading(false);
     }
   }
   async function mutate(label: string, action: () => Promise<unknown>, success: string) {
@@ -170,7 +220,11 @@ export function WorktreeReviewScreen({
     setConfirmationRequest(request);
   }
   async function createBuild(request: CreateBuildRequest) {
-    await mutate('create-build', () => client.createBuild(request), 'Build result recorded.');
+    await mutate(
+      'create-build',
+      () => client.createBuild(request),
+      'Build started. Follow its progress below.',
+    );
   }
   async function openBuild(buildId: BuildId) {
     setOpeningBuildId(buildId);
@@ -214,6 +268,8 @@ export function WorktreeReviewScreen({
           onRepositoryChange={(value) => void changeRepository(value)}
           onRegisterRepository={() => setRegistrationOpen(true)}
           onBranchChange={(target) => void selectTarget(target)}
+          onViewDetached={() => void viewDetached()}
+          detachedSelected={showDetached}
         />
 
         <div className="worktree-review__content" aria-busy={loading}>
@@ -270,7 +326,14 @@ export function WorktreeReviewScreen({
               Select a repository with at least one branch or instantiated worktree.
             </p>
           )}
-          {detail && (
+          {showDetached && (
+            <DetachedWorktreeList
+              worktrees={detached}
+              loading={detachedLoading}
+              error={detachedError}
+            />
+          )}
+          {!showDetached && detail && (
             <>
               <BranchSummary detail={detail} />
               <WorktreeSelector
@@ -313,9 +376,10 @@ export function WorktreeReviewScreen({
                 />
               )}
               <BuildHistory
-                builds={detail.builds}
+                builds={liveBuilds}
                 openingBuildId={openingBuildId}
                 onOpen={(buildId) => void openBuild(buildId)}
+                readLog={client.readBuildLog}
               />
             </>
           )}

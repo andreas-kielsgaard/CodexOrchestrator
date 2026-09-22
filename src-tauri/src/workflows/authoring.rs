@@ -508,6 +508,11 @@ fn validate_node_capabilities(
             node.node_id
         ));
     }
+    // Route-model allowances are design-time intent. MCP/skill narrowing is checked
+    // against the selected route when a Session instance is materialized.
+    if !capability_profile.route_policies.is_empty() {
+        return Ok(());
+    }
     if let Some(capability) = node
         .node_profile
         .allowed_capabilities

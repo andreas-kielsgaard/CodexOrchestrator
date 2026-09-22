@@ -3,6 +3,8 @@
 mod capability_profile;
 mod defaults;
 mod inventory;
+mod model_catalogue;
+pub(crate) use model_catalogue::{ModelCatalogueView, StoredModelCatalogue};
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
 mod creation_intent;
 mod native_codex;
@@ -16,6 +18,8 @@ mod runtime_profile;
 mod service;
 mod session_profile;
 mod session_skills;
+mod skill_reader;
+pub(crate) use skill_reader::SessionSkillReaderProvisioner;
 pub(crate) mod transport;
 
 pub(crate) use capability_profile::{
@@ -27,6 +31,7 @@ pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
     CapabilityProfileRepository, CapabilityProfileRepositoryError, RuntimeSkillRoot,
     SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
+    PinnedConfigurationProfileSource,
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,

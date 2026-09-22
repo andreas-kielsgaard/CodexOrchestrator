@@ -26,6 +26,8 @@ pub(crate) struct PackageDescriptor {
     pub requested_handles: Vec<Handle>,
     pub tools: Vec<ToolDescriptor>,
     pub agent_mcp_servers: Vec<AgentMcpServerDescriptor>,
+    /// Registered skill roots; an OTP with none cannot expose a skill bucket.
+    pub skill_roots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

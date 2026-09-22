@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 54;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 55;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -538,11 +538,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_model_catalogues','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 9)
+        .map(|table_count| table_count == 10)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let otp_schema_is_present = connection
         .query_row(
@@ -649,6 +649,20 @@ mod tests {
                 |_| Ok(()),
             )
             .is_ok()
+    }
+
+    #[test]
+    fn upgrades_existing_profile_storage_with_model_catalogue() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        initialize_active_database(&connection).expect("initialize database");
+        connection
+            .execute_batch("DROP TABLE execution_model_catalogues; PRAGMA user_version=54;")
+            .expect("simulate predecessor database");
+
+        initialize_active_database(&connection).expect("upgrade database");
+
+        assert!(table_exists(&connection, "execution_model_catalogues"));
+        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
     }
 
     fn seed_file_review_predecessor(

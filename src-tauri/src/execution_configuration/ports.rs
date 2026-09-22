@@ -49,6 +49,15 @@ impl Error for CapabilityProfileRepositoryError {}
 /// `replace` uses the revision read by the application service so concurrent writers cannot
 /// silently discard one another. Consumers should use `CapabilityProfileService`, not this port.
 pub(crate) trait CapabilityProfileRepository: Send + Sync {
+    fn model_catalogue(
+        &self,
+        configuration_ref: &str,
+    ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError>;
+    fn save_model_catalogue(
+        &self,
+        configuration_ref: &str,
+        catalogue: &super::StoredModelCatalogue,
+    ) -> Result<(), CapabilityProfileRepositoryError>;
     fn default_profile(
         &self,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError>;
@@ -174,9 +183,28 @@ pub(crate) struct WorkingContextProfileSource<'a> {
     pub(crate) cwd: Option<&'a str>,
 }
 impl SelectedRuntimeProfileSource for WorkingContextProfileSource<'_> {
+    fn profile_for_configuration(
+        &self,
+        reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source.profile_for_configuration(reference, self.cwd)
+    }
     fn selected_runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
         self.source.selected_runtime_profile_at(self.cwd)
+    }
+}
+
+pub(crate) struct PinnedConfigurationProfileSource<'a> {
+    pub(crate) source: &'a dyn SelectedRuntimeProfileSource,
+    pub(crate) configuration_ref: &'a str,
+    pub(crate) cwd: Option<&'a str>,
+}
+
+impl SelectedRuntimeProfileSource for PinnedConfigurationProfileSource<'_> {
+    fn selected_runtime_profile(&self) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source.profile_for_configuration(self.configuration_ref, self.cwd)
     }
 }

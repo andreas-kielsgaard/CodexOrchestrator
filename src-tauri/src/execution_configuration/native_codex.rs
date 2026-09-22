@@ -15,6 +15,7 @@ pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
     product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     reader: Arc<dyn CodexEnvironmentSource>,
     orchid_skill_roots: Vec<std::path::PathBuf>,
+    otp_skill_roots: std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
 }
 
 impl NativeCodexSelectedRuntimeProfileSource {
@@ -27,12 +28,23 @@ impl NativeCodexSelectedRuntimeProfileSource {
             product_tools,
             reader: Arc::new(CodexEnvironmentReader::new("codex")),
             orchid_skill_roots: Vec::new(),
+            otp_skill_roots: Default::default(),
         }
     }
     pub(crate) fn with_skill_roots(mut self, roots: Vec<String>) -> Self {
         self.orchid_skill_roots = roots.iter().map(std::path::PathBuf::from).collect();
-        self.reader = Arc::new(CodexEnvironmentReader::new("codex").with_skill_roots(roots));
+        self.refresh_skill_reader();
         self
+    }
+    pub(crate) fn with_otp_skill_roots(mut self, roots: std::collections::BTreeMap<String, Vec<String>>) -> Self {
+        self.otp_skill_roots = roots.into_iter().map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect())).collect();
+        self.refresh_skill_reader();
+        self
+    }
+    fn refresh_skill_reader(&mut self) {
+        let paths = self.orchid_skill_roots.iter().chain(self.otp_skill_roots.values().flatten())
+            .map(|path| path.to_string_lossy().into_owned()).collect();
+        self.reader = Arc::new(CodexEnvironmentReader::new("codex").with_skill_roots(paths));
     }
     #[cfg(test)]
     pub(crate) fn with_reader(mut self, reader: Arc<dyn CodexEnvironmentSource>) -> Self {
@@ -64,6 +76,11 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
                     path,
                 }),
         );
+        for (package, paths) in &self.otp_skill_roots {
+            roots.extend(paths.iter().cloned().map(|path| RuntimeSkillRoot {
+                group_id: format!("otp:{package}:skills"), path,
+            }));
+        }
         Ok(roots)
     }
     fn configuration_home(
@@ -97,6 +114,9 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
         let mut features =
             quick_features::project(format!("native-codex:{}", selected.profile_id), &native);
         quick_features::append_owned_root_skills(&mut features, &self.orchid_skill_roots);
+        for paths in self.otp_skill_roots.values() {
+            quick_features::append_owned_root_skills(&mut features, paths);
+        }
         Ok(features)
     }
     fn resolve_configuration_ref(

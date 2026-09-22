@@ -30,6 +30,23 @@ pub(crate) struct NativeProfileInventoryInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ModelCatalogueInput {
+    configuration_ref: String,
+}
+
+#[tauri::command]
+pub(crate) async fn load_profile_model_catalogue(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: ModelCatalogueInput,
+) -> Result<super::ModelCatalogueView, String> {
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.model_catalogue(&input.configuration_ref).map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateCapabilityProfileInput {
     #[serde(default)]
     execution: crate::execution_targets::domain::ExecutionBinding,

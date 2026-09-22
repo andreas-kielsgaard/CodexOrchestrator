@@ -483,21 +483,9 @@ fn initialize_turn(
     }
     invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
     configuration::validate_effective_sandbox(request.options.sandbox, &result["sandbox"])?;
-    let mut input = Vec::new();
-    if let Some(extension) = request.launch_extension.as_ref() {
-        for skill in &extension.skill_inputs {
-            let path = PathBuf::from(&skill.path);
-            if skill.id.trim().is_empty()
-                || skill.name.trim().is_empty()
-                || !path.is_absolute()
-                || path.file_name().is_none_or(|name| name != "SKILL.md")
-            {
-                return Err(unavailable("Invalid selected skill input"));
-            }
-            input.push(json!({"type":"skill","name":skill.name,"path":skill.path}));
-        }
-    }
-    input.push(json!({"type":"text","text":request.submitted_text}));
+    // A skill input explicitly invokes that skill in Codex. The pinned manifest is
+    // instead supplied as application context, and the model reads a skill on demand.
+    let input = vec![json!({"type":"text","text":request.submitted_text})];
     let mut turn = json!({"threadId":thread_id,"input":input});
     if let Some(effort) = request
         .launch_extension

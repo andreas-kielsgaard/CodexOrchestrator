@@ -506,7 +506,7 @@ impl ManagedPlanBuilderService {
             };
         let mut config_overrides = harness.runtime_config_overrides();
         config_overrides.extend(managed.injection().config_overrides.clone());
-        let extension = RuntimeLaunchExtension {
+        let extension = RuntimeLaunchExtension { native_mcp_enabled: None,
             managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides,
             environment: vec![managed.injection().environment.clone()],
@@ -1349,7 +1349,7 @@ mod tests {
     fn context_extension(
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
-        RuntimeLaunchExtension {
+        RuntimeLaunchExtension { native_mcp_enabled: None,
             managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides: Vec::new(),
             environment: Vec::new(),
