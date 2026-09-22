@@ -29,8 +29,8 @@ pub struct RuntimeLaunchExtension {
     pub reasoning_mode: Option<String>,
     /// Explicit existing Harness intent; never inherited by ordinary sessions.
     pub ignore_user_rules: bool,
-    /// Skills selected by Orchid for this invocation. The provider adapter delivers these as
-    /// explicit inputs instead of mutating a Codex home or asking the runtime to discover roots.
+    /// Pinned skills available to the session reader. Mentioned native skills may also become
+    /// explicit turn inputs; the manifest itself does not invoke them.
     pub skill_inputs: Vec<RuntimeSkillInput>,
     /// Whether native Codex-configured MCP servers are exposed for this pinned session.
     pub native_mcp_enabled: Option<bool>,

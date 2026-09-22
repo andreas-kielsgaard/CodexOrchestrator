@@ -3,7 +3,7 @@ use crate::agent_sessions::ports::RuntimeSkillInput;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// Compile the selected master roots into immutable, explicit Codex skill inputs for one session.
+/// Pin selected Codex-discovered skills and Orchid-owned roots for one session.
 /// No source folder is copied, linked, or added to CODEX_HOME.
 pub(crate) fn compile_session_skill_inputs(
     route: &ProfileRoutePolicy,
@@ -14,11 +14,6 @@ pub(crate) fn compile_session_skill_inputs(
     if groups.is_empty() {
         return Ok(Vec::new());
     }
-    let selected_roots = roots
-        .iter()
-        .filter(|root| groups.contains(&root.group_id))
-        .filter_map(|root| root.path.canonicalize().ok())
-        .collect::<Vec<_>>();
     let mut result = Vec::new();
     for skill in &features.skills {
         let path = PathBuf::from(&skill.id);
@@ -27,11 +22,20 @@ pub(crate) fn compile_session_skill_inputs(
         {
             continue;
         }
-        let Ok(path) = path.canonicalize() else { continue };
-        if !selected_roots
-            .iter()
-            .any(|root| path.starts_with(root))
-        {
+        let Ok(path) = path.canonicalize() else {
+            continue;
+        };
+        let codex_discovered =
+            skill.group_id == "codex-profile-skills" && groups.contains("codex-profile-skills");
+        let owned_root = roots.iter().any(|root| {
+            root.group_id == skill.group_id
+                && groups.contains(&root.group_id)
+                && root
+                    .path
+                    .canonicalize()
+                    .is_ok_and(|root| path.starts_with(root))
+        });
+        if !codex_discovered && !owned_root {
             continue;
         }
         result.push(RuntimeSkillInput {
@@ -77,6 +81,24 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     let contents = std::fs::read(path)
         .map_err(|error| format!("Could not read selected skill {}: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(contents)))
+}
+
+pub(crate) fn pin_discovered_skill(
+    skill: &orchid_engine::codex::app_server::skills::CodexSkill,
+) -> Result<RuntimeSkillInput, String> {
+    let path = Path::new(&skill.path)
+        .canonicalize()
+        .map_err(|error| format!("Discovered skill path is unavailable: {error}"))?;
+    if path.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
+        return Err("Discovered skill does not point to SKILL.md".into());
+    }
+    Ok(RuntimeSkillInput {
+        id: path.to_string_lossy().into_owned(),
+        name: skill.name.clone(),
+        path: path.to_string_lossy().into_owned(),
+        content_sha256: sha256_file(&path)?,
+        description: skill.description.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -125,6 +147,7 @@ mod tests {
                 name: "review".into(),
                 description: String::new(),
                 invocation_text: "$review".into(),
+                group_id: "orchid-skills".into(),
             }],
             ..Default::default()
         };
@@ -141,5 +164,39 @@ mod tests {
         assert!(validate_session_skill_inputs(&inputs).is_ok());
         std::fs::write(&skill, "version two").unwrap();
         assert!(validate_session_skill_inputs(&inputs).is_err());
+    }
+
+    #[test]
+    fn codex_discovered_skill_outside_home_is_selected_by_group() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("repo")
+            .join(".agents")
+            .join("skills")
+            .join("review")
+            .join("SKILL.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "review instructions").unwrap();
+        let features = RuntimeQuickFeatures {
+            skills: vec![super::super::QuickSkill {
+                id: path.to_string_lossy().into_owned(),
+                name: "review".into(),
+                description: "Review".into(),
+                invocation_text: "$review".into(),
+                group_id: "codex-profile-skills".into(),
+            }],
+            ..Default::default()
+        };
+        let mut profile = capability();
+        let route = &mut profile.route_policies[0];
+        assert!(compile_session_skill_inputs(route, &features, &[])
+            .unwrap()
+            .is_empty());
+        route.skill_groups.insert("codex-profile-skills".into());
+        let inputs = compile_session_skill_inputs(route, &features, &[]).unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "review");
+        assert!(validate_session_skill_inputs(&inputs).is_ok());
     }
 }

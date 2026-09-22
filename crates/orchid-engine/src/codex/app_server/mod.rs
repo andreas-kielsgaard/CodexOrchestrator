@@ -11,6 +11,7 @@ pub mod items;
 mod notifications;
 mod process_context;
 mod requests;
+pub mod skills;
 
 use super::protocol::CodexJsonlProtocol;
 use crate::{
@@ -483,9 +484,29 @@ fn initialize_turn(
     }
     invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
     configuration::validate_effective_sandbox(request.options.sandbox, &result["sandbox"])?;
-    // A skill input explicitly invokes that skill in Codex. The pinned manifest is
-    // instead supplied as application context, and the model reads a skill on demand.
-    let input = vec![json!({"type":"text","text":request.submitted_text})];
+    let working_directory = result["cwd"]
+        .as_str()
+        .or(request.working_directory.as_deref())
+        .ok_or_else(|| unavailable("App-server did not return a working directory"))?
+        .to_owned();
+    let mut input = vec![json!({"type":"text","text":request.submitted_text})];
+    if request.submitted_text.contains('$')
+        && request
+            .launch_extension
+            .as_ref()
+            .is_some_and(|extension| !extension.skill_inputs.is_empty())
+    {
+        if let Ok(catalogue) = skills::read(
+            &invocation.connection,
+            std::path::Path::new(&working_directory),
+        ) {
+            input.extend(skill_items_for_text(
+                &request.submitted_text,
+                &catalogue,
+                request.launch_extension.as_ref(),
+            ));
+        }
+    }
     let mut turn = json!({"threadId":thread_id,"input":input});
     if let Some(effort) = request
         .launch_extension
@@ -494,11 +515,6 @@ fn initialize_turn(
     {
         turn["effort"] = effort.clone().into();
     }
-    let working_directory = result["cwd"]
-        .as_str()
-        .or(request.working_directory.as_deref())
-        .ok_or_else(|| unavailable("App-server did not return a working directory"))?
-        .to_owned();
     Ok((
         RuntimeInvocationReady {
             external_context_id: ExternalRuntimeContextId::new(thread_id)
@@ -507,6 +523,61 @@ fn initialize_turn(
         },
         turn,
     ))
+}
+
+fn skill_items_for_text(
+    text: &str,
+    catalogue: &skills::CodexSkillCatalogue,
+    extension: Option<&RuntimeLaunchExtension>,
+) -> Vec<Value> {
+    let Some(extension) = extension else {
+        return Vec::new();
+    };
+    skills::mentioned(text, catalogue)
+        .into_iter()
+        .filter(|skill| {
+            extension.skill_inputs.iter().any(|input| {
+                input.name == skill.name
+                    && (input.path == skill.path
+                        || std::path::Path::new(&input.path)
+                            .canonicalize()
+                            .ok()
+                            .is_some_and(|path| {
+                                std::path::Path::new(&skill.path).canonicalize().ok() == Some(path)
+                            }))
+            })
+        })
+        .map(|skill| json!({"type":"skill","name":skill.name,"path":skill.path}))
+        .collect()
+}
+
+#[cfg(test)]
+mod skill_item_tests {
+    use super::*;
+
+    #[test]
+    fn adds_only_unique_exact_native_skill_mentions() {
+        let catalogue = skills::project(&json!({"data":[{"skills":[
+            {"name":"review","path":"/first/SKILL.md","enabled":true},
+            {"name":"reviewer","path":"/second/SKILL.md","enabled":true},
+            {"name":"duplicate","path":"/a/SKILL.md","enabled":true},
+            {"name":"duplicate","path":"/b/SKILL.md","enabled":true}
+        ]}]}));
+        let extension = RuntimeLaunchExtension {
+            skill_inputs: vec![crate::contracts::ports::RuntimeSkillInput {
+                id: "/second/SKILL.md".into(),
+                name: "reviewer".into(),
+                path: "/second/SKILL.md".into(),
+                content_sha256: "hash".into(),
+                description: String::new(),
+            }],
+            ..Default::default()
+        };
+        let inputs = skill_items_for_text("$reviewer and $duplicate", &catalogue, Some(&extension));
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0]["name"], "reviewer");
+        assert_eq!(inputs[0]["path"], "/second/SKILL.md");
+    }
 }
 
 impl AgentRuntime for CodexAppServerRuntime {

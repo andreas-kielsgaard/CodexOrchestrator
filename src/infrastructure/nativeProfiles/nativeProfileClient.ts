@@ -143,6 +143,17 @@ export interface NativeHarnessToolInventory {
   readonly limitations: readonly string[];
 }
 
+export interface NativeCodexSkillCatalogue {
+  readonly skills: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly path: string;
+    readonly scope: string;
+    readonly enabled: boolean;
+  }[];
+  readonly limitations: readonly string[];
+}
+
 export interface DiscoveredNativeCodexHome {
   readonly homePath: string;
   readonly source: 'environment' | 'default' | 'sibling' | 'registered';
@@ -488,6 +499,7 @@ export interface NativeProfileClient {
   refreshReadiness(profileId: string): Promise<NativeProfileQuery>;
   openInExplorer(profileId: string): Promise<void>;
   loadHarnessTools(profileId: string): Promise<NativeHarnessToolInventory>;
+  loadSkills(profileId: string, workingDirectory?: string): Promise<NativeCodexSkillCatalogue>;
 }
 
 export function createNativeProfileClient(invokeCommand: Invoke = invoke): NativeProfileClient {
@@ -521,6 +533,10 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     loadHarnessTools: (profileId) => invokeCommand<NativeHarnessToolInventory>(
       'load_native_profile_capability_inventory',
       id(profileId),
+    ),
+    loadSkills: (profileId, workingDirectory) => invokeCommand<NativeCodexSkillCatalogue>(
+      'load_native_profile_skills',
+      { input: { profileId, workingDirectory: workingDirectory ?? null } },
     ),
   };
 }

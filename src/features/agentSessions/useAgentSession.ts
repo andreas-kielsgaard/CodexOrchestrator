@@ -488,23 +488,18 @@ export function useAgentSession(
   const loadQuickFeatures = useCallback(async () => {
     const selectedFacts = options.executionQuickFeatures;
     const desired = options.executionSelection;
+    if (options.preparedExecution && desired?.execution.connection.kind === 'ssh') {
+      if (selectedFacts) return { ...selectedFacts, limitations: ['Native skill discovery is unavailable on remote devices.'] };
+      throw new Error('Native skill discovery is unavailable on remote devices.');
+    }
     if (options.preparedExecution && desired && selectedFacts) {
-      if (desired.execution.connection.kind === 'ssh')
-        return {
-          ...selectedFacts,
-          limitations: ['Native skill discovery is unavailable on remote devices.'],
-        };
-      if (desired.workspace.kind !== 'existing')
-        return {
-          ...selectedFacts,
-          limitations: ['Skills are available after the working folder is prepared.'],
-        };
       if (!quickFeaturesClient?.loadQuickFeatures) return selectedFacts;
       try {
         const discovered = await quickFeaturesClient.loadQuickFeatures({
           sessionId: null,
-          workingDirectory: desired.workspace.target.path,
-          executionTarget: desired.workspace.target,
+          workingDirectory: desired.workspace.kind === 'existing' ? desired.workspace.target.path : null,
+          configurationRef: desired.execution.configurationRef,
+          ...(desired.workspace.kind === 'existing' ? { executionTarget: desired.workspace.target } : {}),
         });
         return mergeSelectedQuickFeatures(selectedFacts, discovered);
       } catch (cause) {
@@ -514,8 +509,6 @@ export function useAgentSession(
         };
       }
     }
-    if (options.preparedExecution && desired)
-      throw new Error('Loading selected target capabilities.');
     if (!quickFeaturesClient?.loadQuickFeatures) throw new Error('Quick features are unavailable.');
     return quickFeaturesClient.loadQuickFeatures({
       sessionId: selectedSessionId,

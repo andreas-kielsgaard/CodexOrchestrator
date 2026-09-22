@@ -30,6 +30,29 @@ pub(crate) struct NativeProfileInventoryInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeProfileSkillInput {
+    profile_id: String,
+    #[serde(default)]
+    working_directory: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn load_native_profile_skills(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: NativeProfileSkillInput,
+) -> Result<crate::runtime::codex::app_server::skills::CodexSkillCatalogue, String> {
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .codex_skills_for_configuration(&input.profile_id, input.working_directory.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ModelCatalogueInput {
     configuration_ref: String,
 }
@@ -40,9 +63,13 @@ pub(crate) async fn load_profile_model_catalogue(
     input: ModelCatalogueInput,
 ) -> Result<super::ModelCatalogueView, String> {
     let service = state.service.clone();
-    tauri::async_runtime::spawn_blocking(move || service.model_catalogue(&input.configuration_ref).map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .model_catalogue(&input.configuration_ref)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(Deserialize)]

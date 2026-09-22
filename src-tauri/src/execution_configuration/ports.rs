@@ -106,6 +106,24 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn configuration_ref_for_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<String>, SelectedRuntimeProfileSourceError> {
+        Ok(None)
+    }
+    fn discover_skills_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<
+        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
+        SelectedRuntimeProfileSourceError,
+    > {
+        Err(SelectedRuntimeProfileSourceError::unavailable(
+            "Codex skill discovery is unavailable",
+        ))
+    }
     fn skill_roots_for_configuration(
         &self,
         _reference: &str,
@@ -204,7 +222,10 @@ pub(crate) struct PinnedConfigurationProfileSource<'a> {
 }
 
 impl SelectedRuntimeProfileSource for PinnedConfigurationProfileSource<'_> {
-    fn selected_runtime_profile(&self) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.source.profile_for_configuration(self.configuration_ref, self.cwd)
+    fn selected_runtime_profile(
+        &self,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source
+            .profile_for_configuration(self.configuration_ref, self.cwd)
     }
 }

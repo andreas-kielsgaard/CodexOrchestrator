@@ -51,6 +51,10 @@ impl SupervisedChild for FakeChild {
             Some("initialize") if self.block_initialize => {},
             Some("initialize") => self.output(json!({"id":id,"result":{}})),
             Some("thread/start" | "thread/resume") => self.output(json!({"id":id,"result":{"thread":{"id":"thread-one"},"cwd":value["params"]["cwd"],"model":"native-model","reasoningEffort":"high","approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}})),
+            Some("skills/list") => {
+                let cwd = value["params"]["cwds"][0].as_str().unwrap();
+                self.output(json!({"id":id,"result":{"data":[{"cwd":cwd,"skills":[{"name":"review","path":std::path::Path::new(cwd).join("SKILL.md"),"enabled":true}],"errors":[]}]}}));
+            }
             Some("turn/start") => {
                 self.output(json!({"id":id,"result":{"turn":{"id":"turn-one"}}}));
                 self.output(json!({"method":"turn/started","params":{"threadId":"thread-one","turn":{"id":"turn-one","status":"inProgress"}}}));
@@ -210,7 +214,51 @@ fn preparation_does_not_force_invoke_selected_skills() {
         .unwrap();
     assert_eq!(request["params"]["input"].as_array().unwrap().len(), 1);
     assert_eq!(request["params"]["input"][0]["type"], "text");
-    assert_eq!(request["params"]["input"][0]["text"], "frozen original prompt");
+    assert_eq!(
+        request["params"]["input"][0]["text"],
+        "frozen original prompt"
+    );
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn mentioned_pinned_native_skill_is_an_explicit_turn_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let skill = directory.path().join("SKILL.md");
+    std::fs::write(&skill, "---\nname: review\n---\n").unwrap();
+    let factory = Arc::new(Factory::default());
+    let runtime = CodexAppServerRuntime::new("fake", factory.clone());
+    let mut request = request(directory.path());
+    request.submitted_text = "$review Examine this.".into();
+    request.launch_extension = Some(RuntimeLaunchExtension {
+        skill_inputs: vec![RuntimeSkillInput {
+            id: skill.to_string_lossy().into_owned(),
+            name: "review".into(),
+            path: skill.to_string_lossy().into_owned(),
+            content_sha256: "pinned-for-adapter-test".into(),
+            description: String::new(),
+        }],
+        ..Default::default()
+    });
+    let id = request.invocation_id.clone();
+    runtime
+        .prepare_invocation(request, None, Arc::new(Sink::default()))
+        .unwrap();
+    runtime.deliver_prepared_invocation(&id).unwrap();
+    let child = factory.0.lock().unwrap()[0].clone();
+    let requests = child.requests.lock().unwrap();
+    let turn = requests
+        .iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap();
+    assert_eq!(turn["params"]["input"][0]["type"], "text");
+    assert_eq!(turn["params"]["input"][1]["type"], "skill");
+    assert_eq!(turn["params"]["input"][1]["name"], "review");
+    assert_eq!(
+        turn["params"]["input"][1]["path"],
+        skill.to_string_lossy().as_ref()
+    );
+    drop(requests);
     runtime.shutdown().unwrap();
 }
 #[test]

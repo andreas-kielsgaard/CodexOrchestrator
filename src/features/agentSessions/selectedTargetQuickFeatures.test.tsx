@@ -1,4 +1,5 @@
 import type { SessionExecutionSelectionDto } from '../../application/executionTargets/contracts';
+import { localExecutionBinding } from '../../application/executionTargets/contracts';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { repairProfile, repairRuntime } from '../workflowAuthoring/testFixtures';
 import { repairSessionClients } from './profileTestFixtures';
@@ -49,6 +50,41 @@ it('uses selected remote capabilities for a creation draft without querying lapt
     limitations: ['Native skill discovery is unavailable on remote devices.'],
   });
   expect(loadQuickFeatures).not.toHaveBeenCalled();
+});
+
+it('discovers skills from the selected local configuration before creating a worktree', async () => {
+  const fixture = repairSessionClients(false);
+  const loadQuickFeatures = vi.fn(fixture.profiles.loadQuickFeatures);
+  const selection: SessionExecutionSelectionDto = {
+    capabilityProfileId: repairProfile.capabilityProfileId,
+    capabilityProfileRevision: repairProfile.revision,
+    execution: { ...localExecutionBinding, configurationRef: 'profile-two' },
+    workspace: {
+      kind: 'create',
+      repositoryId: 'repo',
+      branchRef: 'refs/heads/main',
+      commit: 'a'.repeat(40),
+      attachment: 'branch',
+    },
+  };
+  const { result } = renderHook(() => useAgentSession(fixture.sessions, {
+    selectedSessionId: null,
+    preparedExecution: true,
+    executionSelection: selection,
+    executionQuickFeatures: selectedTargetQuickFeatures(repairRuntime, repairProfile),
+    execution: {
+      client: { ...fixture.profiles, loadQuickFeatures },
+      selection: { model: null, reasoningMode: null },
+      setSelection: () => {},
+      afterAccepted: () => {},
+    },
+  }));
+  await act(async () => { await result.current.quickFeatures!.load(); });
+  expect(loadQuickFeatures).toHaveBeenCalledWith({
+    sessionId: null,
+    workingDirectory: null,
+    configurationRef: 'profile-two',
+  });
 });
 
 it('matches settled preparation after reload, but excludes profile revisions and delivery in progress', () => {

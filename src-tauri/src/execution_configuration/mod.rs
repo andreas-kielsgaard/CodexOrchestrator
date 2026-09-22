@@ -4,8 +4,8 @@ mod capability_profile;
 mod defaults;
 mod inventory;
 mod model_catalogue;
-pub(crate) use model_catalogue::{ModelCatalogueView, StoredModelCatalogue};
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
+pub(crate) use model_catalogue::{ModelCatalogueView, StoredModelCatalogue};
 mod creation_intent;
 mod native_codex;
 mod quick_features;
@@ -29,9 +29,9 @@ pub(crate) use creation_intent::SessionCreationIntent;
 pub(crate) use native_codex::NativeCodexSelectedRuntimeProfileSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
-    CapabilityProfileRepository, CapabilityProfileRepositoryError, RuntimeSkillRoot,
-    SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
-    PinnedConfigurationProfileSource,
+    CapabilityProfileRepository, CapabilityProfileRepositoryError,
+    PinnedConfigurationProfileSource, RuntimeSkillRoot, SelectedRuntimeProfileSource,
+    SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,
@@ -47,7 +47,9 @@ pub(crate) use runtime_profile::{
 };
 pub(crate) use service::{CapabilityProfileService, CapabilityProfileServiceError};
 pub(crate) use session_profile::SessionProfile;
-pub(crate) use session_skills::{compile_session_skill_inputs, validate_session_skill_inputs};
+pub(crate) use session_skills::{
+    compile_session_skill_inputs, pin_discovered_skill, validate_session_skill_inputs,
+};
 
 #[cfg(test)]
 mod tests;

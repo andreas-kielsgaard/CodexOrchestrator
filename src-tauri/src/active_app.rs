@@ -427,6 +427,7 @@ pub(crate) fn run() {
             crate::native_profiles::refresh_native_profile_readiness,
             crate::native_profiles::open_native_profile_in_explorer,
             crate::execution_configuration::transport::load_native_profile_capability_inventory,
+            crate::execution_configuration::transport::load_native_profile_skills,
             crate::product_decisions::accept_product_decision_version,
             crate::product_decisions::load_product_decision_current_query,
             crate::product_decisions::load_product_decision_history,

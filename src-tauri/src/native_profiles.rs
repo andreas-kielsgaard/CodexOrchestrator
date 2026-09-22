@@ -1,9 +1,9 @@
 //! Product-owned Codex home profiles. This module deliberately records only filesystem identity
 //! and bounded setup observations; it never reads authentication, sandbox, or provider payloads.
 
+mod discovery;
 mod readiness;
 pub(crate) mod session_binding;
-mod discovery;
 
 use crate::persistence::ActiveDatabase;
 use axum::http::{header, StatusCode};
@@ -2439,12 +2439,6 @@ impl NativeProfileService {
         })
     }
 
-
-
-
-
-
-
     /// Produces a command only after all mode-specific authority is independently valid. It does
     /// not start Codex and consequently cannot be mistaken for launch acceptance or activity.
     pub(crate) fn project_launch(
@@ -3784,25 +3778,62 @@ pub(crate) struct ResolvedNativeCodexHome {
 }
 
 impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
-    fn bound_configuration_ref(&self, session_id: &crate::agent_sessions::domain::AgentSessionId) -> Result<Option<String>,String> {
-        self.read("read Session native configuration", |c| c.query_row("SELECT profile_id FROM agent_session_native_profile_bindings WHERE session_id=?1",[session_id.as_str()],|r|r.get(0)).optional().map_err(|e|e.to_string()))
+    fn bound_configuration_ref(
+        &self,
+        session_id: &crate::agent_sessions::domain::AgentSessionId,
+    ) -> Result<Option<String>, String> {
+        self.read("read Session native configuration", |c| {
+            c.query_row(
+                "SELECT profile_id FROM agent_session_native_profile_bindings WHERE session_id=?1",
+                [session_id.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        })
     }
-    fn prepare_destination_launch(&self, reference: &str, session_id: &crate::agent_sessions::domain::AgentSessionId, invocation_id: &crate::agent_sessions::domain::AgentInvocationId, resuming: bool, extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension,String> {
-        self.prepare_destination_native_launch(reference,session_id.as_str(),invocation_id.as_str(),resuming,extension)
+    fn prepare_destination_launch(
+        &self,
+        reference: &str,
+        session_id: &crate::agent_sessions::domain::AgentSessionId,
+        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
+        resuming: bool,
+        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
+        self.prepare_destination_native_launch(
+            reference,
+            session_id.as_str(),
+            invocation_id.as_str(),
+            resuming,
+            extension,
+        )
     }
-    fn commit_destination(&self, reference: &str, session_id: &crate::agent_sessions::domain::AgentSessionId) -> Result<(),String> {
-        let home=self.resolve_configuration_home(reference)?;
+    fn commit_destination(
+        &self,
+        reference: &str,
+        session_id: &crate::agent_sessions::domain::AgentSessionId,
+    ) -> Result<(), String> {
+        let home = self.resolve_configuration_home(reference)?;
         self.write("commit Session native destination",|tx| {
             tx.execute("INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES(?1,?2,?3,?4) ON CONFLICT(session_id) DO UPDATE SET profile_id=excluded.profile_id,filesystem_identity=excluded.filesystem_identity,bound_at=excluded.bound_at",params![session_id.as_str(),home.profile_id,home.filesystem_identity,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;Ok(())
         })
     }
 
     fn prepare_configured_launch(
-        &self, configuration_ref: &str, session_id: &crate::agent_sessions::domain::AgentSessionId,
-        invocation_id: &crate::agent_sessions::domain::AgentInvocationId, resuming: bool,
+        &self,
+        configuration_ref: &str,
+        session_id: &crate::agent_sessions::domain::AgentSessionId,
+        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
+        resuming: bool,
         extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
     ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        self.prepare_configured_agent_session_launch(configuration_ref, session_id.as_str(), invocation_id.as_str(), resuming, extension)
+        self.prepare_configured_agent_session_launch(
+            configuration_ref,
+            session_id.as_str(),
+            invocation_id.as_str(),
+            resuming,
+            extension,
+        )
     }
     fn prepare_launch(
         &self,
@@ -4928,8 +4959,7 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet,
-        NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
+        CapabilitySet, NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
         SelectedRuntimeProfileSource,
     };
     use std::sync::Barrier;
@@ -5211,32 +5241,92 @@ mod tests {
     fn selected_profile_adapter_uses_native_exposure_without_product_sandbox_locks() {
         struct Environment;
         impl crate::runtime::codex::app_server::environment::CodexEnvironmentSource for Environment {
-            fn read(&self, _: PathBuf, _: Option<PathBuf>) -> Result<crate::runtime::codex::app_server::environment::CodexEnvironment, crate::agent_sessions::ports::RuntimePortError> {
-                Ok(crate::runtime::codex::app_server::environment::CodexEnvironment { models: serde_json::json!([{"model":"native-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]), skills: serde_json::json!({"data":[]}), config: serde_json::json!({}), requirements: serde_json::json!({}) })
+            fn read(
+                &self,
+                _: PathBuf,
+                _: Option<PathBuf>,
+            ) -> Result<
+                crate::runtime::codex::app_server::environment::CodexEnvironment,
+                crate::agent_sessions::ports::RuntimePortError,
+            > {
+                Ok(
+                    crate::runtime::codex::app_server::environment::CodexEnvironment {
+                        models: serde_json::json!([{"model":"native-model","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]),
+                        skills: serde_json::json!({"data":[]}),
+                        config: serde_json::json!({}),
+                        requirements: serde_json::json!({}),
+                    },
+                )
             }
         }
         let (_directory, service) = service();
         let profile = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &profile.id);
-        let source = NativeCodexSelectedRuntimeProfileSource::new(
-            Arc::new(service),
-            Default::default(),
-        ).with_reader(Arc::new(Environment));
+        let source =
+            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+                .with_reader(Arc::new(Environment));
 
         let snapshot = source.selected_runtime_profile().unwrap();
         assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
         assert_eq!(
             snapshot.exposure.sandbox_modes,
-            [SandboxMode::ReadOnly, SandboxMode::WorkspaceWrite, SandboxMode::DangerFullAccess].into_iter().collect()
+            [
+                SandboxMode::ReadOnly,
+                SandboxMode::WorkspaceWrite,
+                SandboxMode::DangerFullAccess
+            ]
+            .into_iter()
+            .collect()
         );
-        assert_eq!(
-            snapshot.locked.sandbox_mode,
-            None
-        );
+        assert_eq!(snapshot.locked.sandbox_mode, None);
         assert!(snapshot.exposure.models.contains("native-model"));
         let encoded = serde_json::to_value(snapshot).unwrap();
         assert!(encoded.get("home").is_none());
         assert!(encoded.get("filesystemIdentity").is_none());
+    }
+
+    #[test]
+    fn skill_discovery_uses_each_registered_home() {
+        struct Environment(Arc<Mutex<Vec<PathBuf>>>);
+        impl crate::runtime::codex::app_server::environment::CodexEnvironmentSource for Environment {
+            fn read(
+                &self,
+                _: PathBuf,
+                _: Option<PathBuf>,
+            ) -> Result<
+                crate::runtime::codex::app_server::environment::CodexEnvironment,
+                crate::agent_sessions::ports::RuntimePortError,
+            > {
+                unreachable!("Skill discovery must not load the full runtime environment")
+            }
+            fn discover_skills(
+                &self,
+                home: PathBuf,
+                _: Option<PathBuf>,
+            ) -> Result<
+                crate::runtime::codex::app_server::skills::CodexSkillCatalogue,
+                crate::agent_sessions::ports::RuntimePortError,
+            > {
+                self.0.lock().unwrap().push(home);
+                Ok(Default::default())
+            }
+        }
+        let (_directory, service) = service();
+        let first = selected_profile_ready_except_mcp(&service);
+        let second = service.create_dedicated().unwrap();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let source =
+            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+                .with_reader(Arc::new(Environment(observed.clone())));
+        source
+            .discover_skills_for_configuration(&first.id, None)
+            .unwrap();
+        source
+            .discover_skills_for_configuration(&second.id, None)
+            .unwrap();
+        let homes = observed.lock().unwrap();
+        assert_eq!(homes.len(), 2);
+        assert_ne!(homes[0], homes[1]);
     }
 
     fn claim_mcp_reporting_for_current_reconciliation(
@@ -5281,17 +5371,31 @@ mod tests {
         let first = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &first.id);
         let first_home = first.home_path.clone();
-        let prepared = service.prepare_managed_agent_session_launch(
-            "session-1", "invocation-1", false,
-            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), native_mcp_enabled: None, ignore_user_rules: false, reasoning_mode: None,
-                config_overrides: vec!["--role-config".into()],
-                environment: vec![("ROLE_ENV".into(), "preserved".into())],
-                initial_prompt_prefix: None,
-            }),
-        ).expect("fresh launch binding");
-        assert!(prepared.environment.iter().any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
-        assert!(prepared.environment.iter().any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
+        let prepared = service
+            .prepare_managed_agent_session_launch(
+                "session-1",
+                "invocation-1",
+                false,
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    managed_mcp_servers: Vec::new(),
+                    skill_inputs: Vec::new(),
+                    native_mcp_enabled: None,
+                    ignore_user_rules: false,
+                    reasoning_mode: None,
+                    config_overrides: vec!["--role-config".into()],
+                    environment: vec![("ROLE_ENV".into(), "preserved".into())],
+                    initial_prompt_prefix: None,
+                }),
+            )
+            .expect("fresh launch binding");
+        assert!(prepared
+            .environment
+            .iter()
+            .any(|(key, value)| key == "CODEX_HOME" && value == &first_home));
+        assert!(prepared
+            .environment
+            .iter()
+            .any(|(key, value)| key == "ROLE_ENV" && value == "preserved"));
         let provenance: String = service.connection().unwrap().query_row(
             "SELECT printf('%s:%s:%s',profile_id,environment_key,invocation_mode) FROM agent_session_native_profile_launch_provenance WHERE invocation_id='invocation-1'",
             [], |row| row.get(0),
@@ -5318,16 +5422,26 @@ mod tests {
 
         let second = selected_profile_ready_except_mcp(&reopened);
         mark_mcp_ready(&reopened, &second.id);
-        assert!(reopened.prepare_managed_agent_session_launch("session-1", "invocation-3", true, None).is_err());
-        assert!(reopened.prepare_managed_agent_session_launch(
-            "session-2", "invocation-4", false,
-            Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), native_mcp_enabled: None, ignore_user_rules: false, reasoning_mode: None,
-                config_overrides: vec![],
-                environment: vec![("CODEX_HOME".into(), "foreign".into())],
-                initial_prompt_prefix: None,
-            }),
-        ).is_err());
+        assert!(reopened
+            .prepare_managed_agent_session_launch("session-1", "invocation-3", true, None)
+            .is_err());
+        assert!(reopened
+            .prepare_managed_agent_session_launch(
+                "session-2",
+                "invocation-4",
+                false,
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    managed_mcp_servers: Vec::new(),
+                    skill_inputs: Vec::new(),
+                    native_mcp_enabled: None,
+                    ignore_user_rules: false,
+                    reasoning_mode: None,
+                    config_overrides: vec![],
+                    environment: vec![("CODEX_HOME".into(), "foreign".into())],
+                    initial_prompt_prefix: None,
+                }),
+            )
+            .is_err());
     }
 
     #[test]

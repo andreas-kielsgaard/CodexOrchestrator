@@ -64,6 +64,7 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
         />
         {selected ? (
           <CodexProfileDetail
+            key={selected.id}
             client={client}
             profile={selected}
             onCheckHealth={() => setOperation({ kind: 'health', profile: selected })}
@@ -124,6 +125,16 @@ function CodexProfileDetail({ client, profile, onCheckHealth, onVerifyLogin }: {
   const [tools, setTools] = useState<Awaited<ReturnType<NonNullable<NativeProfileClient['loadHarnessTools']>>> | null>(null);
   const [toolsError, setToolsError] = useState<string | null>(null);
   const [loadingTools, setLoadingTools] = useState(false);
+  const [skills, setSkills] = useState<Awaited<ReturnType<NativeProfileClient['loadSkills']>> | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [loadingSkills, setLoadingSkills] = useState(false);
+  const loadSkills = useCallback(async () => {
+    setLoadingSkills(true); setSkillsError(null);
+    try { setSkills(await client.loadSkills(profile.id)); }
+    catch (cause) { setSkillsError(cause instanceof Error ? cause.message : 'Skill discovery is unavailable.'); }
+    finally { setLoadingSkills(false); }
+  }, [client, profile.id]);
+  useEffect(() => { void loadSkills(); }, [loadSkills]);
   const loadTools = async () => {
     setLoadingTools(true); setToolsError(null);
     try { setTools(await client.loadHarnessTools(profile.id)); }
@@ -157,14 +168,24 @@ function CodexProfileDetail({ client, profile, onCheckHealth, onVerifyLogin }: {
       <button type="button" onClick={onVerifyLogin} disabled={profile.lifecycle !== 'active' || profile.readiness.authentication === 'authenticated'}>Verify login</button>
     </section>
     <section className="codex-profile-detail__section">
+      <div className="codex-profile-detail__actions">
+        <div><h3>Codex skills{skills ? ` · ${skills.skills.filter((skill) => skill.enabled).length}` : ''}</h3><p>Skills this Codex profile discovers. A project working folder may add more.</p></div>
+        <button type="button" onClick={() => void loadSkills()} disabled={loadingSkills}>{loadingSkills ? 'Discovering…' : 'Refresh skills'}</button>
+      </div>
+      {skillsError ? <p role="alert">Could not discover skills: {skillsError}</p> : null}
+      {skills?.limitations.map((item, index) => <p role="status" key={`${item}:${index}`}>{item}</p>)}
+      {skills && skills.skills.length === 0 ? <p>No Codex skills were reported for this profile.</p> : null}
+      {skills ? <ul className="codex-profile-tools">{skills.skills.map((skill) => <li key={skill.path}><strong>{skill.name}</strong><span>{skill.scope} · {skill.enabled ? 'Enabled' : 'Disabled'} · {displayPath(skill.path)}</span>{skill.description ? <span>{skill.description}</span> : null}</li>)}</ul> : null}
+    </section>
+    <section className="codex-profile-detail__section">
       <h3>Harness-provided tools</h3>
       <p>Shows only capabilities reported by this profile's current Codex runtime.</p>
       <button type="button" onClick={() => void loadTools()} disabled={loadingTools}>{loadingTools ? 'Reading tools…' : 'Read provided tools'}</button>
       {toolsError ? <p role="alert">{toolsError}</p> : null}
       {tools ? <>
         {tools.limitations.map((item) => <p key={item}>{item}</p>)}
-        <ul className="codex-profile-tools">{tools.entries.map((item, index) => <li key={`${item.kind}:${item.name}:${index}`}><strong>{item.name}</strong><span>{item.kind.replaceAll('_', ' ')} · {item.origin} · {item.state}</span></li>)}</ul>
-        {tools.entries.length === 0 ? <p>No discoverable tools were reported.</p> : null}
+        <ul className="codex-profile-tools">{tools.entries.filter((item) => item.kind !== 'skill').map((item, index) => <li key={`${item.kind}:${item.name}:${index}`}><strong>{item.name}</strong><span>{item.kind.replaceAll('_', ' ')} · {item.origin} · {item.state}</span></li>)}</ul>
+        {tools.entries.every((item) => item.kind === 'skill') ? <p>No discoverable tools were reported.</p> : null}
       </> : null}
     </section>
   </section>;

@@ -98,7 +98,7 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
       : [
           {
             id: 'codex-profile-skills',
-            label: 'Codex profile skills',
+            label: 'Skills discovered by Codex',
             detail: 'Skills registered by the selected Codex profile.',
           },
           {

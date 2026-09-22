@@ -1,6 +1,6 @@
 # Codex profile skill discovery
 
-Status: proposed implementation shape, 2026-09-22. Planning only.
+Status: implemented on `refinement/usability`, 2026-09-22. Live profile and draft discovery verified; native turn-input and reader paths covered by focused tests. An actual provider skill invocation remains unobserved.
 
 ## Target and boundary
 

@@ -36,50 +36,48 @@ pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> Runtime
                 .collect(),
         });
     }
-    // A textual invocation is supported by Codex. Do not offer ambiguous names as exact choices.
-    let mut skills: BTreeMap<String, BTreeMap<String, &Value>> = BTreeMap::new();
-    for group in array(&native.skills["data"]) {
-        if array(&group["errors"]).next().is_some() {
-            result
-                .limitations
-                .push("Some skills could not be discovered.".into());
-        }
-        for skill in array(&group["skills"]).filter(|skill| skill["enabled"] != false) {
-            let (Some(name), Some(path)) = (skill["name"].as_str(), skill["path"].as_str()) else {
-                continue;
-            };
-            skills
-                .entry(name.into())
-                .or_default()
-                .insert(path.into(), skill);
-        }
-    }
-    for (name, paths) in skills {
-        if paths.len() != 1 {
-            result.limitations.push(format!(
-                "Skill '{name}' has multiple sources and cannot be selected by name."
-            ));
-            continue;
-        }
-        let (path, skill) = paths.into_iter().next().unwrap();
-        result.skills.push(QuickSkill {
-            id: path,
-            invocation_text: format!("${name}"),
-            name,
-            description: skill["interface"]["shortDescription"]
-                .as_str()
-                .or(skill["description"].as_str())
-                .unwrap_or("")
-                .into(),
-        });
-    }
+    append_codex_skills(
+        &mut result,
+        &crate::runtime::codex::app_server::skills::project(&native.skills),
+    );
     result
 }
 
-/// Orchid-owned roots are deliberately not registered with Codex's global skill discovery.
-/// We enumerate their immutable `SKILL.md` files locally and later deliver selected entries as
-/// explicit turn inputs.
-pub(super) fn append_owned_root_skills(result: &mut RuntimeQuickFeatures, roots: &[PathBuf]) {
+pub(super) fn append_codex_skills(
+    result: &mut RuntimeQuickFeatures,
+    catalogue: &crate::runtime::codex::app_server::skills::CodexSkillCatalogue,
+) {
+    result
+        .limitations
+        .extend(catalogue.limitations.iter().cloned());
+    let mut names =
+        BTreeMap::<&str, Vec<&crate::runtime::codex::app_server::skills::CodexSkill>>::new();
+    for skill in catalogue.skills.iter().filter(|skill| skill.enabled) {
+        names.entry(&skill.name).or_default().push(skill);
+    }
+    for (name, entries) in names {
+        if entries.len() != 1 {
+            result.limitations.push(format!("Skill '{name}' has multiple sources; choose a source explicitly in the Codex profile."));
+            continue;
+        }
+        let skill = entries[0];
+        result.skills.push(QuickSkill {
+            id: skill.path.clone(),
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            invocation_text: format!("${name}"),
+            group_id: "codex-profile-skills".into(),
+        });
+    }
+}
+
+/// Orchid-owned roots are not registered with Codex discovery. Selected entries are pinned
+/// for the session's read_skill broker.
+pub(super) fn append_owned_root_skills(
+    result: &mut RuntimeQuickFeatures,
+    roots: &[PathBuf],
+    group_id: &str,
+) {
     let mut discovered = BTreeMap::<String, String>::new();
     for root in roots {
         let Ok(entries) = std::fs::read_dir(root) else {
@@ -108,6 +106,7 @@ pub(super) fn append_owned_root_skills(result: &mut RuntimeQuickFeatures, roots:
             invocation_text: format!("${name}"),
             name,
             description: "Orchid-owned skill".into(),
+            group_id: group_id.into(),
         });
     }
 }

@@ -236,7 +236,9 @@ impl AgentSessionApplication {
                 agent_mcp_configuration: Default::default(),
                 node_profile: NodeProfile {
                     contract_version: 1,
-                    allowed_capabilities: super::super::configuration::default_node_capabilities(&capability),
+                    allowed_capabilities: super::super::configuration::default_node_capabilities(
+                        &capability,
+                    ),
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,
@@ -313,8 +315,11 @@ impl AgentSessionApplication {
             .map_err(AgentSessionApplicationError::invalid)?;
         let mut extension = reasoning_launch_extension(&resolution.selections).unwrap_or_default();
         extension.skill_inputs = selected_skills;
-        extension = super::super::configuration::pinned_exposure_extension(p.current_resolution.as_ref().expect("resolved creation"), extension)
-            .map_err(AgentSessionApplicationError::invalid)?;
+        extension = super::super::configuration::pinned_exposure_extension(
+            p.current_resolution.as_ref().expect("resolved creation"),
+            extension,
+        )
+        .map_err(AgentSessionApplicationError::invalid)?;
         let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);
@@ -337,6 +342,23 @@ impl AgentSessionApplication {
             .get_invocation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Invocation not found"))?;
+        if !destination.execution.is_remote() {
+            if let Some(extension) = extension.as_mut() {
+                for skill in self.direct_user_native_skill_inputs(
+                    &destination.execution.configuration_ref,
+                    Some(&destination.path),
+                    &invocation.submitted_text,
+                ) {
+                    if !extension
+                        .skill_inputs
+                        .iter()
+                        .any(|existing| existing.path == skill.path)
+                    {
+                        extension.skill_inputs.push(skill);
+                    }
+                }
+            }
+        }
         let sink = Arc::new(PreparationUpdateGate {
             inner: Arc::new(PersistedRuntimeUpdateSink::new(
                 self.repository.clone(),

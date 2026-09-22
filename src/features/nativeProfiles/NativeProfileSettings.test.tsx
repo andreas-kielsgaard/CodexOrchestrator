@@ -35,11 +35,26 @@ function client(overrides: Partial<NativeProfileClient> = {}): NativeProfileClie
     refreshReadiness: query,
     openInExplorer: async () => {},
     loadHarnessTools: async () => ({ entries: [], limitations: [] }),
+    loadSkills: async () => ({ skills: [], limitations: [] }),
     ...overrides,
   };
 }
 
 describe('NativeProfileSettings', () => {
+  it('discovers skills from the selected registered Codex profile without a session', async () => {
+    const user = userEvent.setup();
+    const loadSkills = vi.fn(async (profileId: string) => ({
+      skills: [{ name: `skill-${profileId}`, description: 'A discovered skill', path: `C:/skills/${profileId}/SKILL.md`, scope: 'user', enabled: true }],
+      limitations: [],
+    }));
+    render(<NativeProfileSettings client={client({ loadSkills })}/>);
+    expect(await screen.findByText('skill-p1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /C:\/Orchid\/profile-two/ }));
+    expect(await screen.findByText('skill-p2')).toBeInTheDocument();
+    expect(screen.queryByText('skill-p1')).not.toBeInTheDocument();
+    expect(loadSkills).toHaveBeenCalledWith('p1');
+    expect(loadSkills).toHaveBeenCalledWith('p2');
+  });
   it('uses a profile list as primary navigation and keeps the default indicator there', async () => {
     const user = userEvent.setup();
     render(<NativeProfileSettings client={client()}/>);

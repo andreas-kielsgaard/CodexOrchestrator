@@ -34,4 +34,5 @@ pub(crate) struct QuickSkill {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) invocation_text: String,
+    pub(crate) group_id: String,
 }

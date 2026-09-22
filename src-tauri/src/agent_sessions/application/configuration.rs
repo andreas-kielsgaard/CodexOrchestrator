@@ -44,24 +44,30 @@ pub(super) fn pinned_exposure_extension(
         pinned.session_skill_inputs(),
     )?;
     if !skills.is_empty() {
-        let manifest = skills.iter().map(|skill| format!(
-            "- {}: {}", skill.name, skill.description,
-        )).collect::<Vec<_>>().join("\n");
-        let context = format!("Orchid-approved skills for this session (not invoked automatically). Use the Orchid read_skill tool to read a selected skill when relevant:\n{manifest}");
+        let manifest = skills
+            .iter()
+            .map(|skill| format!("- {}: {}", skill.name, skill.description,))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let context = format!("Skills available to this session (not invoked automatically). Codex-discovered skills use $name; Orchid and OTP skills use read_skill:\n{manifest}");
         match extension.initial_prompt_prefix.as_mut() {
             Some(prefix) => prefix.content = format!("{}\n\n{}", prefix.content, context),
-            None => extension.initial_prompt_prefix = Some(InitialPromptPrefix {
-                source: "session_skill_manifest".into(),
-                version: 1,
-                content: context,
-            }),
+            None => {
+                extension.initial_prompt_prefix = Some(InitialPromptPrefix {
+                    source: "session_skill_manifest".into(),
+                    version: 1,
+                    content: context,
+                })
+            }
         }
     }
     extension.skill_inputs = skills;
     Ok(extension)
 }
 
-pub(super) fn default_node_capabilities(capability: &CapabilityProfile) -> crate::execution_configuration::CapabilitySet {
+pub(super) fn default_node_capabilities(
+    capability: &CapabilityProfile,
+) -> crate::execution_configuration::CapabilitySet {
     if capability.route_policies.is_empty() {
         capability.allowed_capabilities.clone()
     } else {
@@ -135,19 +141,41 @@ impl fmt::Display for SessionConfigurationError {
 impl Error for SessionConfigurationError {}
 
 impl AgentSessionApplication {
+    pub(super) fn direct_user_native_skill_inputs(
+        &self,
+        configuration_ref: &str,
+        cwd: Option<&str>,
+        submitted_text: &str,
+    ) -> Vec<crate::agent_sessions::ports::RuntimeSkillInput> {
+        if !submitted_text.contains('$') {
+            return Vec::new();
+        }
+        let Ok(source) = self.profile_source() else {
+            return Vec::new();
+        };
+        let Ok(catalogue) = source.discover_skills_for_configuration(configuration_ref, cwd) else {
+            return Vec::new();
+        };
+        crate::runtime::codex::app_server::skills::mentioned(submitted_text, &catalogue)
+            .into_iter()
+            .filter_map(|skill| crate::execution_configuration::pin_discovered_skill(skill).ok())
+            .collect()
+    }
+
     pub(super) fn compile_capability_skill_inputs(
         &self,
         capability: &CapabilityProfile,
         configuration_ref: &str,
         cwd: Option<&str>,
     ) -> Result<Vec<crate::agent_sessions::ports::RuntimeSkillInput>, String> {
-        let Some(route) = capability.route_policies.iter().find(|route| {
-            route.execution.configuration_ref == configuration_ref
-        }) else {
+        let Some(route) = capability
+            .route_policies
+            .iter()
+            .find(|route| route.execution.configuration_ref == configuration_ref)
+        else {
             return Ok(Vec::new());
         };
-        if route.skill_groups.is_empty()
-        {
+        if route.skill_groups.is_empty() {
             return Ok(Vec::new());
         }
         let source = self.profile_source().map_err(|error| error.to_string())?;
@@ -203,15 +231,17 @@ impl AgentSessionApplication {
         if capability.execution.is_remote() {
             return Err(SessionConfigurationError::new(SessionConfigurationErrorKind::InvalidInvocationSelection, "Select an existing remote worktree before starting a session with this Capability Profile"));
         }
-        let runtime = self
-            .capability_profiles
-            .as_ref()
-            .expect("default Capability Profile service is configured")
-            .runtime_for_binding(&capability.execution, working_directory)
-            .map_err(|error| SessionConfigurationError::new(
+        let runtime =
+            self.capability_profiles
+                .as_ref()
+                .expect("default Capability Profile service is configured")
+                .runtime_for_binding(&capability.execution, working_directory)
+                .map_err(|error| {
+                    SessionConfigurationError::new(
                 SessionConfigurationErrorKind::InvalidInvocationSelection,
                 format!("Cannot start session on the selected Capability Profile route: {error}"),
-            ))?;
+            )
+                })?;
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,

@@ -18,15 +18,29 @@ pub(crate) struct CapabilityProfileService {
 }
 
 impl CapabilityProfileService {
+    pub(crate) fn codex_skills_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<
+        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
+        CapabilityProfileServiceError,
+    > {
+        self.runtime_profile_source
+            .discover_skills_for_configuration(reference, cwd)
+            .map_err(|error| CapabilityProfileServiceError::RuntimeUnavailable(error.to_string()))
+    }
     pub(crate) fn model_catalogue(
         &self,
         reference: &str,
     ) -> Result<super::ModelCatalogueView, CapabilityProfileServiceError> {
         validate_identifier("Model catalogue", "configurationRef", reference)
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
-        let observation = self.runtime_profile_source.quick_features_for_configuration(reference, None);
+        let observation = self
+            .runtime_profile_source
+            .quick_features_for_configuration(reference, None);
         let (stored, observation_error) = match observation {
-            Ok(features) => {
+            Ok(features) if !features.models.is_empty() => {
                 let stored = super::StoredModelCatalogue {
                     observed_at: chrono::Utc::now().to_rfc3339(),
                     models: features.models,
@@ -34,7 +48,18 @@ impl CapabilityProfileService {
                 self.repository.save_model_catalogue(reference, &stored)?;
                 (Some(stored), None)
             }
-            Err(error) => (self.repository.model_catalogue(reference)?, Some(error.to_string())),
+            Ok(features) => (
+                self.repository.model_catalogue(reference)?,
+                Some(if features.limitations.is_empty() {
+                    "The selected runtime did not report any models.".into()
+                } else {
+                    features.limitations.join(" ")
+                }),
+            ),
+            Err(error) => (
+                self.repository.model_catalogue(reference)?,
+                Some(error.to_string()),
+            ),
         };
         Ok(super::ModelCatalogueView {
             configuration_ref: reference.into(),
@@ -353,7 +378,6 @@ impl CapabilityProfileService {
             .remove(capability_profile_id)
             .map_err(Into::into)
     }
-
 }
 
 fn selected_route_execution(
@@ -621,12 +645,16 @@ mod tests {
     #[test]
     fn saves_design_time_choices_without_observing_runtime() {
         let service = service();
-        let profile = service.create("wide".into(), "Wide".into(), allowed(&["unavailable"])).unwrap();
+        let profile = service
+            .create("wide".into(), "Wide".into(), allowed(&["unavailable"]))
+            .unwrap();
         assert!(profile.allowed_capabilities.models.contains("unavailable"));
 
         let mut excluding_lock = allowed(&["codex-a"]);
         excluding_lock.sandbox_modes.clear();
-        assert!(service.create("locked".into(), "Locked".into(), excluding_lock).is_ok());
+        assert!(service
+            .create("locked".into(), "Locked".into(), excluding_lock)
+            .is_ok());
     }
 
     #[test]
@@ -653,24 +681,43 @@ mod tests {
     fn failed_model_refresh_preserves_the_last_complete_route_catalogue() {
         struct FlakyModels(std::sync::atomic::AtomicBool);
         impl SelectedRuntimeProfileSource for FlakyModels {
-            fn selected_runtime_profile(&self) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-                Err(SelectedRuntimeProfileSourceError::unavailable("runtime offline"))
+            fn selected_runtime_profile(
+                &self,
+            ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+                Err(SelectedRuntimeProfileSourceError::unavailable(
+                    "runtime offline",
+                ))
             }
-            fn quick_features_for_configuration(&self, _: &str, _: Option<&str>) -> Result<crate::execution_configuration::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+            fn quick_features_for_configuration(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<
+                crate::execution_configuration::RuntimeQuickFeatures,
+                SelectedRuntimeProfileSourceError,
+            > {
                 if self.0.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(SelectedRuntimeProfileSourceError::unavailable("runtime offline"));
+                    return Err(SelectedRuntimeProfileSourceError::unavailable(
+                        "runtime offline",
+                    ));
                 }
                 Ok(crate::execution_configuration::RuntimeQuickFeatures {
                     models: vec![crate::execution_configuration::QuickModel {
-                        id: "known-model".into(), label: "Known model".into(), description: String::new(),
-                        default_reasoning_mode: Some("low".into()), reasoning_modes: vec![],
+                        id: "known-model".into(),
+                        label: "Known model".into(),
+                        description: String::new(),
+                        default_reasoning_mode: Some("low".into()),
+                        reasoning_modes: vec![],
                     }],
                     ..Default::default()
                 })
             }
         }
         let source = Arc::new(FlakyModels(std::sync::atomic::AtomicBool::new(true)));
-        let service = CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()), source.clone());
+        let service = CapabilityProfileService::new(
+            Arc::new(InMemoryCapabilityProfileRepository::default()),
+            source.clone(),
+        );
         let empty = service.model_catalogue("home-one").unwrap();
         assert!(empty.observed_at.is_none());
         assert!(empty.models.is_empty());

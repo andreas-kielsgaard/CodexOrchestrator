@@ -116,7 +116,9 @@ impl AgentSessionApplication {
                     agent_mcp_configuration: Default::default(),
                     node_profile: NodeProfile {
                         contract_version: 1,
-                        allowed_capabilities: super::configuration::default_node_capabilities(&capability),
+                        allowed_capabilities: super::configuration::default_node_capabilities(
+                            &capability,
+                        ),
                         pinned_defaults: Default::default(),
                     },
                     capability_profile: capability,
@@ -248,6 +250,39 @@ impl AgentSessionApplication {
         let mut launch_extension =
             reasoning_launch_extension(&invocation_resolution.selections).unwrap_or_default();
         launch_extension.skill_inputs = selected_skills;
+        if let Ok(history) = self.load_session(&command.session_id) {
+            let reference = history
+                .session
+                .execution_target
+                .as_ref()
+                .map(|target| target.execution.configuration_ref.as_str())
+                .or_else(|| {
+                    history
+                        .session
+                        .session_profile
+                        .as_ref()
+                        .and_then(|profile| {
+                            profile
+                                .session_profile()
+                                .runtime_profile_ref()
+                                .strip_prefix("native-codex:")
+                        })
+                })
+                .unwrap_or("selected");
+            for skill in self.direct_user_native_skill_inputs(
+                reference,
+                history.session.working_directory.as_deref(),
+                &command.submitted_text,
+            ) {
+                if !launch_extension
+                    .skill_inputs
+                    .iter()
+                    .any(|existing| existing.path == skill.path)
+                {
+                    launch_extension.skill_inputs.push(skill);
+                }
+            }
+        }
         let acknowledgement = self
             .send_message_with_launch_extension(
                 SendAgentSessionMessageCommand {

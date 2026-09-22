@@ -238,6 +238,22 @@ impl SessionNavigationService {
         folder_target: Option<&SessionFolderTarget>,
         execution_target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
     ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, String> {
+        self.load_quick_features_for_configuration(
+            session_id,
+            working_directory,
+            folder_target,
+            execution_target,
+            None,
+        )
+    }
+    pub(crate) fn load_quick_features_for_configuration(
+        &self,
+        session_id: Option<&AgentSessionId>,
+        working_directory: Option<&str>,
+        folder_target: Option<&SessionFolderTarget>,
+        execution_target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
+        configuration_ref: Option<&str>,
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, String> {
         let folder_directory = if session_id.is_none() && execution_target.is_none() {
             folder_target
                 .map(|target| self.working_directory_for_folder(target))
@@ -245,10 +261,11 @@ impl SessionNavigationService {
         } else {
             None
         };
-        self.sessions.load_quick_features(
+        self.sessions.load_quick_features_for_configuration(
             session_id,
             folder_directory.as_deref().or(working_directory),
             execution_target,
+            configuration_ref,
         )
     }
     pub(crate) fn start_session(

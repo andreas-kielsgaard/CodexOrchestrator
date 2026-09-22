@@ -22,6 +22,14 @@ pub trait CodexEnvironmentSource: Send + Sync {
         home: PathBuf,
         cwd: Option<PathBuf>,
     ) -> Result<CodexEnvironment, RuntimePortError>;
+    fn discover_skills(
+        &self,
+        home: PathBuf,
+        cwd: Option<PathBuf>,
+    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+        self.read(home, cwd)
+            .map(|environment| super::skills::project(&environment.skills))
+    }
     fn inventory(
         &self,
         _home: PathBuf,
@@ -49,6 +57,7 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
         home: PathBuf,
         cwd: Option<PathBuf>,
     ) -> Result<CodexEnvironment, RuntimePortError> {
+        let context = cwd.clone().unwrap_or_else(|| home.clone());
         self.with_connection(home, cwd.clone(), |connection| {
             let config = connection.call("config/read", json!({"cwd":cwd,"includeLayers":true}))?;
             let requirements = connection.call("configRequirements/read", json!({}))?;
@@ -67,16 +76,24 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
                     break;
                 }
             }
-            let skills = connection.call(
-                "skills/list",
-                json!({"cwds":cwd.into_iter().collect::<Vec<_>>(),"forceReload":true}),
-            )?;
+            let skills = super::skills::read_response(connection, &context)?;
             Ok(CodexEnvironment {
                 models: Value::Array(models),
                 skills,
                 config,
                 requirements,
             })
+        })
+    }
+
+    fn discover_skills(
+        &self,
+        home: PathBuf,
+        cwd: Option<PathBuf>,
+    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+        let context = cwd.clone().unwrap_or_else(|| home.clone());
+        self.with_connection(home, cwd, |connection| {
+            super::skills::read(connection, &context)
         })
     }
 
