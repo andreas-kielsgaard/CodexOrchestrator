@@ -3,7 +3,9 @@
 Status: implementation shape, 2026-09-20. The local usability slice is implemented: composer
 draft recovery, Agent Sessions return location, local Codex harness/source projection, profile
 route selection, and the app-server protocol fix. The Coordinator, Device Agent, and shared
-catalogue migration remain planned work.
+catalogue migration remain planned work. For current Capability Profile configuration-versus-runtime
+corrections, use `profile-and-worktree-review-correction-plan.md`; any save-time runtime-readiness
+requirement below is superseded.
 
 ## Target
 

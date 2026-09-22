@@ -1,6 +1,6 @@
 # Capability Policy and Session Materialization
 
-Status: proposed implementation shape, 2026-09-20.
+Status: superseded for current correction work by `profile-and-worktree-review-correction-plan.md`, 2026-09-22. Its live save-time validation and model/reasoning enforcement proposals are not current requirements.
 
 ## Purpose and scope
 
