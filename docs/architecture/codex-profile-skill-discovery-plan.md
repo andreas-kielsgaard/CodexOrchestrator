@@ -1,0 +1,28 @@
+# Codex profile skill discovery
+
+Status: proposed implementation shape, 2026-09-22. Planning only.
+
+## Target and boundary
+
+Registering a local Codex profile makes its Codex-discovered skills inspectable in Technical Settings and available to Orchid's `/skills` picker without starting an Agent Session or selecting a Capability Profile. A working directory adds repository-scoped skills when one is known. Capability Profile skill-group toggles still decide which skills enter a new profiled session's pinned manifest; discovery itself is not a policy decision. Preserve manual-session choices and the existing per-session Orchid/OTP reader. Remote device discovery remains outside this slice.
+
+Use the configured Codex profile as the `CODEX_HOME` context for Codex app-server `skills/list`. The Codex group means skills reported by that Codex runtime, not only files beneath `<CODEX_HOME>/skills`. A missing CLI or failed discovery produces a visible diagnostic, not an empty-success list; profile registration and Capability Profile saving remain possible.
+
+## Ownership and changes
+
+1. **One native skill catalogue.** Extract the `skills/list` call and projection from `crates/orchid-engine/src/codex/app_server/{environment,inventory}.rs` into a focused skill-discovery module using the existing supervised app-server connection. Return enabled state, name, description, path, scope/source, and discovery errors. Query with the registered home and a home/default working context when no project is selected; add the actual session/project cwd when known. Do not make this request depend on `model/list`, login, MCP inventory, or a running session. Remove the duplicate skill parsing from the two existing readers. No new package or filesystem scanner is needed.
+2. **Expose registration-level discovery.** Add a narrow read endpoint through `src-tauri/src/execution_configuration/{native_codex,transport}.rs` for a registered configuration reference and optional cwd. Adapt `src/features/nativeProfiles/CodexProfilesScreen.tsx` and its client to show a distinct **Codex skills** list/count and refresh status for the selected profile. Keep the existing Harness-provided tools section for tools; do not bury skills in it or treat a failed probe as failed registration.
+3. **Compile by provenance, not path guesswork.** Adapt `src-tauri/src/execution_configuration/{ports,session_skills,native_codex}.rs`: `codex-profile-skills` selects enabled entries in the configured Codex skill catalogue, including Codex-discovered user, system, plugin, and cwd-scoped skills outside `<CODEX_HOME>/skills`. Orchid/OTP groups continue to use their registered roots. Pin exact skill paths and content fingerprints at session creation, then apply any narrower node selection. Rename the profile-editor group to **Skills discovered by Codex** and explain that its toggle controls session inclusion, not discovery. Do not require a successful probe to save a Capability Profile.
+4. **Make `/skills` consume the right context.** Adapt `src-tauri/src/agent_sessions/application/quick_features.rs`, `src-tauri/src/session_navigation/application.rs`, and `src/features/agentSessions/{useAgentSession,selectedTargetQuickFeatures,composerQuickActions}.ts*` so a new manual draft can list skills from its selected registered Codex profile before workspace preparation; a known cwd adds project skills. An existing session uses its pinned route/configuration for discovery. For older sessions without a pinned profile, use the durable native-profile binding when present, otherwise show a clear fallback/unavailable state without rewriting history. Show loading, empty, and discovery-error states distinctly. Do not filter the manual picker by Capability Profile model/reasoning settings.
+5. **Keep choices usable.** A chosen native Codex skill should carry its exact path as an explicit `skill` turn input only for that user invocation, alongside visible `$name` text; do not attach every allowed skill to every turn. Keep Orchid/OTP choices on the existing manifest-authorized `read_skill` path rather than pretending Codex's native `$name` lookup owns those roots. Adapt `crates/orchid-engine/src/codex/app_server/mod.rs` and the direct-user send contract only as needed for that distinction. Preserve the unsent composer draft and selected choice across tab changes.
+
+## Verification
+
+- A registered Codex home with no Capability Profile lists its Codex skills in Technical Settings and `/skills` for a new local draft; project skills appear when a repository cwd is selected. Repeat with a second registered home to prove the chosen configuration is used.
+- A profile with the Codex skill group off still permits discovery, but compiles none of that group into a new profiled session. With it on, a skill outside `<CODEX_HOME>/skills` is pinned and readable. A node subset narrows the manifest. Old sessions without pinned profiles retain usable discovery or an explicit reason it is unavailable.
+- A user-selected native skill produces one explicit `skill` input on that turn only. An Orchid/OTP selection reads through the authorized reader. Duplicate names remain distinguishable by source/path and cannot silently invoke the wrong file.
+- Focused Rust/frontend tests cover missing CLI, discovery errors, no cwd, changed skill files, and the two picker contexts. Launch the app and check `/skills`, then verify one actual native skill invocation and one reader-backed invocation. Do not claim Codex-native skill masking without observing it.
+
+## Not in this slice
+
+No new skill scanner, copied or symlinked session roots, child sidecars, broad model/reasoning enforcement, remote Orchid Network support, or automatic invocation of every discovered skill.
