@@ -13,9 +13,9 @@ use crate::{
         },
         domain::{
             AgentInvocation, AgentInvocationId, AgentInvocationStatus, AgentRuntimeEvent,
-            AgentSessionId, NormalizedRuntimeEventKind,
+            AgentRuntimeOptions, AgentSessionId, NormalizedRuntimeEventKind, RuntimeSandboxMode,
         },
-        ports::{AgentSessionHistory, AgentSessionRepository},
+        ports::{AgentSessionHistory, AgentSessionRepository, RuntimeLaunchExtension},
         repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
     },
     runtime::codex::{CodexCliCapabilities, CodexCliCapabilityProbe, CodexCliRuntime},
@@ -730,6 +730,155 @@ impl LiveSmokeDriver {
         Ok(())
     }
 
+    fn launch_parallel_probe(
+        &mut self,
+        title: &str,
+        prompt: &str,
+        config_overrides: Vec<String>,
+    ) -> Result<(AgentSessionId, AgentInvocationId), String> {
+        let invocation_id = self.application()?.allocate_application_invocation_id();
+        let launch = self
+            .application()?
+            .send_idempotent_application_message_with_launch_observation(
+                SendIdempotentApplicationAgentSessionMessageCommand {
+                    invocation_id: invocation_id.clone(),
+                    message: SendAgentSessionMessageCommand {
+                        session_id: None,
+                        submitted_text: prompt.into(),
+                        title: Some(title.into()),
+                        working_directory: Some(
+                            self.environment
+                                .workspace_path
+                                .to_string_lossy()
+                                .into_owned(),
+                        ),
+                        requested_options: Some(AgentRuntimeOptions {
+                            model: Some("gpt-5.6-luna".into()),
+                            sandbox: Some(RuntimeSandboxMode::ReadOnly),
+                        }),
+                    },
+                },
+                Some(RuntimeLaunchExtension {
+                    config_overrides,
+                    ..RuntimeLaunchExtension::default()
+                }),
+            )
+            .map_err(|error| format!("launch {title}: {error}"))?;
+        if !launch.launch_accepted {
+            return Err(format!("{title} was not launch accepted"));
+        }
+        self.evidence.invocations_launched += 1;
+        self.known_invocations.push(invocation_id.clone());
+        let session_id = launch.acknowledgement.session_id;
+        let terminal = self.wait_for_terminal(&session_id, &invocation_id)?;
+        if terminal.status != AgentInvocationStatus::Completed {
+            return Err(classify_terminal_failure(title, &terminal));
+        }
+        Ok((session_id, invocation_id))
+    }
+
+    fn execute_parallel_tool_calling_probe(&mut self) -> Result<(), String> {
+        self.compose_fresh_application()?;
+        for (name, contents) in [
+            ("alpha.txt", "alpha marker\n"),
+            ("beta.txt", "beta marker\n"),
+            ("gamma.txt", "gamma marker\n"),
+            ("delta.txt", "delta marker\n"),
+        ] {
+            std::fs::write(self.environment.workspace_path.join(name), contents)
+                .map_err(|error| format!("write shell probe fixture {name}: {error}"))?;
+        }
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "parallel probe has no repository root".to_string())?
+            .join("scripts/parallel-tool-calling-mcp.py")
+            .canonicalize()
+            .map_err(|error| format!("resolve parallel probe server: {error}"))?;
+        let log = self.environment.root().join("orchid-mcp-parallel.jsonl");
+        let quoted = |value: &str| serde_json::to_string(value).expect("probe value serializes");
+        let mcp_overrides = vec![
+            "mcp_servers.parallel_probe.command=\"python\"".into(),
+            format!(
+                "mcp_servers.parallel_probe.args=[{}]",
+                quoted(&script.to_string_lossy())
+            ),
+            format!(
+                "mcp_servers.parallel_probe.env.ORCHID_PARALLEL_PROBE_LOG={}",
+                quoted(&log.to_string_lossy())
+            ),
+            "mcp_servers.parallel_probe.env.ORCHID_PARALLEL_PROBE_RUN=\"orchid-baseline\""
+                .into(),
+            "mcp_servers.parallel_probe.required=true".into(),
+            "mcp_servers.parallel_probe.default_tools_approval_mode=\"approve\"".into(),
+        ];
+        let (mcp_session, mcp_invocation) = self.launch_parallel_probe(
+            "Orchid MCP parallel probe",
+            "Call inspect_alpha, inspect_beta, inspect_gamma, and inspect_delta exactly once each. Do not use shell or other tools. Then report the four returned markers.",
+            mcp_overrides,
+        )?;
+        let mcp_events = std::fs::read_to_string(&log)
+            .map_err(|error| format!("read parallel probe log: {error}"))?;
+        let (shell_baseline_session, shell_baseline_invocation) = self.launch_parallel_probe(
+            "Orchid shell parallel baseline",
+            "Read the first non-empty line from alpha.txt, beta.txt, gamma.txt, and delta.txt. Do not modify files. Return one labeled line per file.",
+            Vec::new(),
+        )?;
+        let developer_instructions = "For a bounded inspection stage whose inputs are already known and independent, use one exec program and run separate exec_command calls concurrently with Promise.all. Keep calls sequential when a result determines the next action.";
+        let (shell_session, shell_invocation) = self.launch_parallel_probe(
+            "Orchid developer-instruction parallel probe",
+            "Read the first non-empty line from alpha.txt, beta.txt, gamma.txt, and delta.txt. Do not modify files. Return one labeled line per file.",
+            vec![format!(
+                "developer_instructions={}",
+                quoted(developer_instructions)
+            )],
+        )?;
+        let mcp_history = self
+            .application()?
+            .load_session(&mcp_session)
+            .map_err(|error| error.to_string())?;
+        let shell_history = self
+            .application()?
+            .load_session(&shell_session)
+            .map_err(|error| error.to_string())?;
+        let shell_baseline_history = self
+            .application()?
+            .load_session(&shell_baseline_session)
+            .map_err(|error| error.to_string())?;
+        let external_context = |history: &AgentSessionHistory| {
+            history
+                .session
+                .runtime_binding
+                .external_context_id
+                .as_ref()
+                .map(|id| id.as_str().to_string())
+                .ok_or_else(|| "parallel probe completed without a Codex thread ID".to_string())
+        };
+        println!(
+            "ORCHID_PARALLEL_TOOL_CALLING_EVIDENCE={}",
+            serde_json::json!({
+                "model": "gpt-5.6-luna",
+                "mcp": {
+                    "sessionId": mcp_session.as_str(),
+                    "invocationId": mcp_invocation.as_str(),
+                    "codexThreadId": external_context(&mcp_history)?,
+                    "serverEvents": mcp_events.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).collect::<Vec<_>>()
+                },
+                "shellBaseline": {
+                    "sessionId": shell_baseline_session.as_str(),
+                    "invocationId": shell_baseline_invocation.as_str(),
+                    "codexThreadId": external_context(&shell_baseline_history)?
+                },
+                "developerInstructionShell": {
+                    "sessionId": shell_session.as_str(),
+                    "invocationId": shell_invocation.as_str(),
+                    "codexThreadId": external_context(&shell_history)?
+                }
+            })
+        );
+        self.close_current_runtime()?;
+        Ok(())
+    }
+
     fn cleanup_after_failure(&mut self) {
         if self.close_current_runtime().is_err() {
             self.evidence.cleanup.shutdown_completed = false;
@@ -998,6 +1147,22 @@ fn agent_session_launch_acceptance_live_smoke_driver() {
         .write_evidence()
         .expect("write redacted launch-acceptance live smoke evidence");
     result.expect("Agent Session launch-acceptance live smoke proof")
+}
+
+#[test]
+#[ignore = "requires CODEX_AGENT_SESSION_LIVE_SMOKE=true and launches three real Lunar Codex invocations"]
+fn agent_session_parallel_tool_calling_live_probe() {
+    let config = LiveSmokeConfig::from_environment().expect("valid live smoke environment");
+    assert!(
+        config.enabled,
+        "refusing live probe: set {LIVE_SMOKE_OPT_IN_ENV}=true explicitly"
+    );
+    let mut driver = LiveSmokeDriver::new(config).expect("create live probe driver");
+    let result = driver.execute_parallel_tool_calling_probe();
+    if result.is_err() {
+        driver.cleanup_after_failure();
+    }
+    result.expect("Agent Session parallel-tool-calling probe")
 }
 
 #[cfg(test)]

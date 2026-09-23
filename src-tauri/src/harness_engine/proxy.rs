@@ -850,7 +850,15 @@ mod tests {
                                         .lock()
                                         .unwrap()
                                         .iter()
-                                        .map(|name| json!({"name": name, "description": name, "inputSchema": {"type": "object"}}))
+                                        .map(|name| json!({
+                                            "name": name,
+                                            "description": name,
+                                            "inputSchema": {"type": "object"},
+                                            "annotations": {
+                                                "readOnlyHint": name == "allowed",
+                                                "openWorldHint": false
+                                            }
+                                        }))
                                         .collect::<Vec<_>>();
                                     json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}})
                                 }
@@ -1177,6 +1185,10 @@ mod tests {
         .await;
         assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 1);
         assert_eq!(listed["result"]["tools"][0]["name"], "allowed");
+        assert_eq!(
+            listed["result"]["tools"][0]["annotations"],
+            json!({"readOnlyHint": true, "openWorldHint": false})
+        );
 
         let denied = rpc(&url, json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"blocked","arguments":{}}})).await;
         assert_eq!(denied["result"]["isError"], true);

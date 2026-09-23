@@ -5029,7 +5029,7 @@ struct EpicRunnerEscalationReassessmentMcp { service:Arc<SprintRunnerTransitionS
 impl EpicRunnerEscalationReassessmentMcp { fn new(service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId)->Self{Self{service,invocation_id,tool_router:Self::tool_router()}} }
 struct EpicRunnerSprintResultReassessmentMcp { service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId,tool_router:ToolRouter<Self> }
 impl EpicRunnerSprintResultReassessmentMcp { fn new(service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId)->Self{Self{service,invocation_id,tool_router:Self::tool_router()}} }
-#[tool_router] impl EpicRunnerEscalationReassessmentMcp { #[tool(description="Read only the application-correlated accepted Epic plan horizon, current Sprint state, concern, known dependencies, and other available Epic work. Input is ONLY {}.")] fn read_epic_escalation_reassessment_context(&self)->CallToolResult{match self.service.epic_escalation_reassessment_context(&self.invocation_id){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.to_string())]),Err(SprintRunnerTransitionError::Forbidden)=> {
+#[tool_router] impl EpicRunnerEscalationReassessmentMcp { #[tool(description="Read only the application-correlated accepted Epic plan horizon, current Sprint state, concern, known dependencies, and other available Epic work. Input is ONLY {}.", annotations(read_only_hint = true, open_world_hint = false))] fn read_epic_escalation_reassessment_context(&self)->CallToolResult{match self.service.epic_escalation_reassessment_context(&self.invocation_id){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.to_string())]),Err(SprintRunnerTransitionError::Forbidden)=> {
                 CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")])
             }
             Err(SprintRunnerTransitionError::Conflict)=> {
@@ -5046,7 +5046,7 @@ impl EpicRunnerSprintResultReassessmentMcp { fn new(service:Arc<SprintRunnerTran
             }
             Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"unavailable\"}")] )}} }
 #[tool_handler(router=self.tool_router)] impl ServerHandler for EpicRunnerEscalationReassessmentMcp { fn get_info(&self)->ServerInfo{ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions("Read the bounded Epic reassessment context, then record one concern-preserving disposition. A request is not delivery, activation, or continuation. No Sprint selection/start, settlement, completion, or acceptance action is available.")} }
-#[tool_router] impl EpicRunnerSprintResultReassessmentMcp { #[tool(description="Read only the exact application-correlated Sprint-result reassessment context. Input is ONLY {}.")] fn read_epic_sprint_result_reassessment_context(&self)->CallToolResult{match self.service.strict_sprint_result_context(&self.invocation_id){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.to_string())]),Err(SprintRunnerTransitionError::Forbidden)=> {
+#[tool_router] impl EpicRunnerSprintResultReassessmentMcp { #[tool(description="Read only the exact application-correlated Sprint-result reassessment context. Input is ONLY {}.", annotations(read_only_hint = true, open_world_hint = false))] fn read_epic_sprint_result_reassessment_context(&self)->CallToolResult{match self.service.strict_sprint_result_context(&self.invocation_id){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.to_string())]),Err(SprintRunnerTransitionError::Forbidden)=> {
                 CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")])
             }
             Err(SprintRunnerTransitionError::Conflict)=> {
@@ -5153,7 +5153,7 @@ impl SprintHandbackReassessmentMcp { fn new(service: Arc<SprintRunnerTransitionS
                 CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"conflict\"}")])
             }
             Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"invalid_or_unavailable\"}")] )}} }
-#[tool_router] impl SprintHandbackReassessmentMcp { #[tool(description="Read only the application-bound no-progress concern and aggregate current Sprint work state. Input is ONLY {}.")] fn read_sprint_handback_reassessment_context(&self)->CallToolResult{match self.service.handback_reassessment_context(&self.invocation_id){Ok((_,context))=> {
+#[tool_router] impl SprintHandbackReassessmentMcp { #[tool(description="Read only the application-bound no-progress concern and aggregate current Sprint work state. Input is ONLY {}.", annotations(read_only_hint = true, open_world_hint = false))] fn read_sprint_handback_reassessment_context(&self)->CallToolResult{match self.service.handback_reassessment_context(&self.invocation_id){Ok((_,context))=> {
                 CallToolResult::success(vec![ContentBlock::text(context.to_string())])
             }
             Err(error)=>Self::result(Err(error),"handback_reassessment_context")}} #[tool(description="Record one identity-free, concern-preserving next movement. Known movementKind values are continue_eligible_work, wait_for_agent_dependency, and local_exhaustion_escalate; other safe bounded kinds remain extensible. This does not settle the concern or activate an Epic receiver.")] fn record_sprint_handback_disposition(&self,Parameters(input):Parameters<SprintHandbackDisposition>)->CallToolResult{Self::result(self.service.record_handback_disposition(&self.invocation_id,input),"handback_disposition_recorded")} }
@@ -5162,7 +5162,7 @@ impl SprintHandbackReassessmentMcp { fn new(service: Arc<SprintRunnerTransitionS
 struct WorkSlicePlannerMcp { service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId,tool_router:ToolRouter<Self> }
 impl WorkSlicePlannerMcp {fn new(service:Arc<SprintRunnerTransitionService>,invocation_id:AgentInvocationId)->Self{Self{service,invocation_id,tool_router:Self::tool_router()}}fn rejected(error:SprintRunnerTransitionError)->CallToolResult{let code=match error{SprintRunnerTransitionError::Forbidden=>"forbidden",SprintRunnerTransitionError::Invalid=>"invalid",SprintRunnerTransitionError::Conflict=>"conflict",SprintRunnerTransitionError::Unavailable(_)=>"unavailable"};CallToolResult::success(vec![ContentBlock::text(serde_json::json!({"status":"rejected","code":code}).to_string())])}}
 #[tool_router] impl WorkSlicePlannerMcp {
- #[tool(description="Read the exact application-bound planning context. Input is ONLY {}.")]
+ #[tool(description="Read the exact application-bound planning context. Input is ONLY {}.", annotations(read_only_hint = true, open_world_hint = false))]
  fn read_current_planning_context(&self)->CallToolResult{match self.service.read_work_slice_planning_context(&self.invocation_id){Ok(context)=>CallToolResult::success(vec![ContentBlock::text(context.to_string())]),Err(error)=>Self::rejected(error)}}
  #[tool(description="Submit a bounded proposal. Input has only objective and proposal-local lanes {title,specification,dependsOn}; no identities, tokens, routes, Work Unit IDs, idempotency key, or acceptance.")]
  fn submit_work_slice_proposal(&self,Parameters(input):Parameters<WorkSliceProposal>)->CallToolResult{match self.service.submit_work_slice_proposal(&self.invocation_id,input){Ok(result)=>CallToolResult::success(vec![ContentBlock::text(result.to_string())]),Err(error)=>Self::rejected(error)}}
@@ -5203,7 +5203,7 @@ impl WorkUnitHandlerReviewMcp { fn new(service:Arc<SprintRunnerTransitionService
                 CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"forbidden\"}")])
             }
             Err(_)=>CallToolResult::success(vec![ContentBlock::text("{\"status\":\"rejected\",\"code\":\"invalid_or_unavailable\"}")] )}} }
-#[tool_router] impl WorkUnitHandlerReviewMcp { #[tool(description="Read the exact application-delivered claims and bounded evidence for this review invocation. Input is ONLY {}.")] fn read_handler_review_evidence(&self)->CallToolResult{match self.service.handler_review_context(&self.invocation_id,true){Ok(context)=> {
+#[tool_router] impl WorkUnitHandlerReviewMcp { #[tool(description="Read the exact application-delivered claims and bounded evidence for this review invocation. Input is ONLY {}.", annotations(read_only_hint = true, open_world_hint = false))] fn read_handler_review_evidence(&self)->CallToolResult{match self.service.handler_review_context(&self.invocation_id,true){Ok(context)=> {
                 CallToolResult::success(vec![ContentBlock::text(context.delivered_payload_json)])
             }
             Err(error)=>Self::result(Err(error),"review_evidence")}} #[tool(description="Accept the exact application-bound implementation outcome. Input is ONLY {} and acceptance remains pending until this exact review invocation is observed Completed.")] fn accept_implementation_outcome(&self)->CallToolResult{Self::result(self.service.record_handler_review_judgment(&self.invocation_id,"accept",None),"review_acceptance_recorded")} #[tool(description="Return the exact application-bound incomplete outcome with {code,explanation,classification,meaningfulProgress}. This records a disposition only; it never launches a later attempt or contacts an upward receiver.")] fn return_implementation_outcome(&self,Parameters(disposition):Parameters<HandlerReviewIncompleteDisposition>)->CallToolResult{Self::result(self.service.record_handler_incomplete_disposition(&self.invocation_id,disposition),"incomplete_disposition_recorded")} }
@@ -5469,5 +5469,59 @@ mod handback_disposition_tests {
         let mut unsafe_request = request;
         unsafe_request.movement_kind = "human_or_external_attention".into();
         assert!(matches!(validate_epic_escalation_disposition(&unsafe_request), Err(SprintRunnerTransitionError::Invalid)));
+    }
+}
+
+#[cfg(test)]
+mod mcp_tool_annotation_tests {
+    use super::{
+        EpicRunnerEscalationReassessmentMcp, EpicRunnerSprintResultReassessmentMcp,
+        SprintHandbackReassessmentMcp, WorkSlicePlannerMcp, WorkUnitHandlerReviewMcp,
+    };
+
+    fn assert_closed_world_read_only<S>(
+        router: rmcp::handler::server::router::tool::ToolRouter<S>,
+        tool_name: &str,
+    ) {
+        let annotations = router.map[tool_name]
+            .attr
+            .annotations
+            .as_ref()
+            .expect("read-only Orchid MCP tools declare annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
+    }
+
+    #[test]
+    fn application_owned_read_tools_publish_parallel_eligibility_metadata() {
+        assert_closed_world_read_only(
+            EpicRunnerEscalationReassessmentMcp::tool_router(),
+            "read_epic_escalation_reassessment_context",
+        );
+        assert_closed_world_read_only(
+            EpicRunnerSprintResultReassessmentMcp::tool_router(),
+            "read_epic_sprint_result_reassessment_context",
+        );
+        assert_closed_world_read_only(
+            SprintHandbackReassessmentMcp::tool_router(),
+            "read_sprint_handback_reassessment_context",
+        );
+        assert_closed_world_read_only(
+            WorkSlicePlannerMcp::tool_router(),
+            "read_current_planning_context",
+        );
+        assert_closed_world_read_only(
+            WorkUnitHandlerReviewMcp::tool_router(),
+            "read_handler_review_evidence",
+        );
+    }
+
+    #[test]
+    fn state_changing_tools_are_not_promoted_to_read_only() {
+        let router = WorkSlicePlannerMcp::tool_router();
+        assert!(router.map["submit_work_slice_proposal"]
+            .attr
+            .annotations
+            .is_none());
     }
 }
