@@ -21,10 +21,7 @@ export function createTauriWorkflowAuthoringClient(
       invokeCommand<WorkflowRecipeStateDto>('load_workflow_recipe', {
         input: { recipeId },
       }),
-    createRecipe: (name) =>
-      invokeCommand<WorkflowRecipeStateDto>('create_workflow_recipe', {
-        input: { name },
-      }),
+    createRecipe: () => invokeCommand<WorkflowRecipeStateDto>('create_workflow_recipe'),
     saveDraft: (draft) =>
       invokeCommand<WorkflowRecipeStateDto>('save_workflow_recipe_draft', {
         input: { draft },

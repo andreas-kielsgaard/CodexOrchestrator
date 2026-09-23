@@ -58,12 +58,11 @@ export const repairProfile: CapabilityProfileDto = {
 };
 export function repairRecipe(id = 'review', name = 'Review workflow'): WorkflowRecipeStateDto {
   const draft: WorkflowRecipeStateDto['draft'] = {
-    contractVersion: 2,
-    entryAction: { package: 'workflow', tool: 'prompt_agent' },
+    contractVersion: 3,
     recipeId: id,
     name,
     revision: 1,
-    startingNodeId: 'author',
+    entryNodeIds: ['author'],
     nodes: ['author', 'reviewer'].map((nodeId, index) => ({
       nodeId,
       name: index ? 'Reviewer' : 'Author',
@@ -139,8 +138,8 @@ export function repairClients() {
         updatedAt,
       })),
     loadRecipe: async (id) => structuredClone(states.find((state) => state.draft.recipeId === id)!),
-    createRecipe: async (name) => {
-      const state = repairRecipe(crypto.randomUUID(), name);
+    createRecipe: async () => {
+      const state = repairRecipe(crypto.randomUUID(), '');
       states.push(state);
       return structuredClone(state);
     },

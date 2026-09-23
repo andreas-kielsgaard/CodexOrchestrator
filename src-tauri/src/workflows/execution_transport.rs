@@ -48,7 +48,6 @@ pub(crate) fn dispatch_workflow_user_request(
 pub(crate) struct CreateRecipeInstanceInput {
     recipe_id: String,
     expected_revision: u64,
-    name: String,
     target: super::instance_domain::ResolvedRepoBranchWorktreeTarget,
 }
 
@@ -74,7 +73,6 @@ pub(crate) fn create_workflow_recipe_instance(
     state.service.create_instance(
         &input.recipe_id,
         input.expected_revision,
-        input.name,
         input.target,
     )
 }

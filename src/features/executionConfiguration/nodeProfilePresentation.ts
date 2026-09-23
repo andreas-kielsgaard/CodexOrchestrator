@@ -17,11 +17,11 @@ export function nodeProfileCatalogs(
   ceiling?: CapabilitySetDto,
 ): RuntimeCapabilityCatalogs {
   return {
-    models: restrict(runtime.models, ceiling?.models ?? []),
-    reasoningModes: restrict(runtime.reasoningModes, ceiling?.reasoningModes ?? []),
-    sandboxModes: restrict(runtime.sandboxModes, ceiling?.sandboxModes ?? []),
-    mcpTools: restrict(runtime.mcpTools, selectedMcpToolValues(ceiling?.mcpTools ?? {})),
-    skills: restrict(runtime.skills, ceiling?.skills ?? []),
+    models: { ...restrict(runtime.models, ceiling?.models ?? []), sourceLabel: undefined },
+    reasoningModes: { ...restrict(runtime.reasoningModes, ceiling?.reasoningModes ?? []), sourceLabel: undefined },
+    sandboxModes: { ...restrict(runtime.sandboxModes, ceiling?.sandboxModes ?? []), sourceLabel: undefined },
+    mcpTools: { ...restrict(runtime.mcpTools, selectedMcpToolValues(ceiling?.mcpTools ?? {})), sourceLabel: undefined },
+    skills: { ...restrict(runtime.skills, ceiling?.skills ?? []), sourceLabel: undefined },
   };
 }
 

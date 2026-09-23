@@ -21,7 +21,7 @@ export function instanceGraphNodes(details: WorkflowInstanceDetails): readonly W
     name: node.name,
     x: node.positionX,
     y: node.positionY,
-    starting: details.instance.recipe.startingNodeId === node.nodeId,
+    entry: details.instance.recipe.entryNodeIds.includes(node.nodeId),
   }));
 }
 

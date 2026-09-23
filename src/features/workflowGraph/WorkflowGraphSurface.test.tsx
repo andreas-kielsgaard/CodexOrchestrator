@@ -10,6 +10,7 @@ it('shares selectable nodes and connections without owning feature behavior', ()
   ];
   const connections = [
     { id: 'review', name: 'Review handoff', source: 'author', destination: 'reviewer' },
+    { id: 'revise', name: 'Revision request', source: 'reviewer', destination: 'author' },
   ];
 
   render(
@@ -21,8 +22,11 @@ it('shares selectable nodes and connections without owning feature behavior', ()
     </WorkflowGraphSurface>,
   );
 
-  fireEvent.click(screen.getByRole('button', { name: 'Open Review handoff' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open 2 connections' }));
   fireEvent.click(screen.getByRole('button', { name: 'Open Author' }));
-  expect(onConnection).toHaveBeenCalledWith(connections[0]);
+  expect(onConnection).toHaveBeenCalledWith(['review', 'revise']);
   expect(onNode).toHaveBeenCalledOnce();
+  const visibleLine = document.querySelector('.workflow-connection__visible');
+  expect(visibleLine).toHaveAttribute('marker-start');
+  expect(visibleLine).toHaveAttribute('marker-end');
 });

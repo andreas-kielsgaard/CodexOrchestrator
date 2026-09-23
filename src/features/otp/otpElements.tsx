@@ -83,9 +83,6 @@ function GroupDetails({ group, server }: { readonly group: OtpAgentMcpCapability
 }
 
 function EndpointDetails({ endpoint, server }: { readonly endpoint: OtpAgentMcpToolDto; readonly server: OtpAgentMcpServerDto }) {
-  const grants = endpoint.requiredGrants
-    .map((id) => server.grants.find((grant) => grant.id === id))
-    .filter((grant): grant is NonNullable<typeof grant> => Boolean(grant));
   return (
     <div className="otp-element-details">
       <p className="otp-element-details__type">MCP endpoint</p>
@@ -95,9 +92,6 @@ function EndpointDetails({ endpoint, server }: { readonly endpoint: OtpAgentMcpT
       <DetailSection title="Recommended use"><p>{endpoint.recommendedUsage}</p></DetailSection>
       <SchemaSection title="Input fields" schema={endpoint.inputSchema} />
       <SchemaSection title="Successful response" schema={endpoint.outputSchema} />
-      <DetailSection title="Required authorization">
-        {grants.length ? <ul>{grants.map((grant) => <li key={grant.id}><strong>{grant.label}</strong><br />{grant.description}</li>)}</ul> : <p>No mutation grant is required.</p>}
-      </DetailSection>
       <DetailSection title="Integration"><p>Available through configured agent sessions using {server.name}. It is not a direct Workflow connection trigger or destination.</p></DetailSection>
     </div>
   );

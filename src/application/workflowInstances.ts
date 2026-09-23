@@ -78,7 +78,6 @@ export interface WorkflowInstanceClient {
   create(input: {
     readonly recipeId: string;
     readonly expectedRevision: number;
-    readonly name: string;
     readonly target: ResolvedRepoBranchWorktreeTarget;
   }): Promise<WorkflowRecipeInstance>;
   load(instanceId: string): Promise<WorkflowInstanceDetails>;

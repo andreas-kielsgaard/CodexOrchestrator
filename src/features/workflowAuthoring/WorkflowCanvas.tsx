@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { LogIn } from 'lucide-react';
 import {
   WorkflowGraphConnections,
   WorkflowGraphEmpty,
@@ -6,6 +7,7 @@ import {
   WorkflowGraphSurface,
   beginWorkflowNodeDrag,
   projectWorkflowNodeDrag,
+  snapWorkflowPoint,
   workflowGraphBounds,
   type WorkflowGraphConnection,
   type WorkflowGraphNode,
@@ -15,7 +17,7 @@ import {
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
 import './workflowCanvas.css';
 
-export type CanvasNode = WorkflowGraphNode & { readonly starting: boolean };
+export type CanvasNode = WorkflowGraphNode & { readonly entry: boolean };
 export type CanvasConnection = WorkflowGraphConnection;
 
 /** Layout and gestures only. Profile editing, persistence and execution belong to the caller. */
@@ -29,7 +31,8 @@ export function WorkflowCanvas({
   onConnect,
   onMove,
   onRemove,
-  onStartingNode,
+  onEntryNode,
+  onConnectionGroup,
   canUndo,
   canRedo,
   onUndo,
@@ -44,7 +47,8 @@ export function WorkflowCanvas({
   onConnect(source: string, destination: string): void;
   onMove(id: string, x: number, y: number): void;
   onRemove(): void;
-  onStartingNode(id: string): void;
+  onEntryNode(id: string): void;
+  onConnectionGroup(ids: readonly string[]): void;
   readonly canUndo?: boolean;
   readonly canRedo?: boolean;
   onUndo?(): void;
@@ -66,7 +70,8 @@ export function WorkflowCanvas({
   };
   const place = (x: number, y: number) => {
     if (brush === 'node' || (brush === 'copy' && source)) {
-      onPlace(Math.max(24, x), Math.max(28, y), brush === 'copy' ? source! : undefined);
+      const point = snapWorkflowPoint(x, y, { width, height });
+      onPlace(point.x, point.y, brush === 'copy' ? source! : undefined);
       setBrush('select');
       setSource(null);
     } else onSelect({ kind: 'node', id: null });
@@ -97,13 +102,6 @@ export function WorkflowCanvas({
         <button type="button" disabled={!selection.id} onClick={onRemove}>
           Delete selected
         </button>
-        <button
-          type="button"
-          disabled={selection.kind !== 'node' || !selection.id}
-          onClick={() => selection.id && onStartingNode(selection.id)}
-        >
-          Set as start
-        </button>
       </div>
       <p className="recipe-canvas-help">
         {brush === 'node'
@@ -125,7 +123,7 @@ export function WorkflowCanvas({
         width={width}
         height={height}
         scrollClassName="recipe-canvas-scroll"
-        className="recipe-canvas"
+        className={`recipe-canvas${brush === 'node' || brush === 'copy' || preview ? ' is-grid-visible' : ''}`}
         role="region"
         aria-label="Workflow canvas"
         tabIndex={0}
@@ -150,7 +148,7 @@ export function WorkflowCanvas({
           connections={connections}
           selectedId={selection.kind === 'connection' ? selection.id : null}
           ariaLabelForConnection={(connection) => `Edit ${connection.name}`}
-          onActivate={(connection) => onSelect({ kind: 'connection', id: connection.id })}
+          onActivate={onConnectionGroup}
         />
         {located.map((node) => (
           <WorkflowGraphNodeCard
@@ -159,6 +157,21 @@ export function WorkflowCanvas({
             aria-label={`Configure ${node.name}`}
             selected={selection.kind === 'node' && selection.id === node.id}
             className={source === node.id ? 'is-connection-source' : undefined}
+            actions={
+              <button
+                type="button"
+                className="workflow-node__entry-toggle"
+                aria-label={node.entry ? `Remove ${node.name} as an entry node` : `Make ${node.name} an entry node`}
+                aria-pressed={node.entry}
+                title={node.entry ? 'Remove entry node' : 'Make entry node'}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEntryNode(node.id);
+                }}
+              >
+                <LogIn size={16} aria-hidden="true" />
+              </button>
+            }
             onPointerDown={(event) => {
               if (brush !== 'select' || event.button > 0) return;
               drag.current = beginWorkflowNodeDrag({
@@ -177,7 +190,7 @@ export function WorkflowCanvas({
                   projectWorkflowNodeDrag(drag.current, event.clientX, event.clientY, {
                     width,
                     height,
-                  }),
+                  }, !event.altKey),
                 );
             }}
             onPointerUp={(event) => {
@@ -185,7 +198,7 @@ export function WorkflowCanvas({
               const next = projectWorkflowNodeDrag(drag.current, event.clientX, event.clientY, {
                 width,
                 height,
-              });
+              }, !event.altKey);
               drag.current = null;
               setPreview(null);
               if (next.moved) {
@@ -206,17 +219,12 @@ export function WorkflowCanvas({
               )
                 return;
               event.preventDefault();
-              onMove(
-                node.id,
-                Math.max(
-                  24,
-                  node.x + (event.key === 'ArrowRight' ? 20 : event.key === 'ArrowLeft' ? -20 : 0),
-                ),
-                Math.max(
-                  28,
-                  node.y + (event.key === 'ArrowDown' ? 20 : event.key === 'ArrowUp' ? -20 : 0),
-                ),
+              const point = snapWorkflowPoint(
+                node.x + (event.key === 'ArrowRight' ? 20 : event.key === 'ArrowLeft' ? -20 : 0),
+                node.y + (event.key === 'ArrowDown' ? 20 : event.key === 'ArrowUp' ? -20 : 0),
+                { width, height },
               );
+              onMove(node.id, point.x, point.y);
             }}
             onClick={(event) => {
               event.stopPropagation();
@@ -240,7 +248,7 @@ export function WorkflowCanvas({
             }}
           >
             <span className="workflow-node__badges">
-              {node.starting ? <small>Start</small> : null}
+              {node.entry ? <small>Entry</small> : null}
             </span>
             <strong>{node.name}</strong>
             <span>Node profile</span>

@@ -56,18 +56,6 @@ impl OtpRegistry {
             .ok_or_else(|| format!("OTP agent MCP server {server_name} is unavailable"))
     }
 
-    pub(crate) fn validate_agent_mcp_configuration(
-        &self,
-        package: &str,
-        server: &str,
-        value: &serde_json::Value,
-    ) -> Result<(), String> {
-        self.packages
-            .get(package)
-            .ok_or_else(|| format!("OTP package {package} is not imported"))?
-            .validate_agent_mcp_configuration(server, value)
-    }
-
     pub(crate) fn validate_configuration(
         &self,
         reference: &CapabilityRef,

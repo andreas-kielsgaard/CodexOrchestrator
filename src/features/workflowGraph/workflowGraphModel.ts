@@ -3,7 +3,7 @@ export interface WorkflowGraphNode {
   readonly name: string;
   readonly x: number;
   readonly y: number;
-  readonly starting?: boolean;
+  readonly entry?: boolean;
 }
 
 export interface WorkflowGraphConnection {
@@ -13,8 +13,43 @@ export interface WorkflowGraphConnection {
   readonly destination: string;
 }
 
+export interface WorkflowGraphConnectionGroup {
+  readonly id: string;
+  readonly firstNode: string;
+  readonly secondNode: string;
+  readonly connections: readonly WorkflowGraphConnection[];
+  readonly firstToSecond: boolean;
+  readonly secondToFirst: boolean;
+}
+
 export const WORKFLOW_GRAPH_NODE_WIDTH = 210;
 export const WORKFLOW_GRAPH_CONNECTION_Y = 46;
+
+export function groupWorkflowGraphConnections(
+  connections: readonly WorkflowGraphConnection[],
+): readonly WorkflowGraphConnectionGroup[] {
+  const groups = new Map<string, WorkflowGraphConnection[]>();
+  for (const connection of connections) {
+    const [first, second] = [connection.source, connection.destination].sort();
+    const id = `${first}\u0000${second}`;
+    groups.set(id, [...(groups.get(id) ?? []), connection]);
+  }
+  return [...groups].map(([id, members]) => {
+    const [firstNode, secondNode] = id.split('\u0000');
+    return {
+      id,
+      firstNode,
+      secondNode,
+      connections: members,
+      firstToSecond: members.some(
+        (connection) => connection.source === firstNode && connection.destination === secondNode,
+      ),
+      secondToFirst: members.some(
+        (connection) => connection.source === secondNode && connection.destination === firstNode,
+      ),
+    };
+  });
+}
 
 export function workflowGraphBounds(nodes: readonly WorkflowGraphNode[]) {
   return {

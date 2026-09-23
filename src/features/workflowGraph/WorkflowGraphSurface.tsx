@@ -3,6 +3,7 @@ import {
   WORKFLOW_GRAPH_CONNECTION_Y,
   WORKFLOW_GRAPH_NODE_WIDTH,
   workflowGraphNodeById,
+  groupWorkflowGraphConnections,
   type WorkflowGraphConnection,
   type WorkflowGraphNode,
 } from './workflowGraphModel';
@@ -49,30 +50,39 @@ export function WorkflowGraphConnections({
   readonly highlightedIds?: readonly string[];
   labelForConnection?(connection: WorkflowGraphConnection): string;
   ariaLabelForConnection?(connection: WorkflowGraphConnection): string;
-  onActivate?(connection: WorkflowGraphConnection): void;
+  onActivate?(connectionIds: readonly string[]): void;
 }) {
   const arrowId = useId();
+  const groups = groupWorkflowGraphConnections(connections);
   return (
     <svg className="workflow-canvas__connections" aria-label="Workflow connections">
       <defs>
-        <marker id={arrowId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <marker id={arrowId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse">
           <path d="M0,0 L8,4 L0,8 z" />
         </marker>
       </defs>
-      {connections.map((connection) => {
-        const from = workflowGraphNodeById(nodes, connection.source);
-        const to = workflowGraphNodeById(nodes, connection.destination);
+      {groups.map((group) => {
+        const from = workflowGraphNodeById(nodes, group.firstNode);
+        const to = workflowGraphNodeById(nodes, group.secondNode);
         if (!from || !to) return null;
-        const activate = () => onActivate?.(connection);
+        const activate = () => onActivate?.(group.connections.map((connection) => connection.id));
         const interactive = Boolean(onActivate);
+        const selected = group.connections.some((connection) => connection.id === selectedId);
+        const highlighted = group.connections.some((connection) => highlightedIds.includes(connection.id));
+        const label = group.connections.length === 1
+          ? labelForConnection(group.connections[0])
+          : `${group.connections.length} connections`;
+        const firstIsLeft = from.x <= to.x;
+        const x1 = firstIsLeft ? from.x + WORKFLOW_GRAPH_NODE_WIDTH : from.x;
+        const x2 = firstIsLeft ? to.x : to.x + WORKFLOW_GRAPH_NODE_WIDTH;
         return (
           <g
-            key={connection.id}
+            key={group.id}
             role={interactive ? 'button' : undefined}
             tabIndex={interactive ? 0 : undefined}
-            aria-label={interactive ? ariaLabelForConnection(connection) : undefined}
-            aria-pressed={interactive ? selectedId === connection.id : undefined}
-            className={`${selectedId === connection.id ? 'is-selected' : ''}${highlightedIds.includes(connection.id) ? ' is-highlighted' : ''}`}
+            aria-label={interactive ? (group.connections.length === 1 ? ariaLabelForConnection(group.connections[0]) : `Open ${group.connections.length} connections`) : undefined}
+            aria-pressed={interactive ? selected : undefined}
+            className={`${selected ? 'is-selected' : ''}${highlighted ? ' is-highlighted' : ''}`}
             onClick={
               interactive
                 ? (event) => {
@@ -94,23 +104,24 @@ export function WorkflowGraphConnections({
           >
             <line
               className="workflow-connection__visible"
-              x1={from.x + WORKFLOW_GRAPH_NODE_WIDTH}
+              x1={x1}
               y1={from.y + WORKFLOW_GRAPH_CONNECTION_Y}
-              x2={to.x}
+              x2={x2}
               y2={to.y + WORKFLOW_GRAPH_CONNECTION_Y}
-              markerEnd={`url(#${arrowId})`}
+              markerStart={group.secondToFirst ? `url(#${arrowId})` : undefined}
+              markerEnd={group.firstToSecond ? `url(#${arrowId})` : undefined}
             />
             {interactive ? (
               <line
                 className="workflow-connection__hitbox"
-                x1={from.x + WORKFLOW_GRAPH_NODE_WIDTH}
+                x1={x1}
                 y1={from.y + WORKFLOW_GRAPH_CONNECTION_Y}
-                x2={to.x}
+                x2={x2}
                 y2={to.y + WORKFLOW_GRAPH_CONNECTION_Y}
               />
             ) : null}
-            <text x={(from.x + WORKFLOW_GRAPH_NODE_WIDTH + to.x) / 2} y={(from.y + to.y) / 2 + 36}>
-              {labelForConnection(connection)}
+            <text x={(x1 + x2) / 2} y={(from.y + to.y) / 2 + 36}>
+              {label}
             </text>
           </g>
         );
@@ -124,22 +135,30 @@ export function WorkflowGraphNodeCard({
   selected,
   className,
   children,
+  actions,
   ...buttonProps
 }: {
   readonly node: WorkflowGraphNode;
   readonly selected?: boolean;
   readonly children: ReactNode;
+  readonly actions?: ReactNode;
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'>) {
   return (
-    <button
-      type="button"
-      {...buttonProps}
-      aria-pressed={buttonProps['aria-pressed'] ?? selected}
-      className={`workflow-node${node.starting ? ' is-start' : ''}${selected ? ' is-selected' : ''}${className ? ` ${className}` : ''}`}
-      style={{ ...buttonProps.style, left: node.x, top: node.y }}
+    <div
+      className={`workflow-node${node.entry ? ' is-entry' : ''}${selected ? ' is-selected' : ''}${className ? ` ${className}` : ''}`}
+      style={{ left: node.x, top: node.y }}
     >
-      {children}
-    </button>
+      <button
+        type="button"
+        {...buttonProps}
+        aria-pressed={buttonProps['aria-pressed'] ?? selected}
+        className="workflow-node__body"
+        style={buttonProps.style}
+      >
+        {children}
+      </button>
+      {actions ? <div className="workflow-node__actions">{actions}</div> : null}
+    </div>
   );
 }
 

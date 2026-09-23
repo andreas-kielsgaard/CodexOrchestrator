@@ -45,65 +45,47 @@ const CAPABILITY_GROUPS: &[CapabilityGroup] = &[
 
 struct Grant {
     id: &'static str,
-    label: &'static str,
-    description: &'static str,
     capability: &'static str,
     transition: &'static str,
 }
 const GRANTS: &[Grant] = &[
     Grant {
         id: "registryConfigure",
-        label: "Allow source registry configuration",
-        description: "Create, update, archive, and restore source records.",
         capability: "source_registry",
         transition: "configure",
     },
     Grant {
         id: "calibrationCalibrate",
-        label: "Allow source calibration",
-        description: "Capture public calibration evidence for a source.",
         capability: "source_calibration",
         transition: "calibrate",
     },
     Grant {
         id: "recipeAuthor",
-        label: "Allow recipe authoring",
-        description: "Create, update, and reject pending recipe candidates.",
         capability: "recipe_authoring",
         transition: "author_recipe",
     },
     Grant {
         id: "recipeApprove",
-        label: "Allow recipe approval",
-        description: "Approve a pending recipe candidate into a validated recipe.",
         capability: "recipe_authoring",
         transition: "approve_recipe",
     },
     Grant {
         id: "recipeAdopt",
-        label: "Allow recipe adoption",
-        description: "Adopt an approved recipe for a source.",
         capability: "recipe_authoring",
         transition: "adopt_recipe",
     },
     Grant {
         id: "executionConfigure",
-        label: "Allow execution projection configuration",
-        description: "Prepare, refresh, and disable execution projections.",
         capability: "source_execution",
         transition: "configure",
     },
     Grant {
         id: "executionTest",
-        label: "Allow safe source tests",
-        description: "Run guarded source tests without normal run outputs.",
         capability: "source_execution",
         transition: "test",
     },
     Grant {
         id: "executionEnable",
-        label: "Allow source enablement",
-        description: "Enable a source when current readiness checks pass.",
         capability: "source_execution",
         transition: "enable",
     },
@@ -176,45 +158,33 @@ fn endpoints() -> Vec<AgentMcpToolDescriptor> {
         input_schema: object_schema(endpoint.inputs, endpoint.required, false), output_schema: output_schema(endpoint.outputs),
         expected_behavior: format!("{} The endpoint returns a structured Job Agent result and applies only its declared guarded transition.", endpoint.description),
         recommended_usage: format!("Use during the {} stage when the node's instructions need this result.", CAPABILITY_GROUPS.iter().find(|group| group.id == endpoint.capability).map(|group| group.name.to_lowercase()).unwrap_or_else(|| endpoint.capability.replace('_', " "))),
-        required_grants: endpoint.grants.iter().map(|value| (*value).into()).collect(),
+        required_grants: vec![],
     }).collect()
 }
-fn fields() -> Vec<ConfigurationField> {
-    GRANTS
+pub(crate) fn grants_for_tools(
+    selected_tools: &std::collections::BTreeSet<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let known_tools = ENDPOINTS
         .iter()
-        .map(|grant| ConfigurationField {
-            key: grant.id.into(),
-            label: grant.label.into(),
-            choices: vec!["deny".into(), "allow".into()],
-            default_value: "deny".into(),
-            when: None,
-        })
-        .collect()
-}
-
-pub(crate) fn grants_from_configuration(value: &Value) -> Result<Vec<(String, String)>, String> {
-    let object = value
-        .as_object()
-        .ok_or("Job Agent configuration must be an object")?;
-    let mut result = vec![];
-    for grant in GRANTS {
-        match object
-            .get(grant.id)
-            .and_then(Value::as_str)
-            .unwrap_or("deny")
-        {
-            "deny" => {}
-            "allow" => result.push((grant.capability.into(), grant.transition.into())),
-            _ => return Err(format!("Invalid Job Agent grant value for {}", grant.id)),
-        }
-    }
-    if let Some(key) = object
-        .keys()
-        .find(|key| !GRANTS.iter().any(|grant| grant.id == *key))
+        .map(|endpoint| endpoint.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(unknown) = selected_tools
+        .iter()
+        .find(|tool| !known_tools.contains(tool.as_str()))
     {
-        return Err(format!("Unknown Job Agent configuration field {key}"));
+        return Err(format!("Unknown Job Agent MCP tool {unknown}"));
     }
-    Ok(result)
+    let selected_grants = ENDPOINTS
+        .iter()
+        .filter(|endpoint| selected_tools.contains(endpoint.id))
+        .flat_map(|endpoint| endpoint.grants)
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    Ok(GRANTS
+        .iter()
+        .filter(|grant| selected_grants.contains(grant.id))
+        .map(|grant| (grant.capability.into(), grant.transition.into()))
+        .collect())
 }
 
 impl OtpPackage for JobAgentPackage {
@@ -222,25 +192,15 @@ impl OtpPackage for JobAgentPackage {
         PackageDescriptor {
             id: "job_agent".into(), name: "Job Agent".into(), summary: "Guarded local source setup operations for configured agent sessions.".into(), description: "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, and preparing controlled source execution.".into(), contract_version: 1, requested_handles: vec![], tools: vec![],
             agent_mcp_servers: vec![AgentMcpServerDescriptor {
-                server_name: "job_agent".into(), name: "Job Agent MCP".into(), description: "A local MCP service delivered only to configured agent sessions, with capability-scoped endpoints and default-deny mutation grants.".into(),
+                server_name: "job_agent".into(), name: "Job Agent MCP".into(), description: "A local MCP service delivered only to configured agent sessions, with capability-scoped endpoints.".into(),
                 capability_groups: CAPABILITY_GROUPS.iter().map(|group| AgentMcpCapabilityGroupDescriptor { id: group.id.into(), name: group.name.into(), description: group.description.into() }).collect(),
-                tools: endpoints(), grants: GRANTS.iter().map(|grant| AgentMcpGrantDescriptor { id: grant.id.into(), label: grant.label.into(), description: grant.description.into(), capability: grant.capability.into(), transition: grant.transition.into() }).collect(), configuration: fields(),
+                tools: endpoints(), grants: vec![], configuration: vec![],
             }],
             skill_roots: vec![],
         }
     }
     fn validate_configuration(&self, tool: &str, _: &Value) -> Result<(), String> {
         Err(format!("Job Agent has no Workflow tool named {tool}"))
-    }
-    fn validate_agent_mcp_configuration(
-        &self,
-        server: &str,
-        configuration: &Value,
-    ) -> Result<(), String> {
-        if server != "job_agent" {
-            return Err(format!("Job Agent does not provide MCP server {server}"));
-        }
-        grants_from_configuration(configuration).map(|_| ())
     }
     fn invoke(
         &self,
@@ -256,12 +216,17 @@ impl OtpPackage for JobAgentPackage {
 mod tests {
     use super::*;
     #[test]
-    fn grants_are_validated() {
+    fn selected_tools_authorize_their_own_guarded_transitions() {
+        let selected = ["create_source".into(), "approve_recipe_candidate".into()]
+            .into_iter()
+            .collect();
         assert_eq!(
-            grants_from_configuration(&json!({"registryConfigure":"allow"})).unwrap(),
-            vec![("source_registry".into(), "configure".into())]
+            grants_for_tools(&selected).unwrap(),
+            vec![
+                ("source_registry".into(), "configure".into()),
+                ("recipe_authoring".into(), "approve_recipe".into()),
+            ]
         );
-        assert!(grants_from_configuration(&json!({"unknown":"allow"})).is_err());
     }
     #[test]
     fn catalogue_references_existing_groups_and_grants() {

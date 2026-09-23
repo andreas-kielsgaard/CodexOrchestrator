@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{
     execution_configuration::{CapabilityProfile, CapabilityProfileService},
-    otp_api::{CapabilityRef, Entrypoint},
     otp_host::OtpRegistry,
     workflows::compiled_plan::WorkflowCompiledPlan,
 };
@@ -34,23 +33,6 @@ impl WorkflowAuthoringService {
         }
     }
 
-    fn default_action(&self) -> Result<CapabilityRef, String> {
-        self.registry
-            .catalogue()
-            .into_iter()
-            .find_map(|package| {
-                package
-                    .tools
-                    .into_iter()
-                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action { .. }))
-                    .map(|tool| CapabilityRef {
-                        package: package.id,
-                        tool: tool.id,
-                    })
-            })
-            .ok_or("Import an OTP with an agent action before creating a Workflow".into())
-    }
-
     pub(crate) fn list(&self) -> Result<Vec<WorkflowRecipeSummary>, String> {
         self.repository.list()
     }
@@ -61,15 +43,13 @@ impl WorkflowAuthoringService {
             .ok_or_else(|| format!("Workflow recipe `{recipe_id}` does not exist"))
     }
 
-    pub(crate) fn create(&self, name: String) -> Result<WorkflowRecipeState, String> {
+    pub(crate) fn create(&self) -> Result<WorkflowRecipeState, String> {
         let draft = WorkflowRecipeDraft {
-            entry_configuration: serde_json::json!({}),
             contract_version: WORKFLOW_RECIPE_CONTRACT_VERSION,
             recipe_id: format!("workflow-recipe-{}", Uuid::new_v4()),
-            name,
+            name: String::new(),
             revision: 1,
-            starting_node_id: None,
-            entry_action: self.default_action()?,
+            entry_node_ids: Vec::new(),
             nodes: Vec::new(),
             connections: Vec::new(),
         };
@@ -196,7 +176,6 @@ fn copy_configurable_node_state(
     destination.node_profile = source.node_profile.clone();
     destination.initial_prompt = source.initial_prompt.clone();
     destination.agent_identity_id = source.agent_identity_id.clone();
-    destination.agent_mcp_configuration = source.agent_mcp_configuration.clone();
 }
 
 #[cfg(test)]
@@ -279,15 +258,15 @@ mod tests {
             },
             initial_prompt: Some(format!("You are {name}.")),
             agent_identity_id: None,
-            agent_mcp_configuration: Default::default(),
         }
     }
 
     #[test]
     fn service_saves_activates_and_compiles_recipe() {
         let service = service();
-        let mut state = service.create("Review".into()).unwrap();
-        state.draft.starting_node_id = Some("planner".into());
+        let mut state = service.create().unwrap();
+        state.draft.name = "Review".into();
+        state.draft.entry_node_ids = vec!["planner".into()];
         state.draft.nodes.push(node("planner", "Planner"));
         state = service.save_draft(state.draft).unwrap();
         let active = service.activate(&state.draft.recipe_id).unwrap();
@@ -303,7 +282,8 @@ mod tests {
     #[test]
     fn copy_node_configuration_preserves_destination_identity_and_position() {
         let service = service();
-        let mut state = service.create("Review".into()).unwrap();
+        let mut state = service.create().unwrap();
+        state.draft.name = "Review".into();
         let mut source = node("planner", "Planner");
         source.agent_identity_id = Some("identity-avery".into());
         source.position_x = 50.0;
@@ -340,7 +320,7 @@ mod tests {
     #[test]
     fn activation_rejects_structurally_incomplete_recipe() {
         let service = service();
-        let state = service.create("Review".into()).unwrap();
+        let state = service.create().unwrap();
 
         assert!(service.activate(&state.draft.recipe_id).is_err());
     }

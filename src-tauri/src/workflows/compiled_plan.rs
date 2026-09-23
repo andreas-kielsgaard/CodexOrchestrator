@@ -16,9 +16,6 @@ pub(crate) struct WorkflowCompiledPlan {
     pub instance: WorkflowInstanceReference,
     pub recipe: WorkflowRecipeReference,
     pub starting_node: WorkflowNodeReference,
-    pub entry_action: CapabilityRef,
-    #[serde(default = "empty_configuration")]
-    pub(crate) entry_configuration: serde_json::Value,
     pub nodes: Vec<WorkflowCompiledNode>,
     pub connections: Vec<WorkflowCompiledConnection>,
 }
@@ -72,8 +69,4 @@ pub(crate) enum FileAssociation {
     Created,
     Edited,
     Either,
-}
-
-fn empty_configuration() -> serde_json::Value {
-    serde_json::json!({})
 }

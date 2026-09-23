@@ -231,14 +231,6 @@ pub(crate) struct RoutingReceipt {
 pub(crate) trait OtpPackage: Send + Sync {
     fn descriptor(&self) -> PackageDescriptor;
     fn validate_configuration(&self, tool: &str, configuration: &Value) -> Result<(), String>;
-    fn validate_agent_mcp_configuration(
-        &self,
-        server: &str,
-        configuration: &Value,
-    ) -> Result<(), String> {
-        let _ = (server, configuration);
-        Ok(())
-    }
     fn invoke(
         &self,
         context: &InvocationContext,

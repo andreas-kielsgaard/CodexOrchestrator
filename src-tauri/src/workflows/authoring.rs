@@ -17,12 +17,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const WORKFLOW_RECIPE_CONTRACT_VERSION: u32 = 2;
+pub(crate) const WORKFLOW_RECIPE_CONTRACT_VERSION: u32 = 3;
 
-/// Reads persisted V1 drafts into the OTP-shaped recipe contract. The next save persists V2.
+/// Reads persisted recipes into the current contract. The next save persists V3.
 pub(crate) fn decode_recipe_value(value: Value) -> Result<WorkflowRecipeDraft, String> {
     let value = match value.get("contractVersion").and_then(Value::as_u64) {
         Some(1) => migrate_v1_recipe(value)?,
+        Some(2) => migrate_v2_recipe(value)?,
         Some(version) if version == WORKFLOW_RECIPE_CONTRACT_VERSION as u64 => value,
         Some(version) => {
             return Err(format!(
@@ -41,10 +42,7 @@ fn migrate_v1_recipe(mut value: Value) -> Result<Value, String> {
     let recipe = value
         .as_object_mut()
         .ok_or("Workflow recipe must be an object")?;
-    recipe.insert(
-        "contractVersion".into(),
-        json!(WORKFLOW_RECIPE_CONTRACT_VERSION),
-    );
+    recipe.insert("contractVersion".into(), json!(2));
     recipe.insert(
         "entryAction".into(),
         json!({"package":"workflow","tool":"prompt_agent"}),
@@ -59,6 +57,31 @@ fn migrate_v1_recipe(mut value: Value) -> Result<Value, String> {
     let connections = required_array_mut(recipe, "connections")?;
     for connection in connections {
         migrate_v1_connection(connection)?;
+    }
+    migrate_v2_recipe(value)
+}
+
+fn migrate_v2_recipe(mut value: Value) -> Result<Value, String> {
+    let recipe = value
+        .as_object_mut()
+        .ok_or("Workflow recipe must be an object")?;
+    recipe.insert(
+        "contractVersion".into(),
+        json!(WORKFLOW_RECIPE_CONTRACT_VERSION),
+    );
+    let entry_nodes = recipe
+        .remove("startingNodeId")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .into_iter()
+        .map(Value::String)
+        .collect();
+    recipe.insert("entryNodeIds".into(), Value::Array(entry_nodes));
+    recipe.remove("entryAction");
+    recipe.remove("entryConfiguration");
+    for node in required_array_mut(recipe, "nodes")? {
+        node.as_object_mut()
+            .ok_or("Workflow node must be an object")?
+            .remove("agentMcpConfiguration");
     }
     Ok(value)
 }
@@ -191,10 +214,7 @@ pub(crate) struct WorkflowRecipeDraft {
     pub(crate) recipe_id: String,
     pub(crate) name: String,
     pub(crate) revision: u64,
-    pub(crate) starting_node_id: Option<String>,
-    pub(crate) entry_action: CapabilityRef,
-    #[serde(default = "empty_configuration")]
-    pub(crate) entry_configuration: serde_json::Value,
+    pub(crate) entry_node_ids: Vec<String>,
     pub(crate) nodes: Vec<WorkflowAuthoringNode>,
     pub(crate) connections: Vec<WorkflowAuthoringConnection>,
 }
@@ -210,8 +230,6 @@ pub(crate) struct WorkflowAuthoringNode {
     pub(crate) node_profile: NodeProfile,
     pub(crate) initial_prompt: Option<String>,
     pub(crate) agent_identity_id: Option<String>,
-    #[serde(default)]
-    pub(crate) agent_mcp_configuration: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -256,7 +274,6 @@ impl WorkflowRecipeDraft {
             ));
         }
         validate_identifier("Workflow recipe", "recipeId", &self.recipe_id)?;
-        validate_label("Workflow recipe", "name", &self.name)?;
         if self.revision == 0 {
             return Err("Workflow recipe revision must be positive".into());
         }
@@ -271,12 +288,11 @@ impl WorkflowRecipeDraft {
 
     pub(crate) fn validate_activatable(&self) -> Result<(), String> {
         self.validate_storable()?;
-        let starting_node = self
-            .starting_node_id
-            .as_deref()
-            .ok_or_else(|| "Active Workflow recipe requires a starting node".to_string())?;
         if self.nodes.is_empty() {
             return Err("Active Workflow recipe requires at least one node".into());
+        }
+        if self.entry_node_ids.is_empty() {
+            return Err("Active Workflow recipe requires at least one entry node".into());
         }
 
         let mut node_ids = BTreeSet::new();
@@ -288,10 +304,16 @@ impl WorkflowRecipeDraft {
                 ));
             }
         }
-        if !node_ids.contains(starting_node) {
-            return Err(format!(
-                "Workflow starting node `{starting_node}` is absent from the recipe"
-            ));
+        let mut entry_nodes = BTreeSet::new();
+        for entry_node in &self.entry_node_ids {
+            if !entry_nodes.insert(entry_node.as_str()) {
+                return Err(format!("Workflow entry node `{entry_node}` is repeated"));
+            }
+            if !node_ids.contains(entry_node.as_str()) {
+                return Err(format!(
+                    "Workflow entry node `{entry_node}` is absent from the recipe"
+                ));
+            }
         }
 
         let mut connection_ids = BTreeSet::new();
@@ -368,7 +390,7 @@ impl WorkflowRecipeDraft {
                         contract_version: 1,
                         capability_profile: capability_profile.clone(),
                         node_profile: node.node_profile.clone(),
-                        agent_mcp_configuration: node.agent_mcp_configuration.clone(),
+                        agent_mcp_configuration: Default::default(),
                         session_skill_inputs: Vec::new(),
                     })
                 } else {
@@ -376,7 +398,7 @@ impl WorkflowRecipeDraft {
                         crate::execution_configuration::SessionCreationIntent {
                             capability_profile_id: node.capability_profile_id.clone(),
                             node_profile: node.node_profile.clone(),
-                            agent_mcp_configuration: node.agent_mcp_configuration.clone(),
+                            agent_mcp_configuration: Default::default(),
                             working_directory: working_directory.into(),
                             title: node.name.clone(),
                         },
@@ -426,16 +448,15 @@ impl WorkflowRecipeDraft {
             .collect::<Result<Vec<_>, String>>()?;
 
         Ok(WorkflowCompiledPlan {
-            entry_action: self.entry_action.clone(),
-            entry_configuration: self.entry_configuration.clone(),
             instance: WorkflowInstanceReference::new(instance_id.to_string())
                 .map_err(|error| error.to_string())?,
             recipe: WorkflowRecipeReference::new(self.recipe_id.clone())
                 .map_err(|error| error.to_string())?,
             starting_node: WorkflowNodeReference::new(
-                self.starting_node_id
-                    .clone()
-                    .expect("validated starting node"),
+                self.entry_node_ids
+                    .first()
+                    .cloned()
+                    .expect("validated entry node"),
             )
             .map_err(|error| error.to_string())?,
             nodes,
@@ -602,12 +623,7 @@ mod tests {
             recipe_id: "recipe-review".into(),
             name: "Review".into(),
             revision: 1,
-            starting_node_id: Some("planner".into()),
-            entry_configuration: serde_json::json!({}),
-            entry_action: crate::otp_api::CapabilityRef {
-                package: "workflow".into(),
-                tool: "prompt_agent".into(),
-            },
+            entry_node_ids: vec!["planner".into()],
             nodes: vec![WorkflowAuthoringNode {
                 node_id: "planner".into(),
                 name: "Planner".into(),
@@ -625,7 +641,6 @@ mod tests {
                 },
                 initial_prompt: Some("Plan the work.".into()),
                 agent_identity_id: Some("identity-avery".into()),
-                agent_mcp_configuration: Default::default(),
             }],
             connections: Vec::new(),
         }
@@ -654,8 +669,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(recipe.contract_version, WORKFLOW_RECIPE_CONTRACT_VERSION);
-        assert_eq!(recipe.entry_action.tool, "prompt_agent");
-        assert!(recipe.nodes[0].agent_mcp_configuration.is_empty());
+        assert_eq!(recipe.entry_node_ids, vec!["planner"]);
         assert_eq!(
             recipe.connections[0].trigger.capability.tool,
             "handoff_to_agent"
@@ -701,7 +715,7 @@ mod tests {
     #[test]
     fn draft_can_be_saved_incomplete_but_not_activated() {
         let mut draft = draft();
-        draft.starting_node_id = None;
+        draft.entry_node_ids.clear();
 
         assert!(draft.validate_storable().is_ok());
         assert!(draft.validate_activatable().is_err());
@@ -721,8 +735,4 @@ mod tests {
 
         assert!(draft.compilation_input("instance-1", &profiles).is_err());
     }
-}
-
-fn empty_configuration() -> serde_json::Value {
-    serde_json::json!({})
 }

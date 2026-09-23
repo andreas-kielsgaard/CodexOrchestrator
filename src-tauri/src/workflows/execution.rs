@@ -58,7 +58,6 @@ impl WorkflowExecutionService {
         &self,
         recipe_id: &str,
         expected_revision: u64,
-        name: String,
         target: ResolvedRepoBranchWorktreeTarget,
     ) -> Result<RecipeInstance, String> {
         let recipe = self
@@ -69,7 +68,7 @@ impl WorkflowExecutionService {
         if recipe.revision != expected_revision {
             return Err("The active Workflow changed; reload before creating an instance".into());
         }
-        self.instances.create(name, recipe, target)
+        self.instances.create(recipe, target)
     }
     pub(crate) fn instance_sessions(
         &self,
@@ -91,9 +90,13 @@ impl WorkflowExecutionService {
         node_id: Option<&str>,
     ) -> Result<WorkflowCompiledPlan, String> {
         let mut instance = self.instances.load(instance_id)?;
-        if let Some(node) = node_id {
-            instance.recipe.starting_node_id = Some(node.into());
-        }
+        let entry_node = match node_id {
+            Some(node) if instance.recipe.entry_node_ids.iter().any(|id| id == node) => node.into(),
+            Some(node) => return Err(format!("Workflow node `{node}` is not an entry node")),
+            None if instance.recipe.entry_node_ids.len() == 1 => instance.recipe.entry_node_ids[0].clone(),
+            None => return Err("Choose an entry node for this Workflow request".into()),
+        };
+        instance.recipe.entry_node_ids = vec![entry_node];
         WorkflowCompiler::compile(
             instance
                 .recipe
@@ -129,7 +132,10 @@ impl WorkflowExecutionService {
         let context = InvocationContext {
             instance_id: instance_id.into(),
             occurrence_id: occurrence_id.clone(),
-            capability: plan.entry_action.clone(),
+            capability: CapabilityRef {
+                package: "workflow".into(),
+                tool: "prompt_agent".into(),
+            },
             source: None,
             connection_id: None,
             output_node_id: Some(plan.starting_node.identity().id().into()),
@@ -139,7 +145,7 @@ impl WorkflowExecutionService {
             &context,
             None,
             serde_json::json!({"text":text,"data":data}),
-            plan.entry_configuration.clone(),
+            serde_json::json!({"mode":"new"}),
             Ok(vec![
                 ResolvedInput {
                     reference: occurrence_id.clone(),
