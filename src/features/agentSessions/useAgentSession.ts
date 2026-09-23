@@ -9,7 +9,7 @@ import {
   type SessionPreparationDto,
 } from '../../application/agentSessions/preparation';
 import { sessionErrorMessage as errorMessage } from './sessionErrors';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   AgentSessionClient,
   AgentSessionDetailsDto,
@@ -24,8 +24,20 @@ import {
   readCachedComposerDraft,
   writeCachedComposerDraft,
 } from './composerDraftCache';
-import { projectAgentSessionTranscript } from './transcriptProjector';
+import {
+  AgentSessionTranscriptProjectionCache,
+  projectAgentSessionTranscript,
+} from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
+
+const EMPTY_HISTORY_SNAPSHOT = {
+  details: null,
+  loading: false,
+  refreshing: false,
+  error: null,
+  revision: 0,
+  changes: [],
+} as const;
 
 export interface AgentSessionWorkspaceController {
   currentProfile?: PinnedAgentSessionProfileDto | null;
@@ -132,9 +144,26 @@ export function useAgentSession(
   options: UseAgentSessionOptions,
 ): AgentSessionWorkspaceController {
   const selectedSessionId = options.selectedSessionId;
+  const historySource = client.historySource;
+  const subscribeToHistory = useCallback(
+    (listener: () => void) =>
+      historySource && selectedSessionId
+        ? historySource.subscribe(selectedSessionId, listener)
+        : () => undefined,
+    [historySource, selectedSessionId],
+  );
+  const readHistory = useCallback(
+    () =>
+      historySource && selectedSessionId
+        ? historySource.getSnapshot(selectedSessionId)
+        : EMPTY_HISTORY_SNAPSHOT,
+    [historySource, selectedSessionId],
+  );
+  const historySnapshot = useSyncExternalStore(subscribeToHistory, readHistory, readHistory);
   const composerCacheKey = composerDraftCacheKey(selectedSessionId, options.folderTarget);
   const composerCacheKeyRef = useRef(composerCacheKey);
-  const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
+  const [fallbackDetails, setFallbackDetails] = useState<AgentSessionDetailsDto | null>(null);
+  const details = historySource ? historySnapshot.details : fallbackDetails;
   const [draft, setDraft] = useState('');
   const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(null);
   const draftRef = useRef(draft);
@@ -149,6 +178,7 @@ export function useAgentSession(
   const [canceling, setCanceling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedProcessing, setExpandedProcessing] = useState<Set<string>>(() => new Set());
+  const transcriptProjection = useRef(new AgentSessionTranscriptProjectionCache());
   const selectedIdRef = useRef<string | null>(null);
   const invocationIdsRef = useRef<Set<string>>(new Set());
   const mountedRef = useRef(true);
@@ -158,9 +188,13 @@ export function useAgentSession(
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
       const generation = ++loadGenerationRef.current;
-      const next = reload
-        ? await client.reloadSession({ sessionId })
-        : await client.loadSession({ sessionId });
+      const next = historySource
+        ? reload
+          ? await historySource.refresh(sessionId)
+          : await historySource.ensure(sessionId)
+        : reload
+          ? await client.reloadSession({ sessionId })
+          : await client.loadSession({ sessionId });
       const prepared =
         options.preparedExecution && options.execution?.client.loadPreparation
           ? await options.execution.client.loadPreparation(sessionId)
@@ -174,7 +208,7 @@ export function useAgentSession(
         selectedIdRef.current === sessionId &&
         generation === loadGenerationRef.current
       ) {
-        setDetails(next);
+        if (!historySource) setFallbackDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
         setWorkingDirectory(
@@ -186,12 +220,34 @@ export function useAgentSession(
       }
       return next;
     },
-    [client, options.preparedExecution, options.execution?.client],
+    [client, historySource, options.preparedExecution, options.execution?.client],
   );
 
   const reconcileUpdate = useCallback(
     async (update: AgentSessionUpdateDto) => {
       if (update.sessionId !== selectedIdRef.current) {
+        return;
+      }
+      if (historySource) {
+        if (update.kind !== 'preparation_updated') return;
+        try {
+          const prepared =
+            options.preparedExecution && options.execution?.client.loadPreparation
+              ? await options.execution.client.loadPreparation(update.sessionId)
+              : null;
+          const current =
+            options.preparedExecution && options.execution?.client.loadCurrentProfile
+              ? await options.execution.client
+                  .loadCurrentProfile(update.sessionId)
+                  .catch(() => null)
+              : null;
+          if (mountedRef.current && selectedIdRef.current === update.sessionId) {
+            setPreparation(prepared);
+            setCurrentProfile(current);
+          }
+        } catch (caught) {
+          if (mountedRef.current) setError(`Session setup refresh failed: ${errorMessage(caught)}`);
+        }
         return;
       }
       if (
@@ -206,7 +262,7 @@ export function useAgentSession(
         if (mountedRef.current) setError(`Session reload failed: ${errorMessage(caught)}`);
       }
     },
-    [loadSelected],
+    [historySource, loadSelected, options.execution?.client, options.preparedExecution],
   );
 
   useEffect(() => {
@@ -235,7 +291,7 @@ export function useAgentSession(
   const selectSession = useCallback(
     async (sessionId: string) => {
       selectedIdRef.current = sessionId;
-      setDetails(null);
+      if (!historySource) setFallbackDetails(null);
       setCurrentProfile(null);
       setPreparation(null);
       acceptedOptionsRef.current = null;
@@ -249,14 +305,14 @@ export function useAgentSession(
         if (mountedRef.current && selectedIdRef.current === sessionId) setLoading(false);
       }
     },
-    [loadSelected],
+    [historySource, loadSelected],
   );
 
   const startNewSession = useCallback(
     (cached = readCachedComposerDraft(composerCacheKeyRef.current)) => {
       loadGenerationRef.current += 1;
       selectedIdRef.current = null;
-      setDetails(null);
+      setFallbackDetails(null);
       setPreparation(null);
       setCurrentProfile(null);
       acceptedOptionsRef.current = null;
@@ -502,13 +558,21 @@ export function useAgentSession(
   }, []);
 
   const transcript = useMemo(
-    () => (details ? projectAgentSessionTranscript(details, preparation) : null),
+    () => (details ? transcriptProjection.current.project(details, preparation) : null),
     [details, preparation],
   );
 
   useEffect(() => {
+    if (details) {
+      invocationIdsRef.current = new Set(
+        details.invocations.map(({ invocation }) => invocation.id),
+      );
+    }
+  }, [details]);
+
+  useEffect(() => {
     const sessionId = selectedSessionId;
-    if (!sessionId || !transcript?.activeInvocationId) return;
+    if (historySource || !sessionId || !transcript?.activeInvocationId) return;
 
     const interval = window.setInterval(() => {
       void loadSelected(sessionId, true).catch((caught) => {
@@ -517,7 +581,7 @@ export function useAgentSession(
     }, 1500);
 
     return () => window.clearInterval(interval);
-  }, [loadSelected, selectedSessionId, transcript?.activeInvocationId]);
+  }, [historySource, loadSelected, selectedSessionId, transcript?.activeInvocationId]);
 
   const quickFeaturesClient = options.execution?.client;
   const quickFeaturesClientRef = useRef(quickFeaturesClient);
@@ -703,10 +767,10 @@ export function useAgentSession(
     transcript,
     draft,
     workingDirectory,
-    loading,
+    loading: loading || historySnapshot.loading,
     sending,
     canceling,
-    error,
+    error: error ?? historySnapshot.error,
     expandedProcessing,
     setDraft,
     setWorkingDirectory,

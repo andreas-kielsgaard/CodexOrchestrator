@@ -49,10 +49,6 @@ impl ExecutionEndpoints {
                     .local_source
                     .profile_for_configuration(&binding.configuration_ref, cwd)
                     .map_err(|e| e.to_string())?,
-                native_inventory: self
-                    .local_source
-                    .inventory_for_configuration(&binding.configuration_ref, cwd)
-                    .map_err(|e| e.to_string())?,
             }),
             ExecutionConnection::Ssh {
                 target,
@@ -68,7 +64,6 @@ impl ExecutionEndpoints {
                     .map_err(|e| e.to_string())?;
                 Ok(ExecutionTargetRuntime {
                     runtime_profile: capabilities.profile,
-                    native_inventory: capabilities.inventory,
                 })
             }
         }

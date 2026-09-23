@@ -74,26 +74,42 @@ export function useAgentSessionCollection(
       stops.forEach((stop) => stop());
     };
   }, [client, navigation, reload, refresh, invalidatePending]);
-  const mutate = async (operation: () => Promise<void>) => {
-    try {
-      await operation();
-      await refresh(false);
-    } catch (cause) {
-      setError(sessionErrorMessage(cause));
-    }
-  };
+  const mutate = useCallback(
+    async (operation: () => Promise<void>) => {
+      try {
+        await operation();
+        await refresh(false);
+      } catch (cause) {
+        setError(sessionErrorMessage(cause));
+      }
+    },
+    [refresh],
+  );
+  const move = useCallback(
+    (id: string, placement: SessionPlacement, orderedIds?: readonly string[]) =>
+      navigation ? mutate(() => navigation.move(id, placement, orderedIds)) : Promise.resolve(),
+    [mutate, navigation],
+  );
+  const reorder = useCallback(
+    (scope: NavigationOrderScope, ids: readonly string[]) =>
+      navigation ? mutate(() => navigation.reorder(scope, ids)) : Promise.resolve(),
+    [mutate, navigation],
+  );
+  const pin = useCallback(
+    (id: string, pinned: boolean) =>
+      navigation ? mutate(() => navigation.pin(id, pinned)) : Promise.resolve(),
+    [mutate, navigation],
+  );
+  const clearError = useCallback(() => setError(null), []);
   return {
     data,
     summaries: data.summaries,
     loading,
     error,
     reload,
-    clearError: () => setError(null),
-    move: (id: string, placement: SessionPlacement, orderedIds?: readonly string[]) =>
-      navigation ? mutate(() => navigation.move(id, placement, orderedIds)) : Promise.resolve(),
-    reorder: (scope: NavigationOrderScope, ids: readonly string[]) =>
-      navigation ? mutate(() => navigation.reorder(scope, ids)) : Promise.resolve(),
-    pin: (id: string, pinned: boolean) =>
-      navigation ? mutate(() => navigation.pin(id, pinned)) : Promise.resolve(),
+    clearError,
+    move,
+    reorder,
+    pin,
   };
 }

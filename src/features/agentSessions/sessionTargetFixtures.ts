@@ -109,7 +109,6 @@ export function sessionTargetFixtures() {
     listTargets: vi.fn(async () => devices),
     loadRuntime: vi.fn(async () => ({
       runtimeProfile: repairRuntime,
-      nativeInventory: { entries: [], limitations: [] },
     })),
     listRepositoryLocations: vi.fn(async () => []),
     saveRepositoryLocation: vi.fn(async () => {}),

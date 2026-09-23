@@ -19,7 +19,6 @@ export function createTauriExecutionConfigurationClient(
       invokeCommand<ProfileModelCatalogueDto>('load_profile_model_catalogue', {
         input: { configurationRef },
       }),
-    loadNativeCapabilityInventory: () => invokeCommand('load_native_capability_inventory'),
     loadDefaultCapabilityProfile: () => invokeCommand('load_default_capability_profile'),
     setDefaultCapabilityProfile: (capabilityProfileId) =>
       invokeCommand('set_default_capability_profile', { input: { capabilityProfileId } }),

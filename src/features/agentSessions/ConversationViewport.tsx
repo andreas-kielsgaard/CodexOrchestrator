@@ -87,14 +87,10 @@ export function ConversationViewport({
   const requests = composerTarget?.respondToRequest
     ? pendingSessionRequests(composerTarget.interactions)
     : [];
-  const revision =
-    segments
-      .map(
-        (segment) =>
-          `${segment.id}:${segment.transcript.invocations.map((item) => `${item.id}:${item.status}:${item.processing.length}:${item.technical.length}:${item.finalResponse?.eventId ?? ''}`).join(',')}`,
-      )
-      .join('|') +
-    JSON.stringify(composerTarget?.interactions?.map((item) => [item.id, item.state]));
+  const revision = segments.reduce(
+    (latest, segment) => Math.max(latest, segment.transcript.presentationRevision),
+    0,
+  );
   const follow = useTranscriptFollow(
     segments.map((segment) => segment.id).join('|'),
     revision,

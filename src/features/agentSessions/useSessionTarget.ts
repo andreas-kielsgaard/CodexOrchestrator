@@ -29,6 +29,55 @@ export function selectionForTarget(
     workspace: { kind: 'existing', target },
   };
 }
+
+function sameExecutionRoute(
+  left: SessionExecutionSelectionDto['execution'],
+  right: SessionExecutionSelectionDto['execution'],
+) {
+  return (
+    left.deviceId === right.deviceId &&
+    left.provider === right.provider &&
+    left.configurationRef === right.configurationRef &&
+    JSON.stringify(left.connection) === JSON.stringify(right.connection)
+  );
+}
+
+function rebaseDraftSelection(
+  selection: SessionExecutionSelectionDto,
+  profiles: readonly CapabilityProfileDto[],
+): SessionExecutionSelectionDto | null {
+  const profile = profiles.find(
+    (candidate) => candidate.capabilityProfileId === selection.capabilityProfileId,
+  );
+  if (!profile) return null;
+  const matchingExecution = profile.routePolicies?.length
+    ? profile.routePolicies.find((route) => sameExecutionRoute(route.execution, selection.execution))
+        ?.execution
+    : profile.execution && sameExecutionRoute(profile.execution, selection.execution)
+      ? profile.execution
+      : undefined;
+  if (!matchingExecution) return null;
+  if (profile.revision === selection.capabilityProfileRevision) return selection;
+  const next = {
+    ...selection,
+    capabilityProfileRevision: profile.revision,
+    execution: matchingExecution,
+  };
+  return selection.workspace.kind === 'existing'
+    ? {
+        ...next,
+        workspace: {
+          kind: 'existing',
+          target: {
+            ...selection.workspace.target,
+            capabilityProfileRevision: profile.revision,
+            execution: matchingExecution,
+          },
+        },
+      }
+    : next;
+}
+
 export function useSessionTarget(
   client: ExecutionTargetClient | undefined,
   profiles: ExecutionConfigurationClient | undefined,
@@ -39,6 +88,8 @@ export function useSessionTarget(
   repositoryId?: string | null,
 ) {
   const [selection, setSelectionState] = useState<SessionExecutionSelectionDto | null>(null);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   const [hydratedCacheKey, setHydratedCacheKey] = useState<string | null>(null);
   const [availableProfiles, setAvailableProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -78,6 +129,21 @@ export function useSessionTarget(
       ([items, defaultId]) => {
         if (!current) return;
         setAvailableProfiles(items);
+        if (!sessionId) {
+          const currentSelection = selectionRef.current;
+          if (currentSelection) {
+            const rebased = rebaseDraftSelection(currentSelection, items);
+            if (!rebased) {
+              setError(
+                'The selected execution route is no longer part of this Capability Profile. Choose a route again.',
+              );
+            } else if (rebased !== currentSelection) {
+              setError(null);
+              setDeviceId(rebased.execution.deviceId);
+              setSelectionState(rebased);
+            }
+          }
+        }
         if (!sessionId && !dirty.current) {
           const selected = items.find((item) => item.capabilityProfileId === defaultId);
           if (selected) {

@@ -152,7 +152,6 @@ pub(crate) struct RepositoryWorktreeChoices {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExecutionTargetRuntime {
     pub(crate) runtime_profile: crate::execution_configuration::RuntimeProfileSnapshot,
-    pub(crate) native_inventory: crate::execution_configuration::NativeCapabilityInventory,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

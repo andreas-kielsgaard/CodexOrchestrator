@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 const FOLLOW_THRESHOLD_PX = 96;
 
@@ -17,7 +17,7 @@ export function isNearTranscriptBottom(
 
 export function useTranscriptFollow(
   sessionId: string | null,
-  revision: string,
+  revision: number,
   requestId?: string,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,11 +58,13 @@ export function useTranscriptFollow(
     shouldFollowRef.current = isNearTranscriptBottom(container);
   }, []);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const sessionChanged = previousSessionRef.current !== sessionId;
     if (sessionChanged) shouldFollowRef.current = true;
     previousSessionRef.current = sessionId;
-    if (shouldFollowRef.current) scrollToLatest();
+    if (!shouldFollowRef.current) return;
+    const frame = requestAnimationFrame(scrollToLatest);
+    return () => cancelAnimationFrame(frame);
   }, [revision, scrollToLatest, sessionId]);
 
   return { containerRef, handleScroll, requestFollow, reviewRequest };

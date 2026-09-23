@@ -295,7 +295,8 @@
   margin: 0;
 }
 
-.capability-route > header > div:first-child > span,
+.capability-route__summary > span,
+.capability-route__summary > small,
 .capability-route__detail,
 .capability-route__section-heading p,
 .capability-groups p,
@@ -303,6 +304,34 @@
   color: #637168;
   font-size: 0.73rem;
   line-height: 1.45;
+}
+
+.capability-route__toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.capability-route__summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.capability-route__summary > strong,
+.capability-route__summary > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .capability-route h3,

@@ -256,6 +256,7 @@ export type AgentSessionUpdateDto =
 export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void;
 
 export interface AgentSessionClient {
+  readonly historySource?: import('./liveHistory').AgentSessionHistorySource;
   resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;
   steerSession?(input: {
     sessionId: string;

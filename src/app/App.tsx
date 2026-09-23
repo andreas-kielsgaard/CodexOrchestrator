@@ -36,6 +36,7 @@ import type { OtpCatalogueReader, OtpInstallationClient } from '../application/o
 import type { WorkflowInstanceClient } from '../application/workflowInstances';
 
 import type { CapabilityProfileDraft } from '../features/executionConfiguration/types';
+import { CapabilityProfileEditorMemory } from '../features/executionConfiguration/CapabilityProfileEditorMemory';
 
 import { DraftWorkspace } from '../components/draftWorkspace';
 
@@ -396,6 +397,7 @@ export function App({
   const [workflowDrafts] = useState(() => new DraftWorkspace<WorkflowRecipeDraftDto>());
 
   const [capabilityDrafts] = useState(() => new DraftWorkspace<CapabilityProfileDraft>());
+  const [capabilityEditorMemory] = useState(() => new CapabilityProfileEditorMemory());
 
   useDraftCloseWarning(() => workflowDrafts.dirty() || capabilityDrafts.dirty(), draftCloseGuard);
 
@@ -1643,9 +1645,8 @@ export function App({
 
           nativeProfileClient={nativeProfileClient}
 
-          executionTargetClient={executionTargetClient}
-
           workspace={capabilityDrafts}
+          editorMemory={capabilityEditorMemory}
         />
       ) : surface === 'workflows' &&
         workflowAuthoringClient &&

@@ -4,7 +4,7 @@ import { projectAgentSessionTranscript } from './transcriptProjector';
 import { runtimeEvent, sessionDetails } from './testFixtures';
 
 describe('AgentSessionTranscript', () => {
-  it('shows running work and intermediate agent messages openly', () => {
+  it('keeps running work collapsed until the user opens it', () => {
     renderTranscript(
       projectAgentSessionTranscript(
         sessionDetails('running', [
@@ -13,8 +13,8 @@ describe('AgentSessionTranscript', () => {
         ]),
       ),
     );
-    expect(screen.getByText('Inspecting files')).toBeVisible();
-    expect(screen.getByText('I found the issue')).toBeVisible();
+    expect(screen.getByText('Inspecting files')).not.toBeVisible();
+    expect(screen.getByText('I found the issue')).not.toBeVisible();
     expect(screen.getByText('Working')).toBeInTheDocument();
   });
 
@@ -63,23 +63,21 @@ describe('AgentSessionTranscript', () => {
     expect(screen.getByText('Completed without a final response.')).toBeInTheDocument();
   });
 
-  it('retains technical detail after a durable reload projection', () => {
+  it('does not expose routine technical detail in the conversation', () => {
     const unknown = runtimeEvent(1, 'unknown', null, { diagnostic: 'malformed' });
     unknown.rawPayload = 'malformed jsonl';
     renderTranscript(projectAgentSessionTranscript(sessionDetails('completed', [unknown])));
-    fireEvent.click(screen.getByText('Technical details (1)'));
-    expect(screen.getByText('malformed jsonl')).toBeVisible();
+    expect(screen.queryByText('Technical details (1)')).not.toBeInTheDocument();
+    expect(screen.queryByText('malformed jsonl')).not.toBeInTheDocument();
   });
 
-  it('keeps live diagnostics collapsed and preserves an explicit expansion across updates', () => {
+  it('keeps live diagnostics out of the ordinary transcript across updates', () => {
     const unknown = runtimeEvent(1, 'unknown', 'Unclassified runtime output');
     const { rerender } = renderTranscript(
       projectAgentSessionTranscript(sessionDetails('running', [unknown])),
     );
 
-    expect(screen.getByText('Unclassified runtime output')).not.toBeVisible();
-    fireEvent.click(screen.getByText('Technical details (1)'));
-    expect(screen.getByText('Unclassified runtime output')).toBeVisible();
+    expect(screen.queryByText('Unclassified runtime output')).not.toBeInTheDocument();
 
     rerender(
       <AgentSessionTranscript
@@ -90,7 +88,7 @@ describe('AgentSessionTranscript', () => {
       />,
     );
 
-    expect(screen.getByText('Unclassified runtime output')).toBeVisible();
+    expect(screen.queryByText('Unclassified runtime output')).not.toBeInTheDocument();
   });
 });
 

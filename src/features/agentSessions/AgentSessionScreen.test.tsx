@@ -15,7 +15,11 @@ describe('AgentSessionScreen', () => {
     const reload = vi.spyOn(sessions, 'reloadSession').mockResolvedValue(completed);
     const subscriptions = vi.spyOn(sessions, 'subscribeUpdates');
     render(<AgentSessionScreen client={sessions} profileClient={profiles} />);
-    expect(await screen.findByText('Reading files')).toBeVisible();
+    expect(await screen.findByText('Reading files')).not.toBeVisible();
+    fireEvent.click(
+      screen.getByText('Working', { selector: '.processing-disclosure summary span' }),
+    );
+    expect(screen.getByText('Reading files')).toBeVisible();
     expect(screen.queryByText('The final answer')).toBeNull();
 
     await act(async () => {
@@ -29,9 +33,9 @@ describe('AgentSessionScreen', () => {
     });
     expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' });
     expect(await screen.findByText('The final answer')).toBeVisible();
-    expect(screen.getByText('Reading files')).not.toBeVisible();
-    fireEvent.click(screen.getByText('Processing'));
     expect(screen.getByText('Reading files')).toBeVisible();
+    fireEvent.click(screen.getByText('Processing'));
+    expect(screen.getByText('Reading files')).not.toBeVisible();
   });
 
   it('ignores another Session update while reflecting an update for the selected Session', async () => {
@@ -71,7 +75,11 @@ describe('AgentSessionScreen', () => {
           event: updated.invocations[0].events[0],
         });
     });
-    expect(await screen.findByText('Selected update')).toBeVisible();
+    expect(await screen.findByText('Selected update')).not.toBeVisible();
+    fireEvent.click(
+      screen.getByText('Working', { selector: '.processing-disclosure summary span' }),
+    );
+    expect(screen.getByText('Selected update')).toBeVisible();
     expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' });
   });
 

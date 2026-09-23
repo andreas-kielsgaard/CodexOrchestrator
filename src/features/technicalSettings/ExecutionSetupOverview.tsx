@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { localCodexRoutes } from '../../application/executionConfiguration';
+import {
+  displayCodexHomePath,
+  localCodexRoutes,
+} from '../../application/executionConfiguration';
 import type {
   NativeProfile,
   NativeProfileClient,
@@ -68,7 +71,7 @@ export function DeviceSetupOverview({
             Configure this harness
           </button>
           <p>
-            {harness.homePath} · connected inference source: OpenAI via this Codex CLI
+            {displayCodexHomePath(harness.homePath)} · connected inference source: OpenAI via this Codex CLI
             configuration. Account credentials remain in this device-local Codex profile.
           </p>
         </section>
@@ -121,7 +124,7 @@ export function InferenceSourceOverview({
           <div>
             <p>Inference source</p>
             <h3 id={`openai-source-${harness.id}`}>OpenAI via Codex CLI</h3>
-            <span>Connected to Codex CLI · {harness.homePath}</span>
+            <span>Connected to Codex CLI · {displayCodexHomePath(harness.homePath)}</span>
           </div>
           <p>
             This is the source binding for one harness configuration. A second account needs its own

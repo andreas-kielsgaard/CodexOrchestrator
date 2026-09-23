@@ -31,7 +31,10 @@ impl ProfileRoutePolicy {
         let mut model_ids = BTreeSet::new();
         for allowance in &self.model_allowances {
             if !model_ids.insert(&allowance.model_id) {
-                return Err(format!("Capability Profile route repeats model `{}`", allowance.model_id));
+                return Err(format!(
+                    "Capability Profile route repeats model `{}`",
+                    allowance.model_id
+                ));
             }
         }
         for group in self.mcp_groups.iter().chain(self.skill_groups.iter()) {
@@ -63,13 +66,22 @@ impl ModelAllowance {
             "maximumReasoning",
             &self.maximum_reasoning,
         )?;
-        const ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+        const ORDER: &[&str] = &[
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ];
         if let (Some(minimum), Some(maximum)) = (
-            ORDER.iter().position(|value| *value == self.minimum_reasoning),
-            ORDER.iter().position(|value| *value == self.maximum_reasoning),
+            ORDER
+                .iter()
+                .position(|value| *value == self.minimum_reasoning),
+            ORDER
+                .iter()
+                .position(|value| *value == self.maximum_reasoning),
         ) {
             if minimum > maximum {
-                return Err(format!("Capability Profile model `{}` has a reversed reasoning range", self.model_id));
+                return Err(format!(
+                    "Capability Profile model `{}` has a reversed reasoning range",
+                    self.model_id
+                ));
             }
         }
         Ok(())
@@ -122,7 +134,10 @@ impl CapabilityProfile {
             for route in &self.route_policies {
                 route.validate()?;
                 if !route_ids.insert(&route.route_id) {
-                    return Err(format!("Capability Profile repeats route `{}`", route.route_id));
+                    return Err(format!(
+                        "Capability Profile repeats route `{}`",
+                        route.route_id
+                    ));
                 }
             }
             let default_route = self.default_route_id.as_deref().ok_or_else(|| {
@@ -147,5 +162,31 @@ impl CapabilityProfile {
                 .iter()
                 .find(|route| route.route_id == id)
         })
+    }
+
+    pub(crate) fn route_for_execution(
+        &self,
+        execution: &crate::execution_targets::domain::ExecutionBinding,
+    ) -> Option<&ProfileRoutePolicy> {
+        self.route_policies.iter().find(|route| {
+            route.execution.device_id == execution.device_id
+                && route.execution.provider == execution.provider
+                && route.execution.configuration_ref == execution.configuration_ref
+                && route.execution.connection == execution.connection
+        })
+    }
+
+    pub(crate) fn contains_execution(
+        &self,
+        execution: &crate::execution_targets::domain::ExecutionBinding,
+    ) -> bool {
+        if self.route_policies.is_empty() {
+            self.execution.device_id == execution.device_id
+                && self.execution.provider == execution.provider
+                && self.execution.configuration_ref == execution.configuration_ref
+                && self.execution.connection == execution.connection
+        } else {
+            self.route_for_execution(execution).is_some()
+        }
     }
 }

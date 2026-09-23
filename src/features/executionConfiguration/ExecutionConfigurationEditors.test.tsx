@@ -116,6 +116,11 @@ describe('Execution Configuration editors', () => {
     await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Reviewer');
     await user.click(screen.getByRole('button', { name: 'Add execution route' }));
     await user.click(screen.getByRole('button', { name: 'Add route' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'This device Configured harness OpenAI via Codex CLI',
+      }),
+    );
     await user.click(screen.getByRole('button', { name: 'Add model' }));
     await user.click(
       within(screen.getByText('gpt-5.6').closest('li') as HTMLElement).getByRole('button', {
@@ -143,6 +148,41 @@ describe('Execution Configuration editors', () => {
         ]),
       }),
     );
+  });
+
+  it('keeps the model picker open and restores a removed reasoning range in this instance', async () => {
+    const user = userEvent.setup();
+    render(<ControlledCapabilityEditor onSave={() => undefined} />);
+
+    await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+    await user.click(screen.getByRole('button', { name: 'Add route' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'This device Configured harness OpenAI via Codex CLI',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    const picker = screen.getByRole('dialog', { name: 'Add model' });
+    const modelRow = within(picker).getByText('gpt-5.6').closest('li') as HTMLElement;
+    await user.click(within(modelRow).getByRole('button', { name: 'Add' }));
+    expect(screen.getByRole('dialog', { name: 'Add model' })).toBeVisible();
+    expect(within(modelRow).getByRole('button', { name: 'Remove' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Close Add model' }));
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'gpt-5.6 lowest reasoning' }),
+      'high',
+    );
+    await user.click(screen.getByRole('button', { name: 'Remove gpt-5.6' }));
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    const reopenedRow = within(screen.getByRole('dialog', { name: 'Add model' }))
+      .getByText('gpt-5.6')
+      .closest('li') as HTMLElement;
+    await user.click(within(reopenedRow).getByRole('button', { name: 'Add' }));
+    await user.click(screen.getByRole('button', { name: 'Close Add model' }));
+
+    expect(screen.getByRole('combobox', { name: 'gpt-5.6 lowest reasoning' })).toHaveValue('high');
+    expect(screen.getByRole('combobox', { name: 'gpt-5.6 highest reasoning' })).toHaveValue('high');
   });
 
   it('presents editable MCP and skill groups rather than individual runtime entries', () => {

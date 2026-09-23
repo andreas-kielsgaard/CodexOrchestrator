@@ -1,6 +1,5 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
@@ -14,7 +13,7 @@ import type {
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
 import { CapabilityProfileEditor } from './CapabilityProfileEditor';
-import { NativeCapabilityInventory } from './NativeCapabilityInventory';
+import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import { runtimeProfileViewModel } from './presentation';
 import type { CapabilityProfileDraft, HarnessInferenceRouteOption } from './types';
 import './mountedExecutionConfiguration.css';
@@ -24,9 +23,9 @@ export interface ExecutionConfigurationScreenProps {
   /** Design-time package descriptions group selectable MCP tools without probing them. */
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
+  readonly editorMemory?: CapabilityProfileEditorMemory;
   /** Native profiles are projected into non-secret local harness/source routes. */
   readonly nativeProfileClient?: NativeProfileClient;
-  readonly executionTargetClient?: ExecutionTargetClient;
 }
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
@@ -96,11 +95,13 @@ export function ExecutionConfigurationScreen({
   client,
   readOtpCatalogue,
   workspace: providedWorkspace,
+  editorMemory: providedEditorMemory,
   nativeProfileClient,
-  executionTargetClient,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
+  const localEditorMemory = useMemo(() => new CapabilityProfileEditorMemory(), []);
   const workspace = providedWorkspace ?? localWorkspace;
+  const editorMemory = providedEditorMemory ?? localEditorMemory;
   const [defaultProfileId, setDefaultProfileId] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
@@ -209,9 +210,6 @@ export function ExecutionConfigurationScreen({
       })(),
     [runtime, otpPackages],
   );
-  const selectedRouteExecution =
-    draft.execution ?? routes.find((route) => route.selected)?.execution;
-
   const selectProfile = (profile: CapabilityProfileDto) => {
     selectedRef.current = profile.capabilityProfileId;
     workspace.selectedKey = profile.capabilityProfileId;
@@ -259,6 +257,7 @@ export function ExecutionConfigurationScreen({
         }),
       );
       if (key !== saved.capabilityProfileId) {
+        editorMemory.rekey(key, saved.capabilityProfileId);
         workspace.load(saved.capabilityProfileId, draftFromProfile(saved));
         workspace.edit(saved.capabilityProfileId, working);
         workspace.discard(key);
@@ -283,6 +282,7 @@ export function ExecutionConfigurationScreen({
     setError(null);
     try {
       await client.deleteCapabilityProfile(selectedId);
+      editorMemory.clear(selectedId);
       workspace.discard(selectedId);
       const nextProfiles = await client.listCapabilityProfiles();
       setProfiles(nextProfiles);
@@ -350,7 +350,6 @@ export function ExecutionConfigurationScreen({
               ))}
             </select>
             {!defaultProfileId && <p>Choose a default for sessions without a target worktree.</p>}
-            <p>A selected worktree supplies its own Capability Profile.</p>
           </label>
         )}
         <nav aria-label="Saved Capability Profiles">
@@ -369,19 +368,6 @@ export function ExecutionConfigurationScreen({
         </nav>
       </aside>
       <section className="execution-configuration-screen__workspace">
-        {selectedId || workspace.read('$new') ? (
-          <NativeCapabilityInventory
-            key={JSON.stringify(selectedRouteExecution)}
-            client={client}
-            loadInventory={
-              executionTargetClient && selectedRouteExecution
-                ? async () =>
-                    (await executionTargetClient.loadRuntime(selectedRouteExecution))
-                      .nativeInventory
-                : undefined
-            }
-          />
-        ) : null}
         {selectedId && selectedId === defaultProfileId && (
           <p>Choose another default before deleting this profile.</p>
         )}
@@ -396,6 +382,8 @@ export function ExecutionConfigurationScreen({
             {selectedId || workspace.read('$new') ? (
               <CapabilityProfileEditor
                 profile={draft}
+                profileKey={selectedId ?? '$new'}
+                editorMemory={editorMemory}
                 runtime={runtimeView}
                 routes={routes}
                 modelCatalogues={client.loadProfileModelCatalogue ? modelCatalogues : undefined}

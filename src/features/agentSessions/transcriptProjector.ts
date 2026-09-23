@@ -6,10 +6,10 @@ import { importedTranscript, type ImportedTranscript } from './importedTranscrip
 import type { SessionInteractionDto } from '../../application/agentSessions';
 import type {
   AgentDiagnosticDto,
+  AgentInvocationDetailsDto,
   AgentInvocationStatusDto,
   AgentRuntimeFailureDto,
   AgentRuntimeEventDto,
-  AgentRuntimeUsageDto,
   AgentSessionDetailsDto,
   IsoDateTimeDto,
   NormalizedToolActivityDto,
@@ -103,91 +103,231 @@ export interface ProjectedTranscript {
   sessionId: string;
   invocations: ProjectedInvocation[];
   activeInvocationId: string | null;
+  presentationRevision: number;
 }
 
 const activeStatuses = new Set<AgentInvocationStatusDto>(['pending', 'running']);
+let nextPresentationRevision = 0;
 
 export function projectAgentSessionTranscript(
   details: AgentSessionDetailsDto,
   preparation?: SessionPreparationDto | null,
 ): ProjectedTranscript {
-  const invocations = details.invocations
-    .map((entry) => ({ ...entry, imported: importedTranscript(entry.events) }))
+  const invocations = orderedInvocationEntries(details).map(({ entry, imported }) =>
+    projectInvocation(
+      details.session.id,
+      entry,
+      imported,
+      preparation,
+      interactionsFor(details, entry.invocation.id),
+    ),
+  );
+
+  return transcript(details.session.id, invocations);
+}
+
+interface CachedInvocationProjection {
+  readonly entry: AgentInvocationDetailsDto;
+  readonly interactions: readonly SessionInteractionDto[] | undefined;
+  readonly preparing: boolean;
+  readonly projected: ProjectedInvocation;
+}
+
+/** Retains unchanged invocation projections and only folds newly appended live events. */
+export class AgentSessionTranscriptProjectionCache {
+  private sessionId: string | null = null;
+  private invocations = new Map<string, CachedInvocationProjection>();
+
+  project(
+    details: AgentSessionDetailsDto,
+    preparation?: SessionPreparationDto | null,
+  ): ProjectedTranscript {
+    if (this.sessionId !== details.session.id) {
+      this.sessionId = details.session.id;
+      this.invocations.clear();
+    }
+
+    const nextCache = new Map<string, CachedInvocationProjection>();
+    const projected = orderedInvocationEntries(details).map(({ entry, imported }) => {
+      const invocationId = entry.invocation.id;
+      const interactions = interactionsFor(details, invocationId);
+      const preparing =
+        preparation?.invocationId === invocationId && isSessionPreparing(preparation);
+      const cached = this.invocations.get(invocationId);
+      const next = cached
+        ? updateInvocationProjection(
+            details.session.id,
+            cached,
+            entry,
+            imported,
+            preparing,
+            interactions,
+          )
+        : projectInvocation(details.session.id, entry, imported, preparation, interactions);
+      nextCache.set(invocationId, { entry, interactions, preparing, projected: next });
+      return next;
+    });
+    this.invocations = nextCache;
+    return transcript(details.session.id, projected);
+  }
+}
+
+function orderedInvocationEntries(details: AgentSessionDetailsDto) {
+  return details.invocations
+    .map((entry) => ({ entry, imported: importedTranscript(entry.events) }))
     .sort((left, right) =>
       left.imported && right.imported
         ? left.imported.ordinal - right.imported.ordinal
         : compareOrdered(
-            left.invocation.createdAt,
-            left.invocation.id,
-            right.invocation.createdAt,
-            right.invocation.id,
+            left.entry.invocation.createdAt,
+            left.entry.invocation.id,
+            right.entry.invocation.createdAt,
+            right.entry.invocation.id,
           ),
-    )
-    .map(({ invocation, events, imported }): ProjectedInvocation => {
-      const orderedEvents = [...events].sort(
-        (left, right) =>
-          left.sequence - right.sequence ||
-          compareOrdered(left.recordedAt, left.id, right.recordedAt, right.id),
-      );
-      const finalEvent = findLastFinalAgentMessage(orderedEvents);
-      const processing: TranscriptActivity[] = [];
-      const technical: TranscriptActivity[] = [];
+    );
+}
 
-      for (const event of orderedEvents) {
-        if (event === finalEvent) {
-          continue;
-        }
+function projectInvocation(
+  sessionId: string,
+  entry: AgentInvocationDetailsDto,
+  imported: ImportedTranscript | undefined,
+  preparation: SessionPreparationDto | null | undefined,
+  interactions: readonly SessionInteractionDto[] | undefined,
+): ProjectedInvocation {
+  const { invocation, events } = entry;
+  const orderedEvents = [...events].sort(
+    (left, right) =>
+      left.sequence - right.sequence ||
+      compareOrdered(left.recordedAt, left.id, right.recordedAt, right.id),
+  );
+  const finalEvent = findLastFinalAgentMessage(orderedEvents);
+  const processing: TranscriptActivity[] = [];
+  const technical: TranscriptActivity[] = [];
 
-        const activity = projectActivity(event);
-        if (!activity) {
-          continue;
-        }
-        if (activity.kind === 'technical') {
-          technical.push(activity);
-        } else {
-          processing.push(activity);
-        }
-      }
-
-      return {
-        preparing: preparation?.invocationId === invocation.id && isSessionPreparing(preparation),
-        imported,
-        id: invocation.id,
-        interactions: details.interactions?.filter((item) => item.invocationId === invocation.id),
-        submittedText: invocation.submittedText,
-        inputProvenance: invocation.inputProvenance,
-        status: invocation.status,
-        isActive: activeStatuses.has(invocation.status),
-        createdAt: invocation.createdAt,
-        startedAt: invocation.startedAt,
-        completedAt: invocation.completedAt,
-        processing: coalesceLifecycleActivities(processing),
-        technical,
-        diagnostics: [...invocation.diagnostics].sort((left, right) =>
-          left.recordedAt.localeCompare(right.recordedAt),
-        ),
-        finalResponse: finalEvent?.normalized?.text?.trim()
-          ? {
-              anchor: eventAnchor(
-                details.session.id,
-                invocation.id,
-                'final_response',
-                finalEvent.id,
-              ),
-              eventId: finalEvent.id,
-              text: finalEvent.normalized.text.trim(),
-            }
-          : null,
-        runtimeFailure: invocation.runtimeError,
-        outcome: projectOutcome(invocation.status, invocation.runtimeError?.message ?? null),
-      };
-    });
+  for (const event of orderedEvents) {
+    if (event === finalEvent) continue;
+    const activity = projectActivity(event);
+    if (!activity) continue;
+    if (activity.kind === 'technical') technical.push(activity);
+    else processing.push(activity);
+  }
 
   return {
-    sessionId: details.session.id,
+    preparing: preparation?.invocationId === invocation.id && isSessionPreparing(preparation),
+    imported,
+    id: invocation.id,
+    interactions,
+    submittedText: invocation.submittedText,
+    inputProvenance: invocation.inputProvenance,
+    status: invocation.status,
+    isActive: activeStatuses.has(invocation.status),
+    createdAt: invocation.createdAt,
+    startedAt: invocation.startedAt,
+    completedAt: invocation.completedAt,
+    processing: coalesceLifecycleActivities(processing),
+    technical,
+    diagnostics: sortedDiagnostics(invocation.diagnostics),
+    finalResponse: finalEvent?.normalized?.text?.trim()
+      ? {
+          anchor: eventAnchor(sessionId, invocation.id, 'final_response', finalEvent.id),
+          eventId: finalEvent.id,
+          text: finalEvent.normalized.text.trim(),
+        }
+      : null,
+    runtimeFailure: invocation.runtimeError,
+    outcome: projectOutcome(invocation.status, invocation.runtimeError?.message ?? null),
+  };
+}
+
+function updateInvocationProjection(
+  sessionId: string,
+  cached: CachedInvocationProjection,
+  entry: AgentInvocationDetailsDto,
+  imported: ImportedTranscript | undefined,
+  preparing: boolean,
+  interactions: readonly SessionInteractionDto[] | undefined,
+): ProjectedInvocation {
+  const previousEvents = cached.entry.events;
+  const events = entry.events;
+  const appendOnly =
+    previousEvents === events ||
+    (previousEvents.length < events.length &&
+      (previousEvents.length === 0 ||
+        previousEvents.at(-1) === events[previousEvents.length - 1]));
+  const appended = appendOnly ? events.slice(previousEvents.length) : [];
+  if (
+    !appendOnly ||
+    imported ||
+    cached.projected.imported ||
+    Boolean(findLastFinalAgentMessage(appended))
+  ) {
+    return {
+      ...projectInvocation(sessionId, entry, imported, undefined, interactions),
+      preparing,
+    };
+  }
+
+  const unchanged =
+    cached.entry === entry &&
+    cached.preparing === preparing &&
+    sameInteractionList(cached.interactions, interactions);
+  if (unchanged) return cached.projected;
+
+  const additions = appended.map(projectActivity).filter((item) => item !== null);
+  const processing = coalesceLifecycleActivities([
+    ...cached.projected.processing,
+    ...additions.filter((item) => item.kind !== 'technical'),
+  ]);
+  const technical = [
+    ...cached.projected.technical,
+    ...additions.filter((item) => item.kind === 'technical'),
+  ];
+  const invocation = entry.invocation;
+  return {
+    ...cached.projected,
+    preparing,
+    interactions,
+    status: invocation.status,
+    isActive: activeStatuses.has(invocation.status),
+    startedAt: invocation.startedAt,
+    completedAt: invocation.completedAt,
+    processing,
+    technical,
+    diagnostics: sortedDiagnostics(invocation.diagnostics),
+    runtimeFailure: invocation.runtimeError,
+    outcome: projectOutcome(invocation.status, invocation.runtimeError?.message ?? null),
+  };
+}
+
+function interactionsFor(details: AgentSessionDetailsDto, invocationId: string) {
+  return details.interactions?.filter((item) => item.invocationId === invocationId);
+}
+
+function sameInteractionList(
+  left: readonly SessionInteractionDto[] | undefined,
+  right: readonly SessionInteractionDto[] | undefined,
+) {
+  return (
+    left === right ||
+    (left?.length === right?.length && left?.every((item, index) => item === right?.[index]))
+  );
+}
+
+function sortedDiagnostics(diagnostics: readonly AgentDiagnosticDto[]) {
+  return [...diagnostics].sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
+}
+
+function transcript(sessionId: string, invocations: ProjectedInvocation[]): ProjectedTranscript {
+  const projected = {
+    sessionId,
     invocations,
     activeInvocationId: invocations.find((invocation) => invocation.isActive)?.id ?? null,
-  };
+  } as ProjectedTranscript;
+  Object.defineProperty(projected, 'presentationRevision', {
+    value: ++nextPresentationRevision,
+    enumerable: false,
+  });
+  return projected;
 }
 
 /**
@@ -392,10 +532,11 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
   }
 
   if (kind === 'processing_started') {
-    return { ...base, kind: 'processing', text: normalized.text?.trim() || 'Processing started' };
+    return null;
   }
   if (kind === 'processing_update') {
-    return { ...base, kind: 'processing', text: normalized.text?.trim() || 'Processing update' };
+    const text = normalized.text?.trim();
+    return text ? { ...base, kind: 'processing', text } : null;
   }
   if (kind === 'tool_activity') {
     return {
@@ -413,12 +554,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     };
   }
   if (kind === 'usage') {
-    return {
-      ...base,
-      kind: 'usage',
-      text: usageLabel(normalized.usage),
-      safeDetail: normalized.usage ? { kind: 'usage', ...normalized.usage } : null,
-    };
+    return null;
   }
   if (kind === 'runtime_context_established' || kind === 'invocation_completed') {
     return null;
@@ -487,14 +623,4 @@ function technicalLabel(event: AgentRuntimeEventDto): string {
     }
   }
   return `${event.source} event (${event.normalized?.kind ?? 'unparsed'})`;
-}
-
-function usageLabel(usage: AgentRuntimeUsageDto | null): string {
-  if (!usage) return 'Usage recorded';
-  const parts = [
-    usage.inputTokens === null ? null : `${usage.inputTokens} input`,
-    usage.cachedInputTokens === null ? null : `${usage.cachedInputTokens} cached`,
-    usage.outputTokens === null ? null : `${usage.outputTokens} output`,
-  ].filter(Boolean);
-  return parts.length ? `Usage: ${parts.join(', ')}` : 'Usage recorded';
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ValidationSummary } from '../../components/ValidationSummary';
 import type {
@@ -12,10 +12,20 @@ import type {
   HarnessInferenceRouteOption,
   RuntimeProfileViewModel,
 } from './types';
+import { CapabilityProfileDialog } from './CapabilityProfileDialog';
+import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
+import {
+  byKnownOrder,
+  CapabilityRouteEditor,
+  MODEL_ORDER,
+  REASONING_ORDER,
+} from './CapabilityRouteEditor';
 import './executionConfiguration.css';
 
 export interface CapabilityProfileEditorProps {
   readonly profile: CapabilityProfileDraft;
+  readonly profileKey?: string;
+  readonly editorMemory?: CapabilityProfileEditorMemory;
   readonly runtime: RuntimeProfileViewModel;
   readonly routes?: readonly HarnessInferenceRouteOption[];
   readonly modelCatalogues?: Readonly<Record<string, ProfileModelCatalogueDto>>;
@@ -23,19 +33,6 @@ export interface CapabilityProfileEditorProps {
   readonly saving?: boolean;
   onChange(profile: CapabilityProfileDraft): void;
   onSave?(profile: CapabilityProfileDraft): void;
-}
-
-const REASONING_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
-const MODEL_ORDER = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'];
-
-function byKnownOrder(values: readonly string[], knownOrder: readonly string[]): readonly string[] {
-  const rank = (value: string) => {
-    const index = knownOrder.indexOf(value.toLowerCase());
-    return index === -1 ? knownOrder.length : index;
-  };
-  return [...new Set(values)].sort(
-    (left, right) => rank(left) - rank(right) || left.localeCompare(right),
-  );
 }
 
 function sameExecution(
@@ -127,6 +124,8 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
 /** Controlled editor for reusable Device -> Harness -> Inference capability routes. */
 export function CapabilityProfileEditor({
   profile,
+  profileKey,
+  editorMemory,
   runtime,
   routes = [],
   modelCatalogues,
@@ -135,6 +134,9 @@ export function CapabilityProfileEditor({
   onChange,
   onSave,
 }: CapabilityProfileEditorProps) {
+  const [localEditorMemory] = useState(() => new CapabilityProfileEditorMemory());
+  const memory = editorMemory ?? localEditorMemory;
+  const memoryKey = profileKey ?? profile.capabilityProfileId ?? '$new';
   const [addingRoute, setAddingRoute] = useState(false);
   const existing = profile.revision !== null;
   const modelOptions = useMemo(
@@ -236,66 +238,32 @@ export function CapabilityProfileEditor({
             );
             const isDefault = route.routeId === profile.defaultRouteId;
             return (
-              <article
-                className={`capability-route${isDefault ? ' is-default' : ''}`}
+              <CapabilityRouteEditor
                 key={route.routeId}
-              >
-                <header>
-                  <div>
-                    <span>{routeInfo?.deviceLabel ?? route.execution.deviceName}</span>
-                    <h3>{routeInfo?.harnessLabel ?? 'Configured harness'}</h3>
-                    <p>
-                      {routeInfo?.inferenceLabel ??
-                        routeInfo?.sourceLabel ??
-                        'Configured inference source'}
-                    </p>
-                  </div>
-                  <div className="capability-route__actions">
-                    {isDefault ? (
-                      <span className="capability-route__default">Default</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="capability-route__hover-action"
-                        onClick={() => changeRoutes(profile.routePolicies, route.routeId)}
-                      >
-                        Set as default
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="capability-route__remove"
-                      aria-label={`Remove ${routeInfo?.label ?? 'execution route'}`}
-                      onClick={() => removeRoute(route.routeId)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </header>
-                <p className="capability-route__detail">
-                  {routeInfo?.detail ??
-                    'The saved route is no longer in the local route catalogue.'}
-                </p>
-                <RouteCapabilities
-                  route={route}
-                  models={
-                    modelCatalogues
-                      ? byKnownOrder(
-                          (modelCatalogues[route.execution.configurationRef]?.models ?? []).map(
-                            (model) => model.id,
-                          ),
-                          MODEL_ORDER,
-                        )
-                      : modelOptions
-                  }
-                  reasoning={reasoningOptions}
-                  modelCatalogue={modelCatalogues?.[route.execution.configurationRef]}
-                  routeCatalogueEnabled={modelCatalogues !== undefined}
-                  mcpGroups={mcpGroups}
-                  skillGroups={skillGroups}
-                  onChange={updateRoute}
-                />
-              </article>
+                route={route}
+                routeInfo={routeInfo}
+                isDefault={isDefault}
+                profileKey={memoryKey}
+                editorMemory={memory}
+                models={
+                  modelCatalogues
+                    ? byKnownOrder(
+                        (modelCatalogues[route.execution.configurationRef]?.models ?? []).map(
+                          (model) => model.id,
+                        ),
+                        MODEL_ORDER,
+                      )
+                    : modelOptions
+                }
+                reasoning={reasoningOptions}
+                modelCatalogue={modelCatalogues?.[route.execution.configurationRef]}
+                routeCatalogueEnabled={modelCatalogues !== undefined}
+                mcpGroups={mcpGroups}
+                skillGroups={skillGroups}
+                onChange={updateRoute}
+                onSetDefault={() => changeRoutes(profile.routePolicies, route.routeId)}
+                onRemove={() => removeRoute(route.routeId)}
+              />
             );
           })}
           {profile.routePolicies.length === 0 ? (
@@ -338,292 +306,6 @@ export function CapabilityProfileEditor({
   );
 }
 
-interface RouteCapabilitiesProps {
-  readonly route: ProfileRoutePolicyDto;
-  readonly models: readonly string[];
-  readonly reasoning: readonly string[];
-  readonly modelCatalogue?: ProfileModelCatalogueDto;
-  readonly routeCatalogueEnabled: boolean;
-  readonly mcpGroups: readonly GroupChoice[];
-  readonly skillGroups: readonly GroupChoice[];
-  onChange(route: ProfileRoutePolicyDto): void;
-}
-
-interface GroupChoice {
-  readonly id: string;
-  readonly label: string;
-  readonly detail: string;
-}
-
-function RouteCapabilities({
-  route,
-  models,
-  reasoning,
-  modelCatalogue,
-  routeCatalogueEnabled,
-  mcpGroups,
-  skillGroups,
-  onChange,
-}: RouteCapabilitiesProps) {
-  const [addingModel, setAddingModel] = useState(false);
-  const reasoningFor = (modelId: string, allowance?: ModelAllowanceDto): readonly string[] => {
-    const observed = modelCatalogue?.models
-      .find((model) => model.id === modelId)
-      ?.reasoningModes.map((mode) => mode.id);
-    return byKnownOrder(
-      [
-        ...(routeCatalogueEnabled ? (observed ?? []) : reasoning),
-        ...(allowance ? [allowance.minimumReasoning, allowance.maximumReasoning] : []),
-      ],
-      REASONING_ORDER,
-    );
-  };
-  const availableModels = models.filter(
-    (model) => !route.modelAllowances.some((entry) => entry.modelId === model),
-  );
-  const updateAllowance = (modelId: string, update: Partial<ModelAllowanceDto>) =>
-    onChange({
-      ...route,
-      modelAllowances: route.modelAllowances.map((allowance) =>
-        allowance.modelId === modelId ? { ...allowance, ...update } : allowance,
-      ),
-    });
-  const toggleGroup = (kind: 'mcpGroups' | 'skillGroups', id: string) => {
-    const selected = route[kind];
-    onChange({
-      ...route,
-      [kind]: selected.includes(id)
-        ? selected.filter((candidate) => candidate !== id)
-        : [...selected, id],
-    });
-  };
-  return (
-    <div className="capability-route__configuration">
-      <section aria-labelledby={`${route.routeId}-models`}>
-        <div className="capability-route__section-heading">
-          <div>
-            <h4 id={`${route.routeId}-models`}>Models and reasoning</h4>
-            <p>Record model-specific reasoning intent for later workflow policy. These ranges do not restrict sessions yet.</p>
-          </div>
-          <button
-            type="button"
-            disabled={availableModels.length === 0}
-            onClick={() => setAddingModel(true)}
-          >
-            Add model
-          </button>
-        </div>
-        {routeCatalogueEnabled ? (
-          <p className="capability-route__detail">
-            {modelCatalogue?.observationError
-              ? `${modelCatalogue.observedAt ? `Using model options observed ${new Date(modelCatalogue.observedAt).toLocaleString()}. ` : 'No model options have been observed yet. '}Current discovery failed: ${modelCatalogue.observationError}`
-              : modelCatalogue?.observedAt
-                ? `Model options observed ${new Date(modelCatalogue.observedAt).toLocaleString()}; availability is checked when a session starts.`
-                : 'Loading model options; you can save this route without choosing a model.'}
-          </p>
-        ) : null}
-        {route.modelAllowances.length === 0 ? (
-          <p className="capability-route__empty">No model preferences are recorded for this route.</p>
-        ) : null}
-        {byKnownOrder(
-          route.modelAllowances.map((entry) => entry.modelId),
-          MODEL_ORDER,
-        ).map((modelId) => {
-          const allowance = route.modelAllowances.find((entry) => entry.modelId === modelId)!;
-          const modelReasoning = reasoningFor(modelId, allowance);
-          const minimumIndex = Math.max(0, modelReasoning.indexOf(allowance.minimumReasoning));
-          const maximumIndex = Math.max(
-            minimumIndex,
-            modelReasoning.indexOf(allowance.maximumReasoning),
-          );
-          return (
-            <div className="model-allowance" key={modelId}>
-              <strong>{modelId}</strong>
-              <label>
-                <span>Lowest reasoning</span>
-                <select
-                  aria-label={`${modelId} lowest reasoning`}
-                  value={allowance.minimumReasoning}
-                  onChange={(event) => {
-                    const nextMinimum = event.currentTarget.value;
-                    const nextIndex = modelReasoning.indexOf(nextMinimum);
-                    updateAllowance(modelId, {
-                      minimumReasoning: nextMinimum,
-                      maximumReasoning:
-                        nextIndex > maximumIndex ? nextMinimum : allowance.maximumReasoning,
-                    });
-                  }}
-                >
-                  {modelReasoning.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Highest reasoning</span>
-                <select
-                  aria-label={`${modelId} highest reasoning`}
-                  value={allowance.maximumReasoning}
-                  onChange={(event) => {
-                    const nextMaximum = event.currentTarget.value;
-                    const nextIndex = modelReasoning.indexOf(nextMaximum);
-                    updateAllowance(modelId, {
-                      minimumReasoning:
-                        nextIndex < minimumIndex ? nextMaximum : allowance.minimumReasoning,
-                      maximumReasoning: nextMaximum,
-                    });
-                  }}
-                >
-                  {modelReasoning.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="model-allowance__remove"
-                aria-label={`Remove ${modelId}`}
-                onClick={() =>
-                  onChange({
-                    ...route,
-                    modelAllowances: route.modelAllowances.filter(
-                      (entry) => entry.modelId !== modelId,
-                    ),
-                  })
-                }
-              >
-                Remove
-              </button>
-            </div>
-          );
-        })}
-      </section>
-
-      <GroupToggles
-        id={`${route.routeId}-mcp-groups`}
-        title="MCP tools"
-        description="Enable broad MCP groups. Orchid filters brokered tool calls again when the session starts."
-        groups={mcpGroups}
-        selected={route.mcpGroups}
-        onToggle={(id) => toggleGroup('mcpGroups', id)}
-      />
-      <GroupToggles
-        id={`${route.routeId}-skill-groups`}
-        title="Skills"
-        description="Enable skill roots. Orchid compiles the selected session skill manifest at launch."
-        groups={skillGroups}
-        selected={route.skillGroups}
-        onToggle={(id) => toggleGroup('skillGroups', id)}
-      />
-
-      {addingModel ? (
-        <AddModelDialog
-          models={availableModels}
-          reasoningByModel={Object.fromEntries(
-            availableModels.map((model) => [model, reasoningFor(model)]),
-          )}
-          onAdd={(modelId) => {
-            const modelReasoning = reasoningFor(modelId);
-            const lowest = modelReasoning[0];
-            const highest = modelReasoning.at(-1) ?? lowest;
-            if (lowest && highest) {
-              onChange({
-                ...route,
-                modelAllowances: [
-                  ...route.modelAllowances,
-                  { modelId, minimumReasoning: lowest, maximumReasoning: highest },
-                ],
-              });
-            }
-            setAddingModel(false);
-          }}
-          onClose={() => setAddingModel(false)}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function GroupToggles({
-  id,
-  title,
-  description,
-  groups,
-  selected,
-  onToggle,
-}: {
-  id: string;
-  title: string;
-  description: string;
-  groups: readonly GroupChoice[];
-  selected: readonly string[];
-  onToggle(id: string): void;
-}) {
-  return (
-    <section className="capability-groups" aria-labelledby={id}>
-      <div>
-        <h4 id={id}>{title}</h4>
-        <p>{description}</p>
-      </div>
-      <div className="capability-groups__list">
-        {groups.map((group) => (
-          <label key={group.id}>
-            <input
-              type="checkbox"
-              checked={selected.includes(group.id)}
-              onChange={() => onToggle(group.id)}
-            />
-            <span>
-              <strong>{group.label}</strong>
-              <small>{group.detail}</small>
-            </span>
-          </label>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AddModelDialog({
-  models,
-  reasoningByModel,
-  onAdd,
-  onClose,
-}: {
-  models: readonly string[];
-  reasoningByModel: Readonly<Record<string, readonly string[]>>;
-  onAdd(model: string): void;
-  onClose(): void;
-}) {
-  return (
-    <Dialog title="Add model" onClose={onClose}>
-      <p>
-        Choose from the latest observed options for this route. Current availability is checked when
-        a session starts.
-      </p>
-      {models.length === 0 ? <p>No additional models are available.</p> : null}
-      <ul className="capability-dialog__list">
-        {models.map((model) => (
-          <li key={model}>
-            <span>{model}</span>
-            <button
-              type="button"
-              onClick={() => onAdd(model)}
-              disabled={!reasoningByModel[model]?.length}
-            >
-              Add
-            </button>
-          </li>
-        ))}
-      </ul>
-    </Dialog>
-  );
-}
-
 function AddRouteDialog({
   routes,
   onAdd,
@@ -643,7 +325,7 @@ function AddRouteDialog({
     (candidate) => (candidate.deviceLabel ?? candidate.execution.deviceName) === selectedDevice,
   );
   return (
-    <Dialog title="Add execution route" onClose={onClose}>
+    <CapabilityProfileDialog title="Add execution route" onClose={onClose}>
       <p>Choose the configured device, harness and inference source for this profile.</p>
       {routes.length === 0 ? (
         <p>
@@ -705,30 +387,6 @@ function AddRouteDialog({
           </footer>
         </>
       )}
-    </Dialog>
-  );
-}
-
-function Dialog({
-  title,
-  children,
-  onClose,
-}: {
-  title: string;
-  children: ReactNode;
-  onClose(): void;
-}) {
-  return (
-    <div className="capability-dialog__backdrop" role="presentation">
-      <section className="capability-dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <header>
-          <h2>{title}</h2>
-          <button type="button" aria-label={`Close ${title}`} onClick={onClose}>
-            ×
-          </button>
-        </header>
-        {children}
-      </section>
-    </div>
+    </CapabilityProfileDialog>
   );
 }

@@ -20,6 +20,11 @@ export interface HarnessInferenceRouteOption {
   readonly execution: ExecutionBindingDto;
 }
 
+/** Removes the Windows extended-path transport prefix from user-facing folder labels. */
+export function displayCodexHomePath(path: string): string {
+  return path.replace(/^\\\\\?\\/, '');
+}
+
 export function localCodexRoutes(
   profiles: readonly RegisteredLocalCodexProfile[],
 ): readonly HarnessInferenceRouteOption[] {
@@ -33,7 +38,7 @@ export function localCodexRoutes(
       deviceLabel: 'This device',
       harnessLabel: 'Codex CLI',
       inferenceLabel: 'OpenAI account via Codex CLI',
-      detail: `${profile.homePath} · account configuration stays in this Codex profile`,
+      detail: `${displayCodexHomePath(profile.homePath)} · account configuration stays in this Codex profile`,
       execution: {
         deviceId: 'local',
         deviceName: 'This device',

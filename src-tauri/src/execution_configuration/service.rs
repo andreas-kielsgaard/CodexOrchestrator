@@ -68,13 +68,6 @@ impl CapabilityProfileService {
             observation_error,
         })
     }
-    pub(crate) fn native_inventory(
-        &self,
-    ) -> Result<super::NativeCapabilityInventory, CapabilityProfileServiceError> {
-        self.runtime_profile_source
-            .native_inventory()
-            .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
-    }
     pub(crate) fn native_inventory_for_configuration(
         &self,
         reference: &str,
@@ -178,6 +171,23 @@ impl CapabilityProfileService {
             .find(capability_profile_id)
             .map_err(CapabilityProfileServiceError::from)?
             .ok_or_else(|| CapabilityProfileServiceError::NotFound(capability_profile_id.into()))
+    }
+
+    /// Resolves an unsent draft against the current profile revision without silently changing
+    /// its selected execution route.
+    pub(crate) fn resolve_draft_selection(
+        &self,
+        capability_profile_id: &str,
+        execution: &crate::execution_targets::domain::ExecutionBinding,
+    ) -> Result<CapabilityProfile, CapabilityProfileServiceError> {
+        let profile = self.read(capability_profile_id)?;
+        if !profile.contains_execution(execution) {
+            return Err(CapabilityProfileServiceError::InvalidInput(
+                "The selected execution route is no longer part of this Capability Profile. Choose a route again."
+                    .into(),
+            ));
+        }
+        Ok(profile)
     }
 
     pub(crate) fn create(
@@ -609,6 +619,58 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(persisted, updated);
+    }
+
+    #[test]
+    fn draft_selection_follows_rename_but_never_switches_a_removed_route() {
+        let service = service();
+        let selected = route("local", "selected");
+        let created = service
+            .create_generated_with_routes(
+                "Original name".into(),
+                allowed(&["codex-a"]),
+                RuntimeSelections::default(),
+                Default::default(),
+                vec![selected.clone()],
+                Some(selected.route_id.clone()),
+            )
+            .unwrap();
+        let draft_execution = selected.execution.clone();
+
+        let renamed = service
+            .update_with_routes(
+                &created.capability_profile_id,
+                "Renamed".into(),
+                allowed(&["codex-a"]),
+                RuntimeSelections::default(),
+                Default::default(),
+                vec![selected],
+                Some("local".into()),
+            )
+            .unwrap();
+        let resolved = service
+            .resolve_draft_selection(&created.capability_profile_id, &draft_execution)
+            .unwrap();
+        assert_eq!(resolved.revision, renamed.revision);
+        assert_eq!(resolved.name, "Renamed");
+
+        let replacement = route("replacement", "other-home");
+        service
+            .update_with_routes(
+                &created.capability_profile_id,
+                "Renamed".into(),
+                allowed(&["codex-a"]),
+                RuntimeSelections::default(),
+                Default::default(),
+                vec![replacement.clone()],
+                Some(replacement.route_id),
+            )
+            .unwrap();
+        assert!(matches!(
+            service.resolve_draft_selection(&created.capability_profile_id, &draft_execution),
+            Err(CapabilityProfileServiceError::InvalidInput(message))
+                if message.contains("route is no longer part")
+        ));
     }
 
     #[test]

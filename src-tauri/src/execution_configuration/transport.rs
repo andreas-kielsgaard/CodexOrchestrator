@@ -104,13 +104,6 @@ pub(crate) struct UpdateCapabilityProfileInput {
 }
 
 #[tauri::command]
-pub(crate) fn load_native_capability_inventory(
-    state: State<'_, CapabilityProfileTauriState>,
-) -> Result<super::NativeCapabilityInventory, String> {
-    state.service.native_inventory().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub(crate) fn load_native_profile_capability_inventory(
     state: State<'_, CapabilityProfileTauriState>,
     input: NativeProfileInventoryInput,

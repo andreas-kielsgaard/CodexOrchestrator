@@ -20,6 +20,7 @@ import type {
   UpdateAgentSessionIdentityCommandDto,
   UpdateAgentSessionModelOverrideCommandDto,
 } from '../../application/agentSessions';
+import { createAgentSessionHistorySource } from './tauriAgentSessionHistorySource';
 
 export const AGENT_SESSION_UPDATE_EVENT = 'agent-session-update';
 
@@ -60,7 +61,7 @@ export function createTauriAgentSessionClient(
   const load = (query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto> =>
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
-  return {
+  const core: AgentSessionClient & AgentSessionProfileClient = {
     loadCurrentProfile: (sessionId) =>
       invokeCommand('load_current_agent_session_profile', { input: { sessionId } }),
     sendPreparedMessage: async (input) => {
@@ -156,6 +157,13 @@ export function createTauriAgentSessionClient(
         (await current)();
       }
     },
+  };
+  return {
+    ...core,
+    historySource: createAgentSessionHistorySource({
+      load: (sessionId) => load({ sessionId }),
+      subscribe: (listener) => core.subscribeUpdates(listener),
+    }),
   };
 }
 

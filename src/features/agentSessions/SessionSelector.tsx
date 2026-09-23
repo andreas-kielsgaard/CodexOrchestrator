@@ -1,17 +1,14 @@
 import { SquarePen, RefreshCw } from 'lucide-react';
-import type { ComponentProps } from 'react';
+import { memo, type ComponentProps } from 'react';
 import { SessionNavigation } from './SessionNavigation';
 import './sessionNavigation.css';
-export function SessionSelector({
-  loading,
-  onReload,
-  onImport,
-  ...tree
-}: ComponentProps<typeof SessionNavigation> & {
+type SessionSelectorProps = ComponentProps<typeof SessionNavigation> & {
   loading: boolean;
   onReload(): void;
   onImport?(): void;
-}) {
+};
+
+function SessionSelectorView({ loading, onReload, onImport, ...tree }: SessionSelectorProps) {
   return (
     <nav className="agent-session-selector" aria-label="Session list">
       <header>
@@ -41,3 +38,17 @@ export function SessionSelector({
     </nav>
   );
 }
+
+/** Conversation updates must not rerender the independently-owned navigation tree. */
+export const SessionSelector = memo(
+  SessionSelectorView,
+  (previous, next) =>
+    previous.model === next.model &&
+    previous.selectedSessionId === next.selectedSessionId &&
+    previous.tree.view === next.tree.view &&
+    previous.tree.activeId === next.tree.activeId &&
+    previous.loading === next.loading &&
+    previous.organizing === next.organizing &&
+    previous.onImport === next.onImport &&
+    previous.onOpenWorkflow === next.onOpenWorkflow,
+);

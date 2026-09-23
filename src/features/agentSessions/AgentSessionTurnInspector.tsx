@@ -128,7 +128,6 @@ export function AgentSessionTurnInspector({
         }}
         agentIdentity={agentIdentity}
         safeActivityDetails
-        showTechnicalDetails={false}
         processingHeading="Recorded steps"
       />
     </section>

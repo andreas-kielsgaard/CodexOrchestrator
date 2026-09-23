@@ -4,6 +4,7 @@ import type {
   AgentSessionDetailsDto,
 } from '../../application/agentSessions';
 import {
+  AgentSessionTranscriptProjectionCache,
   projectAgentSessionTranscript,
   projectedTranscriptContent,
   selectLatestFinalAgentResponseRange,
@@ -33,7 +34,6 @@ describe('projectAgentSessionTranscript', () => {
 
     expect(projected.activeInvocationId).toBe('invocation-1');
     expect(projected.invocations[0].processing.map((item) => item.text)).toEqual([
-      'Processing started',
       'npm test',
       'A partial answer',
     ]);
@@ -215,6 +215,40 @@ describe('projectAgentSessionTranscript', () => {
     expect(selectTranscriptInvocation(projected, 'other-session', 'invocation-1')).toBeNull();
     expect(selectTranscriptInvocation(projected, 'session-1', 'other-invocation')).toBeNull();
   });
+
+  it('incrementally projects appended events while preserving unchanged invocations', () => {
+    const first = details('running', [event(1, 'processing_update', 'First')]);
+    first.invocations.push(invocation('invocation-2', 'Unchanged', '2026-07-10T12:01:00.000Z', []));
+    const cache = new AgentSessionTranscriptProjectionCache();
+    const before = cache.project(first);
+    const next = {
+      ...first,
+      invocations: [
+        {
+          ...first.invocations[0],
+          events: [...first.invocations[0].events, event(2, 'processing_update', 'Second')],
+        },
+        first.invocations[1],
+      ],
+    };
+
+    const after = cache.project(next);
+    expect(after.invocations[0].processing.map((item) => item.text)).toEqual(['First', 'Second']);
+    expect(after.invocations[1]).toBe(before.invocations[1]);
+  });
+
+  it('projects a 10,000-event history and preserves the terminal response', () => {
+    const events = Array.from({ length: 9_999 }, (_, index) =>
+      event(index + 1, 'processing_update', `Update ${index + 1}`),
+    );
+    events.push(event(10_000, 'agent_message', 'Finished', { role: 'final' }));
+
+    const projected = projectAgentSessionTranscript(details('completed', events));
+
+    expect(projected.invocations[0].processing).toHaveLength(9_999);
+    expect(projected.invocations[0].finalResponse?.text).toBe('Finished');
+    expect(projected.invocations[0].outcome.status).toBe('completed');
+  });
 });
 
 function details(
@@ -268,9 +302,21 @@ function invocation(
       updatedAt: createdAt,
     },
     observation: {
-      launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null,
-      processTerminal: status === 'running' ? null : { status, completedAt: createdAt, exitCode: status === 'completed' ? 0 : null, signal: null },
-      mcpToolActivities: [], mcpToolActivityPartial: false,
+      launchAcceptedAt: null,
+      externalContext: null,
+      providerActivity: null,
+      providerTerminal: null,
+      processTerminal:
+        status === 'running'
+          ? null
+          : {
+              status,
+              completedAt: createdAt,
+              exitCode: status === 'completed' ? 0 : null,
+              signal: null,
+            },
+      mcpToolActivities: [],
+      mcpToolActivityPartial: false,
     },
     events,
   };

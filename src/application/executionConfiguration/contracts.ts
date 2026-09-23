@@ -119,7 +119,6 @@ export interface UpdateCapabilityProfileInput {
 
 export interface ExecutionConfigurationClient {
   loadProfileModelCatalogue?(configurationRef: string): Promise<ProfileModelCatalogueDto>;
-  loadNativeCapabilityInventory?(): Promise<NativeCapabilityInventoryDto>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;
   loadSelectedRuntimeProfile(): Promise<RuntimeProfileSnapshotDto>;
@@ -128,15 +127,4 @@ export interface ExecutionConfigurationClient {
   createCapabilityProfile(input: CreateCapabilityProfileInput): Promise<CapabilityProfileDto>;
   updateCapabilityProfile(input: UpdateCapabilityProfileInput): Promise<CapabilityProfileDto>;
   deleteCapabilityProfile(capabilityProfileId: string): Promise<void>;
-}
-
-export interface NativeCapabilityInventoryDto {
-  readonly entries: readonly {
-    readonly name: string;
-    readonly kind: string;
-    readonly origin: string;
-    readonly state: string;
-    readonly support: string;
-  }[];
-  readonly limitations: readonly string[];
 }

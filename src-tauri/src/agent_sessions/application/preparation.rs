@@ -146,7 +146,7 @@ impl AgentSessionApplication {
     }
     fn accept_prepared_inner(
         &self,
-        input: PreparedMessageInput,
+        mut input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         let now = self.clock.now();
         let session = match &input.session_id {
@@ -178,23 +178,16 @@ impl AgentSessionApplication {
                 "Mutable execution targets are available for ordinary sessions only",
             ));
         }
-        if let Some(selection) = &input.execution_selection {
+        if let Some(selection) = input.execution_selection.as_mut() {
             let capability = self
                 .capability_profiles
                 .as_ref()
                 .ok_or_else(|| {
                     AgentSessionApplicationError::invalid("Capability Profiles unavailable")
                 })?
-                .read(&selection.capability_profile_id)
+                .resolve_draft_selection(&selection.capability_profile_id, &selection.execution)
                 .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
-            if capability.revision != selection.capability_profile_revision
-                || capability.execution.device_id != selection.execution.device_id
-                || capability.execution.connection != selection.execution.connection
-            {
-                return Err(AgentSessionApplicationError::conflict(
-                    "Capability Profile changed. Select it again.",
-                ));
-            }
+            selection.capability_profile_revision = capability.revision;
             if let SessionWorkspaceSelection::Create { commit, .. } = &selection.workspace {
                 if commit.len() != 40 || !commit.bytes().all(|c| c.is_ascii_hexdigit()) {
                     return Err(AgentSessionApplicationError::invalid(

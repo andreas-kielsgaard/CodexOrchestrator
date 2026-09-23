@@ -208,12 +208,18 @@ export function StandaloneAgentSessionScreen({
 
   const model = useMemo(() => buildSessionNavigation(collection.data), [collection.data]);
   const [openRevision, setOpenRevision] = useState(0);
-  const onSelect = (sessionId: string) => {
-    select({ kind: 'session', sessionId });
-    setOpenRevision((value) => value + 1);
-  };
-  const onNew = (folderTarget: SessionFolderTarget | null) =>
-    select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget });
+  const onSelect = useCallback(
+    (sessionId: string) => {
+      select({ kind: 'session', sessionId });
+      setOpenRevision((value) => value + 1);
+    },
+    [select],
+  );
+  const onNew = useCallback(
+    (folderTarget: SessionFolderTarget | null) =>
+      select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget }),
+    [select],
+  );
   const tree = useSessionNavigation(
     model,
     selectedSessionId,

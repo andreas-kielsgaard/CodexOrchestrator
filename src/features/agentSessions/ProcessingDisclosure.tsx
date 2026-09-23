@@ -21,14 +21,13 @@ export function ProcessingDisclosure({
   heading = 'Processing',
 }: ProcessingDisclosureProps) {
   if (activity.length === 0 && !running) return null;
-  const isOpen = running || expanded;
 
   return (
-    <details className="processing-disclosure" open={isOpen}>
+    <details className="processing-disclosure" open={expanded}>
       <summary
         onClick={(event) => {
           event.preventDefault();
-          if (!running) onToggle();
+          onToggle();
         }}
       >
         <span>{running ? 'Working' : heading}</span>
@@ -45,31 +44,14 @@ export function ProcessingDisclosure({
             ) : (
               <p>{item.text}</p>
             )}
-            {safeOnly ? (
-              item.kind !== 'tool' &&
-              item.safeDetail && (
-                <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
-              )
-            ) : (
-              <details className="raw-event-disclosure">
-                <summary>Raw event</summary>
-                <pre>{formatRaw(item.rawPayload)}</pre>
-              </details>
+            {safeOnly && item.kind !== 'tool' && item.safeDetail && (
+              <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
             )}
           </li>
         ))}
       </ol>
     </details>
   );
-}
-
-function formatRaw(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }
 
 function activityLabel(kind: TranscriptActivity['kind']): string {

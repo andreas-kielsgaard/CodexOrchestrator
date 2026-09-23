@@ -88,13 +88,8 @@ impl AgentSessionApplication {
                         .as_ref()
                         .ok_or("No Capability Profile service is available.")?;
                     let profile = profiles
-                        .read(&target.capability_profile_id)
+                        .resolve_draft_selection(&target.capability_profile_id, &target.execution)
                         .map_err(|error| error.to_string())?;
-                    if profile.revision != target.capability_profile_revision
-                        || profile.execution != target.execution
-                    {
-                        return Err("The Capability Profile changed. Select the target again.".into());
-                    }
                     Some(profile)
                 }
                 None => self
@@ -109,10 +104,8 @@ impl AgentSessionApplication {
             let allowed_groups = capability
                 .as_ref()
                 .and_then(|profile| {
-                    profile
-                        .route_policies
-                        .iter()
-                        .find(|route| route.execution.configuration_ref == reference)
+                    target
+                        .and_then(|selected| profile.route_for_execution(&selected.execution))
                         .or_else(|| profile.default_route())
                 })
                 .map(|route| route.skill_groups.clone())

@@ -1,6 +1,5 @@
 import type {
   RuntimeProfileSnapshotDto,
-  NativeCapabilityInventoryDto,
 } from '../executionConfiguration';
 
 export interface ExecutionBindingDto {
@@ -92,7 +91,6 @@ export interface RepositoryDeviceLocationDto {
 }
 export interface ExecutionTargetRuntimeDto {
   readonly runtimeProfile: RuntimeProfileSnapshotDto;
-  readonly nativeInventory: NativeCapabilityInventoryDto;
 }
 export interface ExecutionTargetClient {
   resolvePublishedTip?(input: {

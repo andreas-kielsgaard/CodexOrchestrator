@@ -479,16 +479,14 @@
   font-size: 0.79rem;
 }
 
-.processing-disclosure,
-.technical-disclosure {
+.processing-disclosure {
   border: 1px solid #d8ddd5;
   border-radius: 8px;
   background: #eef1eb;
   color: #4f5c54;
 }
 
-.processing-disclosure summary,
-.technical-disclosure summary {
+.processing-disclosure summary {
   padding: 9px 11px;
   font-size: 0.78rem;
   font-weight: 780;
@@ -501,22 +499,19 @@
   font-weight: 650;
 }
 
-.processing-disclosure ol,
-.technical-disclosure ul {
+.processing-disclosure ol {
   display: grid;
   gap: 9px;
   margin: 0;
   padding: 4px 12px 12px 30px;
 }
 
-.processing-disclosure li,
-.technical-disclosure li {
+.processing-disclosure li {
   padding-left: 3px;
   font-size: 0.79rem;
 }
 
-.processing-disclosure li > span,
-.technical-disclosure strong {
+.processing-disclosure li > span {
   display: block;
   color: #748078;
   font-size: 0.68rem;
@@ -524,36 +519,9 @@
   text-transform: uppercase;
 }
 
-.processing-disclosure li > p,
-.technical-disclosure li > span {
+.processing-disclosure li > p {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-}
-
-.raw-event-disclosure {
-  margin-top: 4px;
-}
-
-.raw-event-disclosure summary {
-  padding: 2px 0;
-  color: #76827a;
-  font-size: 0.68rem;
-  font-weight: 700;
-}
-
-.raw-event-disclosure pre,
-.technical-disclosure pre {
-  max-height: 240px;
-  margin: 5px 0 0;
-  overflow: auto;
-  color: #59655e;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.69rem;
-  white-space: pre-wrap;
-}
-
-.technical-disclosure {
-  background: transparent;
 }
 
 .invocation-outcome {

@@ -7,7 +7,6 @@ import {
 } from './transcriptProjector';
 import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
-import { TechnicalDiagnosticDisclosure } from './TechnicalDiagnosticDisclosure';
 import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
@@ -22,7 +21,6 @@ interface AgentSessionTranscriptProps {
   emptyState?: Readonly<{ heading: string; guidance: string }>;
   agentIdentity?: AgentIdentity;
   safeActivityDetails?: boolean;
-  showTechnicalDetails?: boolean;
   processingHeading?: string;
 }
 
@@ -35,7 +33,6 @@ export function AgentSessionTranscript({
   emptyState,
   agentIdentity,
   safeActivityDetails = false,
-  showTechnicalDetails = true,
   processingHeading,
   onRespondToRequest,
 }: AgentSessionTranscriptProps) {
@@ -143,13 +140,6 @@ export function AgentSessionTranscript({
                       <strong>Completed without a final response.</strong>
                     </p>
                   )}
-                {showTechnicalDetails && (
-                  <TechnicalDiagnosticDisclosure
-                    activity={invocation.technical}
-                    diagnostics={invocation.diagnostics}
-                    safeOnly={safeActivityDetails}
-                  />
-                )}
               </section>
             </>
           )}
@@ -200,7 +190,7 @@ function projectVisibleInvocations(
             }
           : undefined,
         processing: invocation.processing.filter((item) => activityIds.has(item.id)),
-        technical: invocation.technical.filter((item) => activityIds.has(item.id)),
+        technical: [],
         finalResponse: final?.kind === 'final_response' ? final.response : null,
         showInput: items.some((item) => item.kind === 'submitted_input'),
         showOutcome: items.some((item) => item.kind === 'outcome'),

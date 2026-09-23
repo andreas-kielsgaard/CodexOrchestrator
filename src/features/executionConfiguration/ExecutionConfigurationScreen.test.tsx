@@ -136,6 +136,9 @@ it('saves a registered route and cached model choice while runtime observation f
   await user.click(screen.getByRole('button', { name: 'Add execution route' }));
   expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
   await user.click(screen.getByRole('button', { name: 'Add route' }));
+  await user.click(
+    screen.getByRole('button', { name: 'This device Codex CLI OpenAI account via Codex CLI' }),
+  );
   await user.click(screen.getByRole('button', { name: 'Add model' }));
   await user.click(
     within(screen.getByText('model-a').closest('li') as HTMLElement).getByRole('button', {

@@ -61,20 +61,15 @@ impl AgentSessionApplication {
                     "Capability Profiles are unavailable",
                 )
             })?;
-            let capability = service.read(&target.capability_profile_id).map_err(|e| {
-                SessionConfigurationError::new(
-                    SessionConfigurationErrorKind::InvalidInvocationSelection,
-                    e.to_string(),
-                )
-            })?;
-            if capability.revision != target.capability_profile_revision
-                || capability.execution != target.execution
-            {
-                return Err(SessionConfigurationError::new(
-                    SessionConfigurationErrorKind::InvalidInvocationSelection,
-                    "The Capability Profile changed. Select the target again.",
-                ));
-            }
+            let capability = service
+                .resolve_draft_selection(&target.capability_profile_id, &target.execution)
+                .map_err(|e| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        e.to_string(),
+                    )
+                })?;
+            target.capability_profile_revision = capability.revision;
             let endpoints = self.endpoints.as_ref().ok_or_else(|| {
                 SessionConfigurationError::new(
                     SessionConfigurationErrorKind::InvalidInvocationSelection,
