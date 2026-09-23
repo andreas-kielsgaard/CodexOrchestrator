@@ -58,7 +58,7 @@ impl SupervisedChild for FakeChild {
         self.requests.lock().unwrap().push(value.clone());
         let id = &value["id"];
         match value["method"].as_str() {
-            Some("initialize" | "skills/extraRoots/set") => self.output(json!({"id":id,"result":{}})),
+            Some("initialize") => self.output(json!({"id":id,"result":{}})),
             Some("thread/start" | "thread/resume") => self.output(json!({"id":id,"result":{"thread":{"id":"thread-one"},"model":"native-model","reasoningEffort":"high","approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}})),
             Some("turn/start") => {
                 self.output(json!({"id":id,"result":{"turn":{"id":"turn-one"}}}));

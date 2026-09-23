@@ -14,7 +14,12 @@ export function useProfiledAgentSession(
   options: UseAgentSessionOptions,
 ) {
   const { profile, error, selection, setSelection, execution, reloadProfile } =
-    useSessionExecutionSelection(profileClient, options.selectedSessionId, options.draftId);
+    useSessionExecutionSelection(
+      profileClient,
+      options.selectedSessionId,
+      options.draftId,
+      options.folderTarget,
+    );
   const deliveries = useSessionDeliveries(queryClient, options.selectedSessionId);
   const session = useAgentSession(client, {
     ...options,

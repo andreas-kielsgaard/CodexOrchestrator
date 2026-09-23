@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Provider-projected choices for a composer; this is discovery, not persisted Session policy.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -11,7 +11,7 @@ pub(crate) struct RuntimeQuickFeatures {
     pub(crate) limitations: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QuickModel {
     pub(crate) id: String,
@@ -21,7 +21,7 @@ pub(crate) struct QuickModel {
     pub(crate) reasoning_modes: Vec<QuickReasoningMode>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct QuickReasoningMode {
     pub(crate) id: String,
     pub(crate) description: String,
@@ -34,4 +34,5 @@ pub(crate) struct QuickSkill {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) invocation_text: String,
+    pub(crate) group_id: String,
 }

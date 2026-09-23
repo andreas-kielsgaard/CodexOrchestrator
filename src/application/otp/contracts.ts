@@ -76,6 +76,7 @@ export interface OtpPackageDto {
   readonly requestedHandles: readonly ('definitions' | 'node_sessions' | 'emit_output')[];
   readonly tools: readonly OtpToolDto[];
   readonly agentMcpServers: readonly OtpAgentMcpServerDto[];
+  readonly skillRoots?: readonly string[];
 }
 export type OtpCatalogueReader = () => Promise<readonly OtpPackageDto[]>;
 

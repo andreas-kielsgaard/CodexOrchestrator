@@ -63,11 +63,10 @@ export function useComposerQuickMenu(
   }, [noticeContext]);
 
   useEffect(() => {
-    if (!open || !load || nativeContext === undefined) return;
+    if (!open || !load || nativeContext === undefined || source?.catalogue) return;
     let current = true;
     setNativeLoading(true);
     setNativeError(null);
-    setCatalog(null);
     void load()
       .then(
         (data) => {
@@ -83,7 +82,12 @@ export function useComposerQuickMenu(
     return () => {
       current = false;
     };
-  }, [open, load, nativeContext, refresh]);
+  }, [open, load, nativeContext, refresh, source?.catalogue]);
+
+  useEffect(() => {
+    if (!source?.catalogue || nativeContext === undefined) return;
+    setCatalog({ context: nativeContext, data: source.catalogue });
+  }, [source?.catalogue, nativeContext]);
 
   const frameToken = frame?.token;
   const pageLoader = frame?.load;
@@ -244,7 +248,17 @@ export function useComposerQuickMenu(
           ...currentFrames.slice(0, -1),
           { ...frame, token: ++sequence.current, page: undefined, error: undefined, loading: true },
         ]);
-      else setRefresh((value) => value + 1);
+      else if (source?.refresh) {
+        setNativeLoading(true);
+        setNativeError(null);
+        void source
+          .refresh()
+          .then(
+            (data) => setCatalog({ context: source.contextKey, data }),
+            (cause) => setNativeError(cause instanceof Error ? cause.message : String(cause)),
+          )
+          .finally(() => setNativeLoading(false));
+      } else setRefresh((value) => value + 1);
     },
     dismiss,
     accept: () => {

@@ -1,34 +1,24 @@
 import { useState } from 'react';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
-import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
-import type { RepositoryBranchSource } from '../../application/branches';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
-import type { DraftWorkspace } from '../../components/draftWorkspace';
-import type { CapabilityProfileDraft } from '../executionConfiguration/types';
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
-import { ExecutionConfigurationScreen } from '../executionConfiguration';
 import { NativeProfileSettings } from '../nativeProfiles/NativeProfileSettings';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
+import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
   executionClient,
-  targetClient,
-  branchSource,
-  workspace,
   readOtpCatalogue,
   otpInstallations,
 }: {
   readonly nativeClient: NativeProfileClient;
   readonly executionClient?: ExecutionConfigurationClient;
-  readonly targetClient?: ExecutionTargetClient;
-  readonly branchSource?: RepositoryBranchSource;
-  readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly otpInstallations?: OtpInstallationClient;
 }) {
-  const [section, setSection] = useState<'connections' | 'native' | 'otp'>(
-    executionClient ? 'connections' : 'native',
+  const [section, setSection] = useState<'devices' | 'inference' | 'native' | 'otp'>(
+    executionClient ? 'devices' : 'native',
   );
   return (
     <div className="technical-settings">
@@ -38,10 +28,19 @@ export function TechnicalSettingsScreen({
           {executionClient && (
             <button
               type="button"
-              aria-pressed={section === 'connections'}
-              onClick={() => setSection('connections')}
+              aria-pressed={section === 'devices'}
+              onClick={() => setSection('devices')}
             >
-              Devices and Capability Profiles
+              Devices
+            </button>
+          )}
+          {executionClient && (
+            <button
+              type="button"
+              aria-pressed={section === 'inference'}
+              onClick={() => setSection('inference')}
+            >
+              Inference sources
             </button>
           )}
           <button
@@ -49,7 +48,7 @@ export function TechnicalSettingsScreen({
             aria-pressed={section === 'native'}
             onClick={() => setSection('native')}
           >
-            Local Codex homes
+            Codex profiles
           </button>
           {readOtpCatalogue && (
             <button
@@ -63,13 +62,13 @@ export function TechnicalSettingsScreen({
         </nav>
       </header>
       <div className="technical-settings__content">
-        {section === 'connections' && executionClient ? (
-          <ExecutionConfigurationScreen
-            client={executionClient}
-            targetClient={targetClient}
-            branchSource={branchSource}
-            workspace={workspace}
+        {section === 'devices' && executionClient ? (
+          <DeviceSetupOverview
+            nativeClient={nativeClient}
+            onOpenCodexHarness={() => setSection('native')}
           />
+        ) : section === 'inference' && executionClient ? (
+          <InferenceSourceOverview nativeClient={nativeClient} />
         ) : section === 'otp' && readOtpCatalogue ? (
           <OtpConfigurationPanel
             readCatalogue={readOtpCatalogue}

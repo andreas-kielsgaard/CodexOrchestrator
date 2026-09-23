@@ -5,6 +5,8 @@ import {
 } from '../../application/executionTargets/contracts';
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
+import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOptions';
 import { targetWorktreeLabel } from '../../application/executionTargets/presentation';
 import './sessionPreparation.css';
 export interface SessionComposerToolbarProps {
@@ -12,10 +14,8 @@ export interface SessionComposerToolbarProps {
   selection: SessionExecutionSelectionDto | null;
   deviceId: string | null;
   options: PerMessageRuntimeSelection;
-  models: readonly string[];
-  reasoningModes: readonly string[];
-  defaultModel?: string | null;
-  defaultReasoning?: string | null;
+  capabilities?: AgentSessionQuickFeatures;
+  workspaceLabel?: string;
   pending: boolean;
   onProfile(id: string): void;
   onDevice(): void;
@@ -25,6 +25,7 @@ export interface SessionComposerToolbarProps {
 }
 export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
   const workspace = props.selection?.workspace;
+  const effective = effectiveSessionOptions(props.capabilities, props.options);
   const worktreeLabel =
     workspace?.kind === 'existing'
       ? workspace.target.branchRef
@@ -32,7 +33,7 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
         : 'Session folder'
       : workspace?.kind === 'create'
         ? `${workspace.branchRef.replace(/^refs\/heads\//, '')} · new at ${workspace.commit.slice(0, 8)}`
-        : 'Select branch';
+        : (props.workspaceLabel ?? 'Empty workspace');
   return (
     <>
       <div className="session-composer-toolbar__targets">
@@ -107,40 +108,34 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
       >
         <select
           aria-label="Model"
-          value={props.options.model ?? ''}
-          onChange={(event) =>
-            props.onOptions({ ...props.options, model: event.target.value || null })
-          }
+          value={effective.model?.id ?? ''}
+          onChange={(event) => {
+            if (props.capabilities && event.target.value)
+              props.onOptions(
+                selectionForModel(props.capabilities, props.options, event.target.value),
+              );
+          }}
+          disabled={!effective.model}
         >
-          <option value="">{props.defaultModel ?? 'Model default'}</option>
-          {props.options.model && !props.models.includes(props.options.model) && (
-            <option value={props.options.model} disabled>
-              {props.options.model} · unavailable
-            </option>
-          )}
-          {props.models.map((model) => (
-            <option key={model} value={model}>
-              {model}
+          {!effective.model && <option value="">Loading models…</option>}
+          {props.capabilities?.models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.label}
             </option>
           ))}
         </select>
         <select
           aria-label="Reasoning"
-          value={props.options.reasoningMode ?? ''}
+          value={effective.reasoningMode ?? ''}
           onChange={(event) =>
-            props.onOptions({ ...props.options, reasoningMode: event.target.value || null })
+            props.onOptions({ ...props.options, reasoningMode: event.target.value })
           }
+          disabled={!effective.reasoningMode}
         >
-          <option value="">{props.defaultReasoning ?? 'Reasoning default'}</option>
-          {props.options.reasoningMode &&
-            !props.reasoningModes.includes(props.options.reasoningMode) && (
-              <option value={props.options.reasoningMode} disabled>
-                {props.options.reasoningMode} · unavailable
-              </option>
-            )}
-          {props.reasoningModes.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
+          {!effective.reasoningMode && <option value="">Loading reasoning…</option>}
+          {effective.model?.reasoningModes.map((mode) => (
+            <option key={mode.id} value={mode.id}>
+              {mode.id}
             </option>
           ))}
         </select>

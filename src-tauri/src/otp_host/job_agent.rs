@@ -599,6 +599,8 @@ mod tests {
                     execution: Default::default(),
                     contract_version: 1,
                     defaults: Default::default(),
+                    route_policies: Vec::new(),
+                    default_route_id: None,
                     capability_profile_id: "profile".into(),
                     name: "Profile".into(),
                     revision: 1,
@@ -610,6 +612,7 @@ mod tests {
                     pinned_defaults: RuntimeSelections::default(),
                 },
                 agent_mcp_configuration: [("job_agent".into(), json!({}))].into_iter().collect(),
+                session_skill_inputs: Vec::new(),
             },
         )
         .unwrap()

@@ -8,7 +8,7 @@ pub(super) fn thread_configuration(
     extension: Option<&RuntimeLaunchExtension>,
     cwd: Option<&str>,
 ) -> Result<Value, RuntimePortError> {
-    let Some(extension) = extension.filter(|e| !e.managed_mcp_servers.is_empty()) else {
+    let Some(extension) = extension.filter(|e| !e.managed_mcp_servers.is_empty() || e.native_mcp_enabled == Some(false)) else {
         return Ok(json!({}));
     };
     let native = connection.call("config/read", json!({"cwd":cwd,"includeLayers":false}))?;
@@ -21,6 +21,16 @@ fn merge_managed_servers(
 ) -> Result<Value, RuntimePortError> {
     let mut result = serde_json::Map::new();
     let mut names = std::collections::HashSet::new();
+    if extension.native_mcp_enabled == Some(false) {
+        if let Some(servers) = native.as_object() {
+            for name in servers.keys() {
+                if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                    return Err(unsupported("Cannot safely mask a native MCP server with an unsupported name"));
+                }
+                result.insert(format!("mcp_servers.{name}.enabled"), json!(false));
+            }
+        }
+    }
     for server in &extension.managed_mcp_servers {
         if server.name.is_empty()
             || !server
@@ -89,6 +99,21 @@ mod tests {
         assert!(error.message.contains("conflicts"));
         assert!(!error.message.contains("secret"));
         assert!(!error.message.contains("private-token"));
+    }
+
+    #[test]
+    fn disabled_native_mcp_group_masks_native_servers_but_retains_managed_servers() {
+        let extension = RuntimeLaunchExtension {
+            native_mcp_enabled: Some(false),
+            managed_mcp_servers: vec![RuntimeManagedMcpServer {
+                name: "orchid".into(), url: "http://localhost/owned".into(),
+            }],
+            ..Default::default()
+        };
+        let config = merge_managed_servers(&json!({"native":{"command":"secret"}}), &extension).unwrap();
+        assert_eq!(config["mcp_servers.native.enabled"], false);
+        assert!(config.get("mcp_servers.orchid").is_some());
+        assert!(!config.to_string().contains("secret"));
     }
 }
 

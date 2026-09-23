@@ -131,6 +131,29 @@ export interface NativeProfileQuery {
   readonly profiles: readonly NativeProfile[];
 }
 
+/** Observable harness capabilities only; this never exposes Codex credentials or configuration. */
+export interface NativeHarnessToolInventory {
+  readonly entries: readonly {
+    readonly name: string;
+    readonly kind: string;
+    readonly origin: string;
+    readonly state: string;
+    readonly support: string;
+  }[];
+  readonly limitations: readonly string[];
+}
+
+export interface NativeCodexSkillCatalogue {
+  readonly skills: readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly path: string;
+    readonly scope: string;
+    readonly enabled: boolean;
+  }[];
+  readonly limitations: readonly string[];
+}
+
 export interface DiscoveredNativeCodexHome {
   readonly homePath: string;
   readonly source: 'environment' | 'default' | 'sibling' | 'registered';
@@ -472,18 +495,11 @@ export interface NativeProfileClient {
   registerExisting(homePath: string): Promise<NativeProfileQuery>;
   createDedicated(): Promise<NativeProfileQuery>;
   select(profileId: string): Promise<NativeProfileQuery>;
-  selectExecutionMode(profileId: string, mode: NativeExecutionMode): Promise<NativeProfileQuery>;
-  authorizeDangerFullAccess(profileId: string): Promise<NativeProfileQuery>;
-  revokeDangerFullAccess(profileId: string): Promise<NativeProfileQuery>;
   requestLogin(profileId: string): Promise<NativeProfileQuery>;
   refreshReadiness(profileId: string): Promise<NativeProfileQuery>;
-  initializeSandbox(profileId: string): Promise<NativeProfileQuery>;
-  confirmSandboxInitialization(profileId: string): Promise<NativeProfileQuery>;
-  verifyPreprovisionedSandbox(profileId: string): Promise<NativeProfileQuery>;
-  confirmPreprovisionedSandboxAdoption(profileId: string): Promise<NativeProfileQuery>;
-  runCanary(profileId: string): Promise<NativeProfileQuery>;
-  runDangerFullAccessCanary(profileId: string): Promise<NativeProfileQuery>;
-  probeMcp(profileId: string): Promise<NativeProfileQuery>;
+  openInExplorer(profileId: string): Promise<void>;
+  loadHarnessTools(profileId: string): Promise<NativeHarnessToolInventory>;
+  loadSkills(profileId: string, workingDirectory?: string): Promise<NativeCodexSkillCatalogue>;
 }
 
 export function createNativeProfileClient(invokeCommand: Invoke = invoke): NativeProfileClient {
@@ -505,40 +521,23 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     return run;
   };
   const id = (profileId: string) => ({ input: { profileId } });
-  const probeMcp = (profileId: string) => {
-    const args = id(profileId);
-    const run = queue.then(async () => {
-      decodeNativeProfile(
-        await invokeCommand<unknown>('probe_native_profile_mcp_reporting', args),
-        0,
-      );
-      decodeNativeProfile(
-        await invokeCommand<unknown>('reconcile_native_profile_mcp_reporting', args),
-        0,
-      );
-      return read();
-    });
-    queue = run.then(() => undefined, () => undefined);
-    return run;
-  };
   return {
     load,
     discoverHomes: () => invokeCommand<unknown>('discover_native_codex_homes').then(decodeDiscoveredNativeCodexHomes),
     registerExisting: (homePath) => action('register_native_profile', { input: { homePath } }),
     createDedicated: () => action('create_dedicated_native_profile', noActionArgs),
     select: (profileId) => action('select_native_profile', id(profileId)),
-    selectExecutionMode: (profileId, mode) => action('select_native_profile_execution_mode', { input: { profileId, mode } }),
-    authorizeDangerFullAccess: (profileId) => action('authorize_native_profile_danger_full_access', id(profileId)),
-    revokeDangerFullAccess: (profileId) => action('revoke_native_profile_danger_full_access', id(profileId)),
     requestLogin: (profileId) => action('request_native_profile_login', id(profileId)),
     refreshReadiness: (profileId) => action('refresh_native_profile_readiness', id(profileId)),
-    initializeSandbox: (profileId) => action('request_native_profile_sandbox_initialization', id(profileId)),
-    confirmSandboxInitialization: (profileId) => action('confirm_native_profile_sandbox_initialization', id(profileId)),
-    verifyPreprovisionedSandbox: (profileId) => action('verify_native_profile_preprovisioned_sandbox', id(profileId)),
-    confirmPreprovisionedSandboxAdoption: (profileId) => action('confirm_native_profile_preprovisioned_sandbox_adoption', id(profileId)),
-    runCanary: (profileId) => action('run_native_profile_workspace_write_canary', id(profileId)),
-    runDangerFullAccessCanary: (profileId) => action('run_native_profile_danger_full_access_canary', id(profileId)),
-    probeMcp,
+    openInExplorer: (profileId) => invokeCommand<void>('open_native_profile_in_explorer', id(profileId)),
+    loadHarnessTools: (profileId) => invokeCommand<NativeHarnessToolInventory>(
+      'load_native_profile_capability_inventory',
+      id(profileId),
+    ),
+    loadSkills: (profileId, workingDirectory) => invokeCommand<NativeCodexSkillCatalogue>(
+      'load_native_profile_skills',
+      { input: { profileId, workingDirectory: workingDirectory ?? null } },
+    ),
   };
 }
 

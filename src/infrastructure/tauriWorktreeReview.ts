@@ -9,11 +9,13 @@ import type {
   WorktreeId,
   WorktreeActivity,
   BranchReviewDetail,
+  DetachedWorktreeDetail,
   CreateBuildRequest,
   CreateWorktreeRequest,
   OpenBuildRequest,
   RepositoryId,
   ReviewBuild,
+  BuildLogChunk,
   WorktreeReviewClient,
   WorktreeReviewOverview,
 } from '../application/worktreeReview';
@@ -47,12 +49,20 @@ export function createTauriWorktreeReviewClient(
       invokeCommand<readonly WorktreeActivity[]>('worktree_review_worktree_activity', {
         input: { repositoryId, worktreeIds },
       }),
+    detachedWorktrees: (repositoryId: RepositoryId) =>
+      invokeCommand<readonly DetachedWorktreeDetail[]>('worktree_review_detached_worktrees', {
+        input: { repositoryId },
+      }),
     associateWorktree: (input: AssociateWorktreeRequest) =>
       invokeCommand<AssociatedWorktree>('associate_worktree_review_worktree', { input }),
     createWorktree: (input: CreateWorktreeRequest) =>
       invokeCommand<AssociatedWorktree>('create_worktree_review_worktree', { input }),
     createBuild: (input: CreateBuildRequest) =>
       invokeCommand<ReviewBuild>('create_worktree_review_build', { input }),
+    readBuildLog: (buildId, attemptId, offset) =>
+      invokeCommand<BuildLogChunk>('worktree_review_build_log', {
+        input: { buildId, attemptId, offset },
+      }),
     openBuild: (input: OpenBuildRequest) =>
       invokeCommand<void>('worktree_review_open_build', { input }),
   };

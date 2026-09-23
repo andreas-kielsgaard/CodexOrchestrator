@@ -25,15 +25,27 @@ CREATE TABLE IF NOT EXISTS execution_default_capability_profile (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     capability_profile_id TEXT NOT NULL REFERENCES execution_capability_profiles(capability_profile_id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS execution_model_catalogues (
+    configuration_ref TEXT PRIMARY KEY,
+    catalogue_json TEXT NOT NULL CHECK (json_valid(catalogue_json))
+);
 "#;
 
 #[derive(Default)]
 pub(crate) struct InMemoryCapabilityProfileRepository {
     profiles: Mutex<BTreeMap<String, CapabilityProfile>>,
     default_profile: Mutex<Option<String>>,
+    model_catalogues: Mutex<BTreeMap<String, super::StoredModelCatalogue>>,
 }
 
 impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
+    fn model_catalogue(&self, configuration_ref: &str) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
+        Ok(self.model_catalogues.lock().map_err(|_| CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into()))?.get(configuration_ref).cloned())
+    }
+    fn save_model_catalogue(&self, configuration_ref: &str, catalogue: &super::StoredModelCatalogue) -> Result<(), CapabilityProfileRepositoryError> {
+        self.model_catalogues.lock().map_err(|_| CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into()))?.insert(configuration_ref.into(), catalogue.clone());
+        Ok(())
+    }
     fn default_profile(
         &self,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
@@ -186,6 +198,19 @@ impl SqliteCapabilityProfileRepository {
 }
 
 impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
+    fn model_catalogue(&self, configuration_ref: &str) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
+        self.read("read model catalogue", |connection| {
+            let json: Option<String> = connection.query_row("SELECT catalogue_json FROM execution_model_catalogues WHERE configuration_ref=?1", [configuration_ref], |row| row.get(0)).optional().map_err(storage_error("read model catalogue"))?;
+            json.map(|json| serde_json::from_str(&json).map_err(|error| CapabilityProfileRepositoryError::Storage(format!("Invalid cached model catalogue: {error}")))).transpose()
+        })
+    }
+    fn save_model_catalogue(&self, configuration_ref: &str, catalogue: &super::StoredModelCatalogue) -> Result<(), CapabilityProfileRepositoryError> {
+        let json = serde_json::to_string(catalogue).map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))?;
+        self.write("save model catalogue", |transaction| {
+            transaction.execute("INSERT INTO execution_model_catalogues(configuration_ref,catalogue_json) VALUES(?1,?2) ON CONFLICT(configuration_ref) DO UPDATE SET catalogue_json=excluded.catalogue_json", params![configuration_ref,json]).map_err(storage_error("save model catalogue"))?;
+            Ok(())
+        })
+    }
     fn default_profile(
         &self,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
@@ -420,6 +445,8 @@ mod tests {
             execution: Default::default(),
             contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
             defaults: Default::default(),
+            route_policies: Vec::new(),
+            default_route_id: None,
             capability_profile_id: id.into(),
             name: format!("{id} profile"),
             revision,

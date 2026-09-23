@@ -29,6 +29,32 @@ export const repairProfile: CapabilityProfileDto = {
   name: 'Review capabilities',
   revision: 1,
   allowedCapabilities: { ...repairRuntime.exposure, models: ['model-a'] },
+  execution: {
+    deviceId: 'fixture-device',
+    deviceName: 'Fixture device',
+    provider: 'codex',
+    configurationRef: 'fixture-codex',
+    connection: { kind: 'local' },
+  },
+  routePolicies: [
+    {
+      routeId: 'fixture-default',
+      execution: {
+        deviceId: 'fixture-device',
+        deviceName: 'Fixture device',
+        provider: 'codex',
+        configurationRef: 'fixture-codex',
+        connection: { kind: 'local' },
+      },
+      modelAllowances: [
+        { modelId: 'model-a', minimumReasoning: 'medium', maximumReasoning: 'high' },
+      ],
+      mcpGroups: [],
+      skillGroups: [],
+      defaults: { model: null, reasoningMode: null, sandboxMode: null },
+    },
+  ],
+  defaultRouteId: 'fixture-default',
 };
 export function repairRecipe(id = 'review', name = 'Review workflow'): WorkflowRecipeStateDto {
   const draft: WorkflowRecipeStateDto['draft'] = {
@@ -75,7 +101,12 @@ export function repairClients() {
     loadCapabilityProfile: async (id) =>
       structuredClone(profiles.find((profile) => profile.capabilityProfileId === id)!),
     createCapabilityProfile: async (input) => {
-      const saved: CapabilityProfileDto = { ...input, contractVersion: 1, revision: 1 };
+      const saved: CapabilityProfileDto = {
+        ...input,
+        capabilityProfileId: 'created-profile',
+        contractVersion: 1,
+        revision: 1,
+      };
       profiles.push(saved);
       return structuredClone(saved);
     },

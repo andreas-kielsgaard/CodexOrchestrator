@@ -23,6 +23,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
-    exclude: [...configDefaults.exclude, 'review-tools/app-inspector/test/**/*.test.mjs'],
+    exclude: [
+      ...configDefaults.exclude,
+      '.dev/**',
+      'review-tools/app-inspector/test/**/*.test.mjs',
+    ],
   },
 });

@@ -191,23 +191,28 @@ export function productNavigationReducer(
         contextualOrigin: action.origin,
       };
     case 'enter_agent_sessions_directly': {
+      const remembered =
+        state.current.destination.kind === 'agent_sessions'
+          ? state.current.destination
+          : state.history
+              .slice()
+              .reverse()
+              .find(
+                (entry): entry is ProductNavigationEntry & {
+                  readonly destination: Extract<
+                    ProductNavigationDestination,
+                    { readonly kind: 'agent_sessions' }
+                  >;
+                } => entry.destination.kind === 'agent_sessions',
+              )?.destination;
       const destination: ProductNavigationDestination = {
         kind: 'agent_sessions',
-        selection:
-          state.current.destination.kind === 'agent_sessions'
-            ? state.current.destination.selection
-            : { kind: 'initial' },
+        selection: remembered?.selection ?? { kind: 'initial' },
         focusedInvocationId: null,
       };
-      if (state.current.destination.kind === 'agent_sessions')
-        return {
-          current: { destination, intent: 'replace' },
-          history: state.history,
-          contextualOrigin: null,
-        };
       return {
-        current: { destination, intent: 'push' },
-        history: [...state.history, state.current],
+        current: { destination, intent: 'replace' },
+        history: state.history,
         contextualOrigin: null,
       };
     }

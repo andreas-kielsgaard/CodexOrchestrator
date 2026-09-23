@@ -9,8 +9,8 @@ use super::{
     CreateAgentSessionCommand, SendAgentSessionMessageCommand,
 };
 use crate::execution_configuration::{
-    DirectUserInvocationRequest, DirectUserInvocationResolution, NodeProfile, SandboxMode,
-    SessionCreationRequest, SessionProfileResolver,
+    validate_session_skill_inputs, DirectUserInvocationRequest, DirectUserInvocationResolution,
+    NodeProfile, SandboxMode, SessionCreationRequest, SessionProfileResolver,
 };
 impl AgentSessionApplication {
     /// Standalone defaults are application-owned, not a hidden Workflow node. Resolve before
@@ -97,6 +97,18 @@ impl AgentSessionApplication {
                         e.to_string(),
                     )
                 })?;
+            let session_skill_inputs = self
+                .compile_capability_skill_inputs(
+                    &capability,
+                    &target.execution.configuration_ref,
+                    Some(&target.path),
+                )
+                .map_err(|error| {
+                    SessionConfigurationError::new(
+                        SessionConfigurationErrorKind::InvalidInvocationSelection,
+                        error,
+                    )
+                })?;
             let resolution = SessionProfileResolver::resolve_snapshot(
                 runtime.clone(),
                 SessionCreationRequest {
@@ -104,10 +116,13 @@ impl AgentSessionApplication {
                     agent_mcp_configuration: Default::default(),
                     node_profile: NodeProfile {
                         contract_version: 1,
-                        allowed_capabilities: capability.allowed_capabilities.clone(),
+                        allowed_capabilities: super::configuration::default_node_capabilities(
+                            &capability,
+                        ),
                         pinned_defaults: Default::default(),
                     },
                     capability_profile: capability,
+                    session_skill_inputs,
                 },
             )
             .map_err(SessionConfigurationError::resolution)?;
@@ -127,6 +142,7 @@ impl AgentSessionApplication {
             },
         )
         .map_err(SessionConfigurationError::resolution)?;
+        let pinned_skill_inputs = resolution.session_profile().session_skill_inputs().to_vec();
         let session = self
             .prepare_session_with_id(
                 CreateAgentSessionCommand {
@@ -161,6 +177,7 @@ impl AgentSessionApplication {
                 sandbox_mode,
             },
             invocation_resolution,
+            &pinned_skill_inputs,
         )
     }
 
@@ -206,16 +223,66 @@ impl AgentSessionApplication {
             },
         )
         .map_err(SessionConfigurationError::resolution)?;
-        self.send_resolved_direct_user_message(command, invocation_resolution)
+        self.send_resolved_direct_user_message(
+            command,
+            invocation_resolution,
+            pinned
+                .creation_resolution
+                .session_profile()
+                .session_skill_inputs(),
+        )
     }
 
     fn send_resolved_direct_user_message(
         &self,
         command: SendDirectUserAgentSessionMessageCommand,
         invocation_resolution: DirectUserInvocationResolution,
+        session_skill_inputs: &[crate::agent_sessions::ports::RuntimeSkillInput],
     ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
         let requested_options = runtime_options(&invocation_resolution.selections);
-        let launch_extension = reasoning_launch_extension(&invocation_resolution.selections);
+        let selected_skills =
+            validate_session_skill_inputs(session_skill_inputs).map_err(|error| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::InvalidInvocationSelection,
+                    error,
+                )
+            })?;
+        let mut launch_extension =
+            reasoning_launch_extension(&invocation_resolution.selections).unwrap_or_default();
+        launch_extension.skill_inputs = selected_skills;
+        if let Ok(history) = self.load_session(&command.session_id) {
+            let reference = history
+                .session
+                .execution_target
+                .as_ref()
+                .map(|target| target.execution.configuration_ref.as_str())
+                .or_else(|| {
+                    history
+                        .session
+                        .session_profile
+                        .as_ref()
+                        .and_then(|profile| {
+                            profile
+                                .session_profile()
+                                .runtime_profile_ref()
+                                .strip_prefix("native-codex:")
+                        })
+                })
+                .unwrap_or("selected");
+            for skill in self.direct_user_native_skill_inputs(
+                reference,
+                history.session.working_directory.as_deref(),
+                &command.submitted_text,
+            ) {
+                if !launch_extension
+                    .skill_inputs
+                    .iter()
+                    .any(|existing| existing.path == skill.path)
+                {
+                    launch_extension.skill_inputs.push(skill);
+                }
+            }
+        }
         let acknowledgement = self
             .send_message_with_launch_extension(
                 SendAgentSessionMessageCommand {
@@ -225,7 +292,7 @@ impl AgentSessionApplication {
                     working_directory: None,
                     requested_options: Some(requested_options),
                 },
-                launch_extension,
+                Some(launch_extension),
             )
             .map_err(SessionConfigurationError::agent_session)?;
         Ok(SendDirectUserAgentSessionMessageResult {

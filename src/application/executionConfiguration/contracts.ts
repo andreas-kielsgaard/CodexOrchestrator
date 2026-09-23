@@ -16,12 +16,42 @@ export interface RuntimeSelectionsDto {
   readonly sandboxMode: SandboxModeDto | null;
 }
 
+/** A model and the inclusive reasoning range the profile permits on one route. */
+export interface ModelAllowanceDto {
+  readonly modelId: string;
+  readonly minimumReasoning: string;
+  readonly maximumReasoning: string;
+}
+
+/** One permitted Device -> Harness -> Inference Source route in a Capability Profile. */
+export interface ProfileRoutePolicyDto {
+  readonly routeId: string;
+  readonly execution: ExecutionBindingDto;
+  readonly modelAllowances: readonly ModelAllowanceDto[];
+  readonly mcpGroups: readonly string[];
+  readonly skillGroups: readonly string[];
+  readonly defaults: RuntimeSelectionsDto;
+}
+
 /** Read-only facts observed from the profile's configured device runtime. */
 export interface RuntimeProfileSnapshotDto {
   readonly contractVersion: 1;
   readonly profileRef: string;
   readonly exposure: CapabilitySetDto;
   readonly locked: RuntimeSelectionsDto;
+}
+
+export interface ProfileModelCatalogueDto {
+  readonly configurationRef: string;
+  readonly observedAt: string | null;
+  readonly observationError: string | null;
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly description: string;
+    readonly defaultReasoningMode: string | null;
+    readonly reasoningModes: readonly { readonly id: string; readonly description: string }[];
+  }[];
 }
 
 /** Reusable capability ceiling selected by a Workflow node. */
@@ -33,6 +63,8 @@ export interface CapabilityProfileDto {
   readonly name: string;
   readonly revision: number;
   readonly allowedCapabilities: CapabilitySetDto;
+  readonly routePolicies?: readonly ProfileRoutePolicyDto[];
+  readonly defaultRouteId?: string | null;
 }
 
 /** Workflow-owned configuration embedded in one node. */
@@ -69,9 +101,10 @@ export interface DirectUserInvocationResolutionDto {
 export interface CreateCapabilityProfileInput {
   readonly execution?: ExecutionBindingDto;
   readonly defaults?: RuntimeSelectionsDto;
-  readonly capabilityProfileId: string;
   readonly name: string;
   readonly allowedCapabilities: CapabilitySetDto;
+  readonly routePolicies?: readonly ProfileRoutePolicyDto[];
+  readonly defaultRouteId?: string | null;
 }
 
 export interface UpdateCapabilityProfileInput {
@@ -80,9 +113,12 @@ export interface UpdateCapabilityProfileInput {
   readonly capabilityProfileId: string;
   readonly name: string;
   readonly allowedCapabilities: CapabilitySetDto;
+  readonly routePolicies?: readonly ProfileRoutePolicyDto[];
+  readonly defaultRouteId?: string | null;
 }
 
 export interface ExecutionConfigurationClient {
+  loadProfileModelCatalogue?(configurationRef: string): Promise<ProfileModelCatalogueDto>;
   loadNativeCapabilityInventory?(): Promise<NativeCapabilityInventoryDto>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;

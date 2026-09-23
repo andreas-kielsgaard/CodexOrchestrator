@@ -4,9 +4,11 @@ import type { PresentableIdentity } from '../identities';
 import type { CatalogState } from '../../components/CatalogSelect';
 import type {
   CapabilitySetDto,
+  ProfileRoutePolicyDto,
   RuntimeSelectionsDto,
   SandboxModeDto,
 } from '../../application/executionConfiguration';
+export type { HarnessInferenceRouteOption } from '../../application/executionConfiguration';
 
 /** The capability contract is already browser-safe; editors consume it directly. */
 export type CapabilitySetViewModel = CapabilitySetDto;
@@ -38,6 +40,8 @@ export interface CapabilityProfileDraft {
   readonly name: string;
   readonly revision: number | null;
   readonly allowedCapabilities: CapabilitySetViewModel;
+  readonly routePolicies: readonly ProfileRoutePolicyDto[];
+  readonly defaultRouteId: string | null;
 }
 
 export interface CapabilityProfileOption {

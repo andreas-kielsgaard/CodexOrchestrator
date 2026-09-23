@@ -67,6 +67,7 @@ pub(super) fn build(
         "action": "app", "worktreeRoot": external(&worktree), "attemptRoot": external(&attempt),
         "profile": request.profile, "cache": "auto", "dependencyPolicy": policy,
         "npmCache": npm_cache.map(|path| external(path)), "cargoBinaryName": request.cargo_binary_name,
+        "runningExecutable": std::env::current_exe().ok().map(|path| external(&path)),
     })).map_err(|_| unavailable())?).map_err(|_| unavailable())?;
     let log = fs::File::create(&log_path).map_err(|_| unavailable())?;
     let stderr = log.try_clone().map_err(|_| unavailable())?;
@@ -102,10 +103,11 @@ pub(super) fn build(
             )
         })?;
     if !status.success() || !reply.ok {
+        let excerpt = log_excerpt(&log_path);
         return Err(reply
             .error
-            .map(|failure| error(&failure.kind, &failure.message))
-            .unwrap_or_else(|| error("build_failed", "Application compilation failed.")));
+            .map(|failure| error(&failure.kind, &format!("{}{}", failure.message, excerpt)))
+            .unwrap_or_else(|| error("build_failed", &format!("Application compilation failed.{}", excerpt))));
     }
     let result = reply.result.ok_or_else(unavailable)?;
     let output_root = result
@@ -132,6 +134,18 @@ pub(super) fn build(
         log_path,
         executable,
     })
+}
+
+fn log_excerpt(path: &Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else { return String::new() };
+    let Ok(length) = file.metadata().map(|metadata| metadata.len()) else { return String::new() };
+    if file.seek(SeekFrom::Start(length.saturating_sub(4096))).is_err() { return String::new(); }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() { return String::new(); }
+    let excerpt = String::from_utf8_lossy(&bytes);
+    let lines = excerpt.lines().rev().take(16).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+    if lines.is_empty() { String::new() } else { format!("\nBuild log tail:\n{lines}") }
 }
 
 fn external(path: &Path) -> PathBuf {

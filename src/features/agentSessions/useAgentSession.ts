@@ -18,6 +18,12 @@ import type {
   PinnedAgentSessionProfileDto,
 } from '../../application/agentSessions';
 import { samePreparedConfiguration } from './sessionPreparationState';
+import {
+  clearCachedComposerDraft,
+  composerDraftCacheKey,
+  readCachedComposerDraft,
+  writeCachedComposerDraft,
+} from './composerDraftCache';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 
@@ -28,6 +34,7 @@ export interface AgentSessionWorkspaceController {
   submissionUnavailableReason?: string;
   retryPreparation?(): Promise<void>;
   quickFeatures?: ComposerQuickFeatures;
+  quickCatalogue?: AgentSessionQuickFeatures;
   selectedSessionId: string | null;
   details: AgentSessionDetailsDto | null;
   transcript: ReturnType<typeof projectAgentSessionTranscript> | null;
@@ -50,6 +57,44 @@ export interface AgentSessionWorkspaceController {
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
   clearError(): void;
+}
+
+const quickFeatureCaches = new WeakMap<object, Map<string, AgentSessionQuickFeatures>>();
+const quickFeatureRequests = new WeakMap<object, Map<string, Promise<AgentSessionQuickFeatures>>>();
+
+function quickFeatureBucket<T>(store: WeakMap<object, Map<string, T>>, owner: object) {
+  const existing = store.get(owner);
+  if (existing) return existing;
+  const created = new Map<string, T>();
+  store.set(owner, created);
+  return created;
+}
+
+function cachedQuickFeatures(
+  key: string,
+  owner: object,
+  discover: () => Promise<AgentSessionQuickFeatures>,
+  refresh = false,
+): Promise<AgentSessionQuickFeatures> {
+  const cache = quickFeatureBucket(quickFeatureCaches, owner);
+  const requests = quickFeatureBucket(quickFeatureRequests, owner);
+  if (!refresh) {
+    const cached = cache.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = requests.get(key);
+    if (pending) return pending;
+  }
+  const request = discover().then((catalogue) => {
+    cache.set(key, catalogue);
+    return catalogue;
+  });
+  requests.set(key, request);
+  void request
+    .finally(() => {
+      if (requests.get(key) === request) requests.delete(key);
+    })
+    .catch(() => undefined);
+  return request;
 }
 
 export interface UseAgentSessionOptions {
@@ -87,8 +132,13 @@ export function useAgentSession(
   options: UseAgentSessionOptions,
 ): AgentSessionWorkspaceController {
   const selectedSessionId = options.selectedSessionId;
+  const composerCacheKey = composerDraftCacheKey(selectedSessionId, options.folderTarget);
+  const composerCacheKeyRef = useRef(composerCacheKey);
   const [details, setDetails] = useState<AgentSessionDetailsDto | null>(null);
   const [draft, setDraft] = useState('');
+  const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
   const acceptedOptionsRef = useRef<string | null>(null);
@@ -127,7 +177,11 @@ export function useAgentSession(
         setDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
-        setWorkingDirectory(next.session.workingDirectory ?? '');
+        setWorkingDirectory(
+          readCachedComposerDraft(composerCacheKeyRef.current)?.workingDirectory ??
+            next.session.workingDirectory ??
+            '',
+        );
         invocationIdsRef.current = new Set(next.invocations.map(({ invocation }) => invocation.id));
       }
       return next;
@@ -198,29 +252,48 @@ export function useAgentSession(
     [loadSelected],
   );
 
-  const startNewSession = useCallback(() => {
-    loadGenerationRef.current += 1;
-    selectedIdRef.current = null;
-    setDetails(null);
-    setPreparation(null);
-    setCurrentProfile(null);
-    acceptedOptionsRef.current = null;
-    invocationIdsRef.current = new Set();
-    setWorkingDirectory('');
-    setDraft('');
-    setError(null);
-    setLoading(false);
-  }, []);
+  const startNewSession = useCallback(
+    (cached = readCachedComposerDraft(composerCacheKeyRef.current)) => {
+      loadGenerationRef.current += 1;
+      selectedIdRef.current = null;
+      setDetails(null);
+      setPreparation(null);
+      setCurrentProfile(null);
+      acceptedOptionsRef.current = null;
+      invocationIdsRef.current = new Set();
+      setWorkingDirectory(cached?.workingDirectory ?? '');
+      setDraft(cached?.text ?? '');
+      setError(null);
+      setLoading(false);
+    },
+    [],
+  );
 
   const draftKey = options.draftId ?? 'new';
   const contextKey = selectedSessionId ?? draftKey;
   const contextRef = useRef(contextKey);
   contextRef.current = contextKey;
   useEffect(() => {
+    setHydratedComposerCacheKey(null);
+    const cached = readCachedComposerDraft(composerCacheKey);
+    composerCacheKeyRef.current = composerCacheKey;
     if (selectedSessionId) {
+      setDraft(cached?.text ?? '');
       if (selectedIdRef.current !== selectedSessionId) void selectSession(selectedSessionId);
-    } else startNewSession();
-  }, [selectedSessionId, draftKey, selectSession, startNewSession]);
+    } else startNewSession(cached);
+    setHydratedComposerCacheKey(composerCacheKey);
+  }, [selectedSessionId, draftKey, composerCacheKey, selectSession, startNewSession]);
+
+  useEffect(() => {
+    if (hydratedComposerCacheKey !== composerCacheKey) return;
+    const timer = window.setTimeout(() => {
+      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
+    };
+  }, [composerCacheKey, draft, hydratedComposerCacheKey, workingDirectory]);
 
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
@@ -245,7 +318,9 @@ export function useAgentSession(
       const preparingNow = isSessionPreparing(preparation);
       if (preparingNow) return;
       const sendContext = contextRef.current;
+      const sendCacheKey = composerCacheKeyRef.current;
       const existingSessionId = selectedIdRef.current;
+      let acceptedDelivery = false;
       sendingRef.current = true;
       setSending(true);
       setError(null);
@@ -275,8 +350,7 @@ export function useAgentSession(
             text: submittedText,
           });
           if (outcome.state === 'accepted' || outcome.state === 'uncertain') {
-            if (clearComposer && selectedIdRef.current === existingSessionId)
-              setDraft((current) => (current === value ? '' : current));
+            acceptedDelivery = outcome.state === 'accepted';
           }
           if (outcome.state !== 'accepted')
             setError(
@@ -354,18 +428,26 @@ export function useAgentSession(
                         : {}),
                     });
         acceptedOptionsRef.current = preparedOptions;
+        acceptedDelivery = true;
         if (!options.preparedExecution) options.execution?.afterAccepted();
         if (!existingSessionId && contextRef.current === sendContext)
           options.onSessionCreated?.(acknowledgement.sessionId);
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
           selectedIdRef.current = acknowledgement.sessionId;
           invocationIdsRef.current.add(acknowledgement.invocationId);
-          if (clearComposer) setDraft((current) => (current === value ? '' : current));
           await loadSelected(acknowledgement.sessionId, true);
         }
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
+        // A controlled owner can switch to the created Session while its acknowledgement is still
+        // settling. Clear again only when this exact sent text is still visible; a user-typed next
+        // draft always wins.
+        if (acceptedDelivery && clearComposer && draftRef.current === value) {
+          draftRef.current = '';
+          setDraft('');
+          clearCachedComposerDraft(sendCacheKey);
+        }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }
@@ -438,6 +520,9 @@ export function useAgentSession(
   }, [loadSelected, selectedSessionId, transcript?.activeInvocationId]);
 
   const quickFeaturesClient = options.execution?.client;
+  const quickFeaturesClientRef = useRef(quickFeaturesClient);
+  quickFeaturesClientRef.current = quickFeaturesClient;
+  const quickFeatureOwner = quickFeaturesClient?.loadQuickFeatures ?? quickFeaturesClient;
   const quickExecutionTarget = options.execution?.target;
   const quickContext =
     quickExecutionTarget?.path ??
@@ -445,26 +530,56 @@ export function useAgentSession(
       ? details.session.workingDirectory
       : workingDirectory);
   const quickFolderTarget = selectedSessionId ? null : options.folderTarget;
-  const loadQuickFeatures = useCallback(async () => {
-    const selectedFacts = options.executionQuickFeatures;
-    const desired = options.executionSelection;
-    if (options.preparedExecution && desired && selectedFacts) {
-      if (desired.execution.connection.kind === 'ssh')
+  const quickFeatureKey = JSON.stringify([
+    selectedSessionId ?? options.draftId,
+    quickContext,
+    quickFolderTarget,
+    quickExecutionTarget,
+    options.executionSelection,
+    options.executionQuickFeatures,
+  ]);
+  const quickFeatureInput = useRef({
+    selectedFacts: options.executionQuickFeatures,
+    desired: options.executionSelection,
+    prepared: options.preparedExecution,
+    sessionId: selectedSessionId,
+    context: quickContext,
+    folderTarget: quickFolderTarget,
+    executionTarget: quickExecutionTarget,
+  });
+  quickFeatureInput.current = {
+    selectedFacts: options.executionQuickFeatures,
+    desired: options.executionSelection,
+    prepared: options.preparedExecution,
+    sessionId: selectedSessionId,
+    context: quickContext,
+    folderTarget: quickFolderTarget,
+    executionTarget: quickExecutionTarget,
+  };
+  const discoverQuickFeatures = useCallback(async () => {
+    const client = quickFeaturesClientRef.current;
+    const input = quickFeatureInput.current;
+    const selectedFacts = input.selectedFacts;
+    const desired = input.desired;
+    if (input.prepared && desired?.execution.connection.kind === 'ssh') {
+      if (selectedFacts)
         return {
           ...selectedFacts,
           limitations: ['Native skill discovery is unavailable on remote devices.'],
         };
-      if (desired.workspace.kind !== 'existing')
-        return {
-          ...selectedFacts,
-          limitations: ['Skills are available after the working folder is prepared.'],
-        };
-      if (!quickFeaturesClient?.loadQuickFeatures) return selectedFacts;
+      throw new Error('Native skill discovery is unavailable on remote devices.');
+    }
+    if (input.prepared && desired && selectedFacts) {
+      if (!client?.loadQuickFeatures) return selectedFacts;
       try {
-        const discovered = await quickFeaturesClient.loadQuickFeatures({
+        const discovered = await client.loadQuickFeatures({
           sessionId: null,
-          workingDirectory: desired.workspace.target.path,
-          executionTarget: desired.workspace.target,
+          workingDirectory:
+            desired.workspace.kind === 'existing' ? desired.workspace.target.path : null,
+          configurationRef: desired.execution.configurationRef,
+          ...(desired.workspace.kind === 'existing'
+            ? { executionTarget: desired.workspace.target }
+            : {}),
         });
         return mergeSelectedQuickFeatures(selectedFacts, discovered);
       } catch (cause) {
@@ -474,25 +589,62 @@ export function useAgentSession(
         };
       }
     }
-    if (options.preparedExecution && desired)
-      throw new Error('Loading selected target capabilities.');
-    if (!quickFeaturesClient?.loadQuickFeatures) throw new Error('Quick features are unavailable.');
-    return quickFeaturesClient.loadQuickFeatures({
-      sessionId: selectedSessionId,
-      workingDirectory: quickContext || null,
-      ...(quickFolderTarget ? { folderTarget: quickFolderTarget } : {}),
-      ...(quickExecutionTarget ? { executionTarget: quickExecutionTarget } : {}),
+    if (!client?.loadQuickFeatures) throw new Error('Quick features are unavailable.');
+    return client.loadQuickFeatures({
+      sessionId: input.sessionId,
+      workingDirectory: input.context || null,
+      ...(input.folderTarget ? { folderTarget: input.folderTarget } : {}),
+      ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
     });
-  }, [
-    quickFeaturesClient,
-    selectedSessionId,
-    quickContext,
-    quickFolderTarget,
-    quickExecutionTarget,
-    options.preparedExecution,
-    options.executionSelection,
-    options.executionQuickFeatures,
-  ]);
+  }, []);
+  const loadQuickFeatures = useCallback(
+    () =>
+      quickFeatureOwner
+        ? cachedQuickFeatures(quickFeatureKey, quickFeatureOwner, discoverQuickFeatures)
+        : discoverQuickFeatures(),
+    [discoverQuickFeatures, quickFeatureKey, quickFeatureOwner],
+  );
+  const refreshQuickFeatures = useCallback(
+    () =>
+      quickFeatureOwner
+        ? cachedQuickFeatures(quickFeatureKey, quickFeatureOwner, discoverQuickFeatures, true)
+        : discoverQuickFeatures(),
+    [discoverQuickFeatures, quickFeatureKey, quickFeatureOwner],
+  );
+  const [quickCatalogue, setQuickCatalogue] = useState<AgentSessionQuickFeatures | undefined>(
+    () =>
+      (quickFeatureOwner
+        ? quickFeatureBucket(quickFeatureCaches, quickFeatureOwner).get(quickFeatureKey)
+        : undefined) ?? options.executionQuickFeatures,
+  );
+  useEffect(() => {
+    let current = true;
+    setQuickCatalogue(
+      (quickFeatureOwner
+        ? quickFeatureBucket(quickFeatureCaches, quickFeatureOwner).get(quickFeatureKey)
+        : undefined) ?? quickFeatureInput.current.selectedFacts,
+    );
+    if (
+      quickFeatureInput.current.prepared &&
+      quickFeatureInput.current.desired &&
+      !quickFeatureInput.current.selectedFacts
+    )
+      return;
+    if (
+      !quickFeaturesClientRef.current?.loadQuickFeatures &&
+      !quickFeatureInput.current.selectedFacts
+    )
+      return;
+    void loadQuickFeatures().then(
+      (catalogue) => {
+        if (current) setQuickCatalogue(catalogue);
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [loadQuickFeatures, quickFeatureKey, quickFeatureOwner]);
 
   const preparing = isSessionPreparing(preparation);
   const sameActiveConfiguration =
@@ -532,11 +684,18 @@ export function useAgentSession(
               options.executionSelection,
               options.executionQuickFeatures,
             ]),
+            catalogue: quickCatalogue,
             load: loadQuickFeatures,
+            refresh: async () => {
+              const catalogue = await refreshQuickFeatures();
+              setQuickCatalogue(catalogue);
+              return catalogue;
+            },
             selection: options.execution.selection,
             setSelection: options.execution.setSelection,
           }
         : undefined,
+    quickCatalogue,
     respondToRequest,
     steeringAvailable: Boolean(client.steerSession) && !preparing && sameActiveConfiguration,
     selectedSessionId,

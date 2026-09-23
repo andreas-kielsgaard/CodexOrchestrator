@@ -18,6 +18,8 @@ export function BranchNavigator({
   onRepositoryChange,
   onRegisterRepository,
   onBranchChange,
+  onViewDetached,
+  detachedSelected,
 }: {
   readonly repositories: readonly ReviewRepository[];
   readonly selectedRepositoryId: RepositoryId | '';
@@ -29,7 +31,13 @@ export function BranchNavigator({
   readonly onRepositoryChange: (repositoryId: RepositoryId) => void;
   readonly onRegisterRepository: () => void;
   readonly onBranchChange: (target: ReviewTarget) => void;
+  readonly onViewDetached: () => void;
+  readonly detachedSelected: boolean;
 }) {
+  const attachedBranches = branches.filter((branch) => branch.target.kind === 'branch');
+  const detachedCount = branches.filter(
+    (branch) => branch.target.kind === 'worktree' && branch.branchRef === null,
+  ).length;
   return (
     <aside className="worktree-review__navigator" aria-label="Repository and branch selection">
       <label className="worktree-review__field">
@@ -59,13 +67,28 @@ export function BranchNavigator({
 
       <BranchBrowser
         repositoryId={selectedRepositoryId}
-        branches={branches}
+        branches={attachedBranches}
         selectedTarget={selectedTarget}
         onBranchChange={onBranchChange}
         onOpenGraph={onSelectBranch}
         graphTriggerRef={graphTriggerRef}
         disabled={disabled}
       />
+      <section className="worktree-review__detached-nav" aria-label="Detached worktrees">
+        <div className="worktree-review__branch-heading">
+          <h2>Detached worktrees</h2>
+          <span>{detachedCount}</span>
+        </div>
+        <button
+          type="button"
+          className="worktree-review__secondary"
+          disabled={disabled || detachedCount === 0}
+          aria-current={detachedSelected ? 'page' : undefined}
+          onClick={onViewDetached}
+        >
+          View details
+        </button>
+      </section>
     </aside>
   );
 }

@@ -61,7 +61,21 @@ function requireFile(filename) {
 export async function buildApplication(request) {
   if (!['release', 'debug'].includes(request.profile))
     throw new BuildError('Application profile must be release or debug.', 'invalid_request');
-  const layout = cacheLayout(request.worktreeRoot, request.targetDir);
+  let layout = cacheLayout(request.worktreeRoot, request.targetDir);
+  if (process.platform === 'win32' && request.runningExecutable && !request.targetDir) {
+    const binary = request.cargoBinaryName ?? 'codex-orchestrator';
+    const prospective = path.join(layout.target, request.profile, `${binary}.exe`);
+    const current = fs.existsSync(request.runningExecutable)
+      ? canonical(request.runningExecutable)
+      : path.resolve(request.runningExecutable);
+    const output = fs.existsSync(prospective) ? canonical(prospective) : path.resolve(prospective);
+    if (current.toLowerCase() === output.toLowerCase()) {
+      layout = cacheLayout(request.worktreeRoot, path.join(layout.ownerRoot, 'review-target'));
+      console.log(
+        `Running application occupies the normal Cargo output; using retained review target ${layout.target}`,
+      );
+    }
+  }
   const worktree = layout.worktree;
   const attemptRoot = path.resolve(
     request.attemptRoot ?? path.join(layout.storage, '..', 'builds', layout.key, randomUUID()),
@@ -99,6 +113,7 @@ export async function buildApplication(request) {
     requireFile(path.join(worktree, 'package-lock.json'));
     requireFile(path.join(worktree, 'src-tauri', 'Cargo.toml'));
     if (request.dependencyPolicy === 'install') {
+      console.log('@@ORCHID_STAGE:dependencies');
       const npm = executable('npm');
       // Invoke npm's JS entrypoint directly to preserve argument boundaries on Windows.
       const npmCli = requireFile(
@@ -124,8 +139,10 @@ export async function buildApplication(request) {
     const tauri = requireFile(path.join(modules, '@tauri-apps', 'cli', 'tauri.js'));
     const frontend = path.join(layout.ownerRoot, 'frontend', profile);
     fs.mkdirSync(frontend, { recursive: true });
+    console.log('@@ORCHID_STAGE:typescript');
     console.log('== TypeScript typecheck ==');
     await run(process.execPath, [tsc, '--noEmit'], { cwd: worktree });
+    console.log('@@ORCHID_STAGE:frontend');
     console.log('== Frontend build ==');
     await run(process.execPath, [vite, 'build', '--outDir', frontend, '--emptyOutDir'], {
       cwd: worktree,
@@ -154,6 +171,7 @@ export async function buildApplication(request) {
       ORCHESTRATOR_CARGO_CONTEXT: context,
     };
     delete env.CARGO_BUILD_TARGET;
+    console.log('@@ORCHID_STAGE:cargo');
     console.log(`== Tauri ${profile} build ==`);
     await run(
       process.execPath,
@@ -185,6 +203,7 @@ export async function buildApplication(request) {
       cacheMode: selection.mode,
       cargoTarget: layout.target,
     };
+    console.log('@@ORCHID_STAGE:publication');
     publishApplication(source, output, profile === 'debug', result);
     console.log(`Application ready: ${executablePath}\nLaunch is a separate action.`);
     return result;

@@ -1,4 +1,7 @@
-use super::{CapabilityProfile, CapabilityProfileService, CapabilitySet, RuntimeProfileSnapshot};
+use super::{
+    CapabilityProfile, CapabilityProfileService, CapabilitySet, ProfileRoutePolicy,
+    RuntimeProfileSnapshot,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::State;
@@ -21,14 +24,67 @@ pub(crate) struct CapabilityProfileIdInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeProfileInventoryInput {
+    profile_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeProfileSkillInput {
+    profile_id: String,
+    #[serde(default)]
+    working_directory: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn load_native_profile_skills(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: NativeProfileSkillInput,
+) -> Result<crate::runtime::codex::app_server::skills::CodexSkillCatalogue, String> {
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .codex_skills_for_configuration(&input.profile_id, input.working_directory.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ModelCatalogueInput {
+    configuration_ref: String,
+}
+
+#[tauri::command]
+pub(crate) async fn load_profile_model_catalogue(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: ModelCatalogueInput,
+) -> Result<super::ModelCatalogueView, String> {
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .model_catalogue(&input.configuration_ref)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateCapabilityProfileInput {
     #[serde(default)]
     execution: crate::execution_targets::domain::ExecutionBinding,
-    capability_profile_id: String,
     name: String,
     allowed_capabilities: CapabilitySet,
     #[serde(default)]
     defaults: super::RuntimeSelections,
+    #[serde(default)]
+    route_policies: Vec<ProfileRoutePolicy>,
+    #[serde(default)]
+    default_route_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +97,10 @@ pub(crate) struct UpdateCapabilityProfileInput {
     allowed_capabilities: CapabilitySet,
     #[serde(default)]
     defaults: super::RuntimeSelections,
+    #[serde(default)]
+    route_policies: Vec<ProfileRoutePolicy>,
+    #[serde(default)]
+    default_route_id: Option<String>,
 }
 
 #[tauri::command]
@@ -48,6 +108,17 @@ pub(crate) fn load_native_capability_inventory(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<super::NativeCapabilityInventory, String> {
     state.service.native_inventory().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_native_profile_capability_inventory(
+    state: State<'_, CapabilityProfileTauriState>,
+    input: NativeProfileInventoryInput,
+) -> Result<super::NativeCapabilityInventory, String> {
+    state
+        .service
+        .native_inventory_for_configuration(&input.profile_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -107,12 +178,13 @@ pub(crate) async fn create_capability_profile(
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
-            .create_with_execution(
-                input.capability_profile_id,
+            .create_generated_with_routes(
                 input.name,
                 input.allowed_capabilities,
                 input.defaults,
                 input.execution,
+                input.route_policies,
+                input.default_route_id,
             )
             .map_err(|error| error.to_string())
     })
@@ -128,12 +200,14 @@ pub(crate) async fn update_capability_profile(
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
-            .update_with_execution(
+            .update_with_routes(
                 &input.capability_profile_id,
                 input.name,
                 input.allowed_capabilities,
                 input.defaults,
                 input.execution,
+                input.route_policies,
+                input.default_route_id,
             )
             .map_err(|error| error.to_string())
     })
@@ -160,7 +234,6 @@ mod tests {
     fn profile_inputs_reject_legacy_harness_fields() {
         assert!(
             serde_json::from_value::<CreateCapabilityProfileInput>(serde_json::json!({
-                "capabilityProfileId": "capability-review",
                 "name": "Review",
                 "allowedCapabilities": {
                     "models": [],

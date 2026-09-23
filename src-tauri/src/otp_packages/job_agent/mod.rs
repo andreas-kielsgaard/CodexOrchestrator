@@ -226,6 +226,7 @@ impl OtpPackage for JobAgentPackage {
                 capability_groups: CAPABILITY_GROUPS.iter().map(|group| AgentMcpCapabilityGroupDescriptor { id: group.id.into(), name: group.name.into(), description: group.description.into() }).collect(),
                 tools: endpoints(), grants: GRANTS.iter().map(|grant| AgentMcpGrantDescriptor { id: grant.id.into(), label: grant.label.into(), description: grant.description.into(), capability: grant.capability.into(), transition: grant.transition.into() }).collect(), configuration: fields(),
             }],
+            skill_roots: vec![],
         }
     }
     fn validate_configuration(&self, tool: &str, _: &Value) -> Result<(), String> {

@@ -1,7 +1,7 @@
 use super::{
     branch_first::{
         AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, BranchFirstReviewService,
-        ProductOverviewView,
+        ProductOverviewView, DetachedWorktreeView,
     },
     branch_graph::BranchGraphView,
     branch_history::{CommitHistoryPageView, CommitHistoryQuery},
@@ -67,6 +67,23 @@ pub(crate) struct CreateWorktreeInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenBuildInput {
     build_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BuildLogInput {
+    build_id: String,
+    attempt_id: String,
+    offset: u64,
+}
+
+#[tauri::command]
+pub(crate) async fn worktree_review_build_log(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: BuildLogInput,
+) -> Result<super::build_service::BuildLogChunkView, String> {
+    let product = state.product_arc()?;
+    blocking("build log", move || product.read_build_log(&input.build_id, &input.attempt_id, input.offset)).await
 }
 
 #[tauri::command]
@@ -143,6 +160,15 @@ pub(crate) async fn worktree_review_worktree_activity(
 }
 
 #[tauri::command]
+pub(crate) async fn worktree_review_detached_worktrees(
+    state: State<'_, WorktreeReviewTauriState>,
+    input: RepositorySelectionInput,
+) -> Result<Vec<DetachedWorktreeView>, String> {
+    let product = state.product_arc()?;
+    blocking("detached worktrees", move || product.detached_worktrees(&input.repository_id)).await
+}
+
+#[tauri::command]
 pub(crate) async fn associate_worktree_review_worktree(
     state: State<'_, WorktreeReviewTauriState>,
     input: AssociateWorktreeInput,
@@ -172,7 +198,20 @@ pub(crate) async fn create_worktree_review_build(
     input: CreateBuildInput,
 ) -> Result<ReviewBuildView, String> {
     let product = state.product_arc()?;
-    blocking("build", move || product.create_build(input)).await
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let sender = std::sync::Arc::new(std::sync::Mutex::new(Some(sender)));
+    let callback_sender = sender.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = product.create_build_with_started(input, move |started| {
+            if let Ok(mut sender) = callback_sender.lock() {
+                if let Some(sender) = sender.take() { let _ = sender.send(Ok(started)); }
+            }
+        });
+        if let Ok(mut sender) = sender.lock() {
+            if let Some(sender) = sender.take() { let _ = sender.send(result); }
+        }
+    });
+    receiver.await.map_err(|_| "Build task stopped before recording its start".to_string())?
 }
 
 #[tauri::command]

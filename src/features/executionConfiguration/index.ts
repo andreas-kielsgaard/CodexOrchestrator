@@ -6,8 +6,6 @@ export type { ExecutionConfigurationScreenProps } from './ExecutionConfiguration
 export { NodeProfileEditor } from './NodeProfileEditor';
 export type { NodeProfileEditorProps } from './NodeProfileEditor';
 export { NodeProfileInspector } from './NodeProfileInspector';
-export { RuntimeProfileInspector } from './RuntimeProfileInspector';
-export type { RuntimeProfileInspectorProps } from './RuntimeProfileInspector';
 export { SessionProfileInspector } from './SessionProfileInspector';
 export type { SessionProfileInspectorProps } from './SessionProfileInspector';
 export { runtimeProfileViewModel, sessionProfileViewModel } from './presentation';

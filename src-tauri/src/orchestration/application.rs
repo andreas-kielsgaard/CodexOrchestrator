@@ -506,8 +506,8 @@ impl ManagedPlanBuilderService {
             };
         let mut config_overrides = harness.runtime_config_overrides();
         config_overrides.extend(managed.injection().config_overrides.clone());
-        let extension = RuntimeLaunchExtension {
-            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+        let extension = RuntimeLaunchExtension { native_mcp_enabled: None,
+            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides,
             environment: vec![managed.injection().environment.clone()],
             initial_prompt_prefix: None,
@@ -1349,8 +1349,8 @@ mod tests {
     fn context_extension(
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
-        RuntimeLaunchExtension {
-            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+        RuntimeLaunchExtension { native_mcp_enabled: None,
+            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides: Vec::new(),
             environment: Vec::new(),
             initial_prompt_prefix: Some(crate::agent_sessions::ports::InitialPromptPrefix {

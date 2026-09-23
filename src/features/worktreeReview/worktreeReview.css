@@ -370,6 +370,60 @@
   gap: 10px;
 }
 
+.worktree-review__detached-nav {
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid #dde1dc;
+}
+
+.worktree-review__detached-nav .worktree-review__secondary {
+  justify-self: start;
+}
+
+.worktree-review__detached-list {
+  display: grid;
+  gap: 10px;
+}
+
+.worktree-review__detached-list .worktree-review__worktree {
+  grid-template-columns: minmax(0, 1fr);
+  cursor: default;
+}
+
+.worktree-review__detached-list code {
+  overflow-wrap: anywhere;
+}
+
+.worktree-review__build-log-action {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.worktree-review__build-log {
+  width: 100%;
+  min-width: 0;
+}
+
+.worktree-review__build-log p {
+  margin: 0 0 8px;
+  color: #536159;
+}
+
+.worktree-review__build-log pre {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 7px;
+  background: #1c2420;
+  color: #e8f1e9;
+  font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .worktree-review__worktree {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

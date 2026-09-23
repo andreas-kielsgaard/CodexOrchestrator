@@ -645,8 +645,8 @@ fn package_runtime_launch_configuration(
     }
     WorkUnitExecutionRuntimeLaunchConfiguration {
         requested_options: harness.runtime_options(),
-        extension: RuntimeLaunchExtension {
-            managed_mcp_servers: Vec::new(), skill_roots: Vec::new(), ignore_user_rules: is_exact_implementer_profile(harness), reasoning_mode: None,
+        extension: RuntimeLaunchExtension { native_mcp_enabled: None,
+            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: is_exact_implementer_profile(harness), reasoning_mode: None,
             config_overrides,
             environment: vec![],
             initial_prompt_prefix: Some(harness.initial_prompt_prefix()),

@@ -119,6 +119,16 @@
   color: #647169;
 }
 
+.execution-configuration__field select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd4cd;
+  border-radius: 8px;
+  background: #fff;
+  color: #17211b;
+  font: inherit;
+}
+
 .execution-configuration__field small {
   color: #748078;
   font-size: 0.66rem;
@@ -128,6 +138,38 @@
 .execution-configuration__capability-fields {
   display: grid;
   gap: 16px;
+}
+
+.execution-configuration__route {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d5ddd6;
+  border-radius: 10px;
+  background: #f7faf5;
+}
+
+.execution-configuration__route h3,
+.execution-configuration__route p {
+  margin: 0;
+}
+
+.execution-configuration__route h3 {
+  font-size: 0.92rem;
+}
+
+.execution-configuration__route p {
+  margin-top: 3px;
+  color: #5f6e65;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.execution-configuration__route-empty {
+  padding: 9px 10px;
+  border: 1px dashed #b9c7bb;
+  border-radius: 7px;
+  background: #fff;
 }
 
 .execution-configuration__capability-fields > .catalog-field + .catalog-field {
@@ -211,6 +253,250 @@
   color: #fff;
 }
 
+.capability-routes,
+.capability-route__configuration,
+.capability-groups,
+.capability-dialog {
+  display: grid;
+  gap: 14px;
+}
+
+.capability-route {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d5ddd6;
+  border-radius: 10px;
+  background: #f7faf5;
+}
+
+.capability-route.is-default {
+  border-color: #75a58b;
+  box-shadow: inset 3px 0 #3e805e;
+}
+
+.capability-route > header,
+.capability-route__section-heading,
+.capability-dialog > header,
+.capability-dialog__actions,
+.capability-dialog__list li,
+.model-allowance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.capability-route h3,
+.capability-route h4,
+.capability-route p,
+.capability-dialog h2,
+.capability-dialog p {
+  margin: 0;
+}
+
+.capability-route > header > div:first-child > span,
+.capability-route__detail,
+.capability-route__section-heading p,
+.capability-groups p,
+.capability-groups small {
+  color: #637168;
+  font-size: 0.73rem;
+  line-height: 1.45;
+}
+
+.capability-route h3,
+.capability-route h4 {
+  margin: 2px 0 0;
+  color: #1c3024;
+  font-size: 0.92rem;
+}
+
+.capability-route__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.capability-route__default {
+  padding: 3px 7px;
+  border-radius: 99px;
+  background: #d9eddf;
+  color: #235d3b;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.capability-route__hover-action,
+.capability-route__remove,
+.model-allowance__remove {
+  border: 0;
+  background: transparent;
+  color: #2e6950;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.capability-route__remove,
+.model-allowance__remove,
+.capability-route__hover-action {
+  opacity: 0;
+}
+
+.capability-route:hover .capability-route__remove,
+.capability-route:hover .capability-route__hover-action,
+.model-allowance:hover .model-allowance__remove,
+.capability-route__remove:focus-visible,
+.capability-route__hover-action:focus-visible,
+.model-allowance__remove:focus-visible {
+  opacity: 1;
+}
+
+.capability-routes__add,
+.capability-route__section-heading button,
+.capability-dialog button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #bfc9c1;
+  border-radius: 7px;
+  background: #fff;
+  color: #26382e;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.capability-route__section-heading button:disabled,
+.capability-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.capability-route__configuration {
+  padding-top: 12px;
+  border-top: 1px solid #dfe6df;
+}
+
+.capability-route__configuration > section + section {
+  padding-top: 13px;
+  border-top: 1px solid #e3e8e3;
+}
+
+.capability-route__empty {
+  padding: 8px 9px;
+  border: 1px dashed #b9c7bb;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.model-allowance {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(135px, 0.9fr) minmax(135px, 0.9fr) auto;
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.model-allowance label {
+  display: grid;
+  gap: 3px;
+  color: #66736b;
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
+.model-allowance select {
+  min-height: 31px;
+  border: 1px solid #cbd4cd;
+  border-radius: 6px;
+  background: #fff;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.capability-groups__list {
+  display: grid;
+  gap: 7px;
+}
+
+.capability-groups__list label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid #dde5de;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.capability-groups__list label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.capability-groups__list strong {
+  color: #23382a;
+  font-size: 0.75rem;
+}
+
+.capability-dialog__backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(19 31 23 / 42%);
+}
+
+.capability-dialog {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid #b7c6b9;
+  border-radius: 12px;
+  background: #fbfcfa;
+  box-shadow: 0 18px 48px rgb(17 36 23 / 25%);
+}
+
+.capability-dialog > header button {
+  width: 30px;
+  padding: 0;
+  font-size: 1.15rem;
+}
+
+.capability-dialog__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capability-dialog__list li {
+  padding: 8px 9px;
+  border: 1px solid #dde5de;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 0.76rem;
+}
+
+.capability-dialog__actions {
+  justify-content: flex-end;
+}
+
+.capability-dialog__actions .is-primary {
+  border-color: #285d47;
+  background: #285d47;
+  color: #fff;
+}
+
 @media (max-width: 600px) {
   .execution-configuration__header,
   .execution-configuration__copy-row {
@@ -219,5 +505,9 @@
 
   .execution-configuration__header {
     display: grid;
+  }
+
+  .model-allowance {
+    grid-template-columns: 1fr 1fr;
   }
 }

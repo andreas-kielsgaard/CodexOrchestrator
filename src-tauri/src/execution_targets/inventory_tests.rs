@@ -25,6 +25,8 @@ fn profile(id: &str, device: &str, remote: bool) -> CapabilityProfile {
             },
             ..Default::default()
         },
+        route_policies: Vec::new(),
+        default_route_id: None,
     }
 }
 

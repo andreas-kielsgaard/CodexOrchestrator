@@ -13,10 +13,17 @@ import {
 function availableCatalog<T extends string>(
   values: readonly T[],
   sourceLabel: string,
+  order: readonly string[] = [],
 ): CatalogState<T> {
+  const position = (value: string) => {
+    const index = order.indexOf(value.toLowerCase());
+    return index === -1 ? order.length : index;
+  };
   return {
     availability: 'available',
-    options: values.map((value) => ({ value, label: value })),
+    options: [...new Set(values)]
+      .sort((left, right) => position(left) - position(right) || left.localeCompare(right))
+      .map((value) => ({ value, label: value })),
     sourceLabel,
   };
 }
@@ -40,8 +47,23 @@ export function runtimeProfileViewModel(
   });
 
   const catalogs: RuntimeCapabilityCatalogs = {
-    models: availableCatalog(runtime.exposure.models, sourceLabel),
-    reasoningModes: availableCatalog(runtime.exposure.reasoningModes, sourceLabel),
+    models: availableCatalog(runtime.exposure.models, sourceLabel, [
+      'gpt-6-astra',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+    ]),
+    reasoningModes: availableCatalog(runtime.exposure.reasoningModes, sourceLabel, [
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ]),
     sandboxModes: availableCatalog(runtime.exposure.sandboxModes, sourceLabel),
     mcpTools:
       mcpTools.length > 0

@@ -12,6 +12,7 @@ pub(super) fn compose(
     workspaces: &SessionWorkspaces,
     local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
+    otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<
     (
         Arc<dyn SelectedRuntimeProfileSource>,
@@ -22,33 +23,18 @@ pub(super) fn compose(
 > {
     let source: Arc<dyn SelectedRuntimeProfileSource> = Arc::new(
         NativeCodexSelectedRuntimeProfileSource::new(profiles, product_tools.clone())
-            .with_skill_roots(vec![workspaces.skills_root()]),
+            .with_skill_roots(vec![workspaces.skills_root()])
+            .with_otp_skill_roots(otp_skill_roots),
     );
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
     );
-    let declared = Arc::new(ConfiguredRuntimeProfileSource::new(
-        configured_runtime_profile(CapabilitySet {
-            mcp_tools: product_tools,
-            models: ["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()]
-                .into_iter()
-                .collect(),
-            reasoning_modes: [
-                "low".to_string(),
-                "medium".to_string(),
-                "high".to_string(),
-                "xhigh".to_string(),
-                "max".to_string(),
-                "ultra".to_string(),
-            ]
-            .into_iter()
-            .collect(),
-            ..CapabilitySet::default()
-        }),
-    ));
-    let service = Arc::new(CapabilityProfileService::new(
-        Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
-        declared,
-    ));
+    let service = Arc::new(
+        CapabilityProfileService::new(
+            Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
+            source.clone(),
+        )
+        .with_endpoints(endpoints.clone()),
+    );
     Ok((source, service, endpoints))
 }

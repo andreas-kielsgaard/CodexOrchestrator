@@ -85,6 +85,9 @@ pub(crate) fn run() {
                     otp_installations.clone(),
                 ),
             )?;
+            harness_engine.attach_agent_mcp_provisioner(
+                crate::execution_configuration::SessionSkillReaderProvisioner::start()?,
+            )?;
             // This product-native seam resolves only durable application-owned attempt authority.
             let execution_support = crate::orchestration::execution_support::ProductExecutionSupportState::new(
                 database.clone(),
@@ -112,7 +115,7 @@ pub(crate) fn run() {
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(),
+                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
             app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(execution_targets));
             let session_event_adapter = Arc::new(
@@ -362,6 +365,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::load_profile_model_catalogue,
             crate::execution_configuration::transport::load_native_capability_inventory,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_targets::transport::list_session_execution_targets,
@@ -419,19 +423,11 @@ pub(crate) fn run() {
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,
             crate::native_profiles::select_native_profile,
-            crate::native_profiles::select_native_profile_execution_mode,
-            crate::native_profiles::authorize_native_profile_danger_full_access,
-            crate::native_profiles::revoke_native_profile_danger_full_access,
             crate::native_profiles::request_native_profile_login,
             crate::native_profiles::refresh_native_profile_readiness,
-            crate::native_profiles::request_native_profile_sandbox_initialization,
-            crate::native_profiles::confirm_native_profile_sandbox_initialization,
-            crate::native_profiles::verify_native_profile_preprovisioned_sandbox,
-            crate::native_profiles::confirm_native_profile_preprovisioned_sandbox_adoption,
-            crate::native_profiles::run_native_profile_workspace_write_canary,
-            crate::native_profiles::run_native_profile_danger_full_access_canary,
-            crate::native_profiles::probe_native_profile_mcp_reporting,
-            crate::native_profiles::reconcile_native_profile_mcp_reporting,
+            crate::native_profiles::open_native_profile_in_explorer,
+            crate::execution_configuration::transport::load_native_profile_capability_inventory,
+            crate::execution_configuration::transport::load_native_profile_skills,
             crate::product_decisions::accept_product_decision_version,
             crate::product_decisions::load_product_decision_current_query,
             crate::product_decisions::load_product_decision_history,
@@ -458,9 +454,11 @@ pub(crate) fn run() {
             crate::worktree_review::transport::worktree_review_commit_history,
             crate::worktree_review::transport::worktree_review_branch_graph,
             crate::worktree_review::transport::worktree_review_worktree_activity,
+            crate::worktree_review::transport::worktree_review_detached_worktrees,
             crate::worktree_review::transport::associate_worktree_review_worktree,
             crate::worktree_review::transport::create_worktree_review_worktree,
             crate::worktree_review::transport::create_worktree_review_build,
+            crate::worktree_review::transport::worktree_review_build_log,
             crate::worktree_review::transport::worktree_review_open_build
         ])
         .build(tauri::generate_context!())

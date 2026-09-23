@@ -22,6 +22,14 @@ pub trait CodexEnvironmentSource: Send + Sync {
         home: PathBuf,
         cwd: Option<PathBuf>,
     ) -> Result<CodexEnvironment, RuntimePortError>;
+    fn discover_skills(
+        &self,
+        home: PathBuf,
+        cwd: Option<PathBuf>,
+    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+        self.read(home, cwd)
+            .map(|environment| super::skills::project(&environment.skills))
+    }
     fn inventory(
         &self,
         _home: PathBuf,
@@ -49,6 +57,7 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
         home: PathBuf,
         cwd: Option<PathBuf>,
     ) -> Result<CodexEnvironment, RuntimePortError> {
+        let context = cwd.clone().unwrap_or_else(|| home.clone());
         self.with_connection(home, cwd.clone(), |connection| {
             let config = connection.call("config/read", json!({"cwd":cwd,"includeLayers":true}))?;
             let requirements = connection.call("configRequirements/read", json!({}))?;
@@ -56,7 +65,9 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
             let mut cursor = Value::Null;
             loop {
                 let page = connection
-                    .call("model/list", json!({"cursor":cursor,"includeHidden":false}))?;
+                    // Capability Profiles need the complete account-visible model catalogue, not
+                    // merely the subset Codex happens to surface in its compact picker.
+                    .call("model/list", json!({"cursor":cursor,"includeHidden":true}))?;
                 if let Some(data) = page["data"].as_array() {
                     models.extend(data.iter().cloned());
                 }
@@ -65,16 +76,24 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
                     break;
                 }
             }
-            let skills = connection.call(
-                "skills/list",
-                json!({"cwds":cwd.into_iter().collect::<Vec<_>>(),"forceReload":true}),
-            )?;
+            let skills = super::skills::read_response(connection, &context, false)?;
             Ok(CodexEnvironment {
                 models: Value::Array(models),
                 skills,
                 config,
                 requirements,
             })
+        })
+    }
+
+    fn discover_skills(
+        &self,
+        home: PathBuf,
+        cwd: Option<PathBuf>,
+    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+        let context = cwd.clone().unwrap_or_else(|| home.clone());
+        self.with_connection(home, cwd, |connection| {
+            super::skills::read_forced(connection, &context)
         })
     }
 
@@ -101,9 +120,6 @@ impl CodexEnvironmentReader {
         cwd: Option<PathBuf>,
         read: impl FnOnce(&Connection) -> Result<T, RuntimePortError>,
     ) -> Result<T, RuntimePortError> {
-        super::client::with_connection(&self.program, home, cwd, |connection| {
-            super::capability_roots::apply_skill_roots(connection, &self.skill_roots)?;
-            read(connection)
-        })
+        super::client::with_connection(&self.program, home, cwd, read)
     }
 }

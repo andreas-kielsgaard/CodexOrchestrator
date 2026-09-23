@@ -91,16 +91,8 @@ export function AgentSessionExecutionSettings({
                   value: mode,
                   label: mode,
                 }))}
-                defaultModelLabel={
-                  resolved.pinnedDefaults.model
-                    ? `Use Session default · ${resolved.pinnedDefaults.model}`
-                    : 'Use Session default'
-                }
-                defaultReasoningLabel={
-                  resolved.pinnedDefaults.reasoningMode
-                    ? `Use Session default · ${resolved.pinnedDefaults.reasoningMode}`
-                    : 'Use Session default'
-                }
+                defaultModel={resolved.pinnedDefaults.model}
+                defaultReasoning={resolved.pinnedDefaults.reasoningMode}
                 disabled={disabled}
                 onChange={onSelectionChange}
               />

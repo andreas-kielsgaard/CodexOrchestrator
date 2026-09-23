@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { beforeEach } from 'vitest';
 import type {
   AgentInvocationDto,
   AgentSessionClient,
@@ -13,6 +14,8 @@ import type {
 import { sessionDetails, sessionSummary } from './testFixtures';
 import { useAgentSession, type UseAgentSessionOptions } from './useAgentSession';
 import { useAgentSessionCollection } from './useAgentSessionCollection';
+
+beforeEach(() => window.localStorage.clear());
 
 describe('conversation state', () => {
   it('steers an active turn through the shared client without another domain delivery', async () => {
@@ -122,6 +125,37 @@ describe('conversation state', () => {
     expect(client.calls).toContain('reload:session-1');
     expect(result.current.selectedSessionId).toBe('session-1');
     expect(result.current.draft).toBe('');
+  });
+
+  it('restores a semantic new-conversation draft after navigating away and back', async () => {
+    const client = new FakeAgentSessionClient({ empty: true });
+    const repository = { kind: 'repository' as const, repositoryId: 'orchestrator' };
+    const { result, rerender } = renderHook(
+      ({ folderTarget }) =>
+        useAgentSession(client, {
+          selectedSessionId: null,
+          draftId: 'new-conversation',
+          folderTarget,
+        }),
+      {
+        initialProps: {
+          folderTarget:
+            repository as import('../../application/agentSessions/organization').SessionFolderTarget | null,
+        },
+      },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.setDraft('Keep this repository draft');
+      result.current.setWorkingDirectory('C:/orchestrator');
+    });
+    rerender({ folderTarget: null });
+    await waitFor(() => expect(result.current.draft).toBe(''));
+
+    rerender({ folderTarget: repository });
+    await waitFor(() => expect(result.current.draft).toBe('Keep this repository draft'));
+    expect(result.current.workingDirectory).toBe('C:/orchestrator');
   });
 
   it('reconciles correlated updates from durable reload and refreshes terminal summaries', async () => {

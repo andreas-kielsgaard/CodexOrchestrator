@@ -81,6 +81,47 @@ impl SelectedRuntimeProfileSource for QuickSource {
 }
 
 #[test]
+fn skill_discovery_does_not_require_a_capability_profile() {
+    let fixture = Fixture::new();
+    let source = Arc::new(QuickSource {
+        profile_ref: test_selected_runtime_profile().profile_ref,
+        contexts: Mutex::new(Vec::new()),
+    });
+    let mut application = fixture.direct.clone().with_profile_source(source.clone());
+    application.capability_profiles = None;
+    application.load_quick_features(None, None, None).unwrap();
+    assert_eq!(*source.contexts.lock().unwrap(), vec![None]);
+}
+
+#[test]
+fn new_workspace_discovers_from_its_selected_codex_configuration() {
+    struct RecordingSource(Mutex<Vec<String>>);
+    impl SelectedRuntimeProfileSource for RecordingSource {
+        fn selected_runtime_profile(
+            &self,
+        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+            Ok(test_selected_runtime_profile())
+        }
+        fn quick_features_for_configuration(
+            &self,
+            reference: &str,
+            _: Option<&str>,
+        ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+            self.0.lock().unwrap().push(reference.into());
+            Ok(RuntimeQuickFeatures::default())
+        }
+    }
+    let fixture = Fixture::new();
+    let source = Arc::new(RecordingSource(Mutex::new(Vec::new())));
+    let mut application = fixture.direct.clone().with_profile_source(source.clone());
+    application.capability_profiles = None;
+    application
+        .load_quick_features_for_configuration(None, None, None, Some("profile-two"))
+        .unwrap();
+    assert_eq!(*source.0.lock().unwrap(), ["profile-two"]);
+}
+
+#[test]
 fn quick_features_use_session_context_and_reject_a_different_provider_profile() {
     let fixture = Fixture::new();
     let source = Arc::new(QuickSource {

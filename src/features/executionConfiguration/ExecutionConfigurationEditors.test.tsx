@@ -78,11 +78,29 @@ function ControlledCapabilityEditor({ onSave }: { onSave(profile: CapabilityProf
     name: '',
     revision: null,
     allowedCapabilities: emptyCapabilities,
+    routePolicies: [],
+    defaultRouteId: null,
   });
   return (
     <CapabilityProfileEditor
       profile={profile}
       runtime={runtime}
+      routes={[
+        {
+          id: 'local-codex:review',
+          selected: true,
+          label: 'This device · Codex CLI',
+          sourceLabel: 'OpenAI via Codex CLI',
+          detail: 'C:/codex-review',
+          execution: {
+            deviceId: 'local',
+            deviceName: 'This device',
+            provider: 'codex',
+            configurationRef: 'review',
+            connection: { kind: 'local' },
+          },
+        },
+      ]}
       onChange={setProfile}
       onSave={onSave}
     />
@@ -95,26 +113,39 @@ describe('Execution Configuration editors', () => {
     const onSave = vi.fn();
     render(<ControlledCapabilityEditor onSave={onSave} />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Capability profile ID' }), 'reviewer');
     await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Reviewer');
-    await user.click(screen.getByRole('checkbox', { name: 'GPT 5.6' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Message Session' }));
+    await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+    await user.click(screen.getByRole('button', { name: 'Add route' }));
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    await user.click(
+      within(screen.getByText('gpt-5.6').closest('li') as HTMLElement).getByRole('button', {
+        name: 'Add',
+      }),
+    );
     await user.click(screen.getByRole('button', { name: 'Create profile' }));
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
-        capabilityProfileId: 'reviewer',
         name: 'Reviewer',
-        allowedCapabilities: expect.objectContaining({
-          models: ['gpt-5.6'],
-          mcpTools: { orchestrator: ['session-message'] },
-        }),
+        execution: {
+          deviceId: 'local',
+          deviceName: 'This device',
+          provider: 'codex',
+          configurationRef: 'review',
+          connection: { kind: 'local' },
+        },
+        routePolicies: expect.arrayContaining([
+          expect.objectContaining({
+            modelAllowances: expect.arrayContaining([
+              expect.objectContaining({ modelId: 'gpt-5.6' }),
+            ]),
+          }),
+        ]),
       }),
     );
   });
 
-  it('shows unavailable runtime catalogs without inventing editable options', () => {
-    const reason = 'Skill discovery is controlled by the selected Codex profile.';
+  it('presents editable MCP and skill groups rather than individual runtime entries', () => {
     render(
       <CapabilityProfileEditor
         profile={{
@@ -122,24 +153,17 @@ describe('Execution Configuration editors', () => {
           name: 'Reviewer',
           revision: 2,
           allowedCapabilities: emptyCapabilities,
+          routePolicies: [],
+          defaultRouteId: null,
         }}
-        runtime={{
-          ...runtime,
-          catalogs: {
-            ...runtime.catalogs,
-            skills: {
-              availability: 'unavailable',
-              options: [],
-              reason,
-            },
-          },
-        }}
+        runtime={runtime}
         onChange={() => undefined}
       />,
     );
 
-    expect(screen.getByText(reason)).toBeVisible();
-    expect(screen.getByRole('group', { name: /Skills/ })).toBeDisabled();
+    expect(
+      screen.getByText('Add a route to choose where sessions using this profile run.'),
+    ).toBeVisible();
   });
 
   it('keeps node edits controlled and delegates copy semantics to the caller', async () => {
@@ -182,7 +206,7 @@ describe('Execution Configuration editors', () => {
 
     render(<ControlledNode />);
     expect(screen.getByLabelText('Avery, Agent identity')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Default sandbox' })).toBeDisabled();
+    expect(screen.queryByRole('combobox', { name: 'Default sandbox' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Expand Copy node configuration' }));
     const copySection = screen

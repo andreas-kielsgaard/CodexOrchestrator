@@ -5,7 +5,6 @@ import type {
 } from '../../application/workflowAuthoring';
 import {
   NodeProfileEditor,
-  RuntimeProfileInspector,
   nodeProfileCatalogs,
   nodeProfileValidationErrors,
   type AgentIdentityOption,
@@ -91,7 +90,6 @@ export function WorkflowNodeEditor({
         value={node.agentMcpConfiguration ?? {}}
         onChange={(agentMcpConfiguration) => onChange({ ...node, agentMcpConfiguration })}
       />
-      <RuntimeProfileInspector runtime={runtime} defaultExpanded={false} />
     </>
   );
 }

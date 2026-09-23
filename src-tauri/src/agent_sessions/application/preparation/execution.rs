@@ -2,7 +2,8 @@
 use super::*;
 use crate::agent_sessions::application::update_sink::PersistedRuntimeUpdateSink;
 use crate::execution_configuration::{
-    DirectUserInvocationRequest, NodeProfile, SessionCreationRequest, SessionProfileResolver,
+    validate_session_skill_inputs, DirectUserInvocationRequest, NodeProfile,
+    SessionCreationRequest, SessionProfileResolver,
 };
 impl AgentSessionApplication {
     pub(super) fn run_preparation(
@@ -221,6 +222,13 @@ impl AgentSessionApplication {
         let runtime_profile = profiles
             .runtime_for_binding(&destination.execution, Some(&destination.path))
             .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let session_skill_inputs = self
+            .compile_capability_skill_inputs(
+                &capability,
+                &destination.execution.configuration_ref,
+                Some(&destination.path),
+            )
+            .map_err(AgentSessionApplicationError::invalid)?;
         let creation = SessionProfileResolver::resolve_snapshot(
             runtime_profile.clone(),
             SessionCreationRequest {
@@ -228,13 +236,17 @@ impl AgentSessionApplication {
                 agent_mcp_configuration: Default::default(),
                 node_profile: NodeProfile {
                     contract_version: 1,
-                    allowed_capabilities: capability.allowed_capabilities.clone(),
+                    allowed_capabilities: super::super::configuration::default_node_capabilities(
+                        &capability,
+                    ),
                     pinned_defaults: Default::default(),
                 },
                 capability_profile: capability,
+                session_skill_inputs,
             },
         )
         .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let pinned_skill_inputs = creation.session_profile().session_skill_inputs().to_vec();
         let resolution = SessionProfileResolver::resolve_direct_user_snapshot(
             runtime_profile,
             &creation,
@@ -299,7 +311,16 @@ impl AgentSessionApplication {
         let preflight = runtime
             .preflight_invocation(mode, &requested)
             .map_err(AgentSessionApplicationError::runtime)?;
-        let mut extension = reasoning_launch_extension(&resolution.selections);
+        let selected_skills = validate_session_skill_inputs(&pinned_skill_inputs)
+            .map_err(AgentSessionApplicationError::invalid)?;
+        let mut extension = reasoning_launch_extension(&resolution.selections).unwrap_or_default();
+        extension.skill_inputs = selected_skills;
+        extension = super::super::configuration::pinned_exposure_extension(
+            p.current_resolution.as_ref().expect("resolved creation"),
+            extension,
+        )
+        .map_err(AgentSessionApplicationError::invalid)?;
+        let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);
             if let Some(authority) = &self.native_profile_launch_authority {
@@ -321,6 +342,23 @@ impl AgentSessionApplication {
             .get_invocation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Invocation not found"))?;
+        if !destination.execution.is_remote() {
+            if let Some(extension) = extension.as_mut() {
+                for skill in self.direct_user_native_skill_inputs(
+                    &destination.execution.configuration_ref,
+                    Some(&destination.path),
+                    &invocation.submitted_text,
+                ) {
+                    if !extension
+                        .skill_inputs
+                        .iter()
+                        .any(|existing| existing.path == skill.path)
+                    {
+                        extension.skill_inputs.push(skill);
+                    }
+                }
+            }
+        }
         let sink = Arc::new(PreparationUpdateGate {
             inner: Arc::new(PersistedRuntimeUpdateSink::new(
                 self.repository.clone(),

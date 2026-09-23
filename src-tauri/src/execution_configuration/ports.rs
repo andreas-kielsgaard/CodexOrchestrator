@@ -1,6 +1,13 @@
 use super::{capability_profile::CapabilityProfile, runtime_profile::RuntimeProfileSnapshot};
 use std::{error::Error, fmt};
 
+/// A master skill folder that a runtime source makes eligible for an explicit session manifest.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeSkillRoot {
+    pub(crate) group_id: String,
+    pub(crate) path: std::path::PathBuf,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilityProfileRepositoryError {
     AlreadyExists(String),
@@ -42,6 +49,15 @@ impl Error for CapabilityProfileRepositoryError {}
 /// `replace` uses the revision read by the application service so concurrent writers cannot
 /// silently discard one another. Consumers should use `CapabilityProfileService`, not this port.
 pub(crate) trait CapabilityProfileRepository: Send + Sync {
+    fn model_catalogue(
+        &self,
+        configuration_ref: &str,
+    ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError>;
+    fn save_model_catalogue(
+        &self,
+        configuration_ref: &str,
+        catalogue: &super::StoredModelCatalogue,
+    ) -> Result<(), CapabilityProfileRepositoryError>;
     fn default_profile(
         &self,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError>;
@@ -90,6 +106,30 @@ impl fmt::Display for SelectedRuntimeProfileSourceError {
 impl Error for SelectedRuntimeProfileSourceError {}
 
 pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+    fn configuration_ref_for_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<String>, SelectedRuntimeProfileSourceError> {
+        Ok(None)
+    }
+    fn discover_skills_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<
+        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
+        SelectedRuntimeProfileSourceError,
+    > {
+        Err(SelectedRuntimeProfileSourceError::unavailable(
+            "Codex skill discovery is unavailable",
+        ))
+    }
+    fn skill_roots_for_configuration(
+        &self,
+        _reference: &str,
+    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
+        Ok(Vec::new())
+    }
     fn configuration_home(
         &self,
         _reference: &str,
@@ -109,6 +149,13 @@ pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
             ));
         }
         self.quick_features_at(cwd)
+    }
+    fn refresh_quick_features_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        self.quick_features_for_configuration(reference, cwd)
     }
     fn quick_features_at(
         &self,
@@ -161,9 +208,31 @@ pub(crate) struct WorkingContextProfileSource<'a> {
     pub(crate) cwd: Option<&'a str>,
 }
 impl SelectedRuntimeProfileSource for WorkingContextProfileSource<'_> {
+    fn profile_for_configuration(
+        &self,
+        reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source.profile_for_configuration(reference, self.cwd)
+    }
     fn selected_runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
         self.source.selected_runtime_profile_at(self.cwd)
+    }
+}
+
+pub(crate) struct PinnedConfigurationProfileSource<'a> {
+    pub(crate) source: &'a dyn SelectedRuntimeProfileSource,
+    pub(crate) configuration_ref: &'a str,
+    pub(crate) cwd: Option<&'a str>,
+}
+
+impl SelectedRuntimeProfileSource for PinnedConfigurationProfileSource<'_> {
+    fn selected_runtime_profile(
+        &self,
+    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        self.source
+            .profile_for_configuration(self.configuration_ref, self.cwd)
     }
 }

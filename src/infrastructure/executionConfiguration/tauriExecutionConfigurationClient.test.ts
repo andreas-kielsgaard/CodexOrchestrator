@@ -18,7 +18,6 @@ describe('Tauri Execution Configuration client', () => {
     await client.listCapabilityProfiles();
     await client.loadCapabilityProfile('review');
     await client.createCapabilityProfile({
-      capabilityProfileId: 'review',
       name: 'Review',
       allowedCapabilities,
     });
@@ -33,10 +32,7 @@ describe('Tauri Execution Configuration client', () => {
       ['load_selected_runtime_profile'],
       ['list_capability_profiles'],
       ['load_capability_profile', { input: { capabilityProfileId: 'review' } }],
-      [
-        'create_capability_profile',
-        { input: { capabilityProfileId: 'review', name: 'Review', allowedCapabilities } },
-      ],
+      ['create_capability_profile', { input: { name: 'Review', allowedCapabilities } }],
       [
         'update_capability_profile',
         {

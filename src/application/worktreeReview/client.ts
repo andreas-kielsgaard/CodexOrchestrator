@@ -8,11 +8,14 @@ import type {
   WorktreeId,
   WorktreeActivity,
   BranchReviewDetail,
+  DetachedWorktreeDetail,
   CreateBuildRequest,
   CreateWorktreeRequest,
   OpenBuildRequest,
   RepositoryId,
   ReviewBuild,
+  BuildId,
+  BuildLogChunk,
   WorktreeReviewOverview,
 } from './contracts';
 
@@ -31,8 +34,10 @@ export interface WorktreeReviewClient {
     repositoryId: RepositoryId,
     worktreeIds: readonly WorktreeId[],
   ): Promise<readonly WorktreeActivity[]>;
+  detachedWorktrees(repositoryId: RepositoryId): Promise<readonly DetachedWorktreeDetail[]>;
   associateWorktree(input: AssociateWorktreeRequest): Promise<AssociatedWorktree>;
   createWorktree(input: CreateWorktreeRequest): Promise<AssociatedWorktree>;
   createBuild(input: CreateBuildRequest): Promise<ReviewBuild>;
+  readBuildLog(buildId: BuildId, attemptId: string, offset: number): Promise<BuildLogChunk>;
   openBuild(input: OpenBuildRequest): Promise<void>;
 }

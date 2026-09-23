@@ -31,6 +31,16 @@ pub(crate) fn insert_import_binding(
     Ok(())
 }
 impl NativeProfileService {
+    pub(crate) fn bound_profile_id(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.read("read Session native home binding", |connection| {
+            connection.query_row(
+                "SELECT profile_id FROM agent_session_native_profile_bindings WHERE session_id=?1",
+                params![session_id],
+                |row| row.get(0),
+            ).optional().map_err(|error| error.to_string())
+        })
+    }
+
     pub(crate) fn resolve_session_home(&self) -> Result<ResolvedNativeCodexHome, String> {
         self.resolve_configuration_home("selected")
     }

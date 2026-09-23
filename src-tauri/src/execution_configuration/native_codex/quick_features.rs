@@ -4,6 +4,7 @@ use crate::execution_configuration::{
 use crate::runtime::codex::app_server::environment::CodexEnvironment;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> RuntimeQuickFeatures {
     let mut result = RuntimeQuickFeatures {
@@ -35,44 +36,79 @@ pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> Runtime
                 .collect(),
         });
     }
-    // A textual invocation is supported by Codex. Do not offer ambiguous names as exact choices.
-    let mut skills: BTreeMap<String, BTreeMap<String, &Value>> = BTreeMap::new();
-    for group in array(&native.skills["data"]) {
-        if array(&group["errors"]).next().is_some() {
-            result
-                .limitations
-                .push("Some skills could not be discovered.".into());
+    append_codex_skills(
+        &mut result,
+        &crate::runtime::codex::app_server::skills::project(&native.skills),
+    );
+    result
+}
+
+pub(super) fn append_codex_skills(
+    result: &mut RuntimeQuickFeatures,
+    catalogue: &crate::runtime::codex::app_server::skills::CodexSkillCatalogue,
+) {
+    result
+        .limitations
+        .extend(catalogue.limitations.iter().cloned());
+    let mut names =
+        BTreeMap::<&str, Vec<&crate::runtime::codex::app_server::skills::CodexSkill>>::new();
+    for skill in catalogue.skills.iter().filter(|skill| skill.enabled) {
+        names.entry(&skill.name).or_default().push(skill);
+    }
+    for (name, entries) in names {
+        if entries.len() != 1 {
+            result.limitations.push(format!("Skill '{name}' has multiple sources; choose a source explicitly in the Codex profile."));
+            continue;
         }
-        for skill in array(&group["skills"]).filter(|skill| skill["enabled"] != false) {
-            let (Some(name), Some(path)) = (skill["name"].as_str(), skill["path"].as_str()) else {
+        let skill = entries[0];
+        result.skills.push(QuickSkill {
+            id: skill.path.clone(),
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            invocation_text: format!("${name}"),
+            group_id: "codex-profile-skills".into(),
+        });
+    }
+}
+
+/// Orchid-owned roots are not registered with Codex discovery. Selected entries are pinned
+/// for the session's read_skill broker.
+pub(super) fn append_owned_root_skills(
+    result: &mut RuntimeQuickFeatures,
+    roots: &[PathBuf],
+    group_id: &str,
+) {
+    let mut discovered = BTreeMap::<String, String>::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path().join("SKILL.md");
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            skills
-                .entry(name.into())
-                .or_default()
-                .insert(path.into(), skill);
+            discovered.insert(name, path.to_string_lossy().into_owned());
         }
     }
-    for (name, paths) in skills {
-        if paths.len() != 1 {
+    for (name, path) in discovered {
+        if result.skills.iter().any(|skill| skill.name == name) {
             result.limitations.push(format!(
-                "Skill '{name}' has multiple sources and cannot be selected by name."
+                "Skill '{name}' is available from multiple roots and is not selected automatically."
             ));
             continue;
         }
-        let (path, skill) = paths.into_iter().next().unwrap();
         result.skills.push(QuickSkill {
             id: path,
             invocation_text: format!("${name}"),
             name,
-            description: skill["interface"]["shortDescription"]
-                .as_str()
-                .or(skill["description"].as_str())
-                .unwrap_or("")
-                .into(),
+            description: "Orchid-owned skill".into(),
+            group_id: group_id.into(),
         });
     }
-    result
 }
 
 fn array(value: &Value) -> impl Iterator<Item = &Value> {

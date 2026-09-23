@@ -37,6 +37,81 @@
   overflow: auto;
 }
 
+.execution-setup-overview {
+  display: grid;
+  max-width: 880px;
+  gap: 16px;
+  padding: 28px clamp(22px, 5vw, 52px);
+}
+
+.execution-setup-overview > header,
+.execution-setup-overview__card {
+  display: grid;
+  gap: 5px;
+}
+
+.execution-setup-overview > header p,
+.execution-setup-overview > header h2,
+.execution-setup-overview > p,
+.execution-setup-overview__card p,
+.execution-setup-overview__card h3 {
+  margin: 0;
+}
+
+.execution-setup-overview > header > p,
+.execution-setup-overview__card > div > p {
+  color: #65736a;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.execution-setup-overview > header > span,
+.execution-setup-overview__card span {
+  color: #1f6347;
+  font-weight: 700;
+}
+
+.execution-setup-overview > p,
+.execution-setup-overview__card > p {
+  max-width: 720px;
+  color: #536359;
+  line-height: 1.5;
+}
+
+.execution-setup-overview__card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  padding: 20px;
+  border: 1px solid #ccd7d0;
+  border-radius: 12px;
+  background: #fffdfa;
+}
+
+.execution-setup-overview__card > p { grid-column: 1 / -1; }
+
+.execution-setup-overview__card button {
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid #2d6049;
+  border-radius: 7px;
+  background: #fff;
+  color: #24543f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.execution-setup-overview__note {
+  font-size: 0.88rem;
+}
+
+.execution-setup-overview__error {
+  color: #9c392f;
+  font-size: 0.88rem;
+}
+
 .otp-configuration {
   max-width: 1120px;
   padding: 22px;

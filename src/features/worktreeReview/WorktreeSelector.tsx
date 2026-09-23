@@ -56,14 +56,6 @@ export function WorktreeSelector({
           <p className="worktree-review__step">2 · Worktree checkout</p>
           <h2 id="worktree-review-worktrees">Choose the exact worktree</h2>
         </div>
-        <button
-          type="button"
-          className="worktree-review__secondary"
-          disabled={!createAvailable || busy}
-          onClick={onCreate}
-        >
-          Create worktree
-        </button>
       </div>
       <p className="worktree-review__supporting">
         Worktrees are physical checkouts. More than one can represent the same branch or commit.
@@ -136,12 +128,21 @@ export function WorktreeSelector({
         </p>
       )}
 
+      <button
+        type="button"
+        className="worktree-review__secondary"
+        disabled={!createAvailable || busy}
+        onClick={onCreate}
+      >
+        Create new worktree
+      </button>
+
       {candidates.length > 0 && (
         <div className="worktree-review__candidates">
-          <h3>Checkouts requiring association</h3>
+          <h3>Other existing checkouts</h3>
           <p className="worktree-review__supporting">
-            These checkouts are not build sources until you explicitly associate one with this
-            branch.
+            These Git checkouts are reachable from this branch but have no Worktree Review
+            association with it. Associate one to use it as this branch’s build source.
           </p>
           {candidates.map((candidate) => (
             <AssociationCandidate

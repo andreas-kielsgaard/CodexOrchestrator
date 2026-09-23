@@ -1,33 +1,32 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { RepositoryBranchSource } from '../../application/branches';
-import {
-  localExecutionBinding,
-  type ExecutionTargetClient,
-  type ExecutionBindingDto,
-} from '../../application/executionTargets/contracts';
-import { RepositoryDeviceLocationEditor } from './RepositoryDeviceLocationEditor';
+import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
+import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
+import { localCodexRoutes } from '../../application/executionConfiguration';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
+  ProfileModelCatalogueDto,
+  ProfileRoutePolicyDto,
   RuntimeProfileSnapshotDto,
 } from '../../application/executionConfiguration';
 import { CapabilityProfileEditor } from './CapabilityProfileEditor';
 import { NativeCapabilityInventory } from './NativeCapabilityInventory';
 import { runtimeProfileViewModel } from './presentation';
-import type { CapabilityProfileDraft } from './types';
+import type { CapabilityProfileDraft, HarnessInferenceRouteOption } from './types';
 import './mountedExecutionConfiguration.css';
 
 export interface ExecutionConfigurationScreenProps {
   readonly client: ExecutionConfigurationClient;
-  readonly targetClient?: ExecutionTargetClient;
-  readonly branchSource?: RepositoryBranchSource;
   /** Design-time package descriptions group selectable MCP tools without probing them. */
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
+  /** Native profiles are projected into non-secret local harness/source routes. */
+  readonly nativeProfileClient?: NativeProfileClient;
+  readonly executionTargetClient?: ExecutionTargetClient;
 }
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
@@ -44,6 +43,28 @@ const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
 };
 
 function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft {
+  const legacyRoute: ProfileRoutePolicyDto | undefined = profile.execution
+    ? {
+        routeId: `${profile.capabilityProfileId}:legacy`,
+        execution: profile.execution,
+        modelAllowances: profile.allowedCapabilities.models.map((modelId) => ({
+          modelId,
+          minimumReasoning: profile.allowedCapabilities.reasoningModes[0] ?? 'none',
+          maximumReasoning:
+            profile.allowedCapabilities.reasoningModes.at(-1) ??
+            profile.allowedCapabilities.reasoningModes[0] ??
+            'none',
+        })),
+        mcpGroups: [],
+        skillGroups: [],
+        defaults: profile.defaults ?? { model: null, reasoningMode: null, sandboxMode: null },
+      }
+    : undefined;
+  const routePolicies = profile.routePolicies?.length
+    ? profile.routePolicies
+    : legacyRoute
+      ? [legacyRoute]
+      : [];
   return {
     capabilityProfileId: profile.capabilityProfileId,
     name: profile.name,
@@ -51,24 +72,32 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     allowedCapabilities: profile.allowedCapabilities,
     defaults: profile.defaults,
     execution: profile.execution,
+    routePolicies,
+    defaultRouteId: profile.defaultRouteId ?? routePolicies[0]?.routeId ?? null,
   };
 }
 
-function newDraft(runtime: RuntimeProfileSnapshotDto): CapabilityProfileDraft {
+function newDraft(
+  runtime: RuntimeProfileSnapshotDto,
+  execution?: CapabilityProfileDraft['execution'],
+): CapabilityProfileDraft {
   return {
     capabilityProfileId: '',
     name: '',
     revision: null,
     allowedCapabilities: runtime.exposure,
+    routePolicies: [],
+    defaultRouteId: null,
+    ...(execution ? { execution } : {}),
   };
 }
 
 export function ExecutionConfigurationScreen({
   client,
-  targetClient,
-  branchSource,
   readOtpCatalogue,
   workspace: providedWorkspace,
+  nativeProfileClient,
+  executionTargetClient,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
   const workspace = providedWorkspace ?? localWorkspace;
@@ -76,84 +105,95 @@ export function ExecutionConfigurationScreen({
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto>(EMPTY_RUNTIME);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileDto[]>([]);
   const [otpPackages, setOtpPackages] = useState<readonly OtpPackageDto[]>([]);
+  const [routes, setRoutes] = useState<readonly HarnessInferenceRouteOption[]>([]);
+  const [modelCatalogues, setModelCatalogues] = useState<
+    Readonly<Record<string, ProfileModelCatalogueDto>>
+  >({});
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
   const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
   const selectedRef = useRef(selectedId);
+  const loadModelCatalogue = useCallback(
+    async (configurationRef: string) => {
+      if (!client.loadProfileModelCatalogue) return;
+      try {
+        const catalogue = await client.loadProfileModelCatalogue(configurationRef);
+        setModelCatalogues((current) => ({ ...current, [configurationRef]: catalogue }));
+      } catch (cause) {
+        setModelCatalogues((current) => ({
+          ...current,
+          [configurationRef]: {
+            configurationRef,
+            observedAt: null,
+            models: [],
+            observationError: errorMessage(cause),
+          },
+        }));
+      }
+    },
+    [client],
+  );
   const editDraft = (next: CapabilityProfileDraft) => {
-    if (JSON.stringify(next.execution) !== JSON.stringify(draft.execution)) {
-      discoveryGeneration.current++;
-      setDiscovering(false);
-      setRuntime(EMPTY_RUNTIME);
-    }
     workspace.edit(selectedRef.current ?? '$new', next);
     setDraft(next);
+    for (const route of next.routePolicies) {
+      if (
+        !draft.routePolicies.some(
+          (previous) => previous.execution.configurationRef === route.execution.configurationRef,
+        )
+      )
+        void loadModelCatalogue(route.execution.configurationRef);
+    }
   };
   useDraftCloseWarning(() => workspace.dirty());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discovering, setDiscovering] = useState(false);
-  const discoveryGeneration = useRef(0);
-  const discover = useCallback(
-    async (execution?: ExecutionBindingDto) => {
-      const generation = ++discoveryGeneration.current;
-      setDiscovering(true);
-      setRuntime(EMPTY_RUNTIME);
-      setError(null);
-      try {
-        const next = targetClient
-          ? (await targetClient.loadRuntime(execution ?? localExecutionBinding)).runtimeProfile
-          : await client.loadSelectedRuntimeProfile();
-        if (generation === discoveryGeneration.current) setRuntime(next);
-      } catch (cause) {
-        if (generation === discoveryGeneration.current) setError(errorMessage(cause));
-      } finally {
-        if (generation === discoveryGeneration.current) setDiscovering(false);
-      }
-    },
-    [client, targetClient],
-  );
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextRuntime, nextProfiles, nextDefault, nextOtpPackages] = await Promise.all([
-        targetClient ? Promise.resolve(EMPTY_RUNTIME) : client.loadSelectedRuntimeProfile(),
+      const [nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] = await Promise.all([
         client.listCapabilityProfiles(),
-        client.loadDefaultCapabilityProfile?.() ?? Promise.resolve(null),
+        client.loadDefaultCapabilityProfile?.().catch(() => null) ?? Promise.resolve(null),
         // The catalogue is local design-time metadata. A read failure must not
-        // prevent a capability profile from being viewed or edited.
+        // prevent a capability profile from being viewed or edited. The selected
+        // native runtime remains an available local route below.
         readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
+        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
       ]);
-      setRuntime(nextRuntime);
-      setDefaultProfileId(nextDefault);
-      setProfiles(nextProfiles);
-      setOtpPackages(nextOtpPackages);
+      const nextRoutes = localCodexRoutes(nativeProfiles?.profiles ?? []);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
-        : (nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current) ??
-          nextProfiles[0]);
+        : nextProfiles.find((profile) => profile.capabilityProfileId === selectedRef.current);
+      const nextDraft = selected
+        ? workspace.load(selected.capabilityProfileId, draftFromProfile(selected))
+        : hasNewDraft
+          ? workspace.load('$new', newDraft(EMPTY_RUNTIME))
+          : newDraft(EMPTY_RUNTIME);
+      setDefaultProfileId(nextDefault);
+      setProfiles(nextProfiles);
+      setOtpPackages(nextOtpPackages);
+      setRoutes(nextRoutes);
       setSelectedId(selected?.capabilityProfileId ?? null);
       selectedRef.current = selected?.capabilityProfileId ?? null;
       workspace.selectedKey = selectedRef.current;
-      setDraft(
-        workspace.load(
-          selectedRef.current ?? '$new',
-          selected ? draftFromProfile(selected) : newDraft(nextRuntime),
+      setDraft(nextDraft);
+      for (const reference of new Set(
+        nextProfiles.flatMap((profile) =>
+          (profile.routePolicies ?? []).map((route) => route.execution.configurationRef),
         ),
-      );
-      if (targetClient)
-        void discover(
-          workspace.read(selectedRef.current ?? '$new')?.execution ?? selected?.execution,
-        );
+      )) {
+        void loadModelCatalogue(reference);
+      }
+      void client.loadSelectedRuntimeProfile().then(setRuntime, () => setRuntime(EMPTY_RUNTIME));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, targetClient, discover, readOtpCatalogue]);
+  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadModelCatalogue]);
 
   useEffect(() => {
     void load();
@@ -169,15 +209,18 @@ export function ExecutionConfigurationScreen({
       })(),
     [runtime, otpPackages],
   );
+  const selectedRouteExecution =
+    draft.execution ?? routes.find((route) => route.selected)?.execution;
 
   const selectProfile = (profile: CapabilityProfileDto) => {
     selectedRef.current = profile.capabilityProfileId;
     workspace.selectedKey = profile.capabilityProfileId;
     setSelectedId(profile.capabilityProfileId);
-    setDraft(workspace.load(profile.capabilityProfileId, draftFromProfile(profile)));
+    const next = workspace.load(profile.capabilityProfileId, draftFromProfile(profile));
+    setDraft(next);
+    for (const route of next.routePolicies)
+      void loadModelCatalogue(route.execution.configurationRef);
     setError(null);
-    if (targetClient)
-      void discover(workspace.read(profile.capabilityProfileId)?.execution ?? profile.execution);
   };
 
   const save = async (next: CapabilityProfileDraft) => {
@@ -189,11 +232,12 @@ export function ExecutionConfigurationScreen({
       const saved =
         next.revision === null
           ? await client.createCapabilityProfile({
-              capabilityProfileId: next.capabilityProfileId.trim(),
               name: next.name.trim(),
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
               ...(next.execution ? { execution: next.execution } : {}),
+              routePolicies: next.routePolicies,
+              defaultRouteId: next.defaultRouteId,
             })
           : await client.updateCapabilityProfile({
               capabilityProfileId: next.capabilityProfileId,
@@ -201,6 +245,8 @@ export function ExecutionConfigurationScreen({
               allowedCapabilities: next.allowedCapabilities,
               defaults: next.defaults,
               ...(next.execution ? { execution: next.execution } : {}),
+              routePolicies: next.routePolicies,
+              defaultRouteId: next.defaultRouteId,
             });
       const working = workspace.acceptSave(
         key,
@@ -240,16 +286,10 @@ export function ExecutionConfigurationScreen({
       workspace.discard(selectedId);
       const nextProfiles = await client.listCapabilityProfiles();
       setProfiles(nextProfiles);
-      const next = nextProfiles[0];
-      setSelectedId(next?.capabilityProfileId ?? null);
-      selectedRef.current = next?.capabilityProfileId ?? null;
-      workspace.selectedKey = selectedRef.current;
-      setDraft(
-        workspace.load(
-          selectedRef.current ?? '$new',
-          next ? draftFromProfile(next) : newDraft(runtime),
-        ),
-      );
+      setSelectedId(null);
+      selectedRef.current = null;
+      workspace.selectedKey = null;
+      setDraft(newDraft(runtime));
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -278,7 +318,6 @@ export function ExecutionConfigurationScreen({
             setSelectedId(null);
             setDraft(workspace.load('$new', newDraft(runtime)));
             setError(null);
-            if (targetClient) void discover();
           }}
         >
           <Plus size={16} aria-hidden="true" />
@@ -307,7 +346,6 @@ export function ExecutionConfigurationScreen({
               {profiles.map((profile) => (
                 <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
                   {profile.name}
-                  {profile.execution?.connection.kind === 'ssh' ? ' · requires a worktree' : ''}
                 </option>
               ))}
             </select>
@@ -324,7 +362,6 @@ export function ExecutionConfigurationScreen({
               onClick={() => selectProfile(profile)}
             >
               <strong>{profile.name}</strong>
-              <span>{profile.capabilityProfileId}</span>
               <small>Revision {profile.revision}</small>
             </button>
           ))}
@@ -332,17 +369,19 @@ export function ExecutionConfigurationScreen({
         </nav>
       </aside>
       <section className="execution-configuration-screen__workspace">
-        <NativeCapabilityInventory
-          key={JSON.stringify(draft.execution)}
-          client={client}
-          loadInventory={
-            targetClient
-              ? async () =>
-                  (await targetClient.loadRuntime(draft.execution ?? localExecutionBinding))
-                    .nativeInventory
-              : undefined
-          }
-        />
+        {selectedId || workspace.read('$new') ? (
+          <NativeCapabilityInventory
+            key={JSON.stringify(selectedRouteExecution)}
+            client={client}
+            loadInventory={
+              executionTargetClient && selectedRouteExecution
+                ? async () =>
+                    (await executionTargetClient.loadRuntime(selectedRouteExecution))
+                      .nativeInventory
+                : undefined
+            }
+          />
+        ) : null}
         {selectedId && selectedId === defaultProfileId && (
           <p>Choose another default before deleting this profile.</p>
         )}
@@ -354,46 +393,24 @@ export function ExecutionConfigurationScreen({
         {loading ? <p className="execution-configuration-screen__loading">Loading…</p> : null}
         {!loading ? (
           <>
-            <CapabilityProfileEditor
-              profile={draft}
-              connectionDetails={
-                targetClient ? (
-                  <>
-                    <div className="execution-connection-actions">
-                      <button
-                        type="button"
-                        disabled={discovering}
-                        onClick={() => void discover(draft.execution)}
-                      >
-                        {discovering ? 'Reading device capabilities…' : 'Read device capabilities'}
-                      </button>
-                      {runtime.profileRef !== 'unavailable' && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            editDraft({ ...draft, allowedCapabilities: runtime.exposure })
-                          }
-                        >
-                          Use discovered capabilities
-                        </button>
-                      )}
-                    </div>
-                    {branchSource && (
-                      <RepositoryDeviceLocationEditor
-                        key={draft.execution?.deviceId ?? 'local'}
-                        execution={draft.execution ?? localExecutionBinding}
-                        client={targetClient}
-                        source={branchSource}
-                      />
-                    )}
-                  </>
-                ) : undefined
-              }
-              runtime={runtimeView}
-              saving={saving}
-              onChange={editDraft}
-              onSave={(next) => void save(next)}
-            />
+            {selectedId || workspace.read('$new') ? (
+              <CapabilityProfileEditor
+                profile={draft}
+                runtime={runtimeView}
+                routes={routes}
+                modelCatalogues={client.loadProfileModelCatalogue ? modelCatalogues : undefined}
+                saving={saving}
+                onChange={editDraft}
+                onSave={(next) => void save(next)}
+              />
+            ) : (
+              <div className="execution-configuration-screen__empty-state">
+                <h2>Choose a Capability Profile</h2>
+                <p>
+                  Select a saved profile, or create one to configure its routes and capabilities.
+                </p>
+              </div>
+            )}
             {selectedId ? (
               <button
                 className="execution-configuration-screen__delete"

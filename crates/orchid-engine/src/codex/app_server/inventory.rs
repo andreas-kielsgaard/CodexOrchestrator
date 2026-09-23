@@ -19,7 +19,8 @@ pub(super) fn read(
             None
         }
     };
-    let skills = query("skills/list", json!({"cwds":[cwd],"forceReload":true}));
+    let skills = super::skills::read_forced(connection, cwd).ok();
+    let skill_discovery_failed = skills.is_none();
     let hooks = query("hooks/list", json!({"cwds":[cwd]}));
     let plugins = query(
         "plugin/list",
@@ -40,31 +41,33 @@ pub(super) fn read(
             break;
         }
     }
-    for group in skills.iter().flat_map(|v| array(&v["data"])) {
-        for skill in array(&group["skills"]) {
-            let origin = if skill["path"].as_str().is_some_and(|p| {
+    if skill_discovery_failed {
+        inventory.limitations.push(
+            "The selected Codex runtime could not read skills/list. Availability is unknown."
+                .into(),
+        );
+    }
+    if let Some(catalogue) = skills {
+        for skill in catalogue.skills {
+            let origin = if {
                 skill_roots
                     .iter()
-                    .any(|root| Path::new(p).starts_with(root))
-            }) {
+                    .any(|root| Path::new(&skill.path).starts_with(root))
+            } {
                 "orchestration"
             } else {
-                skill["scope"].as_str().unwrap_or("native")
+                &skill.scope
             };
             push(
                 &mut inventory,
-                text(&skill["name"]),
+                skill.name,
                 "skill",
                 origin,
-                enabled(skill),
+                if skill.enabled { "enabled" } else { "disabled" },
                 "discovered by Codex",
             );
         }
-        if array(&group["errors"]).next().is_some() {
-            inventory.limitations.push(
-                "Codex reported skill discovery errors; the catalogue may be incomplete.".into(),
-            );
-        }
+        inventory.limitations.extend(catalogue.limitations);
     }
     for group in hooks.iter().flat_map(|v| array(&v["data"])) {
         for hook in array(&group["hooks"]) {
