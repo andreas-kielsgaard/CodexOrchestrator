@@ -118,12 +118,22 @@ export function StandaloneAgentSessionScreen({
   const collection = useAgentSessionCollection(client, navigationClient);
   const selectedSessionId = sessionIdOf(selection);
   const draftId = selection.kind === 'draft' ? selection.draftId : undefined;
+  const draftFolderTarget = selection.kind === 'draft' ? selection.folderTarget : null;
+  const draftRepositoryId =
+    draftFolderTarget?.kind === 'repository'
+      ? draftFolderTarget.repositoryId
+      : draftFolderTarget?.kind === 'workflow_instance'
+        ? collection.data.instances.find((instance) => instance.id === draftFolderTarget.instanceId)
+            ?.repositoryId
+        : null;
   const targetDraft = useSessionTarget(
     executionTargetClient,
     executionConfigurationClient,
     selectedSessionId,
     draftId,
-    selection.kind === 'draft' ? selection.folderTarget : null,
+    draftFolderTarget,
+    branchSource,
+    draftRepositoryId,
   );
   const { preserveOnAcknowledgement, adoptCurrent, acceptReady } = targetDraft;
   useEffect(() => {
@@ -228,7 +238,7 @@ export function StandaloneAgentSessionScreen({
   const selectedIdentity = selectedSessionId
     ? agentIdentityForSession?.(selectedSessionId)
     : undefined;
-  const folderTarget = selection.kind === 'draft' ? selection.folderTarget : null;
+  const folderTarget = draftFolderTarget;
   const folderLabel =
     folderTarget?.kind === 'repository'
       ? collection.data.repositories.find((repo) => repo.id === folderTarget.repositoryId)?.name
@@ -276,19 +286,34 @@ export function StandaloneAgentSessionScreen({
   const resolvedProfile =
     session.currentProfile?.creationResolution.sessionProfile ??
     view.profile?.creationResolution.sessionProfile;
-  const models = targetDraft.profile
-    ? (targetDraft.runtime?.exposure.models ?? []).filter((value) =>
-        targetDraft.profile!.allowedCapabilities.models.includes(value),
-      )
-    : (resolvedProfile?.attachedRuntimeCapabilities.models ?? []);
-  const reasoningModes = targetDraft.profile
-    ? (targetDraft.runtime?.exposure.reasoningModes ?? []).filter((value) =>
-        targetDraft.profile!.allowedCapabilities.reasoningModes.includes(value),
-      )
-    : (resolvedProfile?.attachedRuntimeCapabilities.reasoningModes ?? []);
-  const hasRuntimeFacts = Boolean(targetDraft.profile ? targetDraft.runtime : resolvedProfile);
-  const selectionError =
-    targetDraft.deviceId && !targetDraft.selection
+  const capabilities =
+    session.quickCatalogue ??
+    selectedTargetQuickFeatures(targetDraft.runtime, targetDraft.profile) ??
+    (resolvedProfile
+      ? {
+          profileRef: resolvedProfile.runtimeProfileRef,
+          defaults: {
+            model: resolvedProfile.pinnedDefaults.model,
+            reasoningMode: resolvedProfile.pinnedDefaults.reasoningMode,
+          },
+          models: resolvedProfile.attachedRuntimeCapabilities.models.map((id) => ({
+            id,
+            label: id,
+            description: '',
+            defaultReasoningMode: resolvedProfile.pinnedDefaults.reasoningMode,
+            reasoningModes: resolvedProfile.attachedRuntimeCapabilities.reasoningModes.map(
+              (id) => ({ id, description: '' }),
+            ),
+          })),
+          skills: [],
+          limitations: [],
+        }
+      : undefined);
+  const models = capabilities?.models.map((model) => model.id) ?? [];
+  const hasRuntimeFacts = Boolean(capabilities);
+  const selectionError = targetDraft.branchChoice?.requiresWorktree
+    ? 'Choose which matching worktree to use.'
+    : targetDraft.deviceId && !targetDraft.selection
       ? 'Choose a Capability Profile for this device.'
       : targetDraft.selection?.execution.connection.kind === 'ssh' &&
           targetDraft.selection.workspace.kind === 'auxiliary'
@@ -297,12 +322,14 @@ export function StandaloneAgentSessionScreen({
             view.selection.model &&
             !targetDraft.loading &&
             !models.includes(view.selection.model)
-          ? `Model ${view.selection.model} is unavailable for the selected profile.`
+          ? `Model ${view.selection.model} is unavailable on the selected Codex route.`
           : hasRuntimeFacts &&
               view.selection.reasoningMode &&
               !targetDraft.loading &&
-              !reasoningModes.includes(view.selection.reasoningMode)
-            ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected profile.`
+              !capabilities?.models.some((model) =>
+                model.reasoningModes.some((mode) => mode.id === view.selection.reasoningMode),
+              )
+            ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected model.`
             : undefined;
   const sendUnavailableReason =
     selectionError ??
@@ -336,13 +363,8 @@ export function StandaloneAgentSessionScreen({
         selection={targetDraft.selection}
         deviceId={targetDraft.deviceId}
         options={view.selection}
-        models={models}
-        reasoningModes={reasoningModes}
-        defaultModel={targetDraft.profile?.defaults?.model ?? resolvedProfile?.pinnedDefaults.model}
-        defaultReasoning={
-          targetDraft.profile?.defaults?.reasoningMode ??
-          resolvedProfile?.pinnedDefaults.reasoningMode
-        }
+        capabilities={capabilities}
+        workspaceLabel={targetDraft.workspaceLabel}
         pending={pending}
         onProfile={targetDraft.chooseProfile}
         onDevice={() => setDeviceContinuationOpen(true)}
@@ -413,6 +435,7 @@ export function StandaloneAgentSessionScreen({
           client={executionTargetClient}
           source={branchSource}
           selected={targetDraft.target}
+          initialRepositoryId={draftRepositoryId ?? undefined}
           deviceId={targetPicker.deviceId}
           capabilityProfileId={
             targetPicker.deviceId === targetDraft.deviceId

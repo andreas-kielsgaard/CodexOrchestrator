@@ -1,10 +1,13 @@
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 import type { ComposerQuickAction } from './composerQuickMenuTypes';
+import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOptions';
 
 export interface ComposerQuickFeatures {
   readonly contextKey: string;
+  readonly catalogue?: AgentSessionQuickFeatures;
   readonly load: () => Promise<AgentSessionQuickFeatures>;
+  readonly refresh?: () => Promise<AgentSessionQuickFeatures>;
   readonly selection: PerMessageRuntimeSelection;
   readonly setSelection: (selection: PerMessageRuntimeSelection) => void;
 }
@@ -14,22 +17,14 @@ export function sessionQuickActions(
   source: ComposerQuickFeatures,
 ): readonly ComposerQuickAction[] {
   const { selection, setSelection } = source;
-  const effectiveModel = selection.model ?? capabilities.defaults.model;
-  const model = capabilities.models.find((item) => item.id === effectiveModel);
-  const effectiveReasoning =
-    selection.reasoningMode ?? capabilities.defaults.reasoningMode ?? model?.defaultReasoningMode;
+  const effective = effectiveSessionOptions(capabilities, selection);
+  const model = effective.model;
+  const effectiveModel = model?.id ?? null;
+  const effectiveReasoning = effective.reasoningMode;
   const disabledReason = undefined;
   const changeModel = (id: string | null) => {
-    const next = capabilities.models.find(
-      (item) => item.id === (id ?? capabilities.defaults.model),
-    );
-    const reasoningMode =
-      next &&
-      effectiveReasoning &&
-      !next.reasoningModes.some((mode) => mode.id === effectiveReasoning)
-        ? next.defaultReasoningMode
-        : selection.reasoningMode;
-    setSelection({ model: id, reasoningMode });
+    if (!id) return { replacement: '', notice: 'No model is available' };
+    setSelection(selectionForModel(capabilities, selection, id));
     return { replacement: '', notice: 'Model updated for the next message' };
   };
   const skillActions: ComposerQuickAction[] = capabilities.skills.map((skill) => ({
@@ -42,27 +37,6 @@ export function sessionQuickActions(
       notice: `Added ${skill.name} to your draft`,
     }),
   }));
-  const inherit = (field: 'model' | 'reasoningMode'): ComposerQuickAction => ({
-    id: 'default',
-    label: 'Use Session default',
-    description: 'Apply the inherited choice to your next message',
-    selected: selection[field] === null,
-    disabledReason:
-      field === 'reasoningMode' &&
-      capabilities.defaults.reasoningMode &&
-      model &&
-      !model.reasoningModes.some((mode) => mode.id === capabilities.defaults.reasoningMode)
-        ? 'The Session default is unavailable for this model'
-        : undefined,
-    run: () => {
-      if (field === 'model') return changeModel(null);
-      setSelection({ ...selection, [field]: null });
-      return {
-        replacement: '',
-        notice: 'Reasoning: Session default',
-      };
-    },
-  });
   return [
     {
       id: 'model',
@@ -70,12 +44,11 @@ export function sessionQuickActions(
       description: effectiveModel ?? 'Choose a model for your next message',
       disabledReason,
       children: [
-        inherit('model'),
         ...capabilities.models.map((item): ComposerQuickAction => ({
           id: item.id,
           label: item.label,
           description: item.description,
-          selected: item.id === selection.model,
+          selected: item.id === effectiveModel,
           run: () => changeModel(item.id),
         })),
       ],
@@ -87,12 +60,11 @@ export function sessionQuickActions(
       disabledReason:
         disabledReason ?? (!model ? 'Choose a model to see its reasoning levels' : undefined),
       children: [
-        inherit('reasoningMode'),
         ...(model?.reasoningModes ?? []).map((mode): ComposerQuickAction => ({
           id: mode.id,
           label: mode.id,
           description: mode.description,
-          selected: mode.id === selection.reasoningMode,
+          selected: mode.id === effectiveReasoning,
           run: () => {
             setSelection({ ...selection, reasoningMode: mode.id });
             return { replacement: '', notice: `Next message reasoning: ${mode.id}` };

@@ -11,6 +11,8 @@ import {
   type SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
 import type { SessionFolderTarget } from '../../application/agentSessions/organization';
+import type { RepositoryBranchSource } from '../../application/branches';
+import { resolveDefaultDraftTarget, type DraftBranchChoice } from './draftTargetResolver';
 import {
   composerDraftCacheKey,
   readCachedComposerDraft,
@@ -33,6 +35,8 @@ export function useSessionTarget(
   sessionId: string | null,
   draftId?: string,
   folderTarget?: SessionFolderTarget | null,
+  branchSource?: RepositoryBranchSource,
+  repositoryId?: string | null,
 ) {
   const [selection, setSelectionState] = useState<SessionExecutionSelectionDto | null>(null);
   const [hydratedCacheKey, setHydratedCacheKey] = useState<string | null>(null);
@@ -41,6 +45,8 @@ export function useSessionTarget(
   const [runtime, setRuntime] = useState<RuntimeProfileSnapshotDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [branchChoice, setBranchChoice] = useState<DraftBranchChoice | null>(null);
+  const [resolvingBranch, setResolvingBranch] = useState(false);
   const dirty = useRef(false);
   const acknowledgedSession = useRef<string | null>(null);
   const cacheKey = composerDraftCacheKey(sessionId, folderTarget);
@@ -55,8 +61,10 @@ export function useSessionTarget(
       return;
     }
     const cachedSelection = readCachedComposerDraft(cacheKey)?.executionSelection ?? null;
+    const cachedBranchChoice = readCachedComposerDraft(cacheKey)?.branchChoice ?? null;
     dirty.current = cachedSelection !== null;
     setSelectionState(cachedSelection);
+    setBranchChoice(cachedBranchChoice);
     setDeviceId(cachedSelection?.execution.deviceId ?? null);
     setHydratedCacheKey(cacheKey);
   }, [sessionId, cacheKey]);
@@ -95,12 +103,13 @@ export function useSessionTarget(
   const setSelection = useCallback((next: SessionExecutionSelectionDto | null) => {
     dirty.current = true;
     setSelectionState(next);
+    if (!next || next.workspace.kind !== 'auxiliary') setBranchChoice(null);
     if (next) setDeviceId(next.execution.deviceId);
   }, []);
   useEffect(() => {
     if (hydratedCacheKey !== cacheKey) return;
-    writeCachedComposerDraft(cacheKey, { executionSelection: selection });
-  }, [cacheKey, hydratedCacheKey, selection]);
+    writeCachedComposerDraft(cacheKey, { executionSelection: selection, branchChoice });
+  }, [branchChoice, cacheKey, hydratedCacheKey, selection]);
   const setTarget = useCallback(
     (target: SessionExecutionTargetDto | null) =>
       setSelection(target ? selectionForTarget(target) : null),
@@ -133,6 +142,7 @@ export function useSessionTarget(
         capabilityProfileRevision: profile.revision,
         execution,
       };
+      setBranchChoice(null);
       setSelection({
         ...next,
         workspace:
@@ -163,12 +173,60 @@ export function useSessionTarget(
   const profile =
     availableProfiles.find((item) => item.capabilityProfileId === selection?.capabilityProfileId) ??
     null;
+  const branchResolutionKey =
+    !sessionId && repositoryId && selection?.workspace.kind === 'auxiliary' && !branchChoice
+      ? `${cacheKey}:${repositoryId}:${selection.capabilityProfileId}:${selection.execution.deviceId}`
+      : null;
+  useEffect(() => {
+    let current = true;
+    if (
+      !branchResolutionKey ||
+      !repositoryId ||
+      !selection ||
+      !client ||
+      !branchSource ||
+      hydratedCacheKey !== cacheKey
+    )
+      return;
+    setResolvingBranch(true);
+    setError(null);
+    void resolveDefaultDraftTarget({
+      source: branchSource,
+      client,
+      repositoryId,
+      selection,
+    })
+      .then(
+        (resolved) => {
+          if (!current) return;
+          setSelectionState(resolved.selection);
+          setBranchChoice(resolved.branchChoice);
+        },
+        (cause) => {
+          if (current) setError(String(cause));
+        },
+      )
+      .finally(() => {
+        if (current) setResolvingBranch(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    branchResolutionKey,
+    branchSource,
+    cacheKey,
+    client,
+    hydratedCacheKey,
+    repositoryId,
+    selection,
+  ]);
   useEffect(() => {
     let current = true;
     setRuntime(null);
     setError(null);
     setLoading(false);
-    if (!selection || !client) return;
+    if (!selection || !client || branchResolutionKey) return;
     setLoading(true);
     void client
       .loadRuntime(selection.execution, target?.path)
@@ -186,7 +244,7 @@ export function useSessionTarget(
     return () => {
       current = false;
     };
-  }, [selection, target?.path, client]);
+  }, [selection, target?.path, client, branchResolutionKey]);
   const acceptReady = useCallback(
     (accepted: SessionExecutionSelectionDto | null, target: SessionExecutionTargetDto | null) => {
       if (target)
@@ -212,8 +270,12 @@ export function useSessionTarget(
     deviceId,
     chooseDevice,
     chooseProfile,
-    loading,
+    loading: loading || resolvingBranch,
     error,
+    branchChoice,
+    workspaceLabel:
+      branchChoice?.label ??
+      (selection?.workspace.kind === 'auxiliary' && !repositoryId ? 'Empty workspace' : undefined),
     adoptCurrent,
     acceptReady,
     preserveOnAcknowledgement,

@@ -38,11 +38,13 @@ function Harness({
   send,
   active = false,
   contextKey = 'session-1',
+  prefetched = false,
 }: {
   load: () => Promise<AgentSessionQuickFeatures>;
   send: ReturnType<typeof vi.fn>;
   active?: boolean;
   contextKey?: string;
+  prefetched?: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [selection, setSelection] = useState<PerMessageRuntimeSelection>({
@@ -64,10 +66,28 @@ function Harness({
       onWorkingDirectoryChange={() => {}}
       onCancel={() => {}}
       onSend={() => send(draft, selection)}
-      quickFeatures={{ contextKey, load, selection, setSelection }}
+      quickFeatures={{
+        contextKey,
+        load,
+        selection,
+        setSelection,
+        ...(prefetched ? { catalogue: capabilities } : {}),
+      }}
     />
   );
 }
+
+it('filters a prefetched catalogue without reloading or clearing results while typing', async () => {
+  const load = vi.fn(async () => capabilities);
+  const user = userEvent.setup();
+  render(<Harness load={load} send={vi.fn()} prefetched />);
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(input, '/');
+  expect(screen.getByRole('option', { name: /Skills/ })).toBeVisible();
+  await user.type(input, 'sk');
+  expect(screen.getByRole('option', { name: /Skills/ })).toBeVisible();
+  expect(load).not.toHaveBeenCalled();
+});
 
 function setup(active = false) {
   const load = vi.fn(async () => capabilities);
@@ -108,10 +128,7 @@ it('uses model-specific reasoning and replaces an incompatible inherited effort'
   await user.keyboard('{Enter}');
   expect(screen.queryByRole('option', { name: /light/ })).not.toBeInTheDocument();
   expect(screen.getByRole('option', { name: /medium/ })).toBeVisible();
-  expect(screen.getByRole('option', { name: /Use Session default/ })).toHaveAttribute(
-    'aria-disabled',
-    'true',
-  );
+  expect(screen.queryByRole('option', { name: /Use Session default/ })).not.toBeInTheDocument();
   await user.keyboard('{Escape}{Escape}');
   await user.clear(input);
   await user.type(input, 'Message{Enter}');
@@ -120,9 +137,9 @@ it('uses model-specific reasoning and replaces an incompatible inherited effort'
   await user.type(input, '/model');
   await screen.findByRole('option', { name: /Model/ });
   await user.keyboard('{Enter}');
-  await user.type(input, 'default{Enter}');
+  await user.type(input, 'model-a{Enter}');
   await user.type(input, 'Inherited{Enter}');
-  expect(send).toHaveBeenLastCalledWith('Inherited', { model: null, reasoningMode: 'deep' });
+  expect(send).toHaveBeenLastCalledWith('Inherited', { model: 'model-a', reasoningMode: 'deep' });
 });
 
 it('inserts a skill using provider-owned syntax without submitting it', async () => {

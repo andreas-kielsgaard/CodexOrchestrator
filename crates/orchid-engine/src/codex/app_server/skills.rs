@@ -26,15 +26,27 @@ pub(super) fn read(
     connection: &Connection,
     cwd: &Path,
 ) -> Result<CodexSkillCatalogue, RuntimePortError> {
-    let response = read_response(connection, cwd)?;
+    let response = read_response(connection, cwd, false)?;
+    Ok(project(&response))
+}
+
+pub(super) fn read_forced(
+    connection: &Connection,
+    cwd: &Path,
+) -> Result<CodexSkillCatalogue, RuntimePortError> {
+    let response = read_response(connection, cwd, true)?;
     Ok(project(&response))
 }
 
 pub(super) fn read_response(
     connection: &Connection,
     cwd: &Path,
+    force_reload: bool,
 ) -> Result<Value, RuntimePortError> {
-    connection.call("skills/list", json!({"cwds":[cwd],"forceReload":true}))
+    connection.call(
+        "skills/list",
+        json!({"cwds":[cwd],"forceReload":force_reload}),
+    )
 }
 
 pub fn project(response: &Value) -> CodexSkillCatalogue {

@@ -9,6 +9,12 @@ import { useAgentSession } from './useAgentSession';
 import { samePreparedConfiguration } from './sessionPreparationState';
 import { selectionForTarget } from './useSessionTarget';
 
+it('keeps the route model catalogue available to direct users outside profile allowances', () => {
+  expect(
+    selectedTargetQuickFeatures(repairRuntime, repairProfile)?.models.map((model) => model.id),
+  ).toEqual(['model-a', 'model-b']);
+});
+
 it('uses selected remote capabilities for a creation draft without querying laptop skills or defaults', async () => {
   const fixture = repairSessionClients(false);
   const loadQuickFeatures = vi.fn(fixture.profiles.loadQuickFeatures);
@@ -67,19 +73,23 @@ it('discovers skills from the selected local configuration before creating a wor
       attachment: 'branch',
     },
   };
-  const { result } = renderHook(() => useAgentSession(fixture.sessions, {
-    selectedSessionId: null,
-    preparedExecution: true,
-    executionSelection: selection,
-    executionQuickFeatures: selectedTargetQuickFeatures(repairRuntime, repairProfile),
-    execution: {
-      client: { ...fixture.profiles, loadQuickFeatures },
-      selection: { model: null, reasoningMode: null },
-      setSelection: () => {},
-      afterAccepted: () => {},
-    },
-  }));
-  await act(async () => { await result.current.quickFeatures!.load(); });
+  const { result } = renderHook(() =>
+    useAgentSession(fixture.sessions, {
+      selectedSessionId: null,
+      preparedExecution: true,
+      executionSelection: selection,
+      executionQuickFeatures: selectedTargetQuickFeatures(repairRuntime, repairProfile),
+      execution: {
+        client: { ...fixture.profiles, loadQuickFeatures },
+        selection: { model: null, reasoningMode: null },
+        setSelection: () => {},
+        afterAccepted: () => {},
+      },
+    }),
+  );
+  await act(async () => {
+    await result.current.quickFeatures!.load();
+  });
   expect(loadQuickFeatures).toHaveBeenCalledWith({
     sessionId: null,
     workingDirectory: null,

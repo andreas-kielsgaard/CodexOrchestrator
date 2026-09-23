@@ -76,7 +76,7 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
                     break;
                 }
             }
-            let skills = super::skills::read_response(connection, &context)?;
+            let skills = super::skills::read_response(connection, &context, false)?;
             Ok(CodexEnvironment {
                 models: Value::Array(models),
                 skills,
@@ -93,7 +93,7 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
     ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
         let context = cwd.clone().unwrap_or_else(|| home.clone());
         self.with_connection(home, cwd, |connection| {
-            super::skills::read(connection, &context)
+            super::skills::read_forced(connection, &context)
         })
     }
 

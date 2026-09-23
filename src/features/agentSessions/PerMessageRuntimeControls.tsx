@@ -15,8 +15,8 @@ export interface PerMessageRuntimeControlsProps {
   readonly value: PerMessageRuntimeSelection;
   readonly models: readonly PerMessageRuntimeOption[];
   readonly reasoningModes: readonly PerMessageRuntimeOption[];
-  readonly defaultModelLabel?: string;
-  readonly defaultReasoningLabel?: string;
+  readonly defaultModel?: string | null;
+  readonly defaultReasoning?: string | null;
   readonly disabled?: boolean;
   readonly onChange: (value: PerMessageRuntimeSelection) => void;
 }
@@ -29,11 +29,18 @@ export function PerMessageRuntimeControls({
   value,
   models,
   reasoningModes,
-  defaultModelLabel = 'Use Session default',
-  defaultReasoningLabel = 'Use Session default',
+  defaultModel,
+  defaultReasoning,
   disabled,
   onChange,
 }: PerMessageRuntimeControlsProps) {
+  const effectiveModel =
+    value.model ?? defaultModel ?? models.find((option) => !option.disabled)?.value ?? '';
+  const effectiveReasoning =
+    value.reasoningMode ??
+    defaultReasoning ??
+    reasoningModes.find((option) => !option.disabled)?.value ??
+    '';
   return (
     <fieldset className="per-message-runtime-controls" disabled={disabled}>
       <legend>Options for this message</legend>
@@ -42,12 +49,10 @@ export function PerMessageRuntimeControls({
         <label>
           <span>Model</span>
           <select
-            value={value.model ?? ''}
-            onChange={(event) =>
-              onChange({ ...value, model: event.target.value ? event.target.value : null })
-            }
+            value={effectiveModel}
+            onChange={(event) => onChange({ ...value, model: event.target.value })}
           >
-            <option value="">{defaultModelLabel}</option>
+            {!effectiveModel && <option value="">No model available</option>}
             {models.map((model) => (
               <option key={model.value} value={model.value} disabled={model.disabled}>
                 {model.label}
@@ -58,15 +63,15 @@ export function PerMessageRuntimeControls({
         <label>
           <span>Reasoning</span>
           <select
-            value={value.reasoningMode ?? ''}
+            value={effectiveReasoning}
             onChange={(event) =>
               onChange({
                 ...value,
-                reasoningMode: event.target.value ? event.target.value : null,
+                reasoningMode: event.target.value,
               })
             }
           >
-            <option value="">{defaultReasoningLabel}</option>
+            {!effectiveReasoning && <option value="">No reasoning available</option>}
             {reasoningModes.map((mode) => (
               <option key={mode.value} value={mode.value} disabled={mode.disabled}>
                 {mode.label}

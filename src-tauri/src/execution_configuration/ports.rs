@@ -150,6 +150,13 @@ pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
         }
         self.quick_features_at(cwd)
     }
+    fn refresh_quick_features_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        self.quick_features_for_configuration(reference, cwd)
+    }
     fn quick_features_at(
         &self,
         _cwd: Option<&str>,

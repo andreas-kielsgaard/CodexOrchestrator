@@ -7,7 +7,7 @@ use crate::{
     native_profiles::NativeProfileService,
     runtime::codex::app_server::environment::{CodexEnvironmentReader, CodexEnvironmentSource},
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 mod quick_features;
 
 pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
@@ -16,6 +16,7 @@ pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
     reader: Arc<dyn CodexEnvironmentSource>,
     orchid_skill_roots: Vec<std::path::PathBuf>,
     otp_skill_roots: std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
+    quick_feature_cache: Mutex<std::collections::BTreeMap<String, super::RuntimeQuickFeatures>>,
 }
 
 impl NativeCodexSelectedRuntimeProfileSource {
@@ -29,6 +30,7 @@ impl NativeCodexSelectedRuntimeProfileSource {
             reader: Arc::new(CodexEnvironmentReader::new("codex")),
             orchid_skill_roots: Vec::new(),
             otp_skill_roots: Default::default(),
+            quick_feature_cache: Mutex::new(Default::default()),
         }
     }
     pub(crate) fn with_skill_roots(mut self, roots: Vec<String>) -> Self {
@@ -55,11 +57,81 @@ impl NativeCodexSelectedRuntimeProfileSource {
             .map(|path| path.to_string_lossy().into_owned())
             .collect();
         self.reader = Arc::new(CodexEnvironmentReader::new("codex").with_skill_roots(paths));
+        if let Ok(cache) = self.quick_feature_cache.get_mut() {
+            cache.clear();
+        }
     }
     #[cfg(test)]
     pub(crate) fn with_reader(mut self, reader: Arc<dyn CodexEnvironmentSource>) -> Self {
         self.reader = reader;
         self
+    }
+
+    fn read_quick_features(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+        refresh: bool,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        let selected = self
+            .service
+            .resolve_configuration_home(reference)
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+        let cache_key = format!(
+            "{}\0{}",
+            selected.profile_id,
+            cwd.unwrap_or("").replace('\\', "/").to_lowercase()
+        );
+        // Keep the context bucket locked through discovery so concurrent callers coalesce onto
+        // the first observation instead of spawning parallel Codex app-server probes.
+        let mut cache = self.quick_feature_cache.lock().map_err(|_| {
+            SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
+        })?;
+        if !refresh {
+            if let Some(cached) = cache.get(&cache_key).cloned() {
+                return Ok(cached);
+            }
+        }
+        let cwd_path = cwd.map(std::path::PathBuf::from);
+        let profile_ref = format!("native-codex:{}", selected.profile_id);
+        let mut features = match self.reader.read(selected.home.clone(), cwd_path.clone()) {
+            Ok(native) => quick_features::project(profile_ref, &native),
+            Err(model_error) => {
+                let catalogue = self
+                    .reader
+                    .discover_skills(selected.home, cwd_path)
+                    .map_err(|error| {
+                        SelectedRuntimeProfileSourceError::unavailable(error.to_string())
+                    })?;
+                let mut fallback = super::RuntimeQuickFeatures {
+                    profile_ref,
+                    ..Default::default()
+                };
+                fallback.limitations.push(format!(
+                    "Model/configuration discovery is unavailable: {model_error}"
+                ));
+                quick_features::append_codex_skills(&mut fallback, &catalogue);
+                fallback
+            }
+        };
+        self.append_owned_skills(&mut features);
+        cache.insert(cache_key, features.clone());
+        Ok(features)
+    }
+
+    fn append_owned_skills(&self, features: &mut super::RuntimeQuickFeatures) {
+        quick_features::append_owned_root_skills(
+            features,
+            &self.orchid_skill_roots,
+            "orchid-skills",
+        );
+        for (package, paths) in &self.otp_skill_roots {
+            quick_features::append_owned_root_skills(
+                features,
+                paths,
+                &format!("otp:{package}:skills"),
+            );
+        }
     }
 }
 
@@ -133,45 +205,14 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
         reference: &str,
         cwd: Option<&str>,
     ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
-        let selected = self
-            .service
-            .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
-        let cwd_path = cwd.map(std::path::PathBuf::from);
-        let profile_ref = format!("native-codex:{}", selected.profile_id);
-        let mut features = match self.reader.read(selected.home.clone(), cwd_path.clone()) {
-            Ok(native) => quick_features::project(profile_ref, &native),
-            Err(model_error) => {
-                let catalogue = self
-                    .reader
-                    .discover_skills(selected.home, cwd_path)
-                    .map_err(|error| {
-                        SelectedRuntimeProfileSourceError::unavailable(error.to_string())
-                    })?;
-                let mut fallback = super::RuntimeQuickFeatures {
-                    profile_ref,
-                    ..Default::default()
-                };
-                fallback.limitations.push(format!(
-                    "Model/configuration discovery is unavailable: {model_error}"
-                ));
-                quick_features::append_codex_skills(&mut fallback, &catalogue);
-                fallback
-            }
-        };
-        quick_features::append_owned_root_skills(
-            &mut features,
-            &self.orchid_skill_roots,
-            "orchid-skills",
-        );
-        for (package, paths) in &self.otp_skill_roots {
-            quick_features::append_owned_root_skills(
-                &mut features,
-                paths,
-                &format!("otp:{package}:skills"),
-            );
-        }
-        Ok(features)
+        self.read_quick_features(reference, cwd, false)
+    }
+    fn refresh_quick_features_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        self.read_quick_features(reference, cwd, true)
     }
     fn resolve_configuration_ref(
         &self,
@@ -230,6 +271,20 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
+        let mut quick =
+            quick_features::project(format!("native-codex:{}", selected.profile_id), &native);
+        self.append_owned_skills(&mut quick);
+        let cache_key = format!(
+            "{}\0{}",
+            selected.profile_id,
+            cwd.unwrap_or("").replace('\\', "/").to_lowercase()
+        );
+        self.quick_feature_cache
+            .lock()
+            .map_err(|_| {
+                SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
+            })?
+            .insert(cache_key, quick);
         Ok(with_temporary_danger_full_access(
             orchid_engine::configuration::runtime_profile(
                 &native,

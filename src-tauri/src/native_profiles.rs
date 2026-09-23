@@ -5329,6 +5329,49 @@ mod tests {
         assert_ne!(homes[0], homes[1]);
     }
 
+    #[test]
+    fn quick_features_cache_by_profile_and_context_until_explicit_refresh() {
+        struct Environment(Arc<Mutex<usize>>);
+        impl crate::runtime::codex::app_server::environment::CodexEnvironmentSource for Environment {
+            fn read(
+                &self,
+                _: PathBuf,
+                _: Option<PathBuf>,
+            ) -> Result<
+                crate::runtime::codex::app_server::environment::CodexEnvironment,
+                crate::agent_sessions::ports::RuntimePortError,
+            > {
+                *self.0.lock().unwrap() += 1;
+                Ok(
+                    crate::runtime::codex::app_server::environment::CodexEnvironment {
+                        models: serde_json::json!([{"model":"native-model","supportedReasoningEfforts":[]}]),
+                        skills: serde_json::json!({"data":[]}),
+                        config: serde_json::json!({}),
+                        requirements: serde_json::json!({}),
+                    },
+                )
+            }
+        }
+        let (_directory, service) = service();
+        let profile = selected_profile_ready_except_mcp(&service);
+        let reads = Arc::new(Mutex::new(0));
+        let source =
+            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+                .with_reader(Arc::new(Environment(reads.clone())));
+
+        source
+            .quick_features_for_configuration(&profile.id, Some("C:/repo"))
+            .unwrap();
+        source
+            .quick_features_for_configuration(&profile.id, Some("C:\\repo"))
+            .unwrap();
+        assert_eq!(*reads.lock().unwrap(), 1);
+        source
+            .refresh_quick_features_for_configuration(&profile.id, Some("C:/repo"))
+            .unwrap();
+        assert_eq!(*reads.lock().unwrap(), 2);
+    }
+
     fn claim_mcp_reporting_for_current_reconciliation(
         service: &NativeProfileService,
         id: &str,

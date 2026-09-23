@@ -19,7 +19,7 @@ pub(super) fn read(
             None
         }
     };
-    let skills = super::skills::read(connection, cwd).ok();
+    let skills = super::skills::read_forced(connection, cwd).ok();
     let skill_discovery_failed = skills.is_none();
     let hooks = query("hooks/list", json!({"cwds":[cwd]}));
     let plugins = query(

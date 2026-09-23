@@ -1,6 +1,7 @@
 import type { SessionFolderTarget } from '../../application/agentSessions/organization';
 import type { SessionExecutionSelectionDto } from '../../application/executionTargets/contracts';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
+import type { DraftBranchChoice } from './draftTargetResolver';
 
 const STORAGE_PREFIX = 'codex-orchestrator/composer-draft/v1/';
 
@@ -9,6 +10,7 @@ export interface CachedComposerDraft {
   readonly workingDirectory?: string;
   readonly executionSelection?: SessionExecutionSelectionDto | null;
   readonly runtimeSelection?: PerMessageRuntimeSelection;
+  readonly branchChoice?: DraftBranchChoice | null;
 }
 
 /**
@@ -78,6 +80,9 @@ function isCachedComposerDraft(value: unknown): value is CachedComposerDraft {
       candidate.executionSelection === null ||
       typeof candidate.executionSelection === 'object') &&
     (candidate.runtimeSelection === undefined ||
-      (candidate.runtimeSelection !== null && typeof candidate.runtimeSelection === 'object'))
+      (candidate.runtimeSelection !== null && typeof candidate.runtimeSelection === 'object')) &&
+    (candidate.branchChoice === undefined ||
+      candidate.branchChoice === null ||
+      typeof candidate.branchChoice === 'object')
   );
 }

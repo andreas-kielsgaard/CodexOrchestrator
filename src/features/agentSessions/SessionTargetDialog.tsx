@@ -33,6 +33,7 @@ export function SessionTargetDialog({
   capabilityProfileId,
   sessionId,
   onSelectSelection,
+  initialRepositoryId,
 }: {
   readonly deviceId?: string | null;
   readonly capabilityProfileId?: string | null;
@@ -43,17 +44,20 @@ export function SessionTargetDialog({
   readonly selected: SessionExecutionTargetDto | null;
   readonly onClose: () => void;
   readonly onSelect: (target: SessionExecutionTargetDto | null) => void;
+  readonly initialRepositoryId?: string;
 }) {
   const [creation, setCreation] = useState<WorktreeCreationRequest | null>(null);
   const [confirmedBranchKey, setConfirmedBranchKey] = useState('');
   const [repositories, setRepositories] = useState<readonly RegisteredRepository[]>([]);
   const [loadingRepositories, setLoadingRepositories] = useState(true);
-  const [repositoryId, setRepositoryId] = useState(selected?.repositoryId ?? '');
+  const [repositoryId, setRepositoryId] = useState(
+    selected?.repositoryId ?? initialRepositoryId ?? '',
+  );
   const [branches, setBranches] = useState<readonly ReviewBranch[]>([]);
   const [referenceTarget, setReferenceTarget] = useState<ReviewTarget | null>(null);
-  const [inventoryProfiles, setInventoryProfiles] = useState<
-    readonly ProfileWorktreeTargetsDto[]
-  >([]);
+  const [inventoryProfiles, setInventoryProfiles] = useState<readonly ProfileWorktreeTargetsDto[]>(
+    [],
+  );
   const [branchRef, setBranchRef] = useState(selected?.branchRef ?? '');
   const [devices, setDevices] = useState<readonly ExecutionTargetDeviceDto[]>([]);
   const [candidate, setCandidate] = useState(selected);
@@ -98,9 +102,7 @@ export function SessionTargetDialog({
             setBranches(graph.targets.filter((branch) => branch.target.kind === 'branch'));
             setReferenceTarget(graph.referenceTarget);
             const defaultBranch =
-              graph.referenceTarget?.kind === 'branch'
-                ? graph.referenceTarget.branchRef
-                : null;
+              graph.referenceTarget?.kind === 'branch' ? graph.referenceTarget.branchRef : null;
             if (defaultBranch) setBranchRef((currentBranch) => currentBranch || defaultBranch);
           }
         },
@@ -166,25 +168,15 @@ export function SessionTargetDialog({
       .flatMap((device) => device.profiles)
       .filter(
         (item) =>
-          !item.error &&
-          (!capabilityProfileId || item.capabilityProfileId === capabilityProfileId),
+          !item.error && (!capabilityProfileId || item.capabilityProfileId === capabilityProfileId),
       )
       .flatMap((profile) => profile.instances.map((instance) => ({ profile, instance })))
       .filter(
-        ({ instance }) =>
-          !instance.sisterLock || instance.sisterLock.ownerSessionId === sessionId,
+        ({ instance }) => !instance.sisterLock || instance.sisterLock.ownerSessionId === sessionId,
       );
     if (matches.length === 1)
       setCandidate(toSessionExecutionTarget(repositoryId, matches[0].profile, matches[0].instance));
-  }, [
-    branchRef,
-    candidate,
-    capabilityProfileId,
-    deviceId,
-    devices,
-    loadingDevices,
-    repositoryId,
-  ]);
+  }, [branchRef, candidate, capabilityProfileId, deviceId, devices, loadingDevices, repositoryId]);
   useEffect(() => {
     if (!deviceId || !onSelectSelection || loadingDevices || !branchRef) return;
     const key = `${repositoryId}:${branchRef}:${deviceId}`;

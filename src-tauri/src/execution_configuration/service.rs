@@ -38,7 +38,7 @@ impl CapabilityProfileService {
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
         let observation = self
             .runtime_profile_source
-            .quick_features_for_configuration(reference, None);
+            .refresh_quick_features_for_configuration(reference, None);
         let (stored, observation_error) = match observation {
             Ok(features) if !features.models.is_empty() => {
                 let stored = super::StoredModelCatalogue {
