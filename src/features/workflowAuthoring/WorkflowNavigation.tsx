@@ -1,9 +1,9 @@
-import { Plus, RefreshCw } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { WorkflowRecipeInstance } from '../../application/workflowInstances';
 import type { WorkflowRecipeSummaryDto } from '../../application/workflowAuthoring';
 
-type WorkflowNavigationTab = 'designs' | 'instances';
+export type WorkflowNavigationTab = 'designs' | 'instances';
 
 export function WorkflowNavigation({
   summaries,
@@ -12,7 +12,7 @@ export function WorkflowNavigation({
   selectedInstanceId,
   busy,
   canCreateInstance,
-  onReload,
+  onTabChange,
   onCreateDesign,
   onCreateInstance,
   onOpenRecipe,
@@ -24,7 +24,7 @@ export function WorkflowNavigation({
   readonly selectedInstanceId: string | null;
   readonly busy: boolean;
   readonly canCreateInstance: boolean;
-  onReload(): void;
+  onTabChange(tab: WorkflowNavigationTab): void;
   onCreateDesign(): void;
   onCreateInstance(): void;
   onOpenRecipe(recipeId: string): void;
@@ -35,8 +35,15 @@ export function WorkflowNavigation({
   );
   const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
-    if (selectedInstanceId) setTab('instances');
-  }, [selectedInstanceId]);
+    if (selectedInstanceId) {
+      setTab('instances');
+      onTabChange('instances');
+    }
+  }, [selectedInstanceId, onTabChange]);
+  const selectTab = (next: WorkflowNavigationTab) => {
+    setTab(next);
+    onTabChange(next);
+  };
   const groups = useMemo(() => {
     const byRecipe = new Map<string, WorkflowRecipeInstance[]>();
     for (const instance of instances) {
@@ -60,16 +67,13 @@ export function WorkflowNavigation({
           <p>Session Event recipes</p>
           <h1>Workflows</h1>
         </div>
-        <button type="button" aria-label="Reload workflows" onClick={onReload}>
-          <RefreshCw size={16} aria-hidden="true" />
-        </button>
       </header>
       <div className="workflow-navigation__tabs" role="tablist" aria-label="Workflow navigation">
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'designs'}
-          onClick={() => setTab('designs')}
+          onClick={() => selectTab('designs')}
         >
           Designs
         </button>
@@ -77,7 +81,7 @@ export function WorkflowNavigation({
           type="button"
           role="tab"
           aria-selected={tab === 'instances'}
-          onClick={() => setTab('instances')}
+          onClick={() => selectTab('instances')}
         >
           Instances
         </button>
@@ -114,7 +118,7 @@ export function WorkflowNavigation({
           <button
             className="workflow-navigation__create"
             type="button"
-            disabled={!canCreateInstance}
+            disabled={busy || !canCreateInstance}
             onClick={onCreateInstance}
           >
             <Plus size={15} aria-hidden="true" /> Create instance

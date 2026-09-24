@@ -1,7 +1,7 @@
 use super::{
     authoring::{
-        WorkflowAuthoringNode, WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary,
-        WORKFLOW_RECIPE_CONTRACT_VERSION,
+        WorkflowAuthoringNode, WorkflowAuthoringWorkspace, WorkflowRecipeDraft,
+        WorkflowRecipeState, WorkflowRecipeSummary, WORKFLOW_RECIPE_CONTRACT_VERSION,
     },
     authoring_repository::WorkflowAuthoringRepository,
     compiler::WorkflowCompiler,
@@ -35,6 +35,21 @@ impl WorkflowAuthoringService {
 
     pub(crate) fn list(&self) -> Result<Vec<WorkflowRecipeSummary>, String> {
         self.repository.list()
+    }
+
+    pub(crate) fn open_workspace(
+        &self,
+        preferred_recipe_id: Option<&str>,
+    ) -> Result<WorkflowAuthoringWorkspace, String> {
+        let summaries = self.list()?;
+        let selected_id = preferred_recipe_id
+            .filter(|id| summaries.iter().any(|recipe| recipe.recipe_id == *id))
+            .or_else(|| summaries.first().map(|recipe| recipe.recipe_id.as_str()));
+        let selected = selected_id.map(|id| self.load(id)).transpose()?;
+        Ok(WorkflowAuthoringWorkspace {
+            summaries,
+            selected,
+        })
     }
 
     pub(crate) fn load(&self, recipe_id: &str) -> Result<WorkflowRecipeState, String> {
@@ -277,6 +292,27 @@ mod tests {
 
         assert_eq!(definitions.nodes.len(), 1);
         assert_eq!(active.active.unwrap().revision, 2);
+    }
+
+    #[test]
+    fn workspace_bootstrap_returns_summaries_and_the_preferred_recipe_together() {
+        let service = service();
+        let first = service.create().unwrap();
+        let second = service.create().unwrap();
+
+        let workspace = service
+            .open_workspace(Some(&second.draft.recipe_id))
+            .unwrap();
+
+        assert_eq!(workspace.summaries.len(), 2);
+        assert_eq!(
+            workspace.selected.unwrap().draft.recipe_id,
+            second.draft.recipe_id
+        );
+        assert!(workspace
+            .summaries
+            .iter()
+            .any(|summary| summary.recipe_id == first.draft.recipe_id));
     }
 
     #[test]

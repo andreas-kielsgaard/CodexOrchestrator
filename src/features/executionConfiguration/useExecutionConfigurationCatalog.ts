@@ -17,6 +17,7 @@ export function useExecutionConfigurationCatalog(
   client: ExecutionConfigurationClient,
   identityClient?: IdentityManagementClient,
   readOtpCatalogue?: OtpCatalogueReader,
+  enabled = true,
 ) {
   const [runtime, setRuntime] = useState<RuntimeProfileViewModel | null>(null);
   const [profiles, setProfiles] = useState<readonly CapabilityProfileOption[]>([]);
@@ -28,6 +29,7 @@ export function useExecutionConfigurationCatalog(
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -70,11 +72,11 @@ export function useExecutionConfigurationCatalog(
     } finally {
       setLoading(false);
     }
-  }, [client, identityClient, readOtpCatalogue]);
+  }, [client, identityClient, readOtpCatalogue, enabled]);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (enabled) void reload();
+  }, [enabled, reload]);
 
   return { runtime, profiles, profileValues, identities, error, loading, reload } as const;
 }

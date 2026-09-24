@@ -9,6 +9,7 @@
   min-height: 0;
   overflow: hidden;
   background-color: #f7f8f5;
+  box-sizing: border-box;
 }
 
 .workflow-canvas.is-grid-visible {
@@ -99,7 +100,7 @@
 .workflow-node {
   position: absolute;
   z-index: 2;
-  width: 210px;
+  box-sizing: border-box;
   border: 1px solid #9eaaa2;
   border-radius: 10px;
   background: #fffdf8;
@@ -112,7 +113,7 @@
   display: grid;
   gap: 5px;
   width: 100%;
-  min-height: 92px;
+  height: 100%;
   box-sizing: border-box;
   padding: 12px;
   border: 0;

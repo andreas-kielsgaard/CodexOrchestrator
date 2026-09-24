@@ -86,32 +86,46 @@ export function RecipeInstanceCreationDialog({
             Close
           </button>
         </header>
-        <p>Choose a saved Workflow and worktree. Creating the instance does not start an agent.</p>
-        <label className="workflow-instance-creation-dialog__field">
-          Workflow
-          <select
-            value={recipeId}
-            onChange={(event) => setRecipeId(event.currentTarget.value)}
-            disabled={pending}
-          >
-            {active.map((recipe) => (
-              <option key={recipe.recipeId} value={recipe.recipeId}>
-                {recipe.name} · v{recipe.activeRevision}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!active.length ? <p>Activate a Workflow before creating an instance.</p> : null}
-        <TargetSelector value={target} onChange={setTarget} disabled={pending} />
-        {error ? <p role="alert">{error}</p> : null}
-        <footer>
-          <button type="button" disabled={pending} onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" disabled={pending || !recipeId || !target}>
-            {pending ? 'Creating…' : 'Create instance'}
-          </button>
-        </footer>
+        {!active.length ? (
+          <>
+            <p>No active designs found</p>
+            <footer>
+              <button type="button" onClick={onClose}>
+                Close
+              </button>
+            </footer>
+          </>
+        ) : (
+          <>
+            <p>
+              Choose a saved Workflow and worktree. Creating the instance does not start an agent.
+            </p>
+            <label className="workflow-instance-creation-dialog__field">
+              Workflow
+              <select
+                value={recipeId}
+                onChange={(event) => setRecipeId(event.currentTarget.value)}
+                disabled={pending}
+              >
+                {active.map((recipe) => (
+                  <option key={recipe.recipeId} value={recipe.recipeId}>
+                    {recipe.name} · v{recipe.activeRevision}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <TargetSelector value={target} onChange={setTarget} disabled={pending} />
+            {error ? <p role="alert">{error}</p> : null}
+            <footer>
+              <button type="button" disabled={pending} onClick={onClose}>
+                Cancel
+              </button>
+              <button type="submit" disabled={pending || !recipeId || !target}>
+                {pending ? 'Creating…' : 'Create instance'}
+              </button>
+            </footer>
+          </>
+        )}
       </form>
     </div>
   );

@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { CatalogState } from '../../components/CatalogSelect';
-import { GroupedCapabilityPicker, type CapabilityPickerNode } from './GroupedCapabilityPicker';
+import {
+  GroupedElementPicker,
+  type GroupedElementPickerNode,
+} from '../../components/otp/GroupedElementPicker';
 
 export function SkillsPicker({
   catalog,
@@ -14,7 +17,7 @@ export function SkillsPicker({
   onChange(values: readonly string[]): void;
 }) {
   const [open, setOpen] = useState(false);
-  const groups = new Map<string, CapabilityPickerNode & { items: typeof catalog.options }>();
+  const groups = new Map<string, GroupedElementPickerNode & { items: typeof catalog.options }>();
   for (const option of catalog.options) {
     const separator = option.value.includes(':') ? ':' : option.value.includes('/') ? '/' : null;
     const source = separator ? option.value.split(separator)[0] : 'Codex profile';
@@ -42,11 +45,17 @@ export function SkillsPicker({
       </div>
       {catalog.reason ? <p>{catalog.reason}</p> : null}
       {open ? (
-        <GroupedCapabilityPicker
+        <GroupedElementPicker
           title="Set skills"
           groups={[...groups.values()]}
           selected={values}
-          renderDetails={(id) => <><h3>{id}</h3><p>Skill available to Sessions created by this node.</p></>}
+          selectionMode="multiple"
+          renderDetails={(id) => (
+            <>
+              <h3>{id}</h3>
+              <p>Skill available to Sessions created by this node.</p>
+            </>
+          )}
           onClose={() => setOpen(false)}
           onConfirm={(next) => {
             onChange(next);

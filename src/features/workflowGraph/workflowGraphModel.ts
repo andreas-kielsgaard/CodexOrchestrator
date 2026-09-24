@@ -22,8 +22,10 @@ export interface WorkflowGraphConnectionGroup {
   readonly secondToFirst: boolean;
 }
 
-export const WORKFLOW_GRAPH_NODE_WIDTH = 210;
-export const WORKFLOW_GRAPH_CONNECTION_Y = 46;
+export const WORKFLOW_GRAPH_GRID_SIZE = 20;
+export const WORKFLOW_GRAPH_NODE_WIDTH = 220;
+export const WORKFLOW_GRAPH_NODE_HEIGHT = 100;
+export const WORKFLOW_GRAPH_CONNECTION_Y = WORKFLOW_GRAPH_NODE_HEIGHT / 2;
 
 export function groupWorkflowGraphConnections(
   connections: readonly WorkflowGraphConnection[],
@@ -53,8 +55,8 @@ export function groupWorkflowGraphConnections(
 
 export function workflowGraphBounds(nodes: readonly WorkflowGraphNode[]) {
   return {
-    width: Math.max(1000, ...nodes.map((node) => node.x + 320)),
-    height: Math.max(620, ...nodes.map((node) => node.y + 220)),
+    width: Math.max(1000, ...nodes.map((node) => node.x + WORKFLOW_GRAPH_NODE_WIDTH + 100)),
+    height: Math.max(620, ...nodes.map((node) => node.y + WORKFLOW_GRAPH_NODE_HEIGHT + 100)),
   };
 }
 

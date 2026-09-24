@@ -3,7 +3,10 @@ import type { OtpPackageDto } from '../../application/otp';
 import type { CatalogState } from '../../components/CatalogSelect';
 import { OtpElementDetails } from '../otp/otpElements';
 import { mcpToolCatalogValue } from './types';
-import { GroupedCapabilityPicker, type CapabilityPickerNode } from './GroupedCapabilityPicker';
+import {
+  GroupedElementPicker,
+  type GroupedElementPickerNode,
+} from '../../components/otp/GroupedElementPicker';
 
 type ManagedTool =
   | {
@@ -64,15 +67,19 @@ export function OtpMcpToolsPicker({
     ]),
   );
   const optionById = new Map(catalog.options.map((option) => [option.value, option]));
-  const groups: CapabilityPickerNode[] = [];
+  const groups: GroupedElementPickerNode[] = [];
   for (const pkg of packages) {
-    const children: CapabilityPickerNode[] = [];
+    const children: GroupedElementPickerNode[] = [];
     const workflowItems = pkg.tools
       .filter((tool) => tool.entrypoint.kind === 'mcp')
       .map((tool) => optionById.get(mcpToolCatalogValue(pkg.id, tool.id)))
       .filter((option): option is NonNullable<typeof option> => Boolean(option));
     if (workflowItems.length) {
-      children.push({ id: `otp:${pkg.id}:workflow`, label: 'Workflow tools', items: workflowItems });
+      children.push({
+        id: `otp:${pkg.id}:workflow`,
+        label: 'Workflow tools',
+        items: workflowItems,
+      });
     }
     for (const server of pkg.agentMcpServers ?? []) {
       const capabilityGroups = server.capabilityGroups
@@ -128,10 +135,11 @@ export function OtpMcpToolsPicker({
       </div>
       {catalog.reason && <p>{catalog.reason}</p>}
       {open && (
-        <GroupedCapabilityPicker
+        <GroupedElementPicker
           title="Set MCP tools"
           groups={groups}
           selected={values}
+          selectionMode="multiple"
           renderDetails={(id) => {
             const owned = managed.get(id);
             if (!owned) {

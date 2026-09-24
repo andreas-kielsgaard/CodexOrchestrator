@@ -1,6 +1,13 @@
-import { useId, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react';
+import {
+  useId,
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type ReactNode,
+  type Ref,
+} from 'react';
 import {
   WORKFLOW_GRAPH_CONNECTION_Y,
+  WORKFLOW_GRAPH_NODE_HEIGHT,
   WORKFLOW_GRAPH_NODE_WIDTH,
   workflowGraphNodeById,
   groupWorkflowGraphConnections,
@@ -15,19 +22,22 @@ export function WorkflowGraphSurface({
   scrollClassName,
   className,
   children,
+  canvasRef,
   ...canvasProps
 }: {
   readonly width: number;
   readonly height: number;
   readonly scrollClassName?: string;
   readonly children: ReactNode;
+  readonly canvasRef?: Ref<HTMLDivElement>;
 } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={scrollClassName ?? 'workflow-graph-scroll'}>
       <div
+        ref={canvasRef}
         {...canvasProps}
         className={`workflow-canvas${className ? ` ${className}` : ''}`}
-        style={{ ...canvasProps.style, width, height }}
+        style={{ ...canvasProps.style, width, height, minWidth: '100%', minHeight: '100%' }}
       >
         {children}
       </div>
@@ -57,7 +67,14 @@ export function WorkflowGraphConnections({
   return (
     <svg className="workflow-canvas__connections" aria-label="Workflow connections">
       <defs>
-        <marker id={arrowId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse">
+        <marker
+          id={arrowId}
+          markerWidth="8"
+          markerHeight="8"
+          refX="7"
+          refY="4"
+          orient="auto-start-reverse"
+        >
           <path d="M0,0 L8,4 L0,8 z" />
         </marker>
       </defs>
@@ -68,10 +85,13 @@ export function WorkflowGraphConnections({
         const activate = () => onActivate?.(group.connections.map((connection) => connection.id));
         const interactive = Boolean(onActivate);
         const selected = group.connections.some((connection) => connection.id === selectedId);
-        const highlighted = group.connections.some((connection) => highlightedIds.includes(connection.id));
-        const label = group.connections.length === 1
-          ? labelForConnection(group.connections[0])
-          : `${group.connections.length} connections`;
+        const highlighted = group.connections.some((connection) =>
+          highlightedIds.includes(connection.id),
+        );
+        const label =
+          group.connections.length === 1
+            ? labelForConnection(group.connections[0])
+            : `${group.connections.length} connections`;
         const firstIsLeft = from.x <= to.x;
         const x1 = firstIsLeft ? from.x + WORKFLOW_GRAPH_NODE_WIDTH : from.x;
         const x2 = firstIsLeft ? to.x : to.x + WORKFLOW_GRAPH_NODE_WIDTH;
@@ -80,7 +100,13 @@ export function WorkflowGraphConnections({
             key={group.id}
             role={interactive ? 'button' : undefined}
             tabIndex={interactive ? 0 : undefined}
-            aria-label={interactive ? (group.connections.length === 1 ? ariaLabelForConnection(group.connections[0]) : `Open ${group.connections.length} connections`) : undefined}
+            aria-label={
+              interactive
+                ? group.connections.length === 1
+                  ? ariaLabelForConnection(group.connections[0])
+                  : `Open ${group.connections.length} connections`
+                : undefined
+            }
             aria-pressed={interactive ? selected : undefined}
             className={`${selected ? 'is-selected' : ''}${highlighted ? ' is-highlighted' : ''}`}
             onClick={
@@ -146,7 +172,12 @@ export function WorkflowGraphNodeCard({
   return (
     <div
       className={`workflow-node${node.entry ? ' is-entry' : ''}${selected ? ' is-selected' : ''}${className ? ` ${className}` : ''}`}
-      style={{ left: node.x, top: node.y }}
+      style={{
+        left: node.x,
+        top: node.y,
+        width: WORKFLOW_GRAPH_NODE_WIDTH,
+        height: WORKFLOW_GRAPH_NODE_HEIGHT,
+      }}
     >
       <button
         type="button"

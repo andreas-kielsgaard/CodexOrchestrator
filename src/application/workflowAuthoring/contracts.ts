@@ -84,6 +84,11 @@ export interface WorkflowRecipeSummaryDto {
   readonly updatedAt: string;
 }
 
+export interface WorkflowAuthoringWorkspaceDto {
+  readonly summaries: readonly WorkflowRecipeSummaryDto[];
+  readonly selected: WorkflowRecipeStateDto | null;
+}
+
 export interface CopyWorkflowNodeConfigurationInput {
   readonly recipeId: string;
   readonly expectedRevision: number;
@@ -98,6 +103,7 @@ export interface DispatchWorkflowUserRequestInput {
 }
 
 export interface WorkflowAuthoringClient {
+  openWorkspace(preferredRecipeId?: string | null): Promise<WorkflowAuthoringWorkspaceDto>;
   listRecipes(): Promise<readonly WorkflowRecipeSummaryDto[]>;
   loadRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
   createRecipe(): Promise<WorkflowRecipeStateDto>;

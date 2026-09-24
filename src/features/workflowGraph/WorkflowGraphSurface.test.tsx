@@ -26,6 +26,12 @@ it('shares selectable nodes and connections without owning feature behavior', ()
   fireEvent.click(screen.getByRole('button', { name: 'Open Author' }));
   expect(onConnection).toHaveBeenCalledWith(['review', 'revise']);
   expect(onNode).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Open Author' }).closest('.workflow-node')).toHaveStyle(
+    {
+      width: '220px',
+      height: '100px',
+    },
+  );
   const visibleLine = document.querySelector('.workflow-connection__visible');
   expect(visibleLine).toHaveAttribute('marker-start');
   expect(visibleLine).toHaveAttribute('marker-end');

@@ -41,6 +41,7 @@ describe('Tauri Workflow Authoring client', () => {
       connections: [],
     };
 
+    await client.openWorkspace('review');
     await client.listRecipes();
     await client.loadRecipe('review');
     await client.createRecipe();
@@ -60,6 +61,7 @@ describe('Tauri Workflow Authoring client', () => {
     });
 
     expect(invoke.mock.calls).toEqual([
+      ['open_workflow_authoring_workspace', { input: { preferredRecipeId: 'review' } }],
       ['list_workflow_recipes'],
       ['load_workflow_recipe', { input: { recipeId: 'review' } }],
       ['create_workflow_recipe'],

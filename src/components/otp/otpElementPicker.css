@@ -132,27 +132,39 @@
   min-width: 160px;
   overflow-wrap: anywhere;
 }
-.capability-picker__node-heading,
-.capability-picker__item {
+.grouped-element-picker__node-heading,
+.grouped-element-picker__item {
   display: flex;
   align-items: center;
   gap: 5px;
 }
-.capability-picker__node-heading > button,
-.capability-picker__item > button {
+.grouped-element-picker__node-heading > button,
+.grouped-element-picker__item > button {
   flex: 1;
   border-color: transparent;
   background: transparent;
   text-align: left;
 }
-.capability-picker__item > button[aria-pressed='true'] {
+.grouped-element-picker__item > button[aria-pressed='true'] {
   border-color: #b6ccbd;
   background: #deebe1;
 }
-.capability-picker__children {
+.grouped-element-picker__children {
   margin-left: 14px;
   padding-left: 8px;
   border-left: 1px solid #d6ded8;
+}
+.grouped-element-picker__empty-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  color: #33453a;
+}
+.grouped-element-picker__empty-group small {
+  color: #748078;
+  white-space: nowrap;
 }
 @media (max-width: 560px) {
   .otp-picker__body {

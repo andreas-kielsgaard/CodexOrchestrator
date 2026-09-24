@@ -265,6 +265,13 @@ pub(crate) struct WorkflowRecipeSummary {
     pub(crate) updated_at: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowAuthoringWorkspace {
+    pub(crate) summaries: Vec<WorkflowRecipeSummary>,
+    pub(crate) selected: Option<WorkflowRecipeState>,
+}
+
 impl WorkflowRecipeDraft {
     pub(crate) fn validate_storable(&self) -> Result<(), String> {
         if self.contract_version != WORKFLOW_RECIPE_CONTRACT_VERSION {

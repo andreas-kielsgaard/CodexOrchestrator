@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { OtpCapabilityRefDto, OtpPackageDto } from '../../application/otp';
-import { OtpElementPicker } from '../../components/otp/OtpElementPicker';
+import { GroupedElementPicker } from '../../components/otp/GroupedElementPicker';
 import { OtpElementDetails } from '../otp/otpElements';
 import { capabilityKey, offeredActions } from './otpPresentation';
 import { OtpConfigurationEditor } from './OtpConfigurationEditor';
+import { WorkflowPromptAgentConfigurationEditor } from './WorkflowPromptAgentConfigurationEditor';
 
 export function WorkflowDestinationActionPicker({
   action,
@@ -24,40 +25,53 @@ export function WorkflowDestinationActionPicker({
   const selected = actions.find((item) => capabilityKey(item.ref) === capabilityKey(action));
   return (
     <>
-      <div className="otp-selection">
-        <span className="otp-selection__summary">
-          {selected?.tool.name ?? 'Unavailable action'}
-        </span>
-        <button type="button" onClick={() => setOpen(true)}>
-          Set action
-        </button>
+      <div className="workflow-destination-action__selector">
+        <strong>Action type</strong>
+        <div className="otp-selection">
+          <span className="otp-selection__summary">
+            {selected?.tool.name ?? 'Unavailable action'}
+          </span>
+          <button type="button" onClick={() => setOpen(true)}>
+            Set action
+          </button>
+        </div>
       </div>
-      {selected && (
-        <OtpConfigurationEditor
-          fields={selected.tool.configuration}
-          value={configuration}
-          onChange={(value) => onChange(action, value)}
-        />
-      )}
+      {selected ? (
+        <section className="workflow-destination-action__configuration">
+          {action.package === 'workflow' && action.tool === 'prompt_agent' ? (
+            <WorkflowPromptAgentConfigurationEditor
+              value={configuration}
+              onChange={(value) => onChange(action, value)}
+            />
+          ) : (
+            <OtpConfigurationEditor
+              fields={selected.tool.configuration}
+              value={configuration}
+              onChange={(value) => onChange(action, value)}
+            />
+          )}
+        </section>
+      ) : null}
       {open && (
-        <OtpElementPicker
+        <GroupedElementPicker
           title="Set action"
           selected={[capabilityKey(action)]}
-          groups={packages
-            .map((pkg) => ({
-              id: pkg.id,
-              label: pkg.id,
-              items: actions
-                .filter((a) => a.ref.package === pkg.id)
-                .map((a) => ({ id: capabilityKey(a.ref), label: a.tool.name })),
-            }))
-            .filter((g) => g.items.length)}
+          selectionMode="single"
+          groups={packages.map((pkg) => ({
+            id: pkg.id,
+            label: pkg.name,
+            emptyLabel: 'No actions',
+            items: actions
+              .filter((a) => a.ref.package === pkg.id)
+              .map((a) => ({ value: capabilityKey(a.ref), label: a.tool.name })),
+          }))}
           renderDetails={(id) => (
             <OtpElementDetails tool={actions.find((a) => capabilityKey(a.ref) === id)!.tool} />
           )}
           onClose={() => setOpen(false)}
           onConfirm={([id]) => {
-            const item = actions.find((a) => capabilityKey(a.ref) === id)!;
+            const item = actions.find((a) => capabilityKey(a.ref) === id);
+            if (!item) return;
             onChange(item.ref, id === capabilityKey(action) ? configuration : {});
             setOpen(false);
           }}

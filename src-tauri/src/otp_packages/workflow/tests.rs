@@ -167,15 +167,83 @@ fn prompt_policy_requests_exact_and_fresh_sessions_from_available_population() {
         SessionRequestTarget::New
     );
     assert_eq!(run(json!({"cardinality":"all"})).len(), 2);
-    assert!(run(json!({"running":"running_only","missing":"noop"})).is_empty());
+    assert!(run(json!({
+        "filters":[{"kind":"idle_sessions","operation":"exclude"}],
+        "missing":"noop"
+    }))
+    .is_empty());
     assert_eq!(
-        run(json!({"createdBySession":"unknown"}))[0].target,
+        run(json!({
+            "filters":[{
+                "kind":"created_by_session",
+                "operation":"include",
+                "sessionId":"unknown"
+            }]
+        }))[0]
+            .target,
         SessionRequestTarget::New
     );
     assert_eq!(
         serde_json::from_str::<Value>(&run(json!({}))[0].prompt[0].text).unwrap(),
         json!({"files":["spec.md"]})
     );
+}
+
+#[test]
+fn prompt_policy_combines_unique_include_and_exclude_filters() {
+    let mut matching = session("matching", 3, None);
+    matching.created_by_event = Some("event-a".into());
+    matching.created_by_session = Some("session-a".into());
+    let mut excluded = session("excluded", 2, None);
+    excluded.created_by_event = Some("event-b".into());
+    excluded.created_by_session = Some("session-a".into());
+    let mut running = session("running", 1, None);
+    running.running = true;
+    running.created_by_event = Some("event-a".into());
+    running.created_by_session = Some("session-b".into());
+    let host = Host {
+        sessions: vec![matching, excluded, running],
+        ..Host::default()
+    };
+    let configuration = json!({
+        "cardinality":"all",
+        "filters":[
+            {"kind":"idle_sessions","operation":"include"},
+            {"kind":"created_by_event","operation":"include","eventId":"event-a"},
+            {"kind":"created_by_session","operation":"exclude","sessionId":"session-b"}
+        ]
+    });
+    let requests = WorkflowPackage
+        .invoke(
+            &context("prompt_agent"),
+            ToolInput::Action {
+                configuration,
+                inputs: vec![ResolvedInput {
+                    reference: "input".into(),
+                    value: json!("Continue"),
+                }],
+            },
+            &host,
+        )
+        .unwrap()
+        .session_requests;
+
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].target,
+        SessionRequestTarget::Exact {
+            session_id: "matching".into()
+        }
+    );
+    assert!(WorkflowPackage
+        .validate_configuration(
+            "prompt_agent",
+            &json!({"filters":[
+                {"kind":"idle_sessions","operation":"include"},
+                {"kind":"idle_sessions","operation":"exclude"}
+            ]})
+        )
+        .is_err());
 }
 #[test]
 fn product_imports_define_available_tools() {

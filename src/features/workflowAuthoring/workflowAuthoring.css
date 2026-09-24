@@ -1,9 +1,14 @@
 .workflow-authoring-screen {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  grid-template-columns: 288px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: #f4f6f2;
+}
+
+.workflow-authoring-screen__recipes > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workflow-authoring-screen__recipes {
@@ -19,7 +24,6 @@
   background: #fbfaf6;
 }
 
-.workflow-authoring-screen__recipes header,
 .workflow-authoring-screen__toolbar,
 .workflow-authoring-screen__toolbar > div:last-child {
   display: flex;
@@ -53,18 +57,6 @@
 .workflow-authoring-screen button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-}
-
-.workflow-authoring-screen__recipes header button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border: 1px solid #ccd4cd;
-  border-radius: 7px;
-  background: #fff;
-  color: #33453a;
 }
 
 .workflow-navigation__create,
@@ -250,6 +242,80 @@
   resize: vertical;
 }
 
+.workflow-connection-editor .prompt-source-list__header {
+  justify-content: flex-end;
+}
+
+.workflow-destination-action__configuration {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d4ddd6;
+  border-radius: 9px;
+  background: #fafbf8;
+}
+
+.workflow-prompt-agent-configuration {
+  display: grid;
+  gap: 12px;
+}
+
+.workflow-prompt-agent-configuration small {
+  color: #66736c;
+  font-weight: 500;
+}
+
+.workflow-prompt-agent-configuration .session-event-editor__field > label {
+  display: grid;
+  gap: 5px;
+}
+
+.workflow-session-filter__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.workflow-session-filter__header > button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #c9d2ca;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-session-filter__operation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 8px 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: #e9eee9;
+}
+
+.workflow-session-filter__operation button {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.workflow-session-filter__operation button[aria-pressed='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(20 39 29 / 16%);
+  color: #1f382c;
+  font-weight: 750;
+}
+
+.workflow-session-filter__add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .otp-selection > button,
 .workflow-connection-editor__grid input,
 .workflow-connection-editor__grid select {
@@ -369,7 +435,7 @@
   gap: 6px;
   padding-bottom: 9px;
 }
-.workflow-instance-list button {
+.workflow-instance-list__groups button {
   display: grid;
   gap: 4px;
   padding: 8px;

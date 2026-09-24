@@ -23,7 +23,7 @@ import { useExecutionConfigurationCatalog } from '../executionConfiguration';
 import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
 import { WorkflowCanvas } from './WorkflowCanvas';
-import { WorkflowNavigation } from './WorkflowNavigation';
+import { WorkflowNavigation, type WorkflowNavigationTab } from './WorkflowNavigation';
 import { WorkflowConnectionGroupDialog } from '../workflowGraph';
 import { RecipeInstanceCreationDialog } from './RecipeInstanceCreationDialog';
 import { WorkflowInstanceView } from '../workflowInstances';
@@ -93,6 +93,7 @@ export function WorkflowAuthoringScreen({
     executionConfigurationClient,
     identityClient,
     readOtpCatalogue,
+    Boolean(draft),
   );
   const [selection, setSelection] = useState<WorkflowEditorSelection>({
     kind: 'node',
@@ -137,10 +138,18 @@ export function WorkflowAuthoringScreen({
     let active = true;
     setBusy(true);
     setError(null);
-    void loadSummaries()
-      .then((recipes) => {
-        if (active && recipes.length) return openRecipe(selectedRef.current ?? recipes[0].recipeId);
-        return undefined;
+    void client
+      .openWorkspace(selectedRef.current)
+      .then((workspaceState) => {
+        if (!active) return;
+        setSummaries(workspaceState.summaries);
+        if (!workspaceState.selected) return;
+        const selected = workspaceState.selected;
+        selectedRef.current = selected.draft.recipeId;
+        workspace.selectedKey = selected.draft.recipeId;
+        setState(selected);
+        setDraft(workspace.load(selected.draft.recipeId, selected.draft));
+        setSelection({ kind: 'node', id: null });
       })
       .catch((caught) => active && setError(errorMessage(caught)))
       .finally(() => active && setBusy(false));
@@ -148,7 +157,7 @@ export function WorkflowAuthoringScreen({
       active = false;
       openTicket.current += 1;
     };
-  }, [loadSummaries, openRecipe]);
+  }, [client, workspace]);
 
   useEffect(() => {
     if (recipeId && recipeId !== selectedRef.current) void openRecipe(recipeId);
@@ -156,9 +165,21 @@ export function WorkflowAuthoringScreen({
   const loadInstances = useCallback(async () => {
     if (instanceClient) setInstances(await instanceClient.list());
   }, [instanceClient]);
+  const instancesLoaded = useRef(false);
+  const handleNavigationTabChange = useCallback(
+    (tab: WorkflowNavigationTab) => {
+      if (tab !== 'instances' || instancesLoaded.current) return;
+      instancesLoaded.current = true;
+      void loadInstances().catch((cause) => {
+        instancesLoaded.current = false;
+        setError(errorMessage(cause));
+      });
+    },
+    [loadInstances],
+  );
   useEffect(() => {
-    void loadInstances().catch((cause) => setError(errorMessage(cause)));
-  }, [loadInstances]);
+    if (selectedInstanceId) handleNavigationTabChange('instances');
+  }, [handleNavigationTabChange, selectedInstanceId]);
 
   const createRecipe = async () => {
     setBusy(true);
@@ -240,12 +261,8 @@ export function WorkflowAuthoringScreen({
         selectedRecipeId={draft?.recipeId ?? null}
         selectedInstanceId={selectedInstanceId ?? null}
         busy={busy}
-        canCreateInstance={Boolean(
-          instanceClient &&
-            TargetSelector &&
-            summaries.some((recipe) => recipe.activeRevision !== null),
-        )}
-        onReload={() => void Promise.all([loadSummaries(), loadInstances()])}
+        canCreateInstance={Boolean(instanceClient && TargetSelector)}
+        onTabChange={handleNavigationTabChange}
         onCreateDesign={() => void createRecipe()}
         onCreateInstance={() => setCreatingInstance(true)}
         onOpenRecipe={(id) => {

@@ -1,7 +1,81 @@
 use crate::otp_api::*;
 use serde::Deserialize;
 use serde_json::Value;
-use std::cmp::Reverse;
+use std::{cmp::Reverse, collections::BTreeSet};
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FilterOperation {
+    Include,
+    Exclude,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum SessionFilter {
+    IdleSessions {
+        operation: FilterOperation,
+    },
+    CreatedByEvent {
+        operation: FilterOperation,
+        event_id: String,
+    },
+    CreatedBySession {
+        operation: FilterOperation,
+        session_id: String,
+    },
+}
+
+impl SessionFilter {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::IdleSessions { .. } => "idle_sessions",
+            Self::CreatedByEvent { .. } => "created_by_event",
+            Self::CreatedBySession { .. } => "created_by_session",
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::CreatedByEvent { event_id, .. } if event_id.trim().is_empty() => {
+                Err("Created by event filter requires an event ID".into())
+            }
+            Self::CreatedBySession { session_id, .. } if session_id.trim().is_empty() => {
+                Err("Created by session filter requires a session ID".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn matches(&self, session: &NodeSession) -> bool {
+        let (matches, operation) = match self {
+            Self::IdleSessions { operation } => (!session.running, *operation),
+            Self::CreatedByEvent {
+                operation,
+                event_id,
+            } => (
+                session.created_by_event.as_deref() == Some(event_id.as_str()),
+                *operation,
+            ),
+            Self::CreatedBySession {
+                operation,
+                session_id,
+            } => (
+                session.created_by_session.as_deref() == Some(session_id.as_str()),
+                *operation,
+            ),
+        };
+        match operation {
+            FilterOperation::Include => matches,
+            FilterOperation::Exclude => !matches,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -12,14 +86,10 @@ struct Configuration {
     cardinality: String,
     #[serde(default = "newest")]
     ordering: String,
-    #[serde(default = "any")]
-    running: String,
     #[serde(default = "create")]
     missing: String,
     #[serde(default)]
-    created_by_event: String,
-    #[serde(default)]
-    created_by_session: String,
+    filters: Vec<SessionFilter>,
 }
 fn select() -> String {
     "select".into()
@@ -29,9 +99,6 @@ fn first() -> String {
 }
 fn newest() -> String {
     "newest".into()
-}
-fn any() -> String {
-    "any".into()
 }
 fn create() -> String {
     "create".into()
@@ -47,11 +114,6 @@ fn read(value: &Value) -> Result<Configuration, String> {
             vec!["newest", "last_addressed"],
         ),
         (
-            "running",
-            c.running.as_str(),
-            vec!["any", "running_only", "not_running"],
-        ),
-        (
             "missing",
             c.missing.as_str(),
             vec!["create", "fail", "noop"],
@@ -59,6 +121,13 @@ fn read(value: &Value) -> Result<Configuration, String> {
     ] {
         if !options.contains(&value) {
             return Err(format!("Invalid {label}: {value}"));
+        }
+    }
+    let mut filter_kinds = BTreeSet::new();
+    for filter in &c.filters {
+        filter.validate()?;
+        if !filter_kinds.insert(filter.kind()) {
+            return Err(format!("Session filter `{}` is repeated", filter.kind()));
         }
     }
     Ok(c)
@@ -72,21 +141,15 @@ pub(super) fn fields() -> Vec<ConfigurationField> {
         ("mode", "Session mode", vec!["select", "new"], "select"),
         (
             "cardinality",
-            "Sessions to select",
+            "Sessions to prompt",
             vec!["first", "all"],
             "first",
         ),
         (
             "ordering",
-            "Order sessions",
+            "Session selection logic",
             vec!["newest", "last_addressed"],
             "newest",
-        ),
-        (
-            "running",
-            "Invocation state",
-            vec!["any", "running_only", "not_running"],
-            "any",
         ),
         (
             "missing",
@@ -94,8 +157,6 @@ pub(super) fn fields() -> Vec<ConfigurationField> {
             vec!["create", "fail", "noop"],
             "create",
         ),
-        ("createdByEvent", "Created by event", vec![], ""),
-        ("createdBySession", "Created by session", vec![], ""),
     ]
     .into_iter()
     .map(|(key, label, choices, default)| ConfigurationField {
@@ -145,15 +206,7 @@ pub(super) fn invoke(
         vec![SessionRequestTarget::New]
     } else {
         let mut candidates = host.sessions(context, node_id)?;
-        candidates.retain(|s| {
-            (c.running == "any"
-                || (c.running == "running_only" && s.running)
-                || (c.running == "not_running" && !s.running))
-                && (c.created_by_event.is_empty()
-                    || s.created_by_event.as_deref() == Some(c.created_by_event.as_str()))
-                && (c.created_by_session.is_empty()
-                    || s.created_by_session.as_deref() == Some(c.created_by_session.as_str()))
-        });
+        candidates.retain(|session| c.filters.iter().all(|filter| filter.matches(session)));
         candidates.sort_by_key(|s| {
             (
                 Reverse(if c.ordering == "last_addressed" {

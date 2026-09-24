@@ -1,6 +1,8 @@
 use super::compiled_plan::WorkflowCompiledPlan;
 use super::{
-    authoring::{WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary},
+    authoring::{
+        WorkflowAuthoringWorkspace, WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary,
+    },
     authoring_service::WorkflowAuthoringService,
 };
 use serde::Deserialize;
@@ -21,6 +23,12 @@ impl WorkflowAuthoringTauriState {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LoadWorkflowRecipeInput {
     recipe_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct OpenWorkflowAuthoringWorkspaceInput {
+    preferred_recipe_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +58,16 @@ pub(crate) struct CopyWorkflowNodeConfigurationInput {
 pub(crate) struct CompileWorkflowRecipeInstanceInput {
     recipe_id: String,
     instance_id: String,
+}
+
+#[tauri::command]
+pub(crate) fn open_workflow_authoring_workspace(
+    state: State<'_, WorkflowAuthoringTauriState>,
+    input: OpenWorkflowAuthoringWorkspaceInput,
+) -> Result<WorkflowAuthoringWorkspace, String> {
+    state
+        .service
+        .open_workspace(input.preferred_recipe_id.as_deref())
 }
 
 #[tauri::command]

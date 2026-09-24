@@ -129,6 +129,18 @@ export function repairClients() {
     },
   };
   const authoring: WorkflowAuthoringClient = {
+    openWorkspace: async (preferredRecipeId) => {
+      const summaries = states.map(({ draft, active, updatedAt }) => ({
+        recipeId: draft.recipeId,
+        name: draft.name,
+        draftRevision: draft.revision,
+        activeRevision: active?.revision ?? null,
+        updatedAt,
+      }));
+      const selected =
+        states.find((state) => state.draft.recipeId === preferredRecipeId) ?? states[0] ?? null;
+      return { summaries, selected: selected ? structuredClone(selected) : null };
+    },
     listRecipes: async () =>
       states.map(({ draft, active, updatedAt }) => ({
         recipeId: draft.recipeId,
