@@ -13,6 +13,7 @@ import type {
   CreateBuildRequest,
   CreateWorktreeRequest,
   OpenBuildRequest,
+  OpenBuildOutcome,
   RepositoryId,
   ReviewBuild,
   BuildLogChunk,
@@ -64,7 +65,7 @@ export function createTauriWorktreeReviewClient(
         input: { buildId, attemptId, offset },
       }),
     openBuild: (input: OpenBuildRequest) =>
-      invokeCommand<void>('worktree_review_open_build', { input }),
+      invokeCommand<OpenBuildOutcome>('worktree_review_open_build', { input }),
   };
 }
 

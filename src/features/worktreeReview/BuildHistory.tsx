@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import {
-  buildOutputLabel,
   attemptLabel,
-  cleanupLabel,
   sourceLabel,
   type BuildId,
   type ReviewBuild,
@@ -13,12 +11,18 @@ export function BuildHistory({
   builds,
   openingBuildId,
   onOpen,
+  onCreate,
+  onRebuild,
   readLog,
+  createButtonRef,
 }: {
   readonly builds: readonly ReviewBuild[];
   readonly openingBuildId?: BuildId;
   readonly onOpen: (buildId: BuildId) => void;
+  readonly onCreate: () => void;
+  readonly onRebuild: (build: ReviewBuild) => void;
   readonly readLog: (buildId: BuildId, attemptId: string, offset: number) => Promise<BuildLogChunk>;
+  readonly createButtonRef?: Ref<HTMLButtonElement>;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   return (
@@ -28,7 +32,17 @@ export function BuildHistory({
           <p className="worktree-review__step">4 · Retained results</p>
           <h2 id="worktree-review-builds">Builds</h2>
         </div>
-        <span className="worktree-review__count">{builds.length}</span>
+        <div className="worktree-review__build-heading-actions">
+          <span className="worktree-review__count">{builds.length}</span>
+          <button
+            type="button"
+            className="worktree-review__primary"
+            ref={createButtonRef}
+            onClick={onCreate}
+          >
+            Create a build
+          </button>
+        </div>
       </div>
       {builds.length === 0 ? (
         <p className="worktree-review__empty">No builds have been created for this branch.</p>
@@ -38,12 +52,16 @@ export function BuildHistory({
             <article className="worktree-review__build" key={build.buildId}>
               <div className="worktree-review__build-title">
                 <h3>{build.name}</h3>
-                <span className={attemptTone(build)}>{attemptLabel(build.latestAttempt)}</span>
+                <span className={outputTone(build)}>{outputStatus(build)}</span>
               </div>
               <dl>
                 <div>
                   <dt>Branch</dt>
-                  <dd>{build.branchRef}</dd>
+                  <dd>{build.branchRef ?? 'Detached commit'}</dd>
+                </div>
+                <div>
+                  <dt>Initiated</dt>
+                  <dd>{new Date(build.initiatedAt).toLocaleString()}</dd>
                 </div>
                 <div>
                   <dt>Source</dt>
@@ -52,10 +70,6 @@ export function BuildHistory({
                 <div>
                   <dt>Worktree checkout</dt>
                   <dd>{build.workspace.locationLabel}</dd>
-                </div>
-                <div>
-                  <dt>Worktree state</dt>
-                  <dd>{worktreeStateLabel(build.workspace.lifecycle)}</dd>
                 </div>
                 <div>
                   <dt>Build mode</dt>
@@ -68,12 +82,13 @@ export function BuildHistory({
                   </dd>
                 </div>
                 <div>
-                  <dt>Build output</dt>
-                  <dd>{buildOutputLabel(build.output)}</dd>
-                </div>
-                <div>
-                  <dt>AppData retention</dt>
-                  <dd>{cleanupLabel(build.cleanup)}</dd>
+                  <dt>Application instance</dt>
+                  <dd>
+                    {build.applicationLabel}
+                    <small className="worktree-review__application-id">
+                      {build.applicationIdentifier}
+                    </small>
+                  </dd>
                 </div>
               </dl>
               {build.latestAttempt?.failure && (
@@ -107,13 +122,17 @@ export function BuildHistory({
                   )}
                 </div>
               )}
-              {build.attention && (
-                <p className="worktree-review__attention" role="status">
-                  {build.attention.summary}
-                </p>
-              )}
-              {build.output.state === 'available' && (
-                <div className="worktree-review__actions">
+              <div className="worktree-review__actions">
+                {isLiveBuild(build) && (
+                  <button
+                    type="button"
+                    className="worktree-review__secondary"
+                    onClick={() => onRebuild(build)}
+                  >
+                    Rebuild
+                  </button>
+                )}
+                {build.output.state === 'available' && (
                   <button
                     type="button"
                     className="worktree-review__primary"
@@ -122,8 +141,8 @@ export function BuildHistory({
                   >
                     {openingBuildId === build.buildId ? 'Launching…' : 'Launch'}
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </article>
           ))}
         </div>
@@ -201,23 +220,16 @@ function BuildLogPane({
   );
 }
 
-function worktreeStateLabel(lifecycle: ReviewBuild['workspace']['lifecycle']): string {
-  switch (lifecycle) {
-    case 'ready':
-      return 'Ready and retained';
-    case 'missing':
-      return 'Missing';
-    case 'removal_pending':
-      return 'Removal pending';
-    case 'removed':
-      return 'Removed';
-    case 'unverified':
-      return 'Not verified';
-  }
+function outputStatus(build: ReviewBuild): string {
+  if (build.latestAttempt?.executionState === 'running' || build.latestAttempt?.executionState === 'pending')
+    return 'Building';
+  if (build.latestAttempt?.outcome === 'failed' || build.latestAttempt?.executionState === 'interrupted')
+    return 'Build failed';
+  return build.output.state === 'available' ? 'Available' : 'No longer available';
 }
 
-function attemptTone(build: ReviewBuild): string {
-  if (build.latestAttempt?.outcome === 'succeeded')
+function outputTone(build: ReviewBuild): string {
+  if (build.output.state === 'available')
     return 'worktree-review__status worktree-review__status--completed';
   if (
     build.latestAttempt?.outcome === 'failed' ||
@@ -226,4 +238,11 @@ function attemptTone(build: ReviewBuild): string {
     return 'worktree-review__status worktree-review__status--failed';
   }
   return 'worktree-review__status';
+}
+
+function isLiveBuild(build: ReviewBuild): boolean {
+  return (
+    build.source.kind === 'existing_worktree' ||
+    (build.source.kind === 'physical_worktree' && !build.source.snapshot)
+  );
 }

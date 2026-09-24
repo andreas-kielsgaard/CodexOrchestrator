@@ -98,6 +98,12 @@ pub(crate) enum CleanupResource {
         storage_key: CleanupStorageKey,
         containment_root: ContainmentRoot,
     },
+    ReviewRuntime {
+        id: CleanupResourceId,
+        build_id: ReviewBuildId,
+        storage_key: CleanupStorageKey,
+        containment_root: ContainmentRoot,
+    },
 }
 
 impl CleanupResource {
@@ -105,13 +111,17 @@ impl CleanupResource {
         match self {
             Self::BuildOutput { id, .. }
             | Self::AttemptLogs { id, .. }
-            | Self::BuildAttemptStorage { id, .. } => id,
+            | Self::BuildAttemptStorage { id, .. }
+            | Self::ReviewRuntime { id, .. } => id,
         }
     }
 
     pub(crate) fn removable_for_build(&self, build_id: &ReviewBuildId) -> bool {
         match self {
             Self::BuildAttemptStorage {
+                build_id: owner, ..
+            }
+            | Self::ReviewRuntime {
                 build_id: owner, ..
             } => owner == build_id,
             Self::BuildOutput { .. } | Self::AttemptLogs { .. } => true,

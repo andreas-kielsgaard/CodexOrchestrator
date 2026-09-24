@@ -7,11 +7,12 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
+    time::{Duration, Instant},
 };
 
 trait OpenMechanism {
     fn activate_existing(&self, executable: &Path) -> Result<bool, WorktreeApplicationError>;
-    fn launch_detached(
+    fn launch_and_observe(
         &self,
         executable: &Path,
         context: &WorktreeApplicationLaunchContext,
@@ -25,12 +26,12 @@ impl OpenMechanism for SystemOpenMechanism {
         activate_existing(executable)
     }
 
-    fn launch_detached(
+    fn launch_and_observe(
         &self,
         executable: &Path,
         context: &WorktreeApplicationLaunchContext,
     ) -> Result<(), WorktreeApplicationError> {
-        launch_detached(executable, context)
+        launch_and_observe(executable, context)
     }
 }
 
@@ -50,8 +51,8 @@ fn open_with(
     if mechanism.activate_existing(&executable)? {
         return Ok(OpenOutcome::ExistingWindowActivationRequested);
     }
-    mechanism.launch_detached(&executable, context)?;
-    Ok(OpenOutcome::DetachedLaunchStarted)
+    mechanism.launch_and_observe(&executable, context)?;
+    Ok(OpenOutcome::LaunchedWindowObserved)
 }
 
 fn canonical_executable(path: &Path) -> Result<PathBuf, WorktreeApplicationError> {
@@ -76,7 +77,7 @@ fn activate_existing(_executable: &Path) -> Result<bool, WorktreeApplicationErro
     Ok(false)
 }
 
-fn launch_detached(
+fn launch_and_observe(
     executable: &Path,
     context: &WorktreeApplicationLaunchContext,
 ) -> Result<(), WorktreeApplicationError> {
@@ -84,15 +85,56 @@ fn launch_detached(
     command
         .current_dir(executable.parent().ok_or_else(open_failed)?)
         .envs(&context.environment)
+        .env_remove("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure_detached(&mut command);
     let mut child = command.spawn().map_err(|_| open_failed())?;
-    thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if child.try_wait().map_err(|_| open_failed())?.is_some() {
+            return Err(WorktreeApplicationError::new(
+                WorktreeApplicationErrorKind::OpenFailed,
+                "The built application exited before opening a window.",
+            ));
+        }
+        if activate_existing(executable)? {
+            let stable_window_deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < stable_window_deadline {
+                if child.try_wait().map_err(|_| open_failed())?.is_some() {
+                    return Err(WorktreeApplicationError::new(
+                        WorktreeApplicationErrorKind::OpenFailed,
+                        "The built application exited immediately after opening its window.",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            if !activate_existing(executable)? {
+                thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return Err(WorktreeApplicationError::new(
+                    WorktreeApplicationErrorKind::OpenFailed,
+                    "The built application did not keep a window open.",
+                ));
+            }
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return Err(WorktreeApplicationError::new(
+                WorktreeApplicationErrorKind::OpenFailed,
+                "The built application started but no window became available.",
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(windows)]
@@ -250,7 +292,7 @@ mod tests {
             Ok(self.existing)
         }
 
-        fn launch_detached(
+        fn launch_and_observe(
             &self,
             _executable: &Path,
             context: &WorktreeApplicationLaunchContext,
@@ -290,7 +332,7 @@ mod tests {
 
         assert_eq!(
             open_with(&build.1, &context, &mechanism).unwrap(),
-            OpenOutcome::DetachedLaunchStarted
+            OpenOutcome::LaunchedWindowObserved
         );
         assert_eq!(*mechanism.calls.lock().unwrap(), ["activate", "launch"]);
         let launched = mechanism.launch_context.lock().unwrap().clone().unwrap();
@@ -316,6 +358,7 @@ mod tests {
                 output_root: worktree.clone(),
                 log_path: attempt_root.join("build.log"),
                 executable,
+                application_schema_version: None,
             },
         )
     }

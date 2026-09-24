@@ -298,6 +298,17 @@ h3 {
   cursor: pointer;
 }
 
+.surface-switcher__notification-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: #c25334;
+  box-shadow: 0 0 0 1px #9d391f;
+  vertical-align: middle;
+}
+
 .surface-switcher button.active {
   background: #e7ebe4;
   color: #17211b;

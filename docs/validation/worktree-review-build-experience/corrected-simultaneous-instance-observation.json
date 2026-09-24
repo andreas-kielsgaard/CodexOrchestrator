@@ -1,0 +1,25 @@
+{
+  "ObservedAt": "2026-09-24T14:19:59.0092974+02:00",
+  "ControllerNotice": "Launched build.",
+  "ReviewedProcesses": [
+    {
+      "Pid": 34840,
+      "Path": "C:\\Users\\user\\AppData\\Local\\CodexOrchestrator\\review-smoke\\controller-appdata-20260924\\worktree-review\\attempts\\e7aef7ad1ca4d2b165ed048278810dbb\\output\\codex-orchestrator.exe",
+      "Title": "Codex Orchestrator",
+      "Handle": {
+        "value": 3547438
+      },
+      "Responding": true
+    },
+    {
+      "Pid": 49912,
+      "Path": "C:\\Users\\user\\AppData\\Local\\CodexOrchestrator\\review-smoke\\controller-appdata-20260924\\worktree-review\\attempts\\eddf9b3c149cc34d8a9d974b54e5999a\\output\\codex-orchestrator.exe",
+      "Title": "Codex Orchestrator — refinement/usability · worktree-observation-f5dcb3a927b3eaefdd103481 · build-422f28a9-a37d-4cf7-ac2a-19967d995956",
+      "Handle": {
+        "value": 1246698
+      },
+      "Responding": true
+    }
+  ],
+  "DebugPortListenerCount": 1
+}

@@ -100,6 +100,10 @@
   box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
 }
 
+.worktree-review__build-dialog {
+  width: min(700px, 92vw);
+}
+
 .worktree-review__modal-header,
 .worktree-review__registration-heading,
 .worktree-review__registration-repository,
@@ -336,6 +340,13 @@
   font-size: 1.15rem;
 }
 
+.worktree-review__build-heading-actions,
+.worktree-review__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .worktree-review__primary,
 .worktree-review__secondary {
   min-height: 40px;
@@ -471,6 +482,16 @@
   justify-content: flex-start;
   color: #17211b;
   font-size: 0.9rem;
+}
+
+.worktree-review__notification-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #fffdf8;
+  border-radius: 50%;
+  background: #c25334;
+  box-shadow: 0 0 0 1px #9d391f;
 }
 
 .worktree-review__worktree-title code,
@@ -677,7 +698,6 @@
 }
 
 .worktree-review__actions {
-  display: flex;
   justify-content: flex-end;
 }
 
@@ -690,6 +710,15 @@
 
 .worktree-review__build-title h3 {
   font-size: 1rem;
+}
+
+.worktree-review__application-id {
+  display: block;
+  margin-top: 3px;
+  color: #67746c;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .worktree-review__status--completed {

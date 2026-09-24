@@ -1,6 +1,7 @@
 import {
   commitSourceContext,
   type AssociatedWorktree,
+  type ApplicationBuildProfile,
   type BranchReviewDetail,
   type CreateBuildRequest,
   type GitCommit,
@@ -11,6 +12,7 @@ export interface BuildDraft {
   readonly sourceMode: SourceMode;
   readonly commit: GitCommit;
   readonly name: string;
+  readonly profile: ApplicationBuildProfile;
 }
 
 export function initialBuildDraft(
@@ -25,6 +27,7 @@ export function initialBuildDraft(
     sourceMode: detail.branch.target.kind !== 'commit' && available ? 'direct' : 'commit',
     commit: detail.branch.tip,
     name: `Review ${detail.branch.displayName}`,
+    profile: 'release',
   };
 }
 
@@ -34,7 +37,7 @@ export function buildRequest(
   draft: BuildDraft,
 ): CreateBuildRequest | null {
   const common = {
-    profile: 'release' as const,
+    profile: draft.profile,
     repositoryId: detail.branch.repositoryId,
     branchRef: detail.branch.branchRef,
     name: draft.name.trim(),

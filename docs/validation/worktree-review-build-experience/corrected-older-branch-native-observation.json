@@ -1,0 +1,26 @@
+{
+  "ObservedAt": "2026-09-24T14:18:37.4247549+02:00",
+  "ControllerPid": 41212,
+  "ReviewedProcesses": {
+    "Pid": 34840,
+    "Path": "C:\\Users\\user\\AppData\\Local\\CodexOrchestrator\\review-smoke\\controller-appdata-20260924\\worktree-review\\attempts\\e7aef7ad1ca4d2b165ed048278810dbb\\output\\codex-orchestrator.exe",
+    "Title": "Codex Orchestrator",
+    "Handle": {
+      "value": 3547438
+    },
+    "Responding": true
+  },
+  "Seed": {
+    "seedFormatVersion": 2,
+    "buildId": "build-97df9a57-9d76-4ec0-aa75-ef7ae8f2f740",
+    "branchOrCommit": "refs/heads/refinement/workflow_usability",
+    "worktreeId": "worktree-observation-c31728cc46cb85b0ff828763",
+    "sourceAppData": "\\\\?\\C:\\Users\\user\\AppData\\Local\\CodexOrchestrator\\review-smoke\\controller-appdata-20260924",
+    "seededAt": "2026-09-24T12:18:29.454551400+00:00",
+    "controllerSchemaVersion": 58,
+    "targetSchemaVersion": 55,
+    "databaseSeeded": false
+  },
+  "DatabaseExists": true,
+  "DebugPortListenerCount": 1
+}

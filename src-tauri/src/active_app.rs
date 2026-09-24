@@ -25,6 +25,13 @@ pub(crate) fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            if let Some(label) = std::env::var_os(
+                crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV,
+            ) {
+                if let (Some(window), Some(label)) = (app.get_webview_window("main"), label.to_str()) {
+                    let _ = window.set_title(&format!("Codex Orchestrator — {label}"));
+                }
+            }
             let app_data_dir = crate::runtime::instance::app_data_dir(|| {
                 app.path()
                     .app_data_dir()
@@ -329,6 +336,7 @@ pub(crate) fn run() {
                 ),
             );
             let review = Arc::new(crate::worktree_review::WorktreeReviewApplication::open(
+                app_data_dir.clone(),
                 worktree_review_root(&app_data_dir),
                 repository_catalog,
             ));

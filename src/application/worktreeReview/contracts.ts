@@ -259,8 +259,13 @@ export type CleanupState =
 export interface ReviewBuild {
   readonly profile?: ApplicationBuildProfile | null;
   readonly buildId: BuildId;
+  readonly repositoryId: RepositoryId;
   readonly name: string;
   readonly branchRef: BranchRef | null;
+  readonly initiatedAt: string;
+  readonly applicationIdentifier: string;
+  readonly applicationLabel: string;
+  readonly sourceWorktreeId?: WorktreeId;
   readonly source: ReviewBuildSource;
   readonly workspace: {
     readonly worktreeId: WorktreeId;
@@ -305,3 +310,7 @@ export interface CreateWorktreeRequest {
 export interface OpenBuildRequest {
   readonly buildId: BuildId;
 }
+
+export type OpenBuildOutcome =
+  | { readonly outcome: 'focused_existing' }
+  | { readonly outcome: 'launched' };

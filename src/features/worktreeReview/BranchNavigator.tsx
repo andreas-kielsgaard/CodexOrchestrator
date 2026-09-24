@@ -5,6 +5,7 @@ import type {
   RepositoryId,
   ReviewBranch,
   ReviewRepository,
+  ReviewBuild,
 } from '../../application/worktreeReview';
 
 export function BranchNavigator({
@@ -20,6 +21,7 @@ export function BranchNavigator({
   onBranchChange,
   onViewDetached,
   detachedSelected,
+  unreadBuilds,
 }: {
   readonly repositories: readonly ReviewRepository[];
   readonly selectedRepositoryId: RepositoryId | '';
@@ -33,6 +35,7 @@ export function BranchNavigator({
   readonly onBranchChange: (target: ReviewTarget) => void;
   readonly onViewDetached: () => void;
   readonly detachedSelected: boolean;
+  readonly unreadBuilds: readonly ReviewBuild[];
 }) {
   const attachedBranches = branches.filter((branch) => branch.target.kind === 'branch');
   const detachedCount = branches.filter(
@@ -73,6 +76,14 @@ export function BranchNavigator({
         onOpenGraph={onSelectBranch}
         graphTriggerRef={graphTriggerRef}
         disabled={disabled}
+        unreadTargetKeys={new Set(
+          unreadBuilds
+            .filter(
+              (build) =>
+                build.repositoryId === selectedRepositoryId && build.branchRef !== null,
+            )
+            .map((build) => `${build.repositoryId}:branch:${build.branchRef}`),
+        )}
       />
       <section className="worktree-review__detached-nav" aria-label="Detached worktrees">
         <div className="worktree-review__branch-heading">

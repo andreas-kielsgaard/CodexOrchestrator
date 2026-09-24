@@ -79,6 +79,8 @@ impl ReviewBuildExecutor {
         attempt_id: &OperationAttemptId,
         workspace: &ReviewWorkspace,
         profile: crate::worktree_application::ApplicationBuildProfile,
+        application_identifier: &str,
+        application_label: &str,
     ) -> Result<RetainedBuildOutput, BuildExecutionFailure> {
         let attempt_key =
             attempt_storage_key(&self.repository_id, build_id, attempt_id).map_err(|error| {
@@ -99,6 +101,12 @@ impl ReviewBuildExecutor {
         )
         .map_err(application_failure)?;
         request.profile = profile;
+        request
+            .set_application_identifier(application_identifier)
+            .map_err(application_failure)?;
+        request
+            .set_application_label(application_label)
+            .map_err(application_failure)?;
         let result = self
             .application
             .build(&request)
@@ -161,10 +169,17 @@ pub(crate) fn resolve_retained_output(
     Ok(PhysicalWorktreeBuildResult {
         worktree_root: PathBuf::from(workspace.location.as_str()),
         log_path: attempt_root.join("build.log"),
+        application_schema_version: retained_application_schema_version(&output_root),
         attempt_root,
         output_root,
         executable,
     })
+}
+
+fn retained_application_schema_version(output_root: &Path) -> Option<i64> {
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output_root.join("build.json")).ok()?).ok()?;
+    receipt.get("applicationSchemaVersion")?.as_i64()
 }
 
 fn retained_output(
@@ -294,6 +309,7 @@ mod tests {
             output_root: output_root.clone(),
             log_path: attempt_root.join("build.log"),
             executable: executable.clone(),
+            application_schema_version: Some(55),
         };
         let build_id = ReviewBuildId::new("build").unwrap();
         let attempt_id = OperationAttemptId::new("attempt").unwrap();
@@ -320,7 +336,17 @@ mod tests {
             output.storage_key.as_str(),
             "attempts/0123456789abcdef0123456789abcdef/output"
         );
-        assert!(resolve_retained_output(&review_root, &workspace, &output).is_ok());
+        fs::write(
+            output_root.join("build.json"),
+            r#"{"applicationSchemaVersion":55}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_retained_output(&review_root, &workspace, &output)
+                .unwrap()
+                .application_schema_version,
+            Some(55)
+        );
 
         fs::remove_file(executable).unwrap();
         assert!(resolve_retained_output(&review_root, &workspace, &output).is_err());

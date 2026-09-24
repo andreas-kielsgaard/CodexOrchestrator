@@ -15,6 +15,7 @@ import type {
   BranchReviewDetail,
   BuildId,
   CreateBuildRequest,
+  OpenBuildOutcome,
   RepositoryId,
   ReviewBuild,
   ReviewBuildSource,
@@ -43,34 +44,90 @@ beforeAll(() => {
 });
 
 describe('WorktreeReviewScreen', () => {
-  it('always confirms a live build, defaults to normal, and never launches it', async () => {
+  it('shows completion on the exact branch and source worktree, then clears after loading it', async () => {
+    const markedRead = vi.fn();
+    const unread = { ...completedBuild, sourceWorktreeId: worktreeOne.worktreeId };
+    renderScreen(new FixtureClient(), new FixtureCatalog(), [unread], markedRead);
+
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    expect(
+      within(screen.getByRole('button', { name: /codex\/durable-review/ })).getByLabelText(
+        'Build finished',
+      ),
+    ).toBeVisible();
+    expect(
+      within(screen.getByText('Agent checkout A').closest('label')!).getByLabelText(
+        'Build finished',
+      ),
+    ).toBeVisible();
+    await waitFor(() => expect(markedRead).toHaveBeenCalledWith([completedBuild.buildId]));
+  });
+
+  it('creates a live build from the modal, defaults to normal, and never launches it', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
     renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
-    await user.click(screen.getByRole('button', { name: 'Build' }));
-    const dialog = screen.getByRole('dialog', { name: 'Build this application?' });
-    expect(within(dialog).getByRole('checkbox', { name: 'Enable debugging' })).not.toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create a build' });
+    expect(within(dialog).getByRole('combobox', { name: 'Build mode' })).toHaveValue('release');
+    expect(within(dialog).getByText('Build directly in the worktree.')).toBeVisible();
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(within(dialog).getByRole('button', { name: 'Build' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0].profile).toBe('release');
     expect(client.openBuildCalls).toEqual([]);
   });
 
-  it('resets debugging after cancellation and sends it only on explicit confirmation', async () => {
+  it('keeps navigation and a second build available after a background build starts', async () => {
+    const user = userEvent.setup();
+    const client = new FixtureClient();
+    client.createBuild = async (input: CreateBuildRequest): Promise<ReviewBuild> => {
+      client.createBuildCalls.push(input);
+      return {
+        ...completedBuild,
+        buildId: `running-${client.createBuildCalls.length}`,
+        name: input.name,
+        source: sourceReceipt(input),
+        latestAttempt: {
+          attemptId: `attempt-running-${client.createBuildCalls.length}`,
+          executionState: 'running',
+          outcome: 'unknown',
+          stage: 'compilation',
+          startedAt: '2026-08-24T11:00:00Z',
+        },
+        output: { state: 'not_produced' },
+      };
+    };
+    renderScreen(client);
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    await user.click(screen.getByRole('button', { name: 'Create build' }));
+    expect(await screen.findByText(/continue navigating while it runs/)).toBeVisible();
+    const main = screen.getByRole('button', { name: /main/ });
+    expect(main).toBeEnabled();
+    await user.click(main);
+    expect(await screen.findByRole('heading', { name: 'main' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    await user.click(screen.getByRole('button', { name: 'Create build' }));
+    await waitFor(() => expect(client.createBuildCalls).toHaveLength(2));
+  });
+
+  it('resets build mode after cancellation and sends debugging only on creation', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
     renderScreen(client);
     await screen.findByRole('heading', { name: 'codex/durable-review' });
-    await user.click(screen.getByRole('button', { name: 'Build' }));
-    await user.click(screen.getByRole('checkbox', { name: 'Enable debugging' }));
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Build mode' }), 'debug');
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Build' }));
-    expect(screen.getByRole('checkbox', { name: 'Enable debugging' })).not.toBeChecked();
-    await user.click(screen.getByRole('checkbox', { name: 'Enable debugging' }));
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    expect(screen.getByRole('combobox', { name: 'Build mode' })).toHaveValue('release');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Build mode' }), 'debug');
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
     await waitFor(() => expect(client.createBuildCalls[0]?.profile).toBe('debug'));
     expect(client.openBuildCalls).toEqual([]);
   });
@@ -162,20 +219,16 @@ describe('WorktreeReviewScreen', () => {
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
     await user.click(screen.getByRole('radio', { name: /Snapshot current work/ }));
-    expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
-      'create and retain an isolated Worktree checkout',
-    );
-    expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
-      'must create a virtual commit before the build can continue',
-    );
+    expect(screen.getByText('Copy the selected worktree and build in the destination.')).toBeVisible();
+    expect(screen.getByText(/create and retain an isolated Worktree checkout/)).toBeVisible();
 
     const name = screen.getByRole('textbox', { name: 'Build name' });
     await user.clear(name);
     await user.type(name, 'Snapshot B');
-    await user.click(screen.getByRole('button', { name: 'Build' }));
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
 
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
@@ -200,13 +253,13 @@ describe('WorktreeReviewScreen', () => {
     renderScreen(client);
 
     expect(await screen.findByText(/No matching worktree exists/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
     expect(screen.getByRole('radio', { name: /Specific commit/ })).toBeChecked();
-    expect(screen.getByRole('note', { name: 'Worktree change' })).toHaveTextContent(
+    expect(screen.getByText(/first create and retain a Worktree checkout/)).toHaveTextContent(
       'first create and retain a Worktree checkout for this branch',
     );
-    await user.click(screen.getByRole('button', { name: 'Build' }));
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       source: {
@@ -249,7 +302,7 @@ describe('WorktreeReviewScreen', () => {
     });
   });
 
-  it('presents compilation outcome, retained output, and cleanup as independent durable facts', async () => {
+  it('presents a simple available or unavailable build state', async () => {
     const client = new FixtureClient();
     renderScreen(client);
     const builds = await screen.findByRole('heading', { name: 'Builds' });
@@ -257,17 +310,63 @@ describe('WorktreeReviewScreen', () => {
     const failed = (
       await within(region).findByRole('heading', { name: 'Failed rebuild' })
     ).closest('article')!;
-    expect(failed).toHaveTextContent('Compilation failed');
-    expect(failed).toHaveTextContent('No retained build output');
-    expect(failed).toHaveTextContent('Eligible for cleanup');
+    expect(failed).toHaveTextContent('Build failed');
+    expect(failed).not.toHaveTextContent('Eligible for cleanup');
     expect(failed).toHaveTextContent('Compiler exited with code 1');
+    expect(within(failed).queryByRole('button', { name: 'Launch' })).not.toBeInTheDocument();
 
     const completed = within(region)
       .getByRole('heading', { name: 'Completed review build' })
       .closest('article')!;
-    expect(completed).toHaveTextContent('Compilation completed');
-    expect(completed).toHaveTextContent('Available · AppData / build-output / build-completed');
-    expect(completed).toHaveTextContent('Newest successful build for this source');
+    expect(completed).toHaveTextContent('Available');
+    expect(completed).not.toHaveTextContent('Newest successful build for this source');
+    expect(within(completed).getByRole('button', { name: 'Launch' })).toBeEnabled();
+  });
+
+  it('shows removed output as no longer available without a launch action', async () => {
+    const removed = {
+      ...completedBuild,
+      buildId: 'build-removed',
+      name: 'Removed review build',
+      output: {
+        state: 'removed' as const,
+        buildOutputId: 'output-removed',
+        removedAt: '2026-08-23T11:00:00Z',
+      },
+    };
+    renderScreen(new FixtureClient(branchDetailFixture({ builds: [removed] })));
+
+    const heading = await screen.findByRole('heading', { name: removed.name });
+    const card = heading.closest('article')!;
+    expect(card).toHaveTextContent('No longer available');
+    expect(within(card).queryByRole('button', { name: 'Launch' })).not.toBeInTheDocument();
+  });
+
+  it('prefills rebuild for the same live worktree, name, and build mode', async () => {
+    const user = userEvent.setup();
+    const live = {
+      ...completedBuild,
+      profile: 'debug' as const,
+      sourceWorktreeId: worktreeOne.worktreeId,
+      source: {
+        kind: 'existing_worktree' as const,
+        associationId: worktreeOne.associationId!,
+        triggerHeadObjectId: tipCommit.objectId,
+      },
+      workspace: {
+        ...completedBuild.workspace,
+        worktreeId: worktreeOne.worktreeId,
+        ownership: 'borrowed_external' as const,
+      },
+    };
+    renderScreen(new FixtureClient(branchDetailFixture({ builds: [live] })));
+
+    const heading = await screen.findByRole('heading', { name: live.name });
+    await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Rebuild' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create a build' });
+    expect(within(dialog).getByRole('radio', { name: /Live worktree checkout/ })).toBeChecked();
+    expect(within(dialog).getByRole('textbox', { name: 'Build name' })).toHaveValue(live.name);
+    expect(within(dialog).getByRole('combobox', { name: 'Build mode' })).toHaveValue('debug');
   });
 
   it('marks the exact active worktree and only blocks direct sources for that checkout', async () => {
@@ -290,14 +389,17 @@ describe('WorktreeReviewScreen', () => {
     expect(activeCheckout).toHaveTextContent('Active build checkout');
     await user.click(screen.getByRole('radio', { name: /Agent checkout A/ }));
     expect(await screen.findByRole('heading', { name: 'Agent checkout A' })).toBeVisible();
-    expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    expect(screen.getByRole('radio', { name: /Live worktree checkout/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeDisabled();
     expect(screen.getByRole('radio', { name: /Specific commit/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await user.click(screen.getByRole('button', { name: /codex\/durable-review/ }));
     await screen.findByRole('heading', { name: 'codex/durable-review' });
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
-    expect(screen.getByRole('radio', { name: /Live Worktree checkout/ })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    expect(screen.getByRole('radio', { name: /Live worktree checkout/ })).toBeEnabled();
     expect(screen.getByRole('radio', { name: /Snapshot current work/ })).toBeEnabled();
   });
 
@@ -308,16 +410,19 @@ describe('WorktreeReviewScreen', () => {
     await screen.findByRole('heading', { name: 'codex/durable-review' });
 
     expect(client.commitHistoryCalls).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
     await user.click(screen.getByRole('radio', { name: /Specific commit/ }));
     expect(client.commitHistoryCalls).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Choose another commit' }));
+    await user.click(screen.getByRole('button', { name: 'Choose from repository history…' }));
+    const graph = await screen.findByRole('dialog', { name: 'Choose a commit' });
+    await user.click(await within(graph).findByRole('button', { name: /^2 commits from/ }));
     await waitFor(() => expect(client.commitHistoryCalls).toEqual([{ cursor: undefined }]));
-    expect(screen.getByRole('combobox', { name: 'Branch commit' })).toHaveTextContent(
+    expect(screen.getByRole('dialog', { name: 'Select a commit' })).toHaveTextContent(
       earlierCommit.subject,
     );
   });
 
-  it('selects a graph commit on the normal surface and provisions only after Build confirmation', async () => {
+  it('selects a graph commit in the build dialog and provisions only after Create build', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
     renderScreen(client);
@@ -333,13 +438,10 @@ describe('WorktreeReviewScreen', () => {
     expect(
       await screen.findByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
     ).toBeVisible();
-    expect(
-      screen.getByText(new RegExp(`Current selection: ${earlierCommit.abbreviatedObjectId}`)),
-    ).toHaveTextContent(earlierCommit.subject);
     expect(client.createBuildCalls).toHaveLength(0);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Build' }));
-    expect(screen.getByRole('dialog', { name: 'Build this application?' })).toHaveTextContent(
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    expect(screen.getByRole('dialog', { name: 'Create a build' })).toHaveTextContent(
       earlierCommit.abbreviatedObjectId,
     );
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -347,8 +449,8 @@ describe('WorktreeReviewScreen', () => {
     expect(
       screen.getByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
     ).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Build' }));
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Build' }));
+    await user.click(screen.getByRole('button', { name: 'Create a build' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       branchRef: null,
@@ -608,8 +710,13 @@ class FixtureClient implements WorktreeReviewClient {
       source: sourceReceipt(input),
     };
   };
-  openBuild = async ({ buildId }: { readonly buildId: BuildId }): Promise<void> => {
+  openBuild = async ({
+    buildId,
+  }: {
+    readonly buildId: BuildId;
+  }): Promise<OpenBuildOutcome> => {
     this.openBuildCalls.push(buildId);
+    return { outcome: 'launched' };
   };
 }
 
@@ -677,8 +784,17 @@ const registeredRepository: RegisteredRepository = {
 function renderScreen(
   client: WorktreeReviewClient,
   repositoryCatalog: RepositoryCatalogClient = new FixtureCatalog(),
+  unreadBuilds: readonly ReviewBuild[] = [],
+  onMarkBuildsRead?: (buildIds: readonly BuildId[]) => void,
 ) {
-  return render(<WorktreeReviewScreen client={client} repositoryCatalog={repositoryCatalog} />);
+  return render(
+    <WorktreeReviewScreen
+      client={client}
+      repositoryCatalog={repositoryCatalog}
+      unreadBuilds={unreadBuilds}
+      onMarkBuildsRead={onMarkBuildsRead}
+    />,
+  );
 }
 
 function sourceReceipt(input: CreateBuildRequest): ReviewBuildSource {

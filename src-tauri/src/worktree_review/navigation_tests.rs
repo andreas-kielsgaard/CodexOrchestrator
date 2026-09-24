@@ -105,6 +105,7 @@ fn worktree_branch_graph_browses_registered_repository_without_changing_review_s
     catalog.register_directory(fixture.root.clone()).unwrap();
     catalog.register_directory(other.root.clone()).unwrap();
     let application = Arc::new(WorktreeReviewApplication::open(
+        fixture.temp.path().join("app-data"),
         fixture.temp.path().join("review"),
         catalog,
     ));

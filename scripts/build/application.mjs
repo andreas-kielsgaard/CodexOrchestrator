@@ -58,9 +58,51 @@ function requireFile(filename) {
   return filename;
 }
 
+export function validateApplicationIdentity(request) {
+  if (
+    request.applicationIdentifier &&
+    (request.applicationIdentifier.length > 200 ||
+      !/^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)+$/.test(
+        request.applicationIdentifier,
+      ))
+  )
+    throw new BuildError('Application identifier is invalid.', 'invalid_request');
+  if (
+    request.applicationLabel &&
+    (request.applicationLabel.length > 512 ||
+      request.applicationLabel.trim().length === 0 ||
+      [...request.applicationLabel].some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || code === 127;
+      }))
+  )
+    throw new BuildError('Application label is invalid.', 'invalid_request');
+}
+
+export function applicationBuildConfig(request, worktree, frontend) {
+  validateApplicationIdentity(request);
+  return {
+    build: { beforeBuildCommand: null, frontendDist: frontendConfigPath(worktree, frontend) },
+    bundle: { active: Boolean(request.bundle) },
+    ...(request.applicationIdentifier ? { identifier: request.applicationIdentifier } : {}),
+  };
+}
+
+export function applicationSchemaVersion(worktree) {
+  const source = path.join(worktree, 'src-tauri', 'src', 'storage.rs');
+  if (!fs.existsSync(source)) return null;
+  const match = fs
+    .readFileSync(source, 'utf8')
+    .match(/pub\(crate\)\s+const\s+ACTIVE_SCHEMA_VERSION:\s*i64\s*=\s*(\d+)\s*;/);
+  if (!match) return null;
+  const version = Number(match[1]);
+  return Number.isSafeInteger(version) ? version : null;
+}
+
 export async function buildApplication(request) {
   if (!['release', 'debug'].includes(request.profile))
     throw new BuildError('Application profile must be release or debug.', 'invalid_request');
+  validateApplicationIdentity(request);
   let layout = cacheLayout(request.worktreeRoot, request.targetDir);
   if (process.platform === 'win32' && request.runningExecutable && !request.targetDir) {
     const binary = request.cargoBinaryName ?? 'codex-orchestrator';
@@ -161,10 +203,7 @@ export async function buildApplication(request) {
     );
     const context = path.join(layout.ownerRoot, 'cargo-context.json');
     fs.writeFileSync(context, JSON.stringify({ layout, selection }));
-    const config = {
-      build: { beforeBuildCommand: null, frontendDist: frontendConfigPath(worktree, frontend) },
-      bundle: { active: Boolean(request.bundle) },
-    };
+    const config = applicationBuildConfig(request, worktree, frontend);
     const env = {
       ...process.env,
       CARGO_TARGET_DIR: layout.target,
@@ -202,6 +241,9 @@ export async function buildApplication(request) {
       profile,
       cacheMode: selection.mode,
       cargoTarget: layout.target,
+      applicationIdentifier: request.applicationIdentifier ?? null,
+      applicationLabel: request.applicationLabel ?? null,
+      applicationSchemaVersion: applicationSchemaVersion(worktree),
     };
     console.log('@@ORCHID_STAGE:publication');
     publishApplication(source, output, profile === 'debug', result);

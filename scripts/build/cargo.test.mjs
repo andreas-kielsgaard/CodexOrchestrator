@@ -12,7 +12,12 @@ import {
   invokeCargo,
   clearCache,
 } from './cargo.mjs';
-import { publishApplication, frontendConfigPath } from './application.mjs';
+import {
+  applicationBuildConfig,
+  applicationSchemaVersion,
+  publishApplication,
+  frontendConfigPath,
+} from './application.mjs';
 import { run, BuildError } from './process.mjs';
 import { parseArguments } from '../build-tools.mjs';
 
@@ -232,6 +237,42 @@ test('frontend configuration is relative so Windows assets are embedded rather t
   assert(!path.isAbsolute(configured));
   assert(configured.startsWith('../'));
   assert.equal(path.resolve(worktree, 'src-tauri', configured), frontend);
+});
+
+test('review builds merge a validated build-specific Tauri identifier', (t) => {
+  const { layout, worktree } = fixture(t);
+  const frontend = path.join(layout.ownerRoot, 'frontend', 'release');
+  const identifier =
+    'dev.codex-orchestrator.review.refinement-usability.wt-worktree-one.bld-build-one';
+  assert.equal(
+    applicationBuildConfig(
+      { applicationIdentifier: identifier, applicationLabel: 'review · worktree · build' },
+      worktree,
+      frontend,
+    ).identifier,
+    identifier,
+  );
+  assert.throws(
+    () => applicationBuildConfig({ applicationIdentifier: 'Not Safe' }, worktree, frontend),
+    /identifier is invalid/,
+  );
+  assert.throws(
+    () => applicationBuildConfig({ applicationLabel: '\n' }, worktree, frontend),
+    /label is invalid/,
+  );
+});
+
+test('application receipts capture the schema compiled from the selected worktree', (t) => {
+  const { worktree } = fixture(t);
+  const source = path.join(worktree, 'src-tauri', 'src');
+  fs.mkdirSync(source, { recursive: true });
+  fs.writeFileSync(
+    path.join(source, 'storage.rs'),
+    'pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 55;\n',
+  );
+  assert.equal(applicationSchemaVersion(worktree), 55);
+  fs.writeFileSync(path.join(source, 'storage.rs'), 'const SOMETHING_ELSE: i64 = 55;\n');
+  assert.equal(applicationSchemaVersion(worktree), null);
 });
 
 test('debug publication copies Rust underscore-named PDBs for a hyphenated executable', (t) => {

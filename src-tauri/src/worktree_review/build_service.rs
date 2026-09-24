@@ -13,6 +13,7 @@ use super::{
         RetentionKey, ReviewBuild, ReviewBuildId, ReviewBuildName, ReviewOperationAttempt,
         ReviewOperationKind, WorkspaceId,
     },
+    review_runtime,
     source_materialization::SourceMaterializationService,
     state::{
         WorktreeReviewApplication, ACTIVE_REVIEW_BUILD_ID_ENV, ACTIVE_REVIEW_WORKTREE_ID_ENV,
@@ -26,11 +27,18 @@ use super::{
 };
 use crate::{
     repository_context::{BranchRef as ObservedBranch, RepositoryIdentity},
-    worktree_application::{PhysicalWorktreeApplication, WorktreeApplicationLaunchContext},
+    runtime::instance::APP_DATA_DIR_ENV,
+    worktree_application::{
+        OpenOutcome, PhysicalWorktreeApplication, WorktreeApplicationLaunchContext,
+    },
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use std::{ffi::OsString, io::{Read, Seek, SeekFrom}, sync::Arc};
+use std::{
+    ffi::OsString,
+    io::{Read, Seek, SeekFrom},
+    sync::Arc,
+};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +50,13 @@ pub(crate) struct BuildLogChunkView {
 
 pub(crate) use super::build_presentation::{CreateBuildInput, ReviewBuildView};
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum OpenBuildOutcomeView {
+    FocusedExisting,
+    Launched,
+}
+
 pub(crate) struct ReviewBuildCoordinator {
     application: Arc<WorktreeReviewApplication>,
     database: Arc<WorktreeReviewDatabase>,
@@ -50,34 +65,68 @@ pub(crate) struct ReviewBuildCoordinator {
 }
 
 impl ReviewBuildCoordinator {
-    pub(crate) fn read_log(&self, build_id: &str, attempt_id: &str, offset: u64) -> Result<BuildLogChunkView, String> {
+    pub(crate) fn read_log(
+        &self,
+        build_id: &str,
+        attempt_id: &str,
+        offset: u64,
+    ) -> Result<BuildLogChunkView, String> {
         let build_id = ReviewBuildId::new(build_id).map_err(|error| error.to_string())?;
         let attempt_id = OperationAttemptId::new(attempt_id).map_err(|error| error.to_string())?;
-        let build = self.database.builds().find(&build_id).map_err(|error| error.to_string())?
+        let build = self
+            .database
+            .builds()
+            .find(&build_id)
+            .map_err(|error| error.to_string())?
             .ok_or("Build not found")?;
-        let attempt = self.database.attempts().find(&attempt_id).map_err(|error| error.to_string())?
+        let attempt = self
+            .database
+            .attempts()
+            .find(&attempt_id)
+            .map_err(|error| error.to_string())?
             .ok_or("Build attempt not found")?;
         if attempt.build_id != build_id {
             return Err("Attempt does not belong to this build".into());
         }
         if attempt.kind != ReviewOperationKind::Build {
-            return Ok(BuildLogChunkView { text: String::new(), next_offset: 0, truncated_before: false });
+            return Ok(BuildLogChunkView {
+                text: String::new(),
+                next_offset: 0,
+                truncated_before: false,
+            });
         }
         let key = attempt_storage_key(&build.source.repository_id, &build_id, &attempt_id)
             .map_err(|error| error.to_string())?;
-        let path = self.application.review_root().join(key.as_str()).join("build.log");
+        let path = self
+            .application
+            .review_root()
+            .join(key.as_str())
+            .join("build.log");
         if !path.exists() {
-            return Ok(BuildLogChunkView { text: String::new(), next_offset: 0, truncated_before: false });
+            return Ok(BuildLogChunkView {
+                text: String::new(),
+                next_offset: 0,
+                truncated_before: false,
+            });
         }
-        let root = self.application.review_root().canonicalize().map_err(|error| error.to_string())?;
+        let root = self
+            .application
+            .review_root()
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
         let canonical = path.canonicalize().map_err(|error| error.to_string())?;
         if !canonical.starts_with(&root) || !canonical.is_file() {
             return Err("Build log is outside retained Worktree Review storage".into());
         }
         let mut file = std::fs::File::open(canonical).map_err(|error| error.to_string())?;
         let length = file.metadata().map_err(|error| error.to_string())?.len();
-        let start = if offset == 0 { length.saturating_sub(64 * 1024) } else { offset.min(length) };
-        file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
+        let start = if offset == 0 {
+            length.saturating_sub(64 * 1024)
+        } else {
+            offset.min(length)
+        };
+        file.seek(SeekFrom::Start(start))
+            .map_err(|error| error.to_string())?;
         let mut bytes = vec![0; (length - start).min(64 * 1024) as usize];
         let read = file.read(&mut bytes).map_err(|error| error.to_string())?;
         bytes.truncate(read);
@@ -124,11 +173,7 @@ impl ReviewBuildCoordinator {
             .map_err(|error| error.message)?;
         let repository = self
             .application
-            .selected_repository()
-            .map_err(|error| error.message)?;
-        if repository.id.as_str() != input.repository_id {
-            return Err("The repository selection changed; refresh Worktree Review.".into());
-        }
+            .registered_repository(&input.repository_id)?;
         let branch = input
             .branch_ref
             .as_ref()
@@ -253,12 +298,15 @@ impl ReviewBuildCoordinator {
             .map_err(|error| error.to_string())?;
 
         let executor = ReviewBuildExecutor::open(self.application.review_root(), &repository);
+        let application_identity = review_runtime::identity(&build, materialized.workspace());
         let execution = executor.and_then(|executor| {
             executor.execute(
                 &build.id,
                 &attempt.id,
                 materialized.workspace(),
                 input.profile,
+                &application_identity.identifier,
+                &application_identity.label,
             )
         });
         match execution {
@@ -410,7 +458,7 @@ impl ReviewBuildCoordinator {
     }
 
     /// Best-effort focus-or-launch. Opening is intentionally not a persisted lifecycle operation.
-    pub(crate) fn open_build(&self, build_id: &str) -> Result<(), String> {
+    pub(crate) fn open_build(&self, build_id: &str) -> Result<OpenBuildOutcomeView, String> {
         let build_id = ReviewBuildId::new(build_id).map_err(|error| error.to_string())?;
         let build = self
             .database
@@ -436,7 +484,22 @@ impl ReviewBuildCoordinator {
             .ok_or_else(|| "The retained application output is unavailable.".to_string())?;
         let physical_build =
             resolve_retained_output(self.application.review_root(), &workspace, &output)?;
+        let runtime = review_runtime::prepare(
+            self.application.review_root(),
+            self.application.app_data_root(),
+            &build,
+            &workspace,
+            physical_build.application_schema_version,
+        )?;
         let launch_context = WorktreeApplicationLaunchContext::new([
+            (
+                OsString::from(APP_DATA_DIR_ENV),
+                runtime.app_data.as_os_str().to_os_string(),
+            ),
+            (
+                OsString::from("WEBVIEW2_USER_DATA_FOLDER"),
+                runtime.webview_data.as_os_str().to_os_string(),
+            ),
             (
                 OsString::from(WORKTREE_REVIEW_DATA_DIR_ENV),
                 self.application.review_root().as_os_str().to_os_string(),
@@ -449,12 +512,19 @@ impl ReviewBuildCoordinator {
                 OsString::from(ACTIVE_REVIEW_WORKTREE_ID_ENV),
                 OsString::from(workspace.worktree_id.as_str()),
             ),
+            (
+                OsString::from(review_runtime::REVIEW_INSTANCE_LABEL_ENV),
+                OsString::from(runtime.identity.label),
+            ),
         ])
         .map_err(|error| error.message)?;
-        PhysicalWorktreeApplication
+        let outcome = PhysicalWorktreeApplication
             .open(&physical_build, &launch_context)
             .map_err(|error| error.message)?;
-        Ok(())
+        Ok(match outcome {
+            OpenOutcome::ExistingWindowActivationRequested => OpenBuildOutcomeView::FocusedExisting,
+            OpenOutcome::LaunchedWindowObserved => OpenBuildOutcomeView::Launched,
+        })
     }
 
     fn view_build(&self, build: ReviewBuild) -> Result<ReviewBuildView, String> {
@@ -519,9 +589,24 @@ impl ReviewBuildCoordinator {
             .map_err(|error| error.to_string())?
             .into_iter()
             .next();
+        let source_worktree_id = match &build.source.selection {
+            super::domain::ReviewSourceSelection::PhysicalWorktree { worktree_id, .. } => {
+                Some(worktree_id.as_str().to_owned())
+            }
+            super::domain::ReviewSourceSelection::LiveWorktree { association_id, .. }
+            | super::domain::ReviewSourceSelection::WorktreeSnapshot { association_id, .. } => {
+                self.database
+                    .associations()
+                    .find(association_id)
+                    .map_err(|error| error.to_string())?
+                    .map(|association| association.worktree_id.as_str().to_owned())
+            }
+            _ => None,
+        };
         Ok(review_build_view(
             &build,
             &workspace,
+            source_worktree_id,
             latest_attempt.as_ref(),
             output_view,
             cleanup,
@@ -560,7 +645,9 @@ impl ReviewBuildCoordinator {
             )
             .map_err(|error| error.to_string())?;
         for candidate in builds {
-            if candidate.id == successful.id || candidate.retention_key != successful.retention_key
+            if candidate.id == successful.id
+                || candidate.retention_key != successful.retention_key
+                || candidate.created_at >= successful.created_at
             {
                 continue;
             }
@@ -611,6 +698,17 @@ impl ReviewBuildCoordinator {
                     .map_err(|error| error.to_string())?,
                     containment_root: self.cleanup.containment_root().clone(),
                 });
+            }
+            if let Ok(storage_key) = review_runtime::runtime_storage_key(&candidate.id) {
+                let runtime_root = self.application.review_root().join(storage_key.as_str());
+                if runtime_root.exists() {
+                    resources.push(CleanupResource::ReviewRuntime {
+                        id: CleanupResourceId::random(),
+                        build_id: candidate.id.clone(),
+                        storage_key,
+                        containment_root: self.cleanup.containment_root().clone(),
+                    });
+                }
             }
             if resources.is_empty() {
                 continue;

@@ -147,6 +147,7 @@ struct ApplicationState {
 }
 
 pub(crate) struct WorktreeReviewApplication {
+    app_data_root: PathBuf,
     review_root: PathBuf,
     database: Result<Arc<WorktreeReviewDatabase>, WorktreeReviewUnavailable>,
     repository_catalog: Arc<RepositoryCatalog>,
@@ -157,7 +158,11 @@ pub(crate) struct WorktreeReviewApplication {
 
 impl WorktreeReviewApplication {
     /// Opens a stable product application root. Environmental failures become capability facts.
-    pub(crate) fn open(review_root: PathBuf, repository_catalog: Arc<RepositoryCatalog>) -> Self {
+    pub(crate) fn open(
+        app_data_root: PathBuf,
+        review_root: PathBuf,
+        repository_catalog: Arc<RepositoryCatalog>,
+    ) -> Self {
         let requested_root = review_root;
         let data_root = SharedWorktreeReviewDataRoot::resolve(requested_root.clone())
             .and_then(SharedWorktreeReviewDataRoot::prepare);
@@ -191,6 +196,7 @@ impl WorktreeReviewApplication {
             .ok()
             .and_then(|database| load_active_build_context(database));
         Self {
+            app_data_root,
             review_root,
             database,
             repository_catalog,
@@ -257,6 +263,10 @@ impl WorktreeReviewApplication {
 
     pub(crate) fn review_root(&self) -> &Path {
         &self.review_root
+    }
+
+    pub(crate) fn app_data_root(&self) -> &Path {
+        &self.app_data_root
     }
 
     pub(crate) fn active_build_context(&self) -> Option<ActiveBuildContextView> {
@@ -566,8 +576,11 @@ mod tests {
     #[test]
     fn missing_selection_is_a_recoverable_product_state() {
         let directory = tempfile::tempdir().unwrap();
-        let application =
-            WorktreeReviewApplication::open(directory.path().join("review"), catalog());
+        let application = WorktreeReviewApplication::open(
+            directory.path().join("app-data"),
+            directory.path().join("review"),
+            catalog(),
+        );
         assert_eq!(
             application
                 .overview()
@@ -629,7 +642,11 @@ mod tests {
         let review_root = directory.path().join("review");
         let catalog = catalog();
         let registered = catalog.register_directory(repository_root.clone()).unwrap();
-        let application = WorktreeReviewApplication::open(review_root.clone(), catalog.clone());
+        let application = WorktreeReviewApplication::open(
+            directory.path().join("app-data"),
+            review_root.clone(),
+            catalog.clone(),
+        );
         let selected = application.select_repository(&registered.repository_id);
         assert_eq!(
             selected.overview.capabilities.repository_browsing.status,
@@ -640,7 +657,11 @@ mod tests {
             CapabilityReadinessStatus::NotEvaluated
         );
 
-        let reopened = WorktreeReviewApplication::open(review_root, catalog);
+        let reopened = WorktreeReviewApplication::open(
+            directory.path().join("app-data"),
+            review_root,
+            catalog,
+        );
         let repository = reopened.selected_repository().unwrap();
         assert_eq!(
             repository.top_level.path(),
@@ -665,7 +686,11 @@ mod tests {
         let catalog = catalog();
         catalog.register_directory(first).unwrap();
         let second_registration = catalog.register_directory(second.clone()).unwrap();
-        let application = WorktreeReviewApplication::open(directory.path().join("review"), catalog);
+        let application = WorktreeReviewApplication::open(
+            directory.path().join("app-data"),
+            directory.path().join("review"),
+            catalog,
+        );
         application.select_repository(&second_registration.repository_id);
 
         assert_eq!(application.registered_repositories().unwrap().len(), 2);

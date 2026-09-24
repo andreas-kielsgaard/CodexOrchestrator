@@ -4,7 +4,6 @@ import type {
   RepositoryCatalogClient,
 } from '../../application/repositoryCatalog';
 import {
-  commitTarget,
   commitSourceContext,
   type AssociateWorktreeRequest,
   type BranchReviewDetail,
@@ -19,24 +18,27 @@ import {
 import { ProductViewHeader } from '../shared/ProductViewHeader';
 import { BranchNavigator } from './BranchNavigator';
 import { DetachedWorktreeList } from './DetachedWorktreeList';
-import { BuildComposer } from './BuildComposer';
 import { BuildHistory } from './BuildHistory';
+import { CreateBuildDialog } from './CreateBuildDialog';
 import { ReadinessNotice } from './ReadinessNotice';
 import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
 import { useReviewSelection } from './useReviewSelection';
 import { useCommitHistory } from './useCommitHistory';
 import { initialBuildDraft, type BuildDraft } from './buildDraft';
-import { BuildConfirmationDialog } from './BuildConfirmationDialog';
 import { BranchGraphDialog } from './branchSelection/BranchGraphDialog';
 import './worktreeReview.css';
 
 export function WorktreeReviewScreen({
   client,
   repositoryCatalog,
+  unreadBuilds = [],
+  onMarkBuildsRead,
 }: {
   readonly client: WorktreeReviewClient;
   readonly repositoryCatalog: RepositoryCatalogClient;
+  readonly unreadBuilds?: readonly ReviewBuild[];
+  readonly onMarkBuildsRead?: (buildIds: readonly BuildId[]) => void;
 }) {
   const [draft, setDraft] = useState<BuildDraft | null>(null);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState('');
@@ -60,8 +62,9 @@ export function WorktreeReviewScreen({
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const refreshTrigger = useRef<HTMLButtonElement>(null);
   const graphTrigger = useRef<HTMLButtonElement>(null);
+  const buildTrigger = useRef<HTMLButtonElement>(null);
   const [graphOpen, setGraphOpen] = useState(false);
-  const [confirmationRequest, setConfirmationRequest] = useState<CreateBuildRequest | null>(null);
+  const [buildDialogOpen, setBuildDialogOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -77,6 +80,22 @@ export function WorktreeReviewScreen({
   useEffect(() => {
     setLiveBuilds(detail?.builds ?? []);
   }, [detail]);
+  useEffect(() => {
+    if (!onMarkBuildsRead || liveBuilds.length === 0 || unreadBuilds.length === 0) return;
+    const visible = new Set(
+      liveBuilds
+        .filter(
+          (build) =>
+            build.latestAttempt?.executionState !== 'pending' &&
+            build.latestAttempt?.executionState !== 'running',
+        )
+        .map((build) => build.buildId),
+    );
+    const read = unreadBuilds
+      .filter((build) => visible.has(build.buildId))
+      .map((build) => build.buildId);
+    if (read.length > 0) onMarkBuildsRead(read);
+  }, [liveBuilds, onMarkBuildsRead, unreadBuilds]);
   useEffect(() => {
     if (!target || (busy !== 'create-build' && !hasRunningBuild)) return;
     let active = true;
@@ -97,7 +116,7 @@ export function WorktreeReviewScreen({
       window.clearInterval(timer);
     };
   }, [client, target, busy, hasRunningBuild]);
-  const disabled = loading || busy !== null;
+  const disabled = loading || (busy !== null && busy !== 'create-build');
   const selectedWorktree = detail?.worktrees.find(
     (worktree) =>
       worktree.worktreeId === selectedWorktreeId && worktree.availability.state === 'available',
@@ -216,22 +235,31 @@ export function WorktreeReviewScreen({
       'Worktree associated.',
     );
   }
-  function requestBuild(request: CreateBuildRequest) {
-    setConfirmationRequest(request);
-  }
   async function createBuild(request: CreateBuildRequest) {
-    await mutate(
-      'create-build',
-      () => client.createBuild(request),
-      'Build started. Follow its progress below.',
-    );
+    setBusy('create-build');
+    setError(null);
+    setNotice(null);
+    try {
+      const started = await client.createBuild(request);
+      setLiveBuilds((current) => [
+        started,
+        ...current.filter((build) => build.buildId !== started.buildId),
+      ]);
+      setBuildDialogOpen(false);
+      requestAnimationFrame(() => buildTrigger.current?.focus());
+      setNotice('Build started. You can continue navigating while it runs.');
+    } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(null);
+    }
   }
   async function openBuild(buildId: BuildId) {
     setOpeningBuildId(buildId);
     setError(null);
     try {
-      await client.openBuild({ buildId });
-      setNotice('Launched build.');
+      const outcome = await client.openBuild({ buildId });
+      setNotice(outcome.outcome === 'focused_existing' ? 'Focused existing build.' : 'Launched build.');
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -270,6 +298,7 @@ export function WorktreeReviewScreen({
           onBranchChange={(target) => void selectTarget(target)}
           onViewDetached={() => void viewDetached()}
           detachedSelected={showDetached}
+          unreadBuilds={unreadBuilds}
         />
 
         <div className="worktree-review__content" aria-busy={loading}>
@@ -353,33 +382,43 @@ export function WorktreeReviewScreen({
                 onAssociate={(candidate, baseline) => void associateWorktree(candidate, baseline)}
                 onRequestHistory={() => void history.load()}
                 onLoadMoreHistory={() => void history.loadMore()}
+                unreadWorktreeIds={new Set(
+                  unreadBuilds
+                    .filter((build) => build.repositoryId === repositoryId)
+                    .flatMap((build) =>
+                      build.sourceWorktreeId ? [build.sourceWorktreeId] : [],
+                    ),
+                )}
               />
-              {draft && (
-                <BuildComposer
-                  draft={draft!}
-                  onDraftChange={setDraft}
-                  onSelectCommit={(commit) =>
-                    void selectTarget(commitTarget(detail.branch, commit.objectId))
-                  }
-                  detail={detail}
-                  selectedWorktree={selectedWorktree}
-                  activeWorktreeId={overview.activeBuildContext?.worktreeId}
-                  commits={history.commits}
-                  historyLoading={history.loading}
-                  hasMoreHistory={history.hasMore}
-                  buildAvailable={canBuild}
-                  disabled={disabled}
-                  creating={busy === 'create-build'}
-                  onCreate={requestBuild}
-                  onRequestHistory={() => void history.load()}
-                  onLoadMoreHistory={() => void history.loadMore()}
-                />
-              )}
               <BuildHistory
                 builds={liveBuilds}
                 openingBuildId={openingBuildId}
                 onOpen={(buildId) => void openBuild(buildId)}
                 readLog={client.readBuildLog}
+                createButtonRef={buildTrigger}
+                onCreate={() => {
+                  setDraft(
+                    initialBuildDraft(detail, overview.activeBuildContext?.worktreeId),
+                  );
+                  setBuildDialogOpen(true);
+                }}
+                onRebuild={(build) => {
+                  const worktree = detail.worktrees.find(
+                    (candidate) =>
+                      (build.source.kind === 'existing_worktree' &&
+                        candidate.associationId === build.source.associationId) ||
+                      (build.source.kind === 'physical_worktree' &&
+                        candidate.worktreeId === build.source.worktreeId),
+                  );
+                  if (worktree) setSelectedWorktreeId(worktree.worktreeId);
+                  setDraft({
+                    sourceMode: 'direct',
+                    commit: detail.branch.tip,
+                    name: build.name,
+                    profile: build.profile ?? 'release',
+                  });
+                  setBuildDialogOpen(true);
+                }}
               />
             </>
           )}
@@ -399,14 +438,21 @@ export function WorktreeReviewScreen({
           }}
         />
       )}
-      {confirmationRequest && (
-        <BuildConfirmationDialog
-          request={confirmationRequest}
-          onClose={() => setConfirmationRequest(null)}
-          onConfirm={(request) => {
-            setConfirmationRequest(null);
-            void createBuild(request);
+      {buildDialogOpen && detail && draft && (
+        <CreateBuildDialog
+          client={client}
+          detail={detail}
+          draft={draft}
+          selectedWorktree={selectedWorktree}
+          activeWorktreeId={overview.activeBuildContext?.worktreeId}
+          buildAvailable={canBuild}
+          submitting={busy === 'create-build'}
+          onDraftChange={setDraft}
+          onClose={() => {
+            setBuildDialogOpen(false);
+            requestAnimationFrame(() => buildTrigger.current?.focus());
           }}
+          onCreate={(request) => void createBuild(request)}
         />
       )}
       {registrationOpen && (

@@ -21,7 +21,6 @@ use crate::repository_context::{
     BranchRef as ObservedBranch, BranchSummary, FullRefName, ObjectId, RepositoryContext,
     RepositoryIdentity, WorktreeLocation, WorktreeObservation,
 };
-use chrono::Utc;
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -412,7 +411,10 @@ impl BranchFirstReviewService {
         self.builds.read_log(build_id, attempt_id, offset)
     }
 
-    pub(crate) fn open_build(&self, build_id: &str) -> Result<(), String> {
+    pub(crate) fn open_build(
+        &self,
+        build_id: &str,
+    ) -> Result<super::build_service::OpenBuildOutcomeView, String> {
         self.builds.open_build(build_id)
     }
 
@@ -879,6 +881,7 @@ mod tests {
             CapabilityReadinessStatus, CapabilityReadinessView, WorktreeReviewCapabilitiesView,
         },
     };
+    use chrono::Utc;
 
     #[test]
     fn persisted_unavailable_repository_remains_visible_with_typed_readiness() {

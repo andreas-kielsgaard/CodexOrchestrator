@@ -71,7 +71,13 @@ export const worktreeTwo: AssociatedWorktree = {
 
 export const completedBuild: ReviewBuild = {
   buildId: 'build-completed',
+  repositoryId: 'repository-one',
   name: 'Completed review build',
+  initiatedAt: '2026-08-21T11:00:00Z',
+  applicationIdentifier:
+    'dev.codex-orchestrator.review.codex-durable-review.wt-worktree-build-owned.bld-build-completed',
+  applicationLabel:
+    'codex/durable-review · worktree-build-owned · build-completed',
   branchRef: 'refs/heads/codex/durable-review',
   source: {
     kind: 'branch_commit',

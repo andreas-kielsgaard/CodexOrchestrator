@@ -130,8 +130,6 @@ export function WorkflowInstanceView({
     ? attemptsForConnection(details.attempts, selectedConnection.connectionId)
     : [];
   const unassignedAttempts = attemptsWithoutElement(details.attempts);
-  const canLoadEvents = true;
-
   const loadAttempt = (eventGroup: SessionEventResultDto) => {
     setEventResult(eventGroup);
   };
@@ -273,7 +271,7 @@ export function WorkflowInstanceView({
                 )}
                 attempts={attemptsForNode(details.attempts, selectedNode.nodeId)}
                 eventResult={eventResult}
-                canLoadEvents
+                canLoadEvents={true}
                 requestText={requestText}
                 busy={busy}
                 onRequestText={setRequestText}
@@ -314,7 +312,7 @@ export function WorkflowInstanceView({
                 destinationName={nodeById(details, selectedConnection.destinationNodeId)?.name}
                 attempts={selectedConnectionAttempts}
                 eventResult={eventResult}
-                canLoadEvents
+                canLoadEvents={true}
                 onLoadAttempt={loadAttempt}
               />
             ) : null}

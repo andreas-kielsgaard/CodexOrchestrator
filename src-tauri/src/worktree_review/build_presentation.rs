@@ -121,8 +121,14 @@ pub(crate) enum ReviewBuildSourceView {
 pub(crate) struct ReviewBuildView {
     pub(crate) profile: Option<crate::worktree_application::ApplicationBuildProfile>,
     pub(crate) build_id: String,
+    pub(crate) repository_id: String,
     pub(crate) name: String,
     pub(crate) branch_ref: Option<String>,
+    pub(crate) initiated_at: String,
+    pub(crate) application_identifier: String,
+    pub(crate) application_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) source_worktree_id: Option<String>,
     pub(crate) source: ReviewBuildSourceView,
     pub(crate) workspace: BuildWorkspaceView,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,20 +236,27 @@ pub(crate) enum CleanupStateView {
 pub(super) fn review_build_view(
     build: &ReviewBuild,
     workspace: &ReviewWorkspace,
+    source_worktree_id: Option<String>,
     latest_attempt: Option<&ReviewOperationAttempt>,
     output: BuildOutputStateView,
     cleanup: CleanupStateView,
     attention: Option<BuildAttention>,
 ) -> ReviewBuildView {
+    let application_identity = super::review_runtime::identity(build, workspace);
     ReviewBuildView {
         profile: build.profile,
         build_id: build.id.as_str().to_owned(),
+        repository_id: build.source.repository_id.as_str().to_owned(),
         name: build.name.as_str().to_owned(),
         branch_ref: build
             .source
             .branch_ref
             .as_ref()
             .map(|reference| reference.as_str().to_owned()),
+        initiated_at: build.created_at.to_rfc3339(),
+        application_identifier: application_identity.identifier,
+        application_label: application_identity.label,
+        source_worktree_id,
         source: source_view(&build.source.branch_ref, &build.source.selection),
         workspace: BuildWorkspaceView {
             worktree_id: workspace.worktree_id.as_str().to_owned(),

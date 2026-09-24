@@ -24,6 +24,7 @@ struct ToolReply {
 struct ToolOutput {
     output_root: PathBuf,
     executable: PathBuf,
+    application_schema_version: Option<i64>,
 }
 #[derive(Deserialize)]
 struct ToolError {
@@ -67,6 +68,8 @@ pub(super) fn build(
         "action": "app", "worktreeRoot": external(&worktree), "attemptRoot": external(&attempt),
         "profile": request.profile, "cache": "auto", "dependencyPolicy": policy,
         "npmCache": npm_cache.map(|path| external(path)), "cargoBinaryName": request.cargo_binary_name,
+        "applicationIdentifier": request.application_identifier,
+        "applicationLabel": request.application_label,
         "runningExecutable": std::env::current_exe().ok().map(|path| external(&path)),
     })).map_err(|_| unavailable())?).map_err(|_| unavailable())?;
     let log = fs::File::create(&log_path).map_err(|_| unavailable())?;
@@ -133,6 +136,7 @@ pub(super) fn build(
         output_root,
         log_path,
         executable,
+        application_schema_version: result.application_schema_version,
     })
 }
 

@@ -14,6 +14,7 @@ export function BranchBrowser({
   onOpenGraph,
   graphTriggerRef,
   disabled = false,
+  unreadTargetKeys,
 }: {
   readonly repositoryId: string;
   readonly branches: readonly ReviewBranch[];
@@ -22,6 +23,7 @@ export function BranchBrowser({
   readonly onOpenGraph: () => void;
   readonly graphTriggerRef?: Ref<HTMLButtonElement>;
   readonly disabled?: boolean;
+  readonly unreadTargetKeys?: ReadonlySet<string>;
 }) {
   const source = selectedTarget ? sourceTarget(selectedTarget) : null;
   const selectedRow = source
@@ -59,6 +61,9 @@ export function BranchBrowser({
                 onClick={() => onBranchChange(branch.target)}
               >
                 <strong>{branch.displayName}</strong>
+                {unreadTargetKeys?.has(targetKey(branch.target)) && (
+                  <span className="worktree-review__notification-dot" aria-label="Build finished" />
+                )}
                 <span>{branch.tip.abbreviatedObjectId}</span>
                 <small>
                   {branch.availableWorktreeCount}{' '}

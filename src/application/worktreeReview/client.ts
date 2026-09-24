@@ -12,6 +12,7 @@ import type {
   CreateBuildRequest,
   CreateWorktreeRequest,
   OpenBuildRequest,
+  OpenBuildOutcome,
   RepositoryId,
   ReviewBuild,
   BuildId,
@@ -39,5 +40,5 @@ export interface WorktreeReviewClient {
   createWorktree(input: CreateWorktreeRequest): Promise<AssociatedWorktree>;
   createBuild(input: CreateBuildRequest): Promise<ReviewBuild>;
   readBuildLog(buildId: BuildId, attemptId: string, offset: number): Promise<BuildLogChunk>;
-  openBuild(input: OpenBuildRequest): Promise<void>;
+  openBuild(input: OpenBuildRequest): Promise<OpenBuildOutcome>;
 }

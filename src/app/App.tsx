@@ -155,10 +155,15 @@ import { ExecutionConfigurationScreen } from '../features/executionConfiguration
 import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
 
 import type { WorktreeReviewClient } from '../application/worktreeReview';
+import type { WorktreeReviewBuildActivitySource } from '../application/worktreeReview';
 
 import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
 
 import { WorktreeReviewScreen } from '../features/worktreeReview';
+
+const EMPTY_BUILD_ACTIVITY = { unreadBuilds: [] } as const;
+const emptyBuildActivitySnapshot = () => EMPTY_BUILD_ACTIVITY;
+const emptySubscribe = () => () => undefined;
 
 export interface AppProps {
   readonly agentSessionImportClient?: AgentSessionImportClient;
@@ -269,6 +274,8 @@ export interface AppProps {
 
   readonly worktreeReviewClient?: WorktreeReviewClient;
 
+  readonly worktreeReviewBuildActivitySource?: WorktreeReviewBuildActivitySource;
+
   /** Shared registered-repository authority used by Worktree Review and Workflow target selection. */
 
   readonly repositoryCatalogClient?: RepositoryCatalogClient;
@@ -369,10 +376,17 @@ export function App({
 
   worktreeReviewClient,
 
+  worktreeReviewBuildActivitySource,
+
   repositoryCatalogClient,
 
   initialSurface = 'epics',
 }: AppProps) {
+  const buildActivitySnapshot = useSyncExternalStore(
+    worktreeReviewBuildActivitySource?.subscribe ?? emptySubscribe,
+    worktreeReviewBuildActivitySource?.getSnapshot ?? emptyBuildActivitySnapshot,
+    worktreeReviewBuildActivitySource?.getSnapshot ?? emptyBuildActivitySnapshot,
+  );
   const initialApplicationSurface: ApplicationSurface =
     (initialSurface === 'workflows' && !workflowAuthoringClient) ||
     (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
@@ -1401,6 +1415,9 @@ export function App({
               }}
             >
               Worktree Review
+              {buildActivitySnapshot.unreadBuilds.length > 0 && (
+                <span className="surface-switcher__notification-dot" aria-label="Build finished" />
+              )}
             </button>
           )}
 
@@ -1689,6 +1706,10 @@ export function App({
           client={worktreeReviewClient}
 
           repositoryCatalog={repositoryCatalogClient}
+
+          unreadBuilds={buildActivitySnapshot.unreadBuilds}
+
+          onMarkBuildsRead={worktreeReviewBuildActivitySource?.markRead}
         />
       ) : surface === 'agent-sessions' ? (
         <StandaloneAgentSessionScreen

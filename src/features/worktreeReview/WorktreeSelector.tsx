@@ -26,6 +26,7 @@ export function WorktreeSelector({
   onAssociate,
   onRequestHistory,
   onLoadMoreHistory,
+  unreadWorktreeIds,
 }: {
   readonly worktrees: readonly AssociatedWorktree[];
   readonly candidates: readonly WorktreeAssociationCandidate[];
@@ -44,6 +45,7 @@ export function WorktreeSelector({
   ) => void;
   readonly onRequestHistory: () => void;
   readonly onLoadMoreHistory: () => void;
+  readonly unreadWorktreeIds?: ReadonlySet<string>;
 }) {
   const availableWorktrees = worktrees.filter(
     (worktree) => worktree.availability.state === 'available',
@@ -96,6 +98,9 @@ export function WorktreeSelector({
                       <span className="worktree-review__tag">Detached HEAD</span>
                     )}
                     {active && <span className="worktree-review__tag">Active build checkout</span>}
+                    {unreadWorktreeIds?.has(worktree.worktreeId) && (
+                      <span className="worktree-review__notification-dot" aria-label="Build finished" />
+                    )}
                   </span>
                   <span className="worktree-review__path">{worktree.locationLabel}</span>
                   <span>{baselineLabel(worktree.baseline)}</span>

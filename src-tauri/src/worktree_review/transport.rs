@@ -1,18 +1,20 @@
 use super::{
     branch_first::{
         AssociateWorktreeInput, AssociatedWorktreeView, BranchDetailView, BranchFirstReviewService,
-        ProductOverviewView, DetachedWorktreeView,
+        DetachedWorktreeView, ProductOverviewView,
     },
     branch_graph::BranchGraphView,
     branch_history::{CommitHistoryPageView, CommitHistoryQuery},
-    build_service::{CreateBuildInput, ReviewBuildView},
+    build_service::{CreateBuildInput, OpenBuildOutcomeView, ReviewBuildView},
     domain::ReviewTarget,
     state::WorktreeReviewApplication,
     worktree_activity::WorktreeActivityView,
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
+
+pub(crate) const BUILD_TERMINAL_EVENT: &str = "worktree-review://build-terminal";
 
 pub(crate) struct WorktreeReviewTauriState {
     product: Result<Arc<BranchFirstReviewService>, String>,
@@ -83,7 +85,10 @@ pub(crate) async fn worktree_review_build_log(
     input: BuildLogInput,
 ) -> Result<super::build_service::BuildLogChunkView, String> {
     let product = state.product_arc()?;
-    blocking("build log", move || product.read_build_log(&input.build_id, &input.attempt_id, input.offset)).await
+    blocking("build log", move || {
+        product.read_build_log(&input.build_id, &input.attempt_id, input.offset)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -165,7 +170,10 @@ pub(crate) async fn worktree_review_detached_worktrees(
     input: RepositorySelectionInput,
 ) -> Result<Vec<DetachedWorktreeView>, String> {
     let product = state.product_arc()?;
-    blocking("detached worktrees", move || product.detached_worktrees(&input.repository_id)).await
+    blocking("detached worktrees", move || {
+        product.detached_worktrees(&input.repository_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -194,6 +202,7 @@ pub(crate) async fn create_worktree_review_worktree(
 
 #[tauri::command]
 pub(crate) async fn create_worktree_review_build(
+    app: AppHandle,
     state: State<'_, WorktreeReviewTauriState>,
     input: CreateBuildInput,
 ) -> Result<ReviewBuildView, String> {
@@ -204,21 +213,30 @@ pub(crate) async fn create_worktree_review_build(
     tauri::async_runtime::spawn_blocking(move || {
         let result = product.create_build_with_started(input, move |started| {
             if let Ok(mut sender) = callback_sender.lock() {
-                if let Some(sender) = sender.take() { let _ = sender.send(Ok(started)); }
+                if let Some(sender) = sender.take() {
+                    let _ = sender.send(Ok(started));
+                }
             }
         });
+        if let Ok(terminal) = &result {
+            let _ = app.emit(BUILD_TERMINAL_EVENT, terminal);
+        }
         if let Ok(mut sender) = sender.lock() {
-            if let Some(sender) = sender.take() { let _ = sender.send(result); }
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(result);
+            }
         }
     });
-    receiver.await.map_err(|_| "Build task stopped before recording its start".to_string())?
+    receiver
+        .await
+        .map_err(|_| "Build task stopped before recording its start".to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn worktree_review_open_build(
     state: State<'_, WorktreeReviewTauriState>,
     input: OpenBuildInput,
-) -> Result<(), String> {
+) -> Result<OpenBuildOutcomeView, String> {
     let product = state.product_arc()?;
     blocking("open build", move || product.open_build(&input.build_id)).await
 }

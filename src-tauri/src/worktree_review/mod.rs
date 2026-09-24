@@ -11,6 +11,7 @@ mod build_storage;
 mod cleanup_service;
 pub(crate) mod domain;
 mod retention;
+pub(crate) mod review_runtime;
 mod source_materialization;
 mod state;
 pub(crate) mod storage;

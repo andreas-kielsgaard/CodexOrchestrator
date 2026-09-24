@@ -18,6 +18,7 @@ export function CommitRangeDialog({
   connection,
   onClose,
   onSelect,
+  onSelectCommit,
 }: {
   readonly client: WorktreeReviewClient;
   readonly query: CommitHistoryQuery;
@@ -25,6 +26,7 @@ export function CommitRangeDialog({
   readonly connection: GraphConnection;
   readonly onClose: () => void;
   readonly onSelect: (target: ReviewTarget) => void;
+  readonly onSelectCommit?: (commit: GitCommit, target: ReviewTarget) => void;
 }) {
   const history = useCommitHistory(client, query);
   const [selected, setSelected] = useState<GitCommit>();
@@ -126,7 +128,12 @@ export function CommitRangeDialog({
           type="button"
           className="worktree-review__primary"
           disabled={!selected}
-          onClick={() => selected && onSelect(commitTarget(source, selected.objectId))}
+          onClick={() => {
+            if (!selected) return;
+            const target = commitTarget(source, selected.objectId);
+            onSelectCommit?.(selected, target);
+            onSelect(target);
+          }}
         >
           Use this commit
         </button>

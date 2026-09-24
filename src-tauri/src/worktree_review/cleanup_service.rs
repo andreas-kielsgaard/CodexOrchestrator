@@ -84,7 +84,8 @@ impl CleanupEffectPort for AppDataCleanupEffects {
                 self.remove_storage_key(storage_key.as_str())
             }
             CleanupResource::AttemptLogs { storage_key, .. }
-            | CleanupResource::BuildAttemptStorage { storage_key, .. } => {
+            | CleanupResource::BuildAttemptStorage { storage_key, .. }
+            | CleanupResource::ReviewRuntime { storage_key, .. } => {
                 self.remove_storage_key(storage_key.as_str())
             }
         }
@@ -442,6 +443,24 @@ impl WorktreeReviewCleanupService {
                             || attempt.kind != ReviewOperationKind::Build
                             || !attempt.is_terminal()
                     })
+                {
+                    return Ok(ResourceAuthority::Unverified);
+                }
+            }
+            CleanupResource::ReviewRuntime {
+                build_id,
+                storage_key,
+                containment_root,
+                ..
+            } => {
+                let expected_key =
+                    super::review_runtime::runtime_storage_key(&build.id).map_err(|message| {
+                        CleanupServiceError::new(CleanupServiceErrorKind::InvalidRequest, message)
+                    })?;
+                if build_id != &build.id
+                    || containment_root != &self.containment_root
+                    || !safe_storage_key(storage_key.as_str())
+                    || storage_key != &expected_key
                 {
                     return Ok(ResourceAuthority::Unverified);
                 }
@@ -912,6 +931,40 @@ mod tests {
             presentation.eligibility,
             CleanupEligibility::SourceUnverified
         );
+        assert!(effects.applied.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn review_runtime_cleanup_requires_the_exact_build_scoped_key() {
+        let (_directory, _database, service, effects, old) = service_fixture();
+        let expected = super::super::review_runtime::runtime_storage_key(&old.id).unwrap();
+        let accepted = service
+            .cleanup_superseded_appdata_resources(CleanupRequest {
+                build_id: old.id.clone(),
+                resources: vec![CleanupResource::ReviewRuntime {
+                    id: CleanupResourceId::new("review-runtime").unwrap(),
+                    build_id: old.id.clone(),
+                    storage_key: expected,
+                    containment_root: service.containment_root().clone(),
+                }],
+            })
+            .unwrap();
+        assert_eq!(accepted.state, CleanupJobState::Completed);
+        assert_eq!(effects.applied.lock().unwrap().len(), 1);
+
+        let (_directory, _database, service, effects, old) = service_fixture();
+        let rejected = service
+            .cleanup_superseded_appdata_resources(CleanupRequest {
+                build_id: old.id.clone(),
+                resources: vec![CleanupResource::ReviewRuntime {
+                    id: CleanupResourceId::new("wrong-review-runtime").unwrap(),
+                    build_id: old.id,
+                    storage_key: CleanupStorageKey::new("review-runtimes/another-build").unwrap(),
+                    containment_root: service.containment_root().clone(),
+                }],
+            })
+            .unwrap();
+        assert_eq!(rejected.eligibility, CleanupEligibility::SourceUnverified);
         assert!(effects.applied.lock().unwrap().is_empty());
     }
 

@@ -33,6 +33,8 @@ const MAX_LAUNCH_ENVIRONMENT_ENTRIES: usize = 16;
 const MAX_LAUNCH_ENVIRONMENT_UNITS: usize = 16 * 1024;
 const MAX_GIT_ID_UNITS: usize = 128;
 const MAX_GIT_REF_UNITS: usize = 512;
+const MAX_APPLICATION_IDENTIFIER_UNITS: usize = 200;
+const MAX_APPLICATION_LABEL_UNITS: usize = 512;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct GitCommitId(String);
@@ -187,6 +189,8 @@ pub(crate) struct PhysicalWorktreeBuildRequest {
     pub(crate) attempt_root: PathBuf,
     pub(crate) dependency_policy: PhysicalWorktreeDependencyPolicy,
     pub(crate) cargo_binary_name: String,
+    pub(crate) application_identifier: Option<String>,
+    pub(crate) application_label: Option<String>,
 }
 
 impl PhysicalWorktreeBuildRequest {
@@ -227,7 +231,44 @@ impl PhysicalWorktreeBuildRequest {
             dependency_policy,
             profile: ApplicationBuildProfile::Release,
             cargo_binary_name,
+            application_identifier: None,
+            application_label: None,
         })
+    }
+
+    pub(crate) fn set_application_identifier(
+        &mut self,
+        value: impl Into<String>,
+    ) -> Result<(), WorktreeApplicationError> {
+        let value = value.into();
+        let valid = value.len() <= MAX_APPLICATION_IDENTIFIER_UNITS
+            && value.contains('.')
+            && value.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-".contains(&byte)
+            })
+            && value.split('.').all(|segment| {
+                !segment.is_empty() && !segment.starts_with('-') && !segment.ends_with('-')
+            });
+        if !valid {
+            return Err(invalid_request("The application identifier is invalid."));
+        }
+        self.application_identifier = Some(value);
+        Ok(())
+    }
+
+    pub(crate) fn set_application_label(
+        &mut self,
+        value: impl Into<String>,
+    ) -> Result<(), WorktreeApplicationError> {
+        let value = value.into();
+        if value.trim().is_empty()
+            || value.chars().count() > MAX_APPLICATION_LABEL_UNITS
+            || value.chars().any(char::is_control)
+        {
+            return Err(invalid_request("The application label is invalid."));
+        }
+        self.application_label = Some(value);
+        Ok(())
     }
 }
 
@@ -238,6 +279,7 @@ pub(crate) struct PhysicalWorktreeBuildResult {
     pub(crate) output_root: PathBuf,
     pub(crate) log_path: PathBuf,
     pub(crate) executable: PathBuf,
+    pub(crate) application_schema_version: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -300,7 +342,7 @@ fn invalid_launch_context() -> WorktreeApplicationError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OpenOutcome {
     ExistingWindowActivationRequested,
-    DetachedLaunchStarted,
+    LaunchedWindowObserved,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -454,5 +496,35 @@ mod tests {
                 .kind,
             WorktreeApplicationErrorKind::InvalidRequest
         );
+    }
+
+    #[test]
+    fn application_identifier_is_validated_before_reaching_the_build_tool() {
+        let root = std::env::temp_dir().join("worktree-application-identifier");
+        let mut request = PhysicalWorktreeBuildRequest::new(
+            root.join("worktree"),
+            root.join("output"),
+            PhysicalWorktreeDependencyPolicy::UseExisting,
+            "codex-orchestrator",
+        )
+        .unwrap();
+        assert!(request
+            .set_application_identifier(
+                "dev.codex-orchestrator.review.main.wt-worktree-one.bld-build-one",
+            )
+            .is_ok());
+        assert!(request
+            .set_application_label("refinement/usability · worktree-one · build-one")
+            .is_ok());
+        for invalid in ["Not Safe", "dev..review", "dev.-review", "single"] {
+            assert_eq!(
+                request
+                    .set_application_identifier(invalid)
+                    .unwrap_err()
+                    .kind,
+                WorktreeApplicationErrorKind::InvalidRequest,
+            );
+        }
+        assert!(request.set_application_label("\n").is_err());
     }
 }

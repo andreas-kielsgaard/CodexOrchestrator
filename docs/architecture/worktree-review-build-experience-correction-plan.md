@@ -1,6 +1,6 @@
 # Worktree Review build experience correction
 
-Status: proposed 2026-09-24. No implementation has started.
+Status: implemented 2026-09-24. Automated and packaged-native validation completed.
 
 ## Target and boundaries
 
@@ -60,7 +60,8 @@ This pass does not add source-freshness comparison, estimated completion times, 
 - Use `worktree-review/review-runtimes/<build-id>/app-data` and `.../webview-data`. Pass them as `CODEX_ORCHESTRATOR_APP_DATA_DIR` and `WEBVIEW2_USER_DATA_FOLDER`, while continuing to pass the shared `CODEX_ORCHESTRATOR_WORKTREE_REVIEW_DATA_DIR` plus active build/worktree IDs.
 - On the first launch of a build, mirror the controller's durable AppData into the private app-data directory so profiles, repositories, capability configuration, and related setup are available. Preserve that private copy on later launches of the same build; do not overwrite changes made by the reviewed instance.
 - Mirror regular durable files and directories by default, but exclude the shared `worktree-review` tree, `EBWebView`, live navigation/IPC token files, probe/temp/cache/log/lock data, and SQLite `-wal`/`-shm` sidecars. Create consistent copies of SQLite databases with SQLite snapshot/VACUUM semantics instead of copying live database files byte-for-byte. Start WebView2 with a new private profile rather than copying an in-use browser profile.
-- Write a seed manifest containing build ID, branch/worktree identity, source app-data path, seed time, and schema version. If seeding fails, do not start the executable; surface the failed item and leave the controller data unchanged.
+- Copy controller databases only when the reviewed source declares the same active schema version. Older or unrecognised sources receive safe non-database configuration and initialize their own compatible database; never relabel a newer database as an older schema.
+- Write a seed manifest containing build ID, branch/worktree identity, source app-data path, seed time, controller and target schema versions, and whether databases were seeded. If seeding fails, do not start the executable; surface the failed item and leave the controller data unchanged.
 - Include each review-runtime root in the existing Worktree Review retention/cleanup resources. Removing a retained build may remove its private app-data and WebView data only through the current contained-path cleanup service.
 
 ## File and ownership shape
@@ -107,6 +108,8 @@ This pass does not add source-freshness comparison, estimated completion times, 
 - First launch creates isolated AppData and WebView roots populated with usable controller configuration without copying live SQLite sidecars, IPC tokens, Worktree Review recursively, or the controller WebView profile. Relaunch preserves reviewed-instance changes.
 - Launch failure or immediate exit does not show a false success notice; the UI reports the observed open outcome or error.
 - Validate with focused frontend and Rust tests, `npm run test:worktree-review`, `npm run test:build-tools`, `npm run build:frontend`, `npm run test:rust:worktree-review`, and a native release-controller build -> concurrent builds -> launch/focus -> cleanup flow. Capture screenshots and process/AppData evidence under `docs/validation/worktree-review-build-experience/`.
+
+Validation completed with 45 focused frontend tests, 22 build-tool tests, 75 focused Rust tests, the 768-test repository suite, lint, frontend and packaged release builds, plus a native flow covering concurrent builds, navigation, terminal dots, exact target clearing, distinct instances, repeat-launch focus, isolated data roots, and an older-schema branch.
 
 ## Explicit non-goals
 

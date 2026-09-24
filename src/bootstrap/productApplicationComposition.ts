@@ -39,6 +39,7 @@ import {
 } from '../infrastructure/productDecisions/tauriProductDecisionClient';
 import { createRepositoryWorktreeTargetSelector } from '../features/repositoryCatalog';
 import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
+import { tauriWorktreeReviewBuildActivity } from '../infrastructure/tauriWorktreeReviewBuildActivity';
 import { tauriRepositoryCatalog } from '../infrastructure/repositoryCatalog/tauriRepositoryCatalog';
 
 const RepositoryWorktreeTargetSelector =
@@ -66,6 +67,7 @@ export function createProductApplicationComposition(): AppProps {
     workflowTargetSelector: RepositoryWorktreeTargetSelector,
     repositoryCatalogClient: tauriRepositoryCatalog,
     worktreeReviewClient: tauriWorktreeReview,
+    worktreeReviewBuildActivitySource: tauriWorktreeReviewBuildActivity,
     managedPlanBuilderSessionClient: createTauriManagedPlanBuilderSessionClient(
       tauriAgentSessionClient,
       invoke,
