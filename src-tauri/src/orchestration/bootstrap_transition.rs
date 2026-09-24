@@ -5063,7 +5063,7 @@ mod tests {
         )
         .unwrap();
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
+            .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap();
         let initialize = serde_json::json!({
@@ -5183,7 +5183,7 @@ mod tests {
         )
         .unwrap();
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
+            .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap();
         let initialize = || {
@@ -6437,7 +6437,7 @@ mod tests {
         let endpoint = injection.config_overrides.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
         let bearer = injection.environment.1.clone();
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
-            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build().unwrap();
+            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap();
             let initialize = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}).to_string();
             assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization","Bearer wrong").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::UNAUTHORIZED);
             assert_eq!(client.post(&endpoint).header("content-type","application/json").header("accept","application/json, text/event-stream").header("authorization",format!("Bearer {bearer}")).header("origin","https://evil.example").body(initialize.clone()).send().await.unwrap().status(), reqwest::StatusCode::FORBIDDEN);

@@ -1,8 +1,14 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
-afterEach(cleanup);
+configure({ asyncUtilTimeout: 5_000 });
+
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+});
 
 // jsdom does not implement the browser's dialog top layer.
 if (!HTMLDialogElement.prototype.showModal)

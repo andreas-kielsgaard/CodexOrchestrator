@@ -161,18 +161,26 @@ export function useAgentSession(
   );
   const historySnapshot = useSyncExternalStore(subscribeToHistory, readHistory, readHistory);
   const composerCacheKey = composerDraftCacheKey(selectedSessionId, options.folderTarget);
+  const [initialComposer] = useState(() => ({
+    key: composerCacheKey,
+    draft: readCachedComposerDraft(composerCacheKey),
+  }));
   const composerCacheKeyRef = useRef(composerCacheKey);
   const [fallbackDetails, setFallbackDetails] = useState<AgentSessionDetailsDto | null>(null);
   const details = historySource ? historySnapshot.details : fallbackDetails;
-  const [draft, setDraft] = useState('');
-  const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(null);
+  const [draft, setDraft] = useState(initialComposer.draft?.text ?? '');
+  const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(
+    initialComposer.key,
+  );
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
   const acceptedOptionsRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
-  const [workingDirectory, setWorkingDirectory] = useState('');
+  const [workingDirectory, setWorkingDirectory] = useState(
+    initialComposer.draft?.workingDirectory ?? '',
+  );
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [canceling, setCanceling] = useState(false);
@@ -309,7 +317,7 @@ export function useAgentSession(
   );
 
   const startNewSession = useCallback(
-    (cached = readCachedComposerDraft(composerCacheKeyRef.current)) => {
+    (cached = readCachedComposerDraft(composerCacheKeyRef.current), hydrateComposer = true) => {
       loadGenerationRef.current += 1;
       selectedIdRef.current = null;
       setFallbackDetails(null);
@@ -317,8 +325,10 @@ export function useAgentSession(
       setCurrentProfile(null);
       acceptedOptionsRef.current = null;
       invocationIdsRef.current = new Set();
-      setWorkingDirectory(cached?.workingDirectory ?? '');
-      setDraft(cached?.text ?? '');
+      if (hydrateComposer) {
+        setWorkingDirectory(cached?.workingDirectory ?? '');
+        setDraft(cached?.text ?? '');
+      }
       setError(null);
       setLoading(false);
     },
@@ -332,11 +342,12 @@ export function useAgentSession(
   useEffect(() => {
     setHydratedComposerCacheKey(null);
     const cached = readCachedComposerDraft(composerCacheKey);
+    const hydrateComposer = composerCacheKeyRef.current !== composerCacheKey;
     composerCacheKeyRef.current = composerCacheKey;
     if (selectedSessionId) {
-      setDraft(cached?.text ?? '');
+      if (hydrateComposer) setDraft(cached?.text ?? '');
       if (selectedIdRef.current !== selectedSessionId) void selectSession(selectedSessionId);
-    } else startNewSession(cached);
+    } else startNewSession(cached, hydrateComposer);
     setHydratedComposerCacheKey(composerCacheKey);
   }, [selectedSessionId, draftKey, composerCacheKey, selectSession, startNewSession]);
 

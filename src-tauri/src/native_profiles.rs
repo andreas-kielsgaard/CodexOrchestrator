@@ -5044,8 +5044,7 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet, NativeCodexSelectedRuntimeProfileSource, RuntimeSelections, SandboxMode,
-        SelectedRuntimeProfileSource,
+        NativeCodexSelectedRuntimeProfileSource, SandboxMode, SelectedRuntimeProfileSource,
     };
     use std::sync::Barrier;
     use std::thread;
@@ -5064,7 +5063,10 @@ mod tests {
                 exit_code: None,
                 sandbox_receipt_observed: false,
             });
-            *self.terminated.lock().unwrap() += 1;
+            *self
+                .terminated
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
             Ok(())
         }
     }
@@ -5355,15 +5357,12 @@ mod tests {
         assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
         assert_eq!(
             snapshot.exposure.sandbox_modes,
-            [
-                SandboxMode::ReadOnly,
-                SandboxMode::WorkspaceWrite,
-                SandboxMode::DangerFullAccess
-            ]
-            .into_iter()
-            .collect()
+            [SandboxMode::DangerFullAccess].into_iter().collect()
         );
-        assert_eq!(snapshot.locked.sandbox_mode, None);
+        assert_eq!(
+            snapshot.locked.sandbox_mode,
+            Some(SandboxMode::DangerFullAccess)
+        );
         assert!(snapshot.exposure.models.contains("native-model"));
         let encoded = serde_json::to_value(snapshot).unwrap();
         assert!(encoded.get("home").is_none());
@@ -5757,6 +5756,7 @@ mod tests {
             sandbox_receipt_observed: false,
         });
         service.request_sandbox_initialization(&profile.id).unwrap();
+        service.reconcile_setup_attempts(&profile.id).unwrap();
         assert!(!service.probe_root(&profile.id).exists());
         let mut query = service.query().unwrap();
         let awaiting_confirmation = query.profiles.remove(0);
@@ -5783,6 +5783,7 @@ mod tests {
             sandbox_receipt_observed: true,
         });
         service.run_workspace_write_canary(&profile.id).unwrap();
+        service.reconcile_setup_attempts(&profile.id).unwrap();
         let mut query = service.query().unwrap();
         let canaried = query.profiles.remove(0);
         assert_eq!(canaried.readiness.workspace_write_canary, "passed");
@@ -5891,6 +5892,7 @@ mod tests {
         fs::write(&stale_receipt, "native-codex-profile-canary").unwrap();
 
         service.run_workspace_write_canary(&profile.id).unwrap();
+        service.reconcile_setup_attempts(&profile.id).unwrap();
 
         let profile = service.query().unwrap().profiles.remove(0);
         assert_eq!(profile.readiness.workspace_write_canary, "blocked");
@@ -5932,6 +5934,7 @@ mod tests {
             sandbox_receipt_observed: false,
         });
         service.run_workspace_write_canary(&profile.id).unwrap();
+        service.reconcile_setup_attempts(&profile.id).unwrap();
         assert_eq!(
             service.query().unwrap().profiles[0]
                 .setup_attempt
@@ -6167,7 +6170,8 @@ mod tests {
         assert!(requested.setup_attempt.launch_accepted_at.is_some());
         assert!(requested.setup_attempt.settled_at.is_none());
 
-        let settled = service.query().unwrap().profiles.remove(0);
+        service.reconcile_setup_attempts(&profile.id).unwrap();
+        let settled = service.profile(&profile.id).unwrap();
         assert_eq!(settled.setup_attempt.disposition, "terminal_failed");
         assert_eq!(settled.setup_attempt.terminal_classification, "exit_code");
         assert_eq!(settled.setup_attempt.terminal_exit_code, Some(7));
@@ -6229,6 +6233,7 @@ mod tests {
                 params![profile.id],
             )
             .unwrap();
+        service.reconcile_setup_attempts(&profile.id).unwrap();
         let result = service.query().unwrap();
         assert_eq!(
             result.profiles[0].readiness.sandbox_initialization,
@@ -6258,6 +6263,7 @@ mod tests {
         service.request_sandbox_initialization(&profile.id).unwrap();
         drop(service);
         let reopened = NativeProfileService::open(database, directory.path().join("app")).unwrap();
+        reopened.reconcile_setup_attempts(&profile.id).unwrap();
         let query = reopened.query().unwrap();
         assert_eq!(
             query.profiles[0].readiness.sandbox_initialization,
@@ -6327,6 +6333,7 @@ mod tests {
         service.request_sandbox_initialization(&first.id).unwrap();
 
         service.select(&second.id).unwrap();
+        service.reconcile_setup_attempts(&first.id).unwrap();
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
         assert_eq!(
             service
@@ -6364,6 +6371,7 @@ mod tests {
         service.run_workspace_write_canary(&first.id).unwrap();
 
         service.select(&second.id).unwrap();
+        service.reconcile_setup_attempts(&first.id).unwrap();
         assert_eq!(*fake.terminated.lock().unwrap(), 1);
         assert_eq!(
             service
@@ -6506,6 +6514,7 @@ mod tests {
             .unwrap();
 
         service.select(&second.id).unwrap();
+        service.reconcile_sandbox_adoption(&first.id).unwrap();
         let invalidated = service.profile(&first.id).unwrap();
         assert_eq!(invalidated.sandbox_adoption.disposition, "invalidated");
         assert_eq!(
@@ -6524,6 +6533,7 @@ mod tests {
             .confirm_preprovisioned_sandbox_adoption(&first.id)
             .unwrap();
         fs::remove_file(config).unwrap();
+        service.reconcile_sandbox_adoption(&first.id).unwrap();
         let drifted = service
             .query()
             .unwrap()
@@ -6958,9 +6968,9 @@ mod tests {
         service.cli = fake.clone();
         let profile = service.create_dedicated().unwrap();
         assert!(service.request_login(&profile.id).is_err());
-        assert!(service.refresh_readiness(&profile.id).is_err());
+        assert!(service.refresh_readiness(&profile.id).is_ok());
         assert_eq!(*fake.starts.lock().unwrap(), 0);
-        assert!(fake.calls.lock().unwrap().is_empty());
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
         service.select(&profile.id).unwrap();
         fs::remove_file(Path::new(&profile.home_path).join(MARKER_FILE)).unwrap();
         assert!(service.request_login(&profile.id).is_err());
@@ -7143,6 +7153,9 @@ mod tests {
         let (directory, mut service) = service();
         let profile = service.create_dedicated().unwrap();
         service.select(&profile.id).unwrap();
+        service
+            .select_execution_mode(&profile.id, ExecutionMode::WorkspaceWrite)
+            .unwrap();
         let root = directory.path().join("assigned-application-root");
         fs::create_dir_all(&root).unwrap();
         let workspace_target = NativeLaunchTarget::application_owned(root.clone(), true).unwrap();
@@ -7309,7 +7322,7 @@ mod tests {
                 .danger_full_access_canary,
             "not_run"
         );
-        service.query().unwrap();
+        service.reconcile_full_access_canary(&profile.id).unwrap();
         assert_eq!(
             service
                 .profile(&profile.id)

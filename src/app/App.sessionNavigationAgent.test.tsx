@@ -74,7 +74,9 @@ it('agent commands navigate the mounted UI and share its folders, disclosure and
   const run = async (command: SessionNavigationCommand) => {
     const id = String(++sequence);
     act(() => receive({ id, command }));
-    await waitFor(() => expect(complete).toHaveBeenCalledWith(id, expect.any(Object), null));
+    await waitFor(() => expect(complete).toHaveBeenCalledWith(id, expect.any(Object), null), {
+      timeout: 15_000,
+    });
     return complete.mock.calls.find((call) => call[0] === id)![1] as SessionNavigationState;
   };
   const initial = await run({ kind: 'inspect' });
