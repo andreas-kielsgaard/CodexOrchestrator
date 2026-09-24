@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 55;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 58;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -50,6 +50,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
+        transaction
+            .execute_batch(crate::execution_devices::SCHEMA)
+            .map_err(|error| format!("Unable to evolve execution device schema: {error}"))?;
         transaction
             .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to evolve repository catalog schema: {error}"))?;
@@ -176,6 +179,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         transaction
             .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
+        transaction
+            .execute_batch(crate::execution_devices::SCHEMA)
+            .map_err(|error| format!("Unable to migrate execution device schema: {error}"))?;
         transaction
             .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
@@ -437,6 +443,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     transaction
+        .execute_batch(crate::execution_devices::SCHEMA)
+        .map_err(|error| format!("Unable to initialize execution device schema: {error}"))?;
+    transaction
         .execute_batch(crate::repository_catalog::REPOSITORY_CATALOG_SCHEMA)
         .map_err(|error| format!("Unable to initialize repository catalog schema: {error}"))?;
     crate::orchestration::epic_settlement::initialize(&transaction)
@@ -476,6 +485,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
 
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
     connection
+        .execute_batch(crate::execution_devices::SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
         .execute_batch(crate::repository_catalog::device_locations::DEVICE_LOCATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
@@ -512,6 +524,14 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
 }
 
 fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    let execution_device_schema_is_present = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_devices','execution_device_activity_leases')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|table_count| table_count == 2)
+        .map_err(|error| format!("Unable to inspect execution device schema: {error}"))?;
     let native_profile_schema_is_present = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_codex_profiles')",
@@ -614,7 +634,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         [], |row| row.get(0)).map_err(|e| e.to_string())?;
     let preparation_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let target_transition_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_target_transitions','sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    Ok(preparation_schema_is_present
+    Ok(execution_device_schema_is_present
+        && preparation_schema_is_present
         && target_transition_schema_is_present
         && import_schema_is_present
         && native_profile_schema_is_present
@@ -662,7 +683,10 @@ mod tests {
         initialize_active_database(&connection).expect("upgrade database");
 
         assert!(table_exists(&connection, "execution_model_catalogues"));
-        assert_eq!(pragma_i64(&connection, "user_version"), ACTIVE_SCHEMA_VERSION);
+        assert_eq!(
+            pragma_i64(&connection, "user_version"),
+            ACTIVE_SCHEMA_VERSION
+        );
     }
 
     fn seed_file_review_predecessor(

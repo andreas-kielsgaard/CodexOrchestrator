@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
 import type {
   DiscoveredNativeCodexHome,
@@ -9,9 +9,23 @@ import './codexProfiles.css';
 
 type Operation = { readonly kind: 'health' | 'login'; readonly profile: NativeProfile } | null;
 
-export function CodexProfilesScreen({ client }: { readonly client: NativeProfileClient }) {
+export function CodexProfilesScreen({
+  client,
+  selectedProfileId,
+  onSelectedProfileChange,
+}: {
+  readonly client: NativeProfileClient;
+  readonly selectedProfileId?: string | null;
+  readonly onSelectedProfileChange?: (profileId: string | null) => void;
+}) {
   const [profiles, setProfiles] = useState<readonly NativeProfile[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(selectedProfileId ?? null);
+  const selectedChangeRef = useRef(onSelectedProfileChange);
+  selectedChangeRef.current = onSelectedProfileChange;
+  const select = (profileId: string | null) => {
+    setSelectedId(profileId);
+    onSelectedProfileChange?.(profileId);
+  };
   const [message, setMessage] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [operation, setOperation] = useState<Operation>(null);
@@ -19,13 +33,23 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
     try {
       const query = await client.load();
       setProfiles(query.profiles);
-      setSelectedId((current) => current && query.profiles.some((profile) => profile.id === current)
-        ? current
-        : query.profiles.find((profile) => profile.selected)?.id ?? query.profiles[0]?.id ?? null);
+      setSelectedId((current) => {
+        const preferred = selectedProfileId ?? current;
+        const next = preferred && query.profiles.some((profile) => profile.id === preferred)
+          ? preferred
+          : query.profiles.find((profile) => profile.selected)?.id ?? query.profiles[0]?.id ?? null;
+        selectedChangeRef.current?.(next);
+        return next;
+      });
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Codex profiles are unavailable.');
     }
-  }, [client]);
+  }, [client, selectedProfileId]);
+  useEffect(() => {
+    if (selectedProfileId !== undefined && selectedProfileId !== selectedId) {
+      setSelectedId(selectedProfileId);
+    }
+  }, [selectedId, selectedProfileId]);
   useEffect(() => { void load(); }, [load]);
   const selected = useMemo(
     () => profiles.find((profile) => profile.id === selectedId) ?? null,
@@ -35,7 +59,7 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
     try {
       const result = await client.select(profile.id);
       setProfiles(result.profiles);
-      setSelectedId(profile.id);
+      select(profile.id);
       setMessage(`${displayPath(profile.homePath)} is now the default Codex profile.`);
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : 'The operation was rejected.';
@@ -59,7 +83,7 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
         <CodexProfileList
           profiles={profiles}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={(id) => select(id)}
           onMakeDefault={(profile) => void makeDefault(profile)}
         />
         {selected ? (
@@ -67,6 +91,7 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
             key={selected.id}
             client={client}
             profile={selected}
+            onProfiles={setProfiles}
             onCheckHealth={() => setOperation({ kind: 'health', profile: selected })}
             onVerifyLogin={() => setOperation({ kind: 'login', profile: selected })}
           />
@@ -79,7 +104,7 @@ export function CodexProfilesScreen({ client }: { readonly client: NativeProfile
       </div>
       {addOpen ? <AddCodexProfileDialog client={client} onClose={() => setAddOpen(false)} onAdded={(result) => {
         setProfiles(result);
-        setSelectedId(result.at(-1)?.id ?? selectedId);
+        select(result.at(-1)?.id ?? selectedId);
         setAddOpen(false);
       }} /> : null}
       {operation?.kind === 'health' ? <ProfileHealthDialog client={client} profile={operation.profile} onProfiles={setProfiles} onClose={() => setOperation(null)} /> : null}
@@ -115,9 +140,10 @@ function CodexProfileList({ profiles, selectedId, onSelect, onMakeDefault }: {
   </aside>;
 }
 
-function CodexProfileDetail({ client, profile, onCheckHealth, onVerifyLogin }: {
+function CodexProfileDetail({ client, profile, onProfiles, onCheckHealth, onVerifyLogin }: {
   readonly client: NativeProfileClient;
   readonly profile: NativeProfile;
+  readonly onProfiles: (profiles: readonly NativeProfile[]) => void;
   readonly onCheckHealth: () => void;
   readonly onVerifyLogin: () => void;
 }) {
@@ -128,6 +154,8 @@ function CodexProfileDetail({ client, profile, onCheckHealth, onVerifyLogin }: {
   const [skills, setSkills] = useState<Awaited<ReturnType<NativeProfileClient['loadSkills']>> | null>(null);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [loadingSkills, setLoadingSkills] = useState(false);
+  const [savingPersonality, setSavingPersonality] = useState(false);
+  const [personalityError, setPersonalityError] = useState<string | null>(null);
   const loadSkills = useCallback(async () => {
     setLoadingSkills(true); setSkillsError(null);
     try { setSkills(await client.loadSkills(profile.id)); }
@@ -166,6 +194,42 @@ function CodexProfileDetail({ client, profile, onCheckHealth, onVerifyLogin }: {
     <section className="codex-profile-detail__section codex-profile-detail__actions">
       <div><h3>Login</h3><p>{loginSummary(profile)}</p></div>
       <button type="button" onClick={onVerifyLogin} disabled={profile.lifecycle !== 'active' || profile.readiness.authentication === 'authenticated'}>Verify login</button>
+    </section>
+    <section className="codex-profile-detail__section codex-profile-detail__actions">
+      <div>
+        <h3>Codex personality</h3>
+        <p>The default Codex response style for execution routes using this profile.</p>
+      </div>
+      <label>
+        <span className="sr-only">Codex personality</span>
+        <select
+          value={profile.personality ?? 'inherit'}
+          disabled={savingPersonality || profile.lifecycle !== 'active'}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setSavingPersonality(true);
+            setPersonalityError(null);
+            const update = client.setPersonality?.(
+              profile.id,
+              value === 'inherit' ? null : value as 'none' | 'friendly' | 'pragmatic',
+            );
+            if (!update) {
+              setPersonalityError('Codex personality configuration is unavailable.');
+              setSavingPersonality(false);
+              return;
+            }
+            void update.then((result) => onProfiles(result.profiles)).catch((cause: unknown) => {
+              setPersonalityError(cause instanceof Error ? cause.message : 'Could not update the Codex personality.');
+            }).finally(() => setSavingPersonality(false));
+          }}
+        >
+          <option value="inherit">Use Codex configuration default</option>
+          <option value="none">None</option>
+          <option value="friendly">Friendly</option>
+          <option value="pragmatic">Pragmatic</option>
+        </select>
+      </label>
+      {personalityError ? <p role="alert">{personalityError}</p> : null}
     </section>
     <section className="codex-profile-detail__section">
       <div className="codex-profile-detail__actions">

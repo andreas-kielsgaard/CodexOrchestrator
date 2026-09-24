@@ -12,6 +12,7 @@ use chrono::{DateTime, Duration, Utc};
 use http_body_util::Empty;
 use hyper::{server::conn::http1, service::service_fn, Response};
 use hyper_util::rt::TokioIo;
+use orchid_engine::configuration::runtime_profile::CodexPersonality;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
@@ -54,6 +55,12 @@ CREATE TABLE IF NOT EXISTS native_codex_profiles (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_native_codex_profiles_selected
 ON native_codex_profiles((1)) WHERE selected_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS native_codex_profile_preferences (
+  profile_id TEXT PRIMARY KEY,
+  personality TEXT NOT NULL CHECK (personality IN ('inherit','none','friendly','pragmatic')),
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(profile_id) REFERENCES native_codex_profiles(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS agent_session_native_profile_bindings (
   session_id TEXT PRIMARY KEY,
   profile_id TEXT NOT NULL,
@@ -1177,6 +1184,7 @@ pub(crate) struct NativeProfileDto {
     ownership: Ownership,
     lifecycle: Lifecycle,
     selected: bool,
+    personality: Option<CodexPersonality>,
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
     setup_attempt: NativeProfileSetupAttempt,
@@ -1300,6 +1308,13 @@ impl NativeMcpReportingMcp {
 #[tool_router]
 impl NativeMcpReportingMcp {
     #[tool(
+        annotations(
+            title = "Report native profile readiness",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
         description = "Record the one application-bound native-profile reporting receipt. Input is ONLY {}. It reports MCP exposure and this exact tool call only; readiness, provider activity, and application-consumer resolution remain separate facts."
     )]
     fn report_native_profile_readiness(
@@ -1532,6 +1547,7 @@ struct StoredProfile {
     ownership: Ownership,
     lifecycle: Lifecycle,
     selected: bool,
+    personality: Option<CodexPersonality>,
     execution: NativeProfileExecution,
     login_attempt: NativeProfileLoginAttempt,
     setup_attempt: NativeProfileSetupAttempt,
@@ -1549,6 +1565,7 @@ impl From<StoredProfile> for NativeProfileDto {
             ownership: value.ownership,
             lifecycle: value.lifecycle,
             selected: value.selected,
+            personality: value.personality,
             execution: value.execution,
             login_attempt: value.login_attempt,
             setup_attempt: value.setup_attempt,
@@ -1806,6 +1823,27 @@ impl NativeProfileService {
             Ok(())
         })?;
         self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn set_personality(
+        &self,
+        id: &str,
+        personality: Option<CodexPersonality>,
+    ) -> Result<NativeProfileDto, String> {
+        self.require_active(id)?;
+        self.write("set native Codex personality", |transaction| {
+            transaction.execute(
+                "INSERT INTO native_codex_profile_preferences (profile_id,personality,updated_at) VALUES (?1,?2,?3) ON CONFLICT(profile_id) DO UPDATE SET personality=excluded.personality,updated_at=excluded.updated_at",
+                params![id, personality_database(personality), Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("Unable to set native Codex personality: {error}"))?;
+            Ok(())
+        })?;
+        self.profile(id).map(Into::into)
+    }
+
+    pub(crate) fn profile_personality(&self, id: &str) -> Result<Option<CodexPersonality>, String> {
+        Ok(self.profile(id)?.personality)
     }
 
     /// This is the only durable opt-in for the dangerous mode. Authentication, readiness,
@@ -4578,6 +4616,7 @@ fn load_profiles(connection: &Connection) -> Result<Vec<StoredProfile>, String> 
                 lifecycle: Lifecycle::parse(&row.get::<_, String>(4)?)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?,
                 selected: row.get::<_, Option<String>>(5)?.is_some(),
+                personality: None,
                 execution: NativeProfileExecution {
                     selected_mode: ExecutionMode::parse(&row.get::<_, String>(11)?)
                         .map_err(|_| rusqlite::Error::InvalidQuery)?,
@@ -4683,6 +4722,7 @@ fn load_profiles(connection: &Connection) -> Result<Vec<StoredProfile>, String> 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
     for profile in &mut profiles {
+        profile.personality = load_profile_personality(connection, &profile.id)?;
         validate_setup_attempt(&profile.setup_attempt)?;
         profile.execution.danger_authorization =
             load_danger_authorization(connection, &profile.id, &profile.identity)?;
@@ -4700,6 +4740,36 @@ fn load_profiles(connection: &Connection) -> Result<Vec<StoredProfile>, String> 
         )?;
     }
     Ok(profiles)
+}
+
+fn personality_database(personality: Option<CodexPersonality>) -> &'static str {
+    match personality {
+        None => "inherit",
+        Some(CodexPersonality::None) => "none",
+        Some(CodexPersonality::Friendly) => "friendly",
+        Some(CodexPersonality::Pragmatic) => "pragmatic",
+    }
+}
+
+fn load_profile_personality(
+    connection: &Connection,
+    profile_id: &str,
+) -> Result<Option<CodexPersonality>, String> {
+    let stored = connection
+        .query_row(
+            "SELECT personality FROM native_codex_profile_preferences WHERE profile_id=?1",
+            params![profile_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match stored.as_deref().unwrap_or("inherit") {
+        "inherit" => Ok(None),
+        "none" => Ok(Some(CodexPersonality::None)),
+        "friendly" => Ok(Some(CodexPersonality::Friendly)),
+        "pragmatic" => Ok(Some(CodexPersonality::Pragmatic)),
+        _ => Err("Stored native Codex personality is invalid".into()),
+    }
 }
 
 fn validate_setup_attempt(attempt: &NativeProfileSetupAttempt) -> Result<(), String> {
@@ -4793,6 +4863,12 @@ pub(crate) struct NativeExecutionModeInput {
     profile_id: String,
     mode: ExecutionMode,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativePersonalityInput {
+    profile_id: String,
+    personality: Option<CodexPersonality>,
+}
 
 #[tauri::command]
 pub(crate) fn load_native_profile_query(
@@ -4846,6 +4922,15 @@ pub(crate) fn select_native_profile_execution_mode(
     state
         .service
         .select_execution_mode(&input.profile_id, input.mode)
+}
+#[tauri::command]
+pub(crate) fn set_native_profile_personality(
+    state: State<'_, NativeProfileTauriState>,
+    input: NativePersonalityInput,
+) -> Result<NativeProfileDto, String> {
+    state
+        .service
+        .set_personality(&input.profile_id, input.personality)
 }
 #[tauri::command]
 pub(crate) fn authorize_native_profile_danger_full_access(
@@ -5423,6 +5508,7 @@ mod tests {
                     managed_mcp_servers: Vec::new(),
                     skill_inputs: Vec::new(),
                     native_mcp_enabled: None,
+                    codex_personality: None,
                     ignore_user_rules: false,
                     reasoning_mode: None,
                     config_overrides: vec!["--role-config".into()],
@@ -5477,6 +5563,7 @@ mod tests {
                     managed_mcp_servers: Vec::new(),
                     skill_inputs: Vec::new(),
                     native_mcp_enabled: None,
+                    codex_personality: None,
                     ignore_user_rules: false,
                     reasoning_mode: None,
                     config_overrides: vec![],
@@ -5493,6 +5580,33 @@ mod tests {
         assert!(service.register_existing("relative").is_err());
         let dedicated = service.create_dedicated().unwrap();
         assert!(service.register_existing(&dedicated.home_path).is_err());
+    }
+
+    #[test]
+    fn codex_personality_preference_persists_and_inherit_remains_absent() {
+        let (directory, service) = service();
+        let profile = service.create_dedicated().unwrap();
+        assert_eq!(service.profile(&profile.id).unwrap().personality, None);
+        service
+            .set_personality(&profile.id, Some(CodexPersonality::Friendly))
+            .unwrap();
+        assert_eq!(
+            service.profile(&profile.id).unwrap().personality,
+            Some(CodexPersonality::Friendly)
+        );
+        drop(service);
+
+        let reopened = NativeProfileService::open(
+            directory.path().join("active.sqlite"),
+            directory.path().join("app"),
+        )
+        .unwrap();
+        assert_eq!(
+            reopened.profile(&profile.id).unwrap().personality,
+            Some(CodexPersonality::Friendly)
+        );
+        reopened.set_personality(&profile.id, None).unwrap();
+        assert_eq!(reopened.profile(&profile.id).unwrap().personality, None);
     }
 
     #[test]

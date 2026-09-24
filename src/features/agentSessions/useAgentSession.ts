@@ -486,6 +486,16 @@ export function useAgentSession(
         acceptedOptionsRef.current = preparedOptions;
         acceptedDelivery = true;
         if (!options.preparedExecution) options.execution?.afterAccepted();
+        if (
+          !existingSessionId &&
+          contextRef.current === sendContext &&
+          draftRef.current !== value
+        ) {
+          writeCachedComposerDraft(
+            composerDraftCacheKey(acknowledgement.sessionId, options.folderTarget),
+            { text: draftRef.current, workingDirectory },
+          );
+        }
         if (!existingSessionId && contextRef.current === sendContext)
           options.onSessionCreated?.(acknowledgement.sessionId);
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {

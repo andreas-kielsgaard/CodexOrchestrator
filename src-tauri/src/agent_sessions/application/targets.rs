@@ -22,14 +22,23 @@ impl AgentSessionApplication {
         session: &AgentSession,
     ) -> Result<Arc<dyn AgentRuntime>, AgentSessionApplicationError> {
         match &session.execution_target {
-            Some(target) => self
-                .endpoints
-                .as_ref()
-                .ok_or_else(|| {
-                    AgentSessionApplicationError::invalid("Execution endpoints are unavailable")
-                })?
-                .runtime(&target.execution)
-                .map_err(AgentSessionApplicationError::invalid),
+            Some(target) => {
+                if let Some(service) = &self.execution_target_service {
+                    service
+                        .runtime(&target.execution)
+                        .map_err(AgentSessionApplicationError::invalid)
+                } else {
+                    self.endpoints
+                        .as_ref()
+                        .ok_or_else(|| {
+                            AgentSessionApplicationError::invalid(
+                                "Execution endpoints are unavailable",
+                            )
+                        })?
+                        .runtime(&target.execution)
+                        .map_err(AgentSessionApplicationError::invalid)
+                }
+            }
             None => Ok(self.runtime.clone()),
         }
     }
@@ -53,14 +62,19 @@ impl AgentSessionApplication {
                 .as_ref()
                 .or(preparation.source_target.as_ref())
             {
-                return self
-                    .endpoints
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AgentSessionApplicationError::invalid("Execution endpoints unavailable")
-                    })?
-                    .runtime(&target.execution)
-                    .map_err(AgentSessionApplicationError::invalid);
+                return if let Some(service) = &self.execution_target_service {
+                    service
+                        .runtime(&target.execution)
+                        .map_err(AgentSessionApplicationError::invalid)
+                } else {
+                    self.endpoints
+                        .as_ref()
+                        .ok_or_else(|| {
+                            AgentSessionApplicationError::invalid("Execution endpoints unavailable")
+                        })?
+                        .runtime(&target.execution)
+                        .map_err(AgentSessionApplicationError::invalid)
+                };
             }
         }
         let invocation = self

@@ -1,5 +1,6 @@
 use super::runtime_profile::{
-    validate_identifier, validate_selection_availability, CapabilitySet, RuntimeSelections,
+    validate_identifier, validate_selection_availability, CapabilitySet, CodexPersonality,
+    RuntimeSelections,
 };
 use crate::agent_sessions::ports::RuntimeSkillInput;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,8 @@ pub(crate) struct SessionProfile {
     pinned_defaults: RuntimeSelections,
     #[serde(default)]
     native_mcp_enabled: Option<bool>,
+    #[serde(default)]
+    codex_personality: Option<CodexPersonality>,
 }
 
 impl SessionProfile {
@@ -39,6 +42,7 @@ impl SessionProfile {
         session_skill_inputs: Vec<RuntimeSkillInput>,
         pinned_defaults: RuntimeSelections,
         native_mcp_enabled: Option<bool>,
+        codex_personality: Option<CodexPersonality>,
     ) -> Self {
         Self {
             contract_version: SESSION_PROFILE_CONTRACT_VERSION,
@@ -52,6 +56,7 @@ impl SessionProfile {
             session_skill_inputs,
             pinned_defaults,
             native_mcp_enabled,
+            codex_personality,
         }
     }
 
@@ -93,6 +98,10 @@ impl SessionProfile {
 
     pub(crate) fn native_mcp_enabled(&self) -> Option<bool> {
         self.native_mcp_enabled
+    }
+
+    pub(crate) fn codex_personality(&self) -> Option<CodexPersonality> {
+        self.codex_personality
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {

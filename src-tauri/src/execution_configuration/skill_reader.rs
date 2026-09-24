@@ -209,7 +209,7 @@ where
         ),
         Some("notifications/initialized") => text(StatusCode::ACCEPTED, ""),
         Some("tools/list") => response(
-            json!({"jsonrpc":"2.0","id":id,"result":{"tools":[{"name":"read_skill","description":"Read one skill in this session's Orchid-approved manifest by name.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}]}}),
+            json!({"jsonrpc":"2.0","id":id,"result":{"tools":[{"name":"read_skill","description":"Read one skill in this session's Orchid-approved manifest by name.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false},"annotations":{"title":"Read skill","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}]}}),
         ),
         Some("tools/call")
             if value.pointer("/params/name").and_then(Value::as_str) == Some("read_skill") =>

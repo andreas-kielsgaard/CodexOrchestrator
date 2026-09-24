@@ -103,6 +103,92 @@
   cursor: pointer;
 }
 
+.execution-setup-overview__add {
+  justify-self: start;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid #2d6049;
+  border-radius: 7px;
+  background: #2d6049;
+  color: #fff;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.execution-setup-overview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.execution-device-dialog {
+  width: min(720px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #bbc8bc;
+  border-radius: 14px;
+  background: #fffdfa;
+  color: #24362c;
+}
+
+.execution-device-dialog,
+.execution-device-dialog header,
+.execution-device-dialog label,
+.execution-device-dialog fieldset {
+  display: grid;
+  gap: 8px;
+}
+
+.execution-device-dialog header h2,
+.execution-device-dialog header p,
+.execution-device-dialog fieldset p {
+  margin: 0;
+}
+
+.execution-device-dialog > label > span,
+.execution-device-dialog fieldset label > span {
+  font-weight: 700;
+}
+
+.execution-device-dialog input:not([type='checkbox']),
+.execution-device-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #c4cec5;
+  border-radius: 7px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.execution-device-dialog fieldset {
+  margin: 4px 0;
+  padding: 15px;
+  border: 1px solid #d5ddd5;
+  border-radius: 9px;
+}
+
+.execution-device-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.execution-device-dialog button {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid #2d6049;
+  border-radius: 7px;
+  background: #fff;
+  color: #24543f;
+  font: inherit;
+  font-weight: 700;
+}
+
 .execution-setup-overview__note {
   font-size: 0.88rem;
 }

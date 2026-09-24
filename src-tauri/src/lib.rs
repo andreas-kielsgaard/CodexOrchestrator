@@ -1,6 +1,7 @@
 mod active_app;
 mod agent_sessions;
 mod execution_configuration;
+mod execution_devices;
 mod execution_targets;
 mod git_process;
 mod harness_engine;

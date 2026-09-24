@@ -414,6 +414,18 @@ fn initialize_turn(
     if let Some(model) = &request.options.model {
         params["model"] = model.clone().into();
     }
+    if let Some(personality) = request
+        .launch_extension
+        .as_ref()
+        .and_then(|extension| extension.codex_personality)
+    {
+        params["personality"] = match personality {
+            crate::configuration::runtime_profile::CodexPersonality::None => "none",
+            crate::configuration::runtime_profile::CodexPersonality::Friendly => "friendly",
+            crate::configuration::runtime_profile::CodexPersonality::Pragmatic => "pragmatic",
+        }
+        .into();
+    }
     if let Some(sandbox) = request.options.sandbox {
         params["sandbox"] = match sandbox {
             RuntimeSandboxMode::ReadOnly => "read-only",
@@ -482,7 +494,7 @@ fn initialize_turn(
     for event in context.events {
         invocation.emit(RuntimeUpdate::Event(event));
     }
-    invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
+    invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"personality":result["personality"],"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
     configuration::validate_effective_sandbox(request.options.sandbox, &result["sandbox"])?;
     let working_directory = result["cwd"]
         .as_str()

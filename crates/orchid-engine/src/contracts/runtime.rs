@@ -1,3 +1,4 @@
+use crate::configuration::runtime_profile::CodexPersonality;
 use crate::contracts::domain::{
     AgentInvocationId, AgentInvocationTerminalStatus, AgentRuntimeEventSource, AgentRuntimeFailure,
     AgentRuntimeOptions, AgentSessionId, ExternalRuntimeContextId, NormalizedRuntimeEvent,
@@ -27,6 +28,8 @@ pub struct RuntimeLaunchExtension {
     pub managed_mcp_servers: Vec<RuntimeManagedMcpServer>,
     /// Semantic invocation choice. Only the provider adapter serializes its configuration.
     pub reasoning_mode: Option<String>,
+    /// Codex-only thread personality. Absence preserves the selected CODEX_HOME default.
+    pub codex_personality: Option<CodexPersonality>,
     /// Explicit existing Harness intent; never inherited by ordinary sessions.
     pub ignore_user_rules: bool,
     /// Pinned skills available to the session reader. Mentioned native skills may also become

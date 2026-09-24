@@ -16,8 +16,8 @@ use crate::{
         SessionExecutionSelection, SessionExecutionTarget, SessionWorkspaceSelection,
     },
 };
-use orchid_engine::protocol::{WorktreeHeadRelation, WorktreeInspection, WorktreeSnapshot};
 use chrono::Utc;
+use orchid_engine::protocol::{WorktreeHeadRelation, WorktreeInspection, WorktreeSnapshot};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -73,18 +73,9 @@ impl AgentSessionApplication {
         let source_inspection = endpoints
             .inspect_worktree(&source.execution, &source.path, destination_head)
             .map_err(AgentSessionApplicationError::invalid)?;
-        let destination_inspection = existing_target(&input.destination)
-            // The source can be local-only. Its host has not received the source commit objects
-            // until after the snapshot arrives, so establish ahead/behind on the source instead.
-            .map(|target| endpoints.inspect_worktree(&target.execution, &target.path, None))
-            .transpose()
-            .map_err(AgentSessionApplicationError::invalid)?;
         let source_turns = self.active_turn_count(&source)?;
-        let destination_turns = existing_target(&input.destination)
-            .map(|target| self.active_turn_count(target))
-            .transpose()?
-            .unwrap_or(0);
-        let migration_error = migration_blocker(&source_inspection, destination_inspection.as_ref());
+        let destination_turns = 0;
+        let migration_error: Option<String> = None;
         let current_lock = targets
             .sisters
             .lock_for(&source.repository_id, &source.branch_ref)
@@ -103,7 +94,7 @@ impl AgentSessionApplication {
             ),
             None => None,
         };
-        let snapshot = planned_snapshot(&source_inspection, destination_inspection.as_ref());
+        let snapshot = planned_snapshot(&source_inspection, None);
         let transfer_estimate = initial_transfer_estimate(&snapshot, now);
         let mut transition = SessionTargetTransition {
             session_id: input.session_id,
@@ -111,12 +102,7 @@ impl AgentSessionApplication {
             destination_selection: input.destination,
             sister_group_id,
             phase: TargetTransitionPhase::Pending,
-            tasks: planned_tasks(
-                &source_inspection,
-                destination_inspection.as_ref(),
-                source_turns,
-                destination_turns,
-            ),
+            tasks: planned_tasks(&source_inspection, None, source_turns, destination_turns),
             snapshot: Some(snapshot),
             transfer_estimate: Some(transfer_estimate),
             queued_prompt: None,
@@ -193,7 +179,11 @@ impl AgentSessionApplication {
         let Some(mut transition) = self.load_target_transition(session_id)? else {
             return Ok(None);
         };
-        if self.load_session(session_id)?.session.execution_target.as_ref()
+        if self
+            .load_session(session_id)?
+            .session
+            .execution_target
+            .as_ref()
             != Some(&transition.source_target)
         {
             // The first prepared prompt already committed the resolved destination. The retained
@@ -234,7 +224,11 @@ impl AgentSessionApplication {
         let Some(mut transition) = self.load_target_transition(session_id)? else {
             return Ok(None);
         };
-        if self.load_session(session_id)?.session.execution_target.as_ref()
+        if self
+            .load_session(session_id)?
+            .session
+            .execution_target
+            .as_ref()
             != Some(&transition.source_target)
         {
             return Ok(None);
@@ -280,7 +274,32 @@ impl AgentSessionApplication {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<(), AgentSessionApplicationError> {
+        let lease_device = self
+            .load_target_transition(session_id)?
+            .and_then(|transition| {
+                transition
+                    .destination_selection
+                    .execution
+                    .is_remote()
+                    .then_some(transition.destination_selection.execution.device_id)
+            });
+        if let (Some(targets), Some(device_id)) = (&self.execution_target_service, &lease_device) {
+            targets
+                .synchronize_devices()
+                .map_err(AgentSessionApplicationError::invalid)?;
+            targets
+                .devices
+                .acquire_activity(device_id, "target_transition", session_id.as_str())
+                .map_err(AgentSessionApplicationError::invalid)?;
+        }
         let result = self.run_target_transition_inner(session_id);
+        if let (Some(targets), Some(device_id)) = (&self.execution_target_service, &lease_device) {
+            let _ = targets.devices.release_activity(
+                device_id,
+                "target_transition",
+                session_id.as_str(),
+            );
+        }
         if let Err(error) = result {
             if let Ok(Some(mut transition)) = self.load_target_transition(session_id) {
                 transition.phase = TargetTransitionPhase::Failed;
@@ -310,6 +329,24 @@ impl AgentSessionApplication {
 
         let source = transition.source_target.clone();
         let initial_destination = existing_target(&transition.destination_selection).cloned();
+        transition_task(
+            &mut transition,
+            TargetTransitionTaskKind::EnsureDestinationDeviceReady,
+            TargetTransitionTaskStatus::Running,
+            Some("Preparing the destination device".into()),
+            None,
+        );
+        self.save_and_notify_target_transition(&transition)?;
+        targets
+            .ensure_ready(&transition.destination_selection.execution)
+            .map_err(AgentSessionApplicationError::invalid)?;
+        transition_task(
+            &mut transition,
+            TargetTransitionTaskKind::EnsureDestinationDeviceReady,
+            TargetTransitionTaskStatus::Completed,
+            Some("Destination device is ready".into()),
+            None,
+        );
         transition_task(
             &mut transition,
             TargetTransitionTaskKind::InspectSource,
@@ -651,6 +688,11 @@ fn planned_tasks(
     });
     [
         (
+            TargetTransitionTaskKind::EnsureDestinationDeviceReady,
+            "Prepare destination device",
+            None,
+        ),
+        (
             TargetTransitionTaskKind::InspectSource,
             "Source inspected",
             Some(summary_with_turns(source, source_turns)),
@@ -697,10 +739,7 @@ fn planned_tasks(
     .into_iter()
     .map(|(kind, _label, detail)| TargetTransitionTask {
         kind,
-        status: if matches!(
-            kind,
-            TargetTransitionTaskKind::InspectSource | TargetTransitionTaskKind::InspectDestination
-        ) {
+        status: if matches!(kind, TargetTransitionTaskKind::InspectSource) {
             TargetTransitionTaskStatus::Completed
         } else {
             TargetTransitionTaskStatus::Pending

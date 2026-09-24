@@ -71,6 +71,7 @@ pub(crate) struct TargetTransitionTask {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TargetTransitionTaskKind {
+    EnsureDestinationDeviceReady,
     InspectSource,
     InspectDestination,
     CaptureSnapshot,

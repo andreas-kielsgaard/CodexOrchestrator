@@ -12,6 +12,7 @@ export type NativeProfileSandbox = 'unknown' | 'initialized' | 'failed' | 'atten
 export type NativeProfileCanary = 'not_run' | 'passed' | 'blocked';
 export type NativeProfileMcp = 'not_assessed' | 'ready' | 'probe_failed';
 export type NativeExecutionMode = 'workspace_write' | 'danger_full_access';
+export type NativeCodexPersonality = 'none' | 'friendly' | 'pragmatic';
 export type NativeDangerAuthorizationDisposition = 'not_authorized' | 'legacy_insufficient' | 'authorized' | 'revoked' | 'foreign';
 export type NativeDangerAuthorizationScope = 'filesystem_only' | 'full_machine_filesystem_and_unrestricted_network';
 export type NativeFullAccessCanaryDisposition = 'not_requested' | 'pending' | 'passed' | 'launch_failed' | 'terminal_failed' | 'timed_out' | 'cancelled' | 'recovered_unobserved' | 'cleanup_failed' | 'legacy_unverified';
@@ -117,6 +118,7 @@ export interface NativeProfile {
   readonly ownership: NativeProfileOwnership;
   readonly lifecycle: NativeProfileLifecycle;
   readonly selected: boolean;
+  readonly personality?: NativeCodexPersonality | null;
   readonly execution: NativeProfileExecution;
   readonly loginAttempt: NativeProfileLoginAttempt;
   readonly setupAttempt: NativeProfileSetupAttempt;
@@ -369,7 +371,7 @@ export function decodeDiscoveredNativeCodexHomes(value: unknown): DiscoveredNati
 
 export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
   const profile = object(value, `native profile ${index}`);
-  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'fullAccessCanaryAttempt', 'readiness'], `native profile ${index}`);
+  keys(profile, ['id', 'homePath', 'ownership', 'lifecycle', 'selected', 'personality', 'execution', 'loginAttempt', 'setupAttempt', 'sandboxAdoption', 'sandboxAdoptionConfirmation', 'fullAccessCanaryAttempt', 'readiness'], `native profile ${index}`);
   if (typeof profile.selected !== 'boolean') throw new Error(`native profile ${index} selected must be boolean`);
   const readiness = object(profile.readiness, `native profile ${index} readiness`);
   keys(readiness, ['authentication', 'sandboxInitialization', 'workspaceWriteCanary', 'dangerFullAccessCanary', 'mcpReporting', 'attentions'], 'readiness');
@@ -455,6 +457,9 @@ export function decodeNativeProfile(value: unknown, index = 0): NativeProfile {
     ownership: enumValue(profile.ownership, ['registered_existing', 'application_dedicated'], 'profile ownership'),
     lifecycle: enumValue(profile.lifecycle, ['active', 'missing_or_moved', 'replaced', 'foreign', 'malformed'], 'profile lifecycle'),
     selected: profile.selected,
+    personality: profile.personality == null
+      ? null
+      : enumValue<NativeCodexPersonality>(profile.personality, ['none', 'friendly', 'pragmatic'], 'Codex personality'),
     execution: {
       selectedMode: enumValue(execution.selectedMode, ['workspace_write', 'danger_full_access'], 'execution mode'),
       dangerFullAccessAuthorized: execution.dangerFullAccessAuthorized,
@@ -495,6 +500,7 @@ export interface NativeProfileClient {
   registerExisting(homePath: string): Promise<NativeProfileQuery>;
   createDedicated(): Promise<NativeProfileQuery>;
   select(profileId: string): Promise<NativeProfileQuery>;
+  setPersonality?(profileId: string, personality: NativeCodexPersonality | null): Promise<NativeProfileQuery>;
   requestLogin(profileId: string): Promise<NativeProfileQuery>;
   refreshReadiness(profileId: string): Promise<NativeProfileQuery>;
   openInExplorer(profileId: string): Promise<void>;
@@ -527,6 +533,9 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     registerExisting: (homePath) => action('register_native_profile', { input: { homePath } }),
     createDedicated: () => action('create_dedicated_native_profile', noActionArgs),
     select: (profileId) => action('select_native_profile', id(profileId)),
+    setPersonality: (profileId, personality) => action('set_native_profile_personality', {
+      input: { profileId, personality },
+    }),
     requestLogin: (profileId) => action('request_native_profile_login', id(profileId)),
     refreshReadiness: (profileId) => action('refresh_native_profile_readiness', id(profileId)),
     openInExplorer: (profileId) => invokeCommand<void>('open_native_profile_in_explorer', id(profileId)),

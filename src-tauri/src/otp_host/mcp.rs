@@ -132,7 +132,7 @@ async fn handle(
         Some("tools/list") => {
             let tools=registry.catalogue().into_iter().filter(|p|p.id==package).flat_map(|p|p.tools).filter_map(|tool|{
                 let Entrypoint::Mcp{ref input_schema}=tool.entrypoint else{return None};
-                Some(json!({"name":tool.id,"title":tool.name,"description":tool.description,"inputSchema":input_schema,"_meta":{"otp":{"package":package,"tool":tool}}}))
+                Some(json!({"name":tool.id,"title":tool.name,"description":tool.description,"inputSchema":input_schema,"annotations":tool.annotations,"_meta":{"otp":{"package":package,"tool":tool}}}))
             }).collect::<Vec<_>>();
             response(json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}}))
         }

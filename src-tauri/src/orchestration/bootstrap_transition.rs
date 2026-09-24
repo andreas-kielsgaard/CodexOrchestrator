@@ -1409,7 +1409,7 @@ impl PostConfirmationTransitionService {
                         .map_err(TransitionError::Unavailable)?;
                     let mut config_overrides = bootstrap_harness.runtime_config_overrides();
                     config_overrides.extend(managed.injection().config_overrides.clone());
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None,
+                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
                         managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![managed.injection().environment.clone()],
@@ -1570,7 +1570,7 @@ impl PostConfirmationTransitionService {
                         .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
                     let mut config_overrides = harness.runtime_config_overrides();
                     config_overrides.extend(injection.config_overrides);
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None,
+                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
                         managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![injection.environment],
@@ -1692,7 +1692,7 @@ impl PostConfirmationTransitionService {
                                 requested_options: Some(harness.runtime_options()),
                             },
                         },
-                        Some(RuntimeLaunchExtension { native_mcp_enabled: None,
+                        Some(RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
                             managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                             config_overrides,
                             environment: vec![injection.environment],
@@ -1875,10 +1875,7 @@ impl BootstrapCompletionMcp {
 
 #[tool_router]
 impl BootstrapCompletionMcp {
-    #[tool(
-        description = "Submit the two bounded semantic bootstrap materials exactly once. Input is ONLY {epicOverviewMarkdown: string, runnerBriefMarkdown: string}. The application derives Epic, session, invocation, paths, and replay authority, validates both values, writes them to exact prepared destinations, and returns the durable material fact. Do not send IDs or paths."
-    )]
-    fn complete_epic_bootstrap(
+    #[tool(annotations(title = "Submit bootstrap materials", read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false), description = "Submit the two bounded semantic bootstrap materials exactly once. Input is ONLY {epicOverviewMarkdown: string, runnerBriefMarkdown: string}. The application derives Epic, session, invocation, paths, and replay authority, validates both values, writes them to exact prepared destinations, and returns the durable material fact. Do not send IDs or paths.")] fn complete_epic_bootstrap(
         &self,
         Parameters(input): Parameters<BootstrapMaterialInput>,
     ) -> CallToolResult {

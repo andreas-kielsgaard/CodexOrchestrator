@@ -34,7 +34,7 @@ it('uses slash choices for the first message and refreshes discovery in the crea
   await user.keyboard('{Enter}');
   await user.type(input, 'medium{Enter}');
   await user.click(screen.getByRole('button', { name: /Message and Session configuration/ }));
-  expect(screen.getByLabelText('Model')).toHaveValue('');
+  expect(screen.getByLabelText('Model')).toHaveValue('model-a');
   expect(screen.getByLabelText('Reasoning')).toHaveValue('medium');
 });
 
@@ -71,7 +71,7 @@ it('uses the profiled route for both the first and next message, with message-lo
       reasoningMode: 'medium',
     }),
   );
-  expect(screen.getByLabelText('Model')).toHaveValue('');
+  expect(screen.getByLabelText('Model')).toHaveValue('model-a');
   expect(generic).not.toHaveBeenCalled();
 });
 

@@ -26,6 +26,11 @@ export interface ExecutionConfigurationScreenProps {
   readonly editorMemory?: CapabilityProfileEditorMemory;
   /** Native profiles are projected into non-secret local harness/source routes. */
   readonly nativeProfileClient?: NativeProfileClient;
+  readonly selection?: { readonly profileId: string | null; readonly newProfile: boolean };
+  readonly onSelectionChange?: (selection: {
+    readonly profileId: string | null;
+    readonly newProfile: boolean;
+  }) => void;
 }
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
@@ -39,6 +44,7 @@ const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
     skills: [],
   },
   locked: { model: null, reasoningMode: null, sandboxMode: null },
+  codexPersonality: null,
 };
 
 function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft {
@@ -46,6 +52,7 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     ? {
         routeId: `${profile.capabilityProfileId}:legacy`,
         execution: profile.execution,
+        codexPersonality: null,
         modelAllowances: profile.allowedCapabilities.models.map((modelId) => ({
           modelId,
           minimumReasoning: profile.allowedCapabilities.reasoningModes[0] ?? 'none',
@@ -97,6 +104,8 @@ export function ExecutionConfigurationScreen({
   workspace: providedWorkspace,
   editorMemory: providedEditorMemory,
   nativeProfileClient,
+  selection,
+  onSelectionChange,
 }: ExecutionConfigurationScreenProps) {
   const localWorkspace = useMemo(() => new DraftWorkspace<CapabilityProfileDraft>(), []);
   const localEditorMemory = useMemo(() => new CapabilityProfileEditorMemory(), []);
@@ -111,7 +120,9 @@ export function ExecutionConfigurationScreen({
     Readonly<Record<string, ProfileModelCatalogueDto>>
   >({});
   const [draft, setDraft] = useState<CapabilityProfileDraft>(() => newDraft(EMPTY_RUNTIME));
-  const [selectedId, setSelectedId] = useState<string | null>(workspace.selectedKey);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    selection?.profileId ?? workspace.selectedKey,
+  );
   const selectedRef = useRef(selectedId);
   const loadModelCatalogue = useCallback(
     async (configurationRef: string) => {
@@ -219,6 +230,7 @@ export function ExecutionConfigurationScreen({
     for (const route of next.routePolicies)
       void loadModelCatalogue(route.execution.configurationRef);
     setError(null);
+    onSelectionChange?.({ profileId: profile.capabilityProfileId, newProfile: false });
   };
 
   const save = async (next: CapabilityProfileDraft) => {
@@ -267,6 +279,7 @@ export function ExecutionConfigurationScreen({
         workspace.selectedKey = saved.capabilityProfileId;
         setSelectedId(saved.capabilityProfileId);
         setDraft(working);
+        onSelectionChange?.({ profileId: saved.capabilityProfileId, newProfile: false });
       }
       setProfiles(await client.listCapabilityProfiles());
     } catch (caught) {
@@ -290,6 +303,7 @@ export function ExecutionConfigurationScreen({
       selectedRef.current = null;
       workspace.selectedKey = null;
       setDraft(newDraft(runtime));
+      onSelectionChange?.({ profileId: null, newProfile: false });
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -318,6 +332,7 @@ export function ExecutionConfigurationScreen({
             setSelectedId(null);
             setDraft(workspace.load('$new', newDraft(runtime)));
             setError(null);
+            onSelectionChange?.({ profileId: null, newProfile: true });
           }}
         >
           <Plus size={16} aria-hidden="true" />

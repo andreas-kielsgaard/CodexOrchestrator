@@ -179,6 +179,13 @@
         "serverName": "job_agent",
         "tools": [
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source catalog"
+            },
             "capability": "source_discovery",
             "description": "Read compact source registry, health, value, and readiness summaries.",
             "expectedBehavior": "Read compact source registry, health, value, and readiness summaries. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -229,6 +236,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source detail"
+            },
             "capability": "source_discovery",
             "description": "Read one source's lifecycle, candidates, readiness, calibration summaries, and session status.",
             "expectedBehavior": "Read one source's lifecycle, candidates, readiness, calibration summaries, and session status. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -275,6 +289,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source discovery context"
+            },
             "capability": "source_discovery",
             "description": "Prepare profile-derived discovery context with existing sources and disqualified domains.",
             "expectedBehavior": "Prepare profile-derived discovery context with existing sources and disqualified domains. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -319,6 +340,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Submit source suggestions"
+            },
             "capability": "source_discovery",
             "description": "Validate and save a review-only source suggestion set.",
             "expectedBehavior": "Validate and save a review-only source suggestion set. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -378,6 +406,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source setup state"
+            },
             "capability": "source_registry",
             "description": "Read complete source setup state, blockers, revision tokens, and allowed next actions.",
             "expectedBehavior": "Read complete source setup state, blockers, revision tokens, and allowed next actions. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -427,6 +462,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Create source"
+            },
             "capability": "source_registry",
             "description": "Create one public source registry record in a disabled state.",
             "expectedBehavior": "Create one public source registry record in a disabled state. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -479,6 +521,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Update source"
+            },
             "capability": "source_registry",
             "description": "Update source name, public URL, notes, or status using a current revision.",
             "expectedBehavior": "Update source name, public URL, notes, or status using a current revision. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -540,6 +589,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": true,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Archive source"
+            },
             "capability": "source_registry",
             "description": "Archive a source and disable any existing execution projection.",
             "expectedBehavior": "Archive a source and disable any existing execution projection. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -589,6 +645,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Restore source"
+            },
             "capability": "source_registry",
             "description": "Restore an archived source without enabling execution.",
             "expectedBehavior": "Restore an archived source without enabling execution. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -641,6 +704,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": true,
+              "readOnlyHint": false,
+              "title": "Capture source calibration"
+            },
             "capability": "source_calibration",
             "description": "Capture bounded public calibration evidence for an existing source.",
             "expectedBehavior": "Capture bounded public calibration evidence for an existing source. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -695,6 +765,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "List source artifacts"
+            },
             "capability": "source_calibration",
             "description": "List saved calibration artifacts associated with one source.",
             "expectedBehavior": "List saved calibration artifacts associated with one source. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -741,6 +818,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get recipe evidence"
+            },
             "capability": "source_calibration",
             "description": "Read bounded evidence from a listed calibration artifact.",
             "expectedBehavior": "Read bounded evidence from a listed calibration artifact. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -797,6 +881,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Create recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Validate a constrained recipe proposal against saved evidence and save a pending candidate.",
             "expectedBehavior": "Validate a constrained recipe proposal against saved evidence and save a pending candidate. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -847,6 +938,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Read a saved recipe candidate with revision, validation, and quality evidence.",
             "expectedBehavior": "Read a saved recipe candidate with revision, validation, and quality evidence. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -887,6 +985,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Update recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Replace a pending candidate proposal using its current revision.",
             "expectedBehavior": "Replace a pending candidate proposal using its current revision. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -945,6 +1050,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": true,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Reject recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Reject a pending candidate with an optional reason.",
             "expectedBehavior": "Reject a pending candidate with an optional reason. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -994,6 +1106,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Approve recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Approve a pending candidate into a validated recipe and preview health.",
             "expectedBehavior": "Approve a pending candidate into a validated recipe and preview health. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1047,6 +1166,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Adopt recipe candidate"
+            },
             "capability": "recipe_authoring",
             "description": "Adopt an approved recipe and optionally prepare a disabled projection.",
             "expectedBehavior": "Adopt an approved recipe and optionally prepare a disabled projection. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1106,6 +1232,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Prepare execution projection"
+            },
             "capability": "source_execution",
             "description": "Create a disabled execution projection from an adopted source recipe.",
             "expectedBehavior": "Create a disabled execution projection from an adopted source recipe. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1155,6 +1288,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Refresh execution projection"
+            },
             "capability": "source_execution",
             "description": "Refresh a disabled execution projection from the selected recipe.",
             "expectedBehavior": "Refresh a disabled execution projection from the selected recipe. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1204,6 +1344,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source readiness"
+            },
             "capability": "source_execution",
             "description": "Read source health, execution alignment, test findings, blockers, and warnings.",
             "expectedBehavior": "Read source health, execution alignment, test findings, blockers, and warnings. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1244,6 +1391,13 @@
             "requiredGrants": []
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": true,
+              "readOnlyHint": false,
+              "title": "Run safe source test"
+            },
             "capability": "source_execution",
             "description": "Run the configured adapter without normal run outputs.",
             "expectedBehavior": "Run the configured adapter without normal run outputs. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1298,6 +1452,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Enable source when ready"
+            },
             "capability": "source_execution",
             "description": "Enable a tested source only when existing readiness checks pass.",
             "expectedBehavior": "Enable a tested source only when existing readiness checks pass. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1347,6 +1508,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": true,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Disable source"
+            },
             "capability": "source_execution",
             "description": "Disable a source execution projection without removing source history.",
             "expectedBehavior": "Disable a source execution projection without removing source history. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1396,6 +1564,13 @@
             ]
           },
           {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get source session status"
+            },
             "capability": "source_session_status",
             "description": "Read whether a source has a usable session without revealing credentials or browser control.",
             "expectedBehavior": "Read whether a source has a usable session without revealing credentials or browser control. The endpoint returns a structured Job Agent result and applies only its declared guarded transition.",
@@ -1443,6 +1618,7 @@
     "id": "job_agent",
     "name": "Job Agent",
     "requestedHandles": [],
+    "skillRoots": [],
     "summary": "Guarded local source setup operations for configured agent sessions.",
     "tools": []
   },
@@ -1457,9 +1633,17 @@
       "node_sessions",
       "emit_output"
     ],
+    "skillRoots": [],
     "summary": "Workflow triggers, observed session events, and destinations.",
     "tools": [
       {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
+          "title": "Workflow continuation"
+        },
         "configuration": [],
         "description": "Trigger connections configured for this call from this node. Follow your instructions for when to call it. Optionally supply output file paths or structured data.",
         "entrypoint": {
@@ -1523,6 +1707,13 @@
         "recommendedUsage": "Use after the agent has completed the work or discussion its node instructions require. Supply output file paths or structured data only when downstream connections use them."
       },
       {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
+          "title": "Handoff to agent"
+        },
         "configuration": [],
         "description": "Publish file paths and prompt text to this node's configured handoff connections.",
         "entrypoint": {
@@ -1590,6 +1781,13 @@
         "recommendedUsage": "Use when the node's instructions call for an explicit handoff and its configured connections expect the supplied files or prompt text."
       },
       {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false,
+          "readOnlyHint": true,
+          "title": "Invocation completed"
+        },
         "configuration": [],
         "description": "Emit when an invocation on the bound source node completes.",
         "entrypoint": {
@@ -1633,6 +1831,13 @@
         "recommendedUsage": "Use when a connection should continue from an invocation ending, without requiring an agent MCP call."
       },
       {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
+          "title": "Prompt agent"
+        },
         "configuration": [
           {
             "choices": [
@@ -1740,6 +1945,13 @@
         "recommendedUsage": "Use as a connection or entry destination when the next step requires an agent session to receive constructed prompt material."
       },
       {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false,
+          "readOnlyHint": false,
+          "title": "Stop session"
+        },
         "configuration": [
           {
             "choices": [

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
+import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import { NativeProfileSettings } from '../nativeProfiles/NativeProfileSettings';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
@@ -9,17 +10,32 @@ import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
   executionClient,
+  deviceClient,
   readOtpCatalogue,
   otpInstallations,
+  section: controlledSection,
+  onSectionChange,
+  selectedCodexProfileId,
+  onSelectedCodexProfileChange,
 }: {
   readonly nativeClient: NativeProfileClient;
   readonly executionClient?: ExecutionConfigurationClient;
+  readonly deviceClient?: ExecutionTargetClient;
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly otpInstallations?: OtpInstallationClient;
+  readonly section?: 'devices' | 'inference' | 'native' | 'otp';
+  readonly onSectionChange?: (section: 'devices' | 'inference' | 'native' | 'otp') => void;
+  readonly selectedCodexProfileId?: string | null;
+  readonly onSelectedCodexProfileChange?: (profileId: string | null) => void;
 }) {
-  const [section, setSection] = useState<'devices' | 'inference' | 'native' | 'otp'>(
+  const [localSection, setLocalSection] = useState<'devices' | 'inference' | 'native' | 'otp'>(
     executionClient ? 'devices' : 'native',
   );
+  const section = controlledSection ?? localSection;
+  const setSection = (next: 'devices' | 'inference' | 'native' | 'otp') => {
+    setLocalSection(next);
+    onSectionChange?.(next);
+  };
   return (
     <div className="technical-settings">
       <header>
@@ -65,6 +81,7 @@ export function TechnicalSettingsScreen({
         {section === 'devices' && executionClient ? (
           <DeviceSetupOverview
             nativeClient={nativeClient}
+            deviceClient={deviceClient}
             onOpenCodexHarness={() => setSection('native')}
           />
         ) : section === 'inference' && executionClient ? (
@@ -75,7 +92,11 @@ export function TechnicalSettingsScreen({
             installations={otpInstallations}
           />
         ) : (
-          <NativeProfileSettings client={nativeClient} />
+          <NativeProfileSettings
+            client={nativeClient}
+            selectedProfileId={selectedCodexProfileId}
+            onSelectedProfileChange={onSelectedCodexProfileChange}
+          />
         )}
       </div>
     </div>

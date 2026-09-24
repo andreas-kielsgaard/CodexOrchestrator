@@ -1,3 +1,4 @@
+use rmcp::model::ToolAnnotations;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -46,6 +47,7 @@ pub(crate) struct ToolDescriptor {
     pub description: String,
     pub expected_behavior: String,
     pub recommended_usage: String,
+    pub annotations: ToolAnnotations,
     pub entrypoint: Entrypoint,
     pub outputs: Vec<OutputDescriptor>,
     pub configuration: Vec<ConfigurationField>,
@@ -95,6 +97,23 @@ pub(crate) struct AgentMcpToolDescriptor {
     pub expected_behavior: String,
     pub recommended_usage: String,
     pub required_grants: Vec<String>,
+    pub annotations: ToolAnnotations,
+}
+
+pub(crate) fn tool_annotations(
+    title: &str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) -> ToolAnnotations {
+    ToolAnnotations::from_raw(
+        Some(title.into()),
+        Some(read_only),
+        Some(destructive),
+        Some(idempotent),
+        Some(open_world),
+    )
 }
 
 #[derive(Clone, Debug, Serialize)]

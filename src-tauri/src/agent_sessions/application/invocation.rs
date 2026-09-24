@@ -1,6 +1,6 @@
 //! Invocation preparation, idempotent launch and launch failure handling.
 
-use super::update_sink::PersistedRuntimeUpdateSink;
+use super::update_sink::{DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink};
 use super::{
     AgentSessionApplication, AgentSessionApplicationError, AgentSessionNotification,
     ApplicationInvocationLaunchEvidence, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
@@ -441,20 +441,40 @@ impl AgentSessionApplication {
             launch_extension
         } else {
             let launch_extension = if let Some(profile) = session.session_profile.as_ref() {
-                match super::configuration::pinned_exposure_extension(profile, launch_extension.unwrap_or_default()) {
+                match super::configuration::pinned_exposure_extension(
+                    profile,
+                    launch_extension.unwrap_or_default(),
+                ) {
                     Ok(extension) => Some(extension),
                     Err(message) => {
-                        self.finish_preflight_failure(&invocation, RuntimePortError::new(RuntimePortErrorKind::Unavailable, message))?;
-                        return Ok(SendAgentSessionMessageLaunchResult { acknowledgement, launch_accepted: false });
+                        self.finish_preflight_failure(
+                            &invocation,
+                            RuntimePortError::new(RuntimePortErrorKind::Unavailable, message),
+                        )?;
+                        return Ok(SendAgentSessionMessageLaunchResult {
+                            acknowledgement,
+                            launch_accepted: false,
+                        });
                     }
                 }
-            } else { launch_extension };
+            } else {
+                launch_extension
+            };
             let launch_extension = self.add_workspace_capabilities(launch_extension);
             let launch_extension = match self.native_profile_launch_authority.as_ref() {
                 Some(authority) => match authority.prepare_configured_launch(
-                    session.execution_target.as_ref()
+                    session
+                        .execution_target
+                        .as_ref()
                         .map(|target| target.execution.configuration_ref.as_str())
-                        .or_else(|| session.session_profile.as_ref().and_then(|profile| profile.session_profile().runtime_profile_ref().strip_prefix("native-codex:")))
+                        .or_else(|| {
+                            session.session_profile.as_ref().and_then(|profile| {
+                                profile
+                                    .session_profile()
+                                    .runtime_profile_ref()
+                                    .strip_prefix("native-codex:")
+                            })
+                        })
                         .unwrap_or("selected"),
                     &session.id,
                     &invocation.id,
@@ -536,6 +556,34 @@ impl AgentSessionApplication {
             )
             .map_err(AgentSessionApplicationError::repository)?;
 
+        let activity_device_id = session
+            .execution_target
+            .as_ref()
+            .filter(|target| target.execution.is_remote())
+            .map(|target| target.execution.device_id.clone());
+        if let (Some(targets), Some(device_id)) = (
+            &self.execution_target_service,
+            activity_device_id.as_deref(),
+        ) {
+            targets
+                .synchronize_devices()
+                .map_err(AgentSessionApplicationError::invalid)?;
+            if let Err(error) = targets.devices.acquire_activity(
+                device_id,
+                "agent_invocation",
+                invocation.id.as_str(),
+            ) {
+                self.handle_launch_error(
+                    &invocation.id,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, error),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        }
+
         let request = RuntimeInvocationRequest {
             session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),
@@ -554,13 +602,22 @@ impl AgentSessionApplication {
             options: preflight.effective_options,
             launch_extension,
         };
-        let sink: Arc<dyn AgentRuntimeUpdateSink> = Arc::new(PersistedRuntimeUpdateSink::new(
+        let mut sink: Arc<dyn AgentRuntimeUpdateSink> = Arc::new(PersistedRuntimeUpdateSink::new(
             self.repository.clone(),
             self.notifier.clone(),
             self.clock.clone(),
             self.ids.clone(),
             self.update_lanes.clone(),
         ));
+        if let (Some(targets), Some(device_id)) =
+            (&self.execution_target_service, activity_device_id.as_ref())
+        {
+            sink = Arc::new(DeviceActivityRuntimeUpdateSink::new(
+                sink,
+                targets.devices.clone(),
+                device_id.clone(),
+            ));
+        }
         let launch = match session.runtime_binding.external_context_id {
             Some(external_context_id) => {
                 runtime.resume_invocation(request, external_context_id, sink)
@@ -583,6 +640,18 @@ impl AgentSessionApplication {
                 false
             }
         };
+        if !launch_accepted {
+            if let (Some(targets), Some(device_id)) = (
+                &self.execution_target_service,
+                activity_device_id.as_deref(),
+            ) {
+                let _ = targets.devices.release_activity(
+                    device_id,
+                    "agent_invocation",
+                    invocation.id.as_str(),
+                );
+            }
+        }
         Ok(SendAgentSessionMessageLaunchResult {
             acknowledgement,
             launch_accepted,

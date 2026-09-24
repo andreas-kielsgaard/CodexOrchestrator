@@ -50,7 +50,7 @@ impl SupervisedChild for FakeChild {
         match value["method"].as_str() {
             Some("initialize") if self.block_initialize => {},
             Some("initialize") => self.output(json!({"id":id,"result":{}})),
-            Some("thread/start" | "thread/resume") => self.output(json!({"id":id,"result":{"thread":{"id":"thread-one"},"cwd":value["params"]["cwd"],"model":"native-model","reasoningEffort":"high","approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}})),
+            Some("thread/start" | "thread/resume") => self.output(json!({"id":id,"result":{"thread":{"id":"thread-one"},"cwd":value["params"]["cwd"],"model":"native-model","reasoningEffort":"high","personality":value["params"]["personality"],"approvalPolicy":"on-request","sandbox":{"type":"readOnly"}}})),
             Some("skills/list") => {
                 let cwd = value["params"]["cwds"][0].as_str().unwrap();
                 self.output(json!({"id":id,"result":{"data":[{"cwd":cwd,"skills":[{"name":"review","path":std::path::Path::new(cwd).join("SKILL.md"),"enabled":true}],"errors":[]}]}}));
@@ -219,6 +219,51 @@ fn preparation_does_not_force_invoke_selected_skills() {
         "frozen original prompt"
     );
     runtime.shutdown().unwrap();
+}
+
+#[test]
+fn personality_is_omitted_for_inherit_and_matches_on_start_and_resume() {
+    use crate::configuration::runtime_profile::CodexPersonality;
+
+    let cases = [
+        (None, None),
+        (Some(CodexPersonality::None), Some("none")),
+        (Some(CodexPersonality::Friendly), Some("friendly")),
+        (Some(CodexPersonality::Pragmatic), Some("pragmatic")),
+    ];
+    for (personality, expected) in cases {
+        for resume in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let factory = Arc::new(Factory::default());
+            let runtime = CodexAppServerRuntime::new("fake", factory.clone());
+            let mut request = request(directory.path());
+            request.launch_extension = Some(RuntimeLaunchExtension {
+                codex_personality: personality,
+                ..Default::default()
+            });
+            runtime
+                .prepare_invocation(
+                    request,
+                    resume.then(|| ExternalRuntimeContextId::new("thread-one").unwrap()),
+                    Arc::new(Sink::default()),
+                )
+                .unwrap();
+            let child = factory.0.lock().unwrap()[0].clone();
+            let calls = child.requests.lock().unwrap();
+            let launch_calls = calls
+                .iter()
+                .filter(|request| {
+                    request["method"] == "thread/start" || request["method"] == "thread/resume"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(launch_calls.len(), if resume { 2 } else { 1 });
+            for call in launch_calls {
+                assert_eq!(call["params"]["personality"].as_str(), expected);
+            }
+            drop(calls);
+            runtime.shutdown().unwrap();
+        }
+    }
 }
 
 #[test]

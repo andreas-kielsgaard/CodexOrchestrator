@@ -117,7 +117,14 @@ pub(crate) fn run() {
             let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
                 database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
-            app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(execution_targets));
+            execution_targets.synchronize_devices()?;
+            let execution_devices = execution_targets.devices.clone();
+            app.manage(crate::execution_devices::ExecutionDeviceTauriState(
+                execution_targets.devices.clone(),
+            ));
+            app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(
+                execution_targets,
+            ));
             let session_event_adapter = Arc::new(
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
                     application.clone(),
@@ -287,6 +294,8 @@ pub(crate) fn run() {
                 .set_button_context_scheduler(orchestration.clone())?;
             // All terminal observers and managed MCP upstreams are ready before recovery can notify.
             application.reconcile_startup().map_err(|error| error.to_string())?;
+            execution_devices.reconcile_activity_leases()?;
+            execution_devices.start_idle_scheduler();
             transition
                 .reconcile_startup()
                 .map_err(|error| error.to_string())?;
@@ -373,6 +382,11 @@ pub(crate) fn run() {
             crate::execution_targets::transport::load_execution_target_runtime,
             crate::execution_targets::transport::list_repository_device_locations,
             crate::execution_targets::transport::save_repository_device_location,
+            crate::execution_devices::list_execution_devices,
+            crate::execution_devices::save_execution_device,
+            crate::execution_devices::start_execution_device,
+            crate::execution_devices::stop_execution_device,
+            crate::execution_devices::hold_execution_device_awake,
             crate::execution_configuration::transport::load_capability_profile,
             crate::execution_configuration::transport::create_capability_profile,
             crate::execution_configuration::transport::update_capability_profile,
@@ -422,6 +436,7 @@ pub(crate) fn run() {
             crate::native_profiles::register_native_profile,
             crate::native_profiles::create_dedicated_native_profile,
             crate::native_profiles::select_native_profile,
+            crate::native_profiles::set_native_profile_personality,
             crate::native_profiles::request_native_profile_login,
             crate::native_profiles::refresh_native_profile_readiness,
             crate::native_profiles::open_native_profile_in_explorer,

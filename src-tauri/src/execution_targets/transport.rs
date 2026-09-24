@@ -79,9 +79,7 @@ pub(crate) async fn load_execution_target_runtime(
 ) -> Result<ExecutionTargetRuntime, String> {
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        service
-            .endpoints
-            .describe_runtime(&input.execution, input.working_directory.as_deref())
+        service.describe_runtime(&input.execution, input.working_directory.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?

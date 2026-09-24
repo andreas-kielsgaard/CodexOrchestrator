@@ -7,6 +7,9 @@ import { repairSessionClients } from './profileTestFixtures';
 import { repairClients } from '../workflowAuthoring/testFixtures';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
 import { sessionDetails } from './testFixtures';
+
+beforeEach(() => window.localStorage.clear());
+
 it('preserves the prompt while choosing a remote worktree and uses the shared target selection for the profiled send', async () => {
   const user = userEvent.setup();
   const sessions = repairSessionClients(false);
@@ -121,7 +124,9 @@ it('uses the device command to select the same target as the modal and retains d
   await screen.findByRole('option', { name: /Remote server/ });
   await user.type(input, 'Remote{Enter}');
   await screen.findByRole('option', { name: /codex\/durable-review · review/ });
-  expect(screen.getByRole('button', { name: 'Target worktree' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Target worktree' })).toHaveTextContent(
+    'Empty workspace',
+  );
   expect(start).not.toHaveBeenCalled();
   await user.type(input, 'codex/durable-review{Enter}');
   expect(
@@ -215,9 +220,13 @@ it('keeps New session and its remote target draft open while existing history re
   );
   await user.click(screen.getByRole('button', { name: 'New session' }));
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Target worktree' })).toBeEnabled(),
+    expect(
+      screen.getByRole('button', { name: /codex\/durable-review.*Remote server/ }),
+    ).toBeEnabled(),
   );
-  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+    'Preserve this remote prompt',
+  );
 });
 
 it('allows a failed existing Session to choose a new target in the command menu', async () => {

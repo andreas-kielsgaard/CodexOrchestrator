@@ -2,7 +2,9 @@
 use super::{
     domain::*, endpoints::ExecutionEndpoints, ssh_connection::SshConnection, ExecutionTargetService,
 };
-use orchid_engine::protocol::{HostCommand, WorktreeInspection, WorktreeInstance, WorktreeSnapshot};
+use orchid_engine::protocol::{
+    HostCommand, WorktreeInspection, WorktreeInstance, WorktreeSnapshot,
+};
 
 impl ExecutionEndpoints {
     /// Runs the same Git inspection locally or through the Orchid host. The result carries only
@@ -14,11 +16,10 @@ impl ExecutionEndpoints {
         compare_to_head: Option<&str>,
     ) -> Result<WorktreeInspection, String> {
         match &binding.connection {
-            ExecutionConnection::Local => orchid_engine::workspaces::inspect_worktree(
-                worktree_root,
-                compare_to_head,
-            )
-            .map_err(|error| error.to_string()),
+            ExecutionConnection::Local => {
+                orchid_engine::workspaces::inspect_worktree(worktree_root, compare_to_head)
+                    .map_err(|error| error.to_string())
+            }
             ExecutionConnection::Ssh {
                 target,
                 host_executable,
@@ -69,11 +70,10 @@ impl ExecutionEndpoints {
         snapshot: &WorktreeSnapshot,
     ) -> Result<WorktreeInspection, String> {
         match &binding.connection {
-            ExecutionConnection::Local => orchid_engine::workspaces::apply_worktree_snapshot(
-                worktree_root,
-                snapshot,
-            )
-            .map_err(|error| error.to_string()),
+            ExecutionConnection::Local => {
+                orchid_engine::workspaces::apply_worktree_snapshot(worktree_root, snapshot)
+                    .map_err(|error| error.to_string())
+            }
             ExecutionConnection::Ssh {
                 target,
                 host_executable,
@@ -254,6 +254,7 @@ impl ExecutionTargetService {
         workspace_id: &str,
     ) -> Result<SessionExecutionTarget, String> {
         let execution = self.endpoints.freeze_binding(selection.execution.clone())?;
+        self.ensure_ready(&execution)?;
         let (repository_id, instance) = match &selection.workspace {
             SessionWorkspaceSelection::Existing { target } => {
                 if target.repository_id.is_empty() {

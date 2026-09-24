@@ -1,5 +1,6 @@
 import type { ExecutionBindingDto } from '../executionTargets/contracts';
 export type SandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
+export type CodexPersonalityDto = 'none' | 'friendly' | 'pragmatic';
 
 /** Capabilities exposed or permitted at one execution-configuration boundary. */
 export interface CapabilitySetDto {
@@ -27,6 +28,7 @@ export interface ModelAllowanceDto {
 export interface ProfileRoutePolicyDto {
   readonly routeId: string;
   readonly execution: ExecutionBindingDto;
+  readonly codexPersonality?: CodexPersonalityDto | null;
   readonly modelAllowances: readonly ModelAllowanceDto[];
   readonly mcpGroups: readonly string[];
   readonly skillGroups: readonly string[];
@@ -39,6 +41,7 @@ export interface RuntimeProfileSnapshotDto {
   readonly profileRef: string;
   readonly exposure: CapabilitySetDto;
   readonly locked: RuntimeSelectionsDto;
+  readonly codexPersonality?: CodexPersonalityDto | null;
 }
 
 export interface ProfileModelCatalogueDto {
@@ -84,6 +87,7 @@ export interface SessionProfileDto {
   readonly capabilityProfileRevision: number;
   readonly nodeCapabilities: CapabilitySetDto;
   readonly pinnedDefaults: RuntimeSelectionsDto;
+  readonly codexPersonality?: CodexPersonalityDto | null;
 }
 
 export interface SessionCreationResolutionDto {

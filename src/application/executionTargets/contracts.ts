@@ -74,6 +74,27 @@ export interface ConfiguredExecutionDeviceDto {
   readonly deviceName: string;
   readonly profiles: readonly ExecutionTargetProfileDto[];
 }
+export interface DeviceCommandSpecDto {
+  readonly program: string;
+  readonly arguments: readonly string[];
+  readonly workingDirectory: string | null;
+  readonly timeoutSeconds: number;
+}
+export interface DeviceLifecyclePolicyDto {
+  readonly start: DeviceCommandSpecDto | null;
+  readonly stop: DeviceCommandSpecDto | null;
+  readonly idleShutdownSeconds: number | null;
+}
+export interface ExecutionDeviceConfigurationDto {
+  readonly deviceId: string;
+  readonly displayName: string;
+  readonly connectionSummary: string;
+  readonly lifecycle: DeviceLifecyclePolicyDto;
+  readonly activeLeases: number;
+  readonly lastOrchidActivityAt: string | null;
+  readonly keepAwakeUntil: string | null;
+  readonly lastLifecycleMessage: string | null;
+}
 export interface ExecutionTargetDeviceDto extends ConfiguredExecutionDeviceDto {
   readonly profiles: readonly ProfileWorktreeTargetsDto[];
 }
@@ -93,6 +114,18 @@ export interface ExecutionTargetRuntimeDto {
   readonly runtimeProfile: RuntimeProfileSnapshotDto;
 }
 export interface ExecutionTargetClient {
+  listConfiguredDevices?(): Promise<readonly ExecutionDeviceConfigurationDto[]>;
+  saveConfiguredDevice?(input: {
+    readonly deviceId: string;
+    readonly displayName: string;
+    readonly lifecycle: DeviceLifecyclePolicyDto;
+  }): Promise<readonly ExecutionDeviceConfigurationDto[]>;
+  startConfiguredDevice?(deviceId: string): Promise<void>;
+  stopConfiguredDevice?(deviceId: string): Promise<void>;
+  holdConfiguredDeviceAwake?(
+    deviceId: string,
+    seconds: number,
+  ): Promise<readonly ExecutionDeviceConfigurationDto[]>;
   resolvePublishedTip?(input: {
     repositoryId: string;
     branchRef: string;

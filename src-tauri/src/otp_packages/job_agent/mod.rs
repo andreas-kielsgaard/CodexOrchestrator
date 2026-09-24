@@ -177,7 +177,23 @@ fn endpoints() -> Vec<AgentMcpToolDescriptor> {
         expected_behavior: format!("{} The endpoint returns a structured Job Agent result and applies only its declared guarded transition.", endpoint.description),
         recommended_usage: format!("Use during the {} stage when the node's instructions need this result.", CAPABILITY_GROUPS.iter().find(|group| group.id == endpoint.capability).map(|group| group.name.to_lowercase()).unwrap_or_else(|| endpoint.capability.replace('_', " "))),
         required_grants: endpoint.grants.iter().map(|value| (*value).into()).collect(),
+        annotations: endpoint_annotations(endpoint),
     }).collect()
+}
+
+fn endpoint_annotations(endpoint: &Endpoint) -> rmcp::model::ToolAnnotations {
+    let read_only = endpoint.id.starts_with("get_")
+        || endpoint.id.starts_with("list_")
+        || endpoint.id == "search_sources";
+    let destructive = matches!(
+        endpoint.id,
+        "archive_source" | "reject_recipe_candidate" | "disable_source"
+    );
+    let open_world = matches!(
+        endpoint.id,
+        "capture_source_calibration" | "run_safe_source_test"
+    );
+    tool_annotations(endpoint.name, read_only, destructive, read_only, open_world)
 }
 fn fields() -> Vec<ConfigurationField> {
     GRANTS
@@ -274,6 +290,35 @@ mod tests {
             for grant in tool.required_grants {
                 assert!(server.grants.iter().any(|candidate| candidate.id == grant));
             }
+        }
+    }
+
+    #[test]
+    fn agent_mcp_catalogue_publishes_complete_annotations() {
+        let server = JobAgentPackage.descriptor().agent_mcp_servers.remove(0);
+        for tool in server.tools {
+            let annotations = serde_json::to_value(&tool.annotations).unwrap();
+            for field in [
+                "title",
+                "readOnlyHint",
+                "destructiveHint",
+                "idempotentHint",
+                "openWorldHint",
+            ] {
+                assert!(
+                    annotations.get(field).is_some(),
+                    "{} omitted {field}",
+                    tool.id
+                );
+            }
+            let expected_read_only = tool.id.starts_with("get_")
+                || tool.id.starts_with("list_")
+                || tool.id == "search_sources";
+            assert_eq!(
+                annotations["readOnlyHint"], expected_read_only,
+                "{} has the wrong read-only classification",
+                tool.id
+            );
         }
     }
 }

@@ -1,6 +1,7 @@
 import type { AgentSessionProductOrigin } from './orchestrations/navigation';
 import {
   canNavigateBack,
+  canNavigateForward,
   contextualOriginDestination,
   createProductNavigation,
   productNavigationReducer,
@@ -65,6 +66,47 @@ describe('Product navigation history', () => {
     expect(state.current).toEqual({ destination: overview, intent: 'restore' });
     expect(state.history).toEqual([]);
     expect(canNavigateBack(state)).toBe(false);
+    expect(canNavigateForward(state)).toBe(true);
+
+    state = productNavigationReducer(state, { type: 'forward' });
+    expect(state.current.destination).toEqual(fileReview);
+    expect(canNavigateForward(state)).toBe(false);
+
+    state = productNavigationReducer(state, { type: 'back' });
+    state = productNavigationReducer(state, {
+      type: 'navigate',
+      intent: 'push',
+      destination: { kind: 'technical_settings', section: 'devices' },
+    });
+    expect(state.future).toEqual([]);
+  });
+
+  it('restores exact Capability Profile and Technical Settings selections', () => {
+    const capabilityProfile: ProductNavigationDestination = {
+      kind: 'capability_profiles',
+      profileId: 'profile-7',
+      newProfile: false,
+    };
+    const technicalSettings: ProductNavigationDestination = {
+      kind: 'technical_settings',
+      section: 'native',
+      selectedCodexProfileId: 'codex-profile-3',
+    };
+    let state = productNavigationReducer(createProductNavigation(overview), {
+      type: 'navigate',
+      intent: 'push',
+      destination: capabilityProfile,
+    });
+    state = productNavigationReducer(state, {
+      type: 'navigate',
+      intent: 'push',
+      destination: technicalSettings,
+    });
+
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current.destination).toEqual(capabilityProfile);
+    state = productNavigationReducer(state, { type: 'forward' });
+    expect(state.current.destination).toEqual(technicalSettings);
   });
 
   it('keeps a Workflow type as a typed destination and returns to its landing page', () => {
@@ -232,6 +274,28 @@ describe('Product navigation history', () => {
     expect(state.current.destination).toEqual(overview);
   });
 
+  it('records a direct Agent Sessions tab change while preserving the remembered selection', () => {
+    const rememberedSession = {
+      kind: 'agent_sessions',
+      selection: { kind: 'session', sessionId: 'session-remembered' },
+      focusedInvocationId: null,
+    } as const;
+    let state = productNavigationReducer(createProductNavigation(rememberedSession), {
+      type: 'navigate',
+      intent: 'push',
+      destination: overview,
+    });
+
+    state = productNavigationReducer(state, { type: 'enter_agent_sessions_directly' });
+
+    expect(state.current).toEqual({ destination: rememberedSession, intent: 'push' });
+    expect(state.history.at(-1)?.destination).toEqual(overview);
+    state = productNavigationReducer(state, { type: 'back' });
+    expect(state.current.destination).toEqual(overview);
+    state = productNavigationReducer(state, { type: 'forward' });
+    expect(state.current.destination).toEqual(rememberedSession);
+  });
+
   it('does not restore Back or contextual return state for direct, deep, or reload initialization', () => {
     const restored = restoreProductNavigation(
       {
@@ -251,6 +315,7 @@ describe('Product navigation history', () => {
         intent: 'restore',
       },
       history: [],
+      future: [],
       contextualOrigin: null,
     });
   });
@@ -434,6 +499,7 @@ describe('Product navigation history', () => {
     expect(createProductNavigation(publish)).toEqual({
       current: { destination: publish, intent: 'direct' },
       history: [],
+      future: [],
       contextualOrigin: null,
     });
     const opened = productNavigationReducer(createProductNavigation(overview), {

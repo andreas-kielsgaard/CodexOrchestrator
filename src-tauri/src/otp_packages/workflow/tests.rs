@@ -214,6 +214,48 @@ fn catalogue_serialization_supplies_the_designer_fixture() {
 }
 
 #[test]
+fn workflow_catalogue_publishes_complete_honest_annotations() {
+    let descriptor = WorkflowPackage.descriptor();
+    for tool in &descriptor.tools {
+        let annotations = serde_json::to_value(&tool.annotations).unwrap();
+        for field in [
+            "title",
+            "readOnlyHint",
+            "destructiveHint",
+            "idempotentHint",
+            "openWorldHint",
+        ] {
+            assert!(
+                annotations.get(field).is_some(),
+                "{} omitted {field}",
+                tool.id
+            );
+        }
+    }
+    let completed = descriptor
+        .tools
+        .iter()
+        .find(|tool| tool.id == "on_invocation_completed")
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&completed.annotations).unwrap()["readOnlyHint"],
+        true
+    );
+    for tool in descriptor
+        .tools
+        .iter()
+        .filter(|tool| tool.id != "on_invocation_completed")
+    {
+        assert_eq!(
+            serde_json::to_value(&tool.annotations).unwrap()["readOnlyHint"],
+            false,
+            "{} must remain a mutation",
+            tool.id
+        );
+    }
+}
+
+#[test]
 fn stop_selects_one_running_session_with_configured_ordering() {
     let make = |id: &str, running, created, addressed| NodeSession {
         id: id.into(),

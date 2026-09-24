@@ -73,6 +73,53 @@ pub(super) struct PersistedRuntimeUpdateSink {
     update_lanes: Arc<InvocationUpdateLanes>,
 }
 
+pub(super) struct DeviceActivityRuntimeUpdateSink {
+    inner: Arc<dyn AgentRuntimeUpdateSink>,
+    devices: Arc<crate::execution_devices::ExecutionDeviceService>,
+    device_id: String,
+}
+
+impl DeviceActivityRuntimeUpdateSink {
+    pub(super) fn new(
+        inner: Arc<dyn AgentRuntimeUpdateSink>,
+        devices: Arc<crate::execution_devices::ExecutionDeviceService>,
+        device_id: String,
+    ) -> Self {
+        Self {
+            inner,
+            devices,
+            device_id,
+        }
+    }
+}
+
+impl AgentRuntimeUpdateSink for DeviceActivityRuntimeUpdateSink {
+    fn emit_update(
+        &self,
+        invocation_id: &AgentInvocationId,
+        update: RuntimeUpdate,
+    ) -> Result<(), RuntimePortError> {
+        let terminal = matches!(update, RuntimeUpdate::Finished(_));
+        let result = self.inner.emit_update(invocation_id, update);
+        if terminal && result.is_ok() {
+            let _ = self.devices.release_activity(
+                &self.device_id,
+                "agent_invocation",
+                invocation_id.as_str(),
+            );
+        }
+        result
+    }
+
+    fn report_delivery_failure(
+        &self,
+        invocation_id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    ) {
+        self.inner.report_delivery_failure(invocation_id, failure)
+    }
+}
+
 impl PersistedRuntimeUpdateSink {
     pub(super) fn new(
         repository: Arc<dyn AgentSessionRepository>,

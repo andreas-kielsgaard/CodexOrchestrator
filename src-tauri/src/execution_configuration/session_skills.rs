@@ -123,6 +123,7 @@ mod tests {
                 mcp_groups: Default::default(),
                 skill_groups: ["orchid-skills".into()].into_iter().collect(),
                 defaults: RuntimeSelections::default(),
+                codex_personality: None,
             }],
             default_route_id: Some("route".into()),
             contract_version: 1,

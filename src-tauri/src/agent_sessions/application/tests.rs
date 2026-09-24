@@ -440,6 +440,7 @@ fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(ExecutionSandboxMode::WorkspaceWrite),
         },
+        codex_personality: None,
     }
 }
 
@@ -834,6 +835,7 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
                 managed_mcp_servers: Vec::new(),
                 skill_inputs: Vec::new(),
                 native_mcp_enabled: None,
+                codex_personality: None,
                 ignore_user_rules: false,
                 reasoning_mode: None,
                 config_overrides: vec![],

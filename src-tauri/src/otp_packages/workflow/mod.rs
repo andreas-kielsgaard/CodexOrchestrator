@@ -37,6 +37,7 @@ impl OtpPackage for WorkflowPackage {
                     description:"Trigger connections configured for this call from this node. Follow your instructions for when to call it. Optionally supply output file paths or structured data.".into(),
                     expected_behavior:"Emits the continuation output in the trusted context of the calling node, then lets the Workflow engine route only connections configured for that source node and trigger.".into(),
                     recommended_usage:"Use after the agent has completed the work or discussion its node instructions require. Supply output file paths or structured data only when downstream connections use them.".into(),
+                    annotations: tool_annotations("Workflow continuation", false, false, false, false),
                     entrypoint: Entrypoint::Mcp {input_schema:json!({"type":"object","properties":{"outputFiles":paths,"data":data},"additionalProperties":false})},
                     outputs: vec![data_output("continuation","Continuation",json!({"outputFiles":paths,"sourceNode":source,"data":data}))], configuration:vec![]
                 },
@@ -45,6 +46,7 @@ impl OtpPackage for WorkflowPackage {
                     description:"Publish file paths and prompt text to this node's configured handoff connections.".into(),
                     expected_behavior:"Emits one handoff output containing the declared file paths, prompt text, and trusted source-node identity for configured connections to consume.".into(),
                     recommended_usage:"Use when the node's instructions call for an explicit handoff and its configured connections expect the supplied files or prompt text.".into(),
+                    annotations: tool_annotations("Handoff to agent", false, false, false, false),
                     entrypoint: Entrypoint::Mcp {input_schema:json!({"type":"object","properties":{"filePaths":paths,"promptText":{"type":"string"}},"required":["filePaths","promptText"],"additionalProperties":false})},
                     outputs: vec![data_output("handoff","Handoff",json!({"filePaths":paths,"promptText":{"type":"string"},"sourceNode":source}))], configuration:vec![]
                 },
@@ -52,6 +54,7 @@ impl OtpPackage for WorkflowPackage {
                     id:"on_invocation_completed".into(),name:"Invocation completed".into(),description:"Emit when an invocation on the bound source node completes.".into(),
                     expected_behavior:"Observes a terminal invocation recorded by the product and emits its text output with the source-node identity.".into(),
                     recommended_usage:"Use when a connection should continue from an invocation ending, without requiring an agent MCP call.".into(),
+                    annotations: tool_annotations("Invocation completed", true, false, true, false),
                     entrypoint:Entrypoint::SessionEvent{event:SessionEventKind::InvocationTerminal},
                     outputs:vec![data_output("completed","Completed",json!({"output":{"type":"string"},"sourceNode":source}))],configuration:vec![]
                 },
@@ -59,6 +62,7 @@ impl OtpPackage for WorkflowPackage {
                     id:"prompt_agent".into(),name:"Prompt agent".into(),description:"Choose destination-node sessions and request delivery of the configured prompt.".into(),
                     expected_behavior:"Resolves destination-node sessions from its configuration and requests prompt delivery through the Workflow engine.".into(),
                     recommended_usage:"Use as a connection or entry destination when the next step requires an agent session to receive constructed prompt material.".into(),
+                    annotations: tool_annotations("Prompt agent", false, false, false, false),
                     entrypoint:Entrypoint::Action { uses_prompt: true },
                     outputs:vec![OutputDescriptor{id:"session".into(),name:"Agent session".into(),kind:OutputKind::SessionRequest,schema:json!({"type":"object"})}],
                     configuration:prompt_agent::fields()
@@ -67,6 +71,7 @@ impl OtpPackage for WorkflowPackage {
                     id:"stop_session".into(), name:"Stop session".into(),description:"Request cancellation of one running session of the destination node. The session remains available for later prompts.".into(),
                     expected_behavior:"Selects one running destination-node session according to its configuration and requests cancellation of its current invocation.".into(),
                     recommended_usage:"Use when a Workflow needs to stop active work in a destination-node session while retaining that session for later prompts.".into(),
+                    annotations: tool_annotations("Stop session", false, false, false, false),
                     entrypoint:Entrypoint::Action { uses_prompt: false },
                     outputs:vec![OutputDescriptor{id:"stop".into(),name:"Session cancellation".into(),kind:OutputKind::SessionStopRequest,schema:json!({"type":"object"})}],
                     configuration:stop_session::fields()

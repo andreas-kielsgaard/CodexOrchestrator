@@ -15,6 +15,7 @@ it('keeps recipe edits while visiting Capability Profiles and returning through 
   const name = await screen.findByRole('textbox', { name: 'Workflow name' });
   fireEvent.change(name, { target: { value: 'Keep my edits' } });
   fireEvent.click(screen.getByRole('button', { name: 'Capability Profiles' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'New profile' }));
   await screen.findByRole('textbox', { name: 'Capability profile name' });
   fireEvent.click(screen.getByRole('button', { name: 'Workflow' }));
   await waitFor(() =>

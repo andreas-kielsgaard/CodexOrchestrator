@@ -102,6 +102,27 @@ mod tests {
     }
 
     #[test]
+    fn enabled_native_mcp_remains_codex_owned_while_managed_servers_are_additive() {
+        let extension = RuntimeLaunchExtension {
+            native_mcp_enabled: Some(true),
+            managed_mcp_servers: vec![RuntimeManagedMcpServer {
+                name: "orchid".into(),
+                url: "http://localhost/owned".into(),
+            }],
+            ..Default::default()
+        };
+
+        let config =
+            merge_managed_servers(&json!({"native":{"command":"provider-owned"}}), &extension)
+                .unwrap();
+
+        assert_eq!(config.as_object().map(|values| values.len()), Some(1));
+        assert!(config.get("mcp_servers.orchid").is_some());
+        assert!(config.get("mcp_servers.native").is_none());
+        assert!(!config.to_string().contains("provider-owned"));
+    }
+
+    #[test]
     fn disabled_native_mcp_group_masks_native_servers_but_retains_managed_servers() {
         let extension = RuntimeLaunchExtension {
             native_mcp_enabled: Some(false),

@@ -230,6 +230,7 @@ mod tests {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
+            codex_personality: None,
         }
     }
 

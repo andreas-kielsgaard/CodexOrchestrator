@@ -191,11 +191,27 @@ impl SessionProfileResolver {
         let mut session_skill_inputs = request.session_skill_inputs;
         if route.is_some() && !request.node_profile.allowed_capabilities.skills.is_empty() {
             for selected in &request.node_profile.allowed_capabilities.skills {
-                if !session_skill_inputs.iter().any(|skill| skill.name == *selected || skill.id == *selected) {
-                    return Err(ResolutionError::InvalidInput(format!("Node requests skill `{selected}` outside the selected route")));
+                if !session_skill_inputs
+                    .iter()
+                    .any(|skill| skill.name == *selected || skill.id == *selected)
+                {
+                    return Err(ResolutionError::InvalidInput(format!(
+                        "Node requests skill `{selected}` outside the selected route"
+                    )));
                 }
             }
-            session_skill_inputs.retain(|skill| request.node_profile.allowed_capabilities.skills.contains(&skill.name) || request.node_profile.allowed_capabilities.skills.contains(&skill.id));
+            session_skill_inputs.retain(|skill| {
+                request
+                    .node_profile
+                    .allowed_capabilities
+                    .skills
+                    .contains(&skill.name)
+                    || request
+                        .node_profile
+                        .allowed_capabilities
+                        .skills
+                        .contains(&skill.id)
+            });
         }
         if let Some(route) = route {
             // Route model allowances describe future automation intent. Current session
@@ -203,32 +219,70 @@ impl SessionProfileResolver {
             node_capabilities.models = runtime_profile.exposure.models.clone();
             node_capabilities.reasoning_modes = runtime_profile.exposure.reasoning_modes.clone();
             node_capabilities.sandbox_modes = runtime_profile.exposure.sandbox_modes.clone();
-            node_capabilities.skills = session_skill_inputs.iter().map(|skill| skill.name.clone()).collect();
+            node_capabilities.skills = session_skill_inputs
+                .iter()
+                .map(|skill| skill.name.clone())
+                .collect();
             node_capabilities.mcp_tools.clear();
             for group in &route.mcp_groups {
-                if let Some(server) = group.strip_prefix("otp:").and_then(|value| value.strip_suffix(":mcps")) {
-                    let tools = runtime_profile.exposure.mcp_tools.get(server).ok_or_else(|| ResolutionError::InvalidInput(format!("Selected MCP group `{group}` is unavailable on this route")))?;
-                    if let Some(narrowed) = request.node_profile.allowed_capabilities.mcp_tools.get(server) {
+                if let Some(server) = group
+                    .strip_prefix("otp:")
+                    .and_then(|value| value.strip_suffix(":mcps"))
+                {
+                    let tools =
+                        runtime_profile
+                            .exposure
+                            .mcp_tools
+                            .get(server)
+                            .ok_or_else(|| {
+                                ResolutionError::InvalidInput(format!(
+                                    "Selected MCP group `{group}` is unavailable on this route"
+                                ))
+                            })?;
+                    if let Some(narrowed) = request
+                        .node_profile
+                        .allowed_capabilities
+                        .mcp_tools
+                        .get(server)
+                    {
                         if !narrowed.is_subset(tools) {
-                            return Err(ResolutionError::InvalidInput(format!("Node requests an unavailable MCP tool in `{server}`")));
+                            return Err(ResolutionError::InvalidInput(format!(
+                                "Node requests an unavailable MCP tool in `{server}`"
+                            )));
                         }
                     }
-                    let selected = match request.node_profile.allowed_capabilities.mcp_tools.get(server) {
-                        Some(narrowed) if !narrowed.is_empty() => tools.intersection(narrowed).cloned().collect(),
+                    let selected = match request
+                        .node_profile
+                        .allowed_capabilities
+                        .mcp_tools
+                        .get(server)
+                    {
+                        Some(narrowed) if !narrowed.is_empty() => {
+                            tools.intersection(narrowed).cloned().collect()
+                        }
                         _ => tools.clone(),
                     };
-                    node_capabilities.mcp_tools.insert(server.to_string(), selected);
+                    node_capabilities
+                        .mcp_tools
+                        .insert(server.to_string(), selected);
                 } else if group != "codex-profile-mcps" {
-                    return Err(ResolutionError::InvalidInput(format!("Unsupported MCP group `{group}`")));
+                    return Err(ResolutionError::InvalidInput(format!(
+                        "Unsupported MCP group `{group}`"
+                    )));
                 }
             }
             for server in request.node_profile.allowed_capabilities.mcp_tools.keys() {
                 if !node_capabilities.mcp_tools.contains_key(server) {
-                    return Err(ResolutionError::InvalidInput(format!("Node requests MCP server `{server}` outside the selected route")));
+                    return Err(ResolutionError::InvalidInput(format!(
+                        "Node requests MCP server `{server}` outside the selected route"
+                    )));
                 }
             }
             if !session_skill_inputs.is_empty() {
-                node_capabilities.mcp_tools.insert("orchid_skills".into(), ["read_skill".into()].into_iter().collect());
+                node_capabilities.mcp_tools.insert(
+                    "orchid_skills".into(),
+                    ["read_skill".into()].into_iter().collect(),
+                );
             }
         }
         let pinned_defaults = resolve_pinned_defaults(
@@ -240,6 +294,9 @@ impl SessionProfileResolver {
             &node_capabilities,
         )?;
         let native_mcp_enabled = route.map(|route| route.mcp_groups.contains("codex-profile-mcps"));
+        let codex_personality = route
+            .and_then(|route| route.codex_personality)
+            .or(runtime_profile.codex_personality);
         let session_profile = SessionProfile::resolved(
             runtime_profile.profile_ref,
             runtime_profile.exposure,
@@ -251,6 +308,7 @@ impl SessionProfileResolver {
             session_skill_inputs,
             pinned_defaults,
             native_mcp_enabled,
+            codex_personality,
         );
         let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
         let digest = session_profile_digest(contract_version, &session_profile)?;

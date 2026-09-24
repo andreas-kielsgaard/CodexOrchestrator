@@ -3,6 +3,23 @@ use crate::execution_configuration::CapabilityProfile;
 use chrono::Utc;
 use serde_json::json;
 
+fn device(id: &str) -> crate::execution_devices::ExecutionDeviceDto {
+    crate::execution_devices::ExecutionDeviceDto {
+        device_id: id.into(),
+        display_name: format!("Registered {id}"),
+        connection_summary: "Developer configured".into(),
+        lifecycle: crate::execution_devices::DeviceLifecyclePolicy {
+            start: None,
+            stop: None,
+            idle_shutdown_seconds: None,
+        },
+        active_leases: 0,
+        last_orchid_activity_at: None,
+        keep_awake_until: None,
+        last_lifecycle_message: None,
+    }
+}
+
 fn profile(id: &str, device: &str, remote: bool) -> CapabilityProfile {
     CapabilityProfile {
         contract_version: 1,
@@ -53,16 +70,23 @@ fn instance(root: &str, name: &str, branch: Option<&str>) -> WorktreeInstance {
 }
 
 #[test]
-fn device_listing_uses_only_profile_identity_and_retains_empty_remote_devices() {
-    let devices = configured_devices(&[
+fn device_listing_is_owned_by_registration_and_profiles_are_optional() {
+    let profiles = [
         profile("local-a", "laptop", false),
         profile("local-b", "laptop", false),
         profile("remote", "server", true),
-    ]);
-    assert_eq!(devices.len(), 2);
+    ];
+    let devices = configured_devices(
+        &[device("laptop"), device("server"), device("profileless")],
+        &profiles,
+    );
+    assert_eq!(devices.len(), 3);
+    assert_eq!(devices[0].device_name, "Registered laptop");
     assert_eq!(devices[0].profiles.len(), 2);
     assert_eq!(devices[1].device_id, "server");
     assert_eq!(devices[1].profiles[0].capability_profile_revision, 7);
+    assert_eq!(devices[2].device_id, "profileless");
+    assert!(devices[2].profiles.is_empty());
     let value = serde_json::to_value(&devices).unwrap();
     assert_eq!(
         value[1]["profiles"][0]["execution"]["configurationRef"],
@@ -197,6 +221,8 @@ fn branch_filtered_modal_keeps_its_json_shape_and_actual_instance_branch() {
                     "worktreeId":"instance-demo",
                     "path":"/laptop/alpha/demo",
                     "head":"0123456789abcdef",
+                    "dirty":false,
+                    "headCommittedAt":"2026-01-01T00:00:00Z",
                     "branchRef":"refs/heads/feature/demo"
                 }],
                 "error":null

@@ -167,6 +167,7 @@ export function CapabilityProfileEditor({
     const policy: ProfileRoutePolicyDto = {
       routeId: `route-${Date.now()}-${profile.routePolicies.length + 1}`,
       execution: route.execution,
+      codexPersonality: null,
       modelAllowances: [],
       mcpGroups: [],
       skillGroups: [],

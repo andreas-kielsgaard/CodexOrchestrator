@@ -52,7 +52,7 @@ it('keeps a pending question reachable across runtime updates and steering witho
   );
   const { rerender } = render(view());
   expect(screen.getAllByLabelText('Which direction?')).toHaveLength(1);
-  expect(screen.getByText('Runtime detail')).not.toBeVisible();
+  expect(screen.queryByText('Runtime detail')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Review request' }));
   expect(screen.getByRole('article', { name: 'Agent request' })).toHaveFocus();
   expect(scroll).toHaveBeenCalledWith({ block: 'start' });
@@ -67,7 +67,7 @@ it('keeps a pending question reachable across runtime updates and steering witho
   rerender(view());
   expect(screen.getByRole('button', { name: 'Review request' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Steer' })).toBeEnabled();
-  expect(screen.getByText('More runtime detail')).not.toBeVisible();
+  expect(screen.queryByText('More runtime detail')).toBeNull();
   details.interactions[0] = { ...request, state: 'answered' };
   rerender(view());
   expect(screen.queryByRole('button', { name: 'Review request' })).toBeNull();

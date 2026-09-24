@@ -750,7 +750,7 @@ mod tests {
     use std::time::Duration;
 
     struct UpstreamState {
-        tools: Mutex<Vec<String>>,
+        tools: Mutex<Vec<Value>>,
         calls: Mutex<Vec<String>>,
         authorizations: Mutex<Vec<String>>,
     }
@@ -758,6 +758,86 @@ mod tests {
     struct WorkflowUpstreamState {
         preparations: Mutex<Vec<Value>>,
         calls: Mutex<Vec<Value>>,
+    }
+
+    #[test]
+    fn selected_tool_filter_preserves_upstream_annotations_and_omissions() {
+        let input = Bytes::from(
+            json!({"jsonrpc":"2.0","id":1,"result":{"tools":[
+                {"name":"annotated","annotations":{"readOnlyHint":true,"openWorldHint":false},"x-provider":{"parallelClass":"safe"}},
+                {"name":"unannotated"},
+                {"name":"blocked","annotations":{"destructiveHint":true}}
+            ]}}).to_string(),
+        );
+        let filtered =
+            filter_tools_list_response(&input, &["annotated".into(), "unannotated".into()])
+                .unwrap();
+        let value: Value = serde_json::from_slice(&filtered).unwrap();
+        let tools = value["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
+        assert_eq!(tools[0]["annotations"]["openWorldHint"], false);
+        assert_eq!(tools[0]["x-provider"]["parallelClass"], "safe");
+        assert!(tools[1].get("annotations").is_none());
+    }
+
+    #[test]
+    fn streamed_tool_filter_preserves_upstream_annotations() {
+        let event = format!(
+            "event: message\ndata: {}\n\n",
+            json!({"jsonrpc":"2.0","id":1,"result":{"tools":[
+                {"name":"kept","annotations":{"readOnlyHint":true,"idempotentHint":true}},
+                {"name":"blocked","annotations":{"readOnlyHint":false}}
+            ]}})
+        );
+        let filtered = filter_tools_list_sse_event(event.as_bytes(), &["kept".into()]).unwrap();
+        let text = std::str::from_utf8(&filtered).unwrap();
+        let data = text
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let value: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(
+            value["result"]["tools"][0]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(
+            value["result"]["tools"][0]["annotations"]["idempotentHint"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn chunk_split_stream_preserves_annotations_and_extensions() {
+        let upstream = stream::iter(vec![
+            Ok::<_, io::Error>(Bytes::from_static(
+                b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"kept\",\"annot",
+            )),
+            Ok(Bytes::from_static(
+                b"ations\":{\"readOnlyHint\":true},\"x-provider\":{\"class\":\"safe\"}},{\"name\":\"hidden\"}]}}\n",
+            )),
+            Ok(Bytes::from_static(b"\n")),
+        ]);
+        let chunks = filter_tools_list_sse_stream(upstream, vec!["kept".into()])
+            .collect::<Vec<_>>()
+            .await;
+        let bytes = chunks
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .concat();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let data = text
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let value: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(
+            value["result"]["tools"][0]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(value["result"]["tools"][0]["x-provider"]["class"], "safe");
+        assert_eq!(value["result"]["tools"].as_array().unwrap().len(), 1);
     }
 
     async fn start_workflow_upstream(
@@ -850,7 +930,7 @@ mod tests {
                                         .lock()
                                         .unwrap()
                                         .iter()
-                                        .map(|name| json!({"name": name, "description": name, "inputSchema": {"type": "object"}}))
+                                        .cloned()
                                         .collect::<Vec<_>>();
                                     json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}})
                                 }
@@ -1157,7 +1237,10 @@ mod tests {
     #[tokio::test]
     async fn selected_tools_are_filtered_and_gated_before_managed_forwarding() {
         let state = Arc::new(UpstreamState {
-            tools: Mutex::new(vec!["allowed".into(), "blocked".into()]),
+            tools: Mutex::new(vec![
+                json!({"name":"allowed","description":"allowed","inputSchema":{"type":"object"}}),
+                json!({"name":"blocked","description":"blocked","inputSchema":{"type":"object"}}),
+            ]),
             calls: Mutex::new(Vec::new()),
             authorizations: Mutex::new(Vec::new()),
         });
@@ -1202,7 +1285,13 @@ mod tests {
     #[tokio::test]
     async fn whole_server_tools_list_reflects_current_upstream_advertisement() {
         let state = Arc::new(UpstreamState {
-            tools: Mutex::new(vec!["first".into()]),
+            tools: Mutex::new(vec![json!({
+                "name":"first",
+                "description":"first",
+                "inputSchema":{"type":"object"},
+                "annotations":{"readOnlyHint":true,"openWorldHint":false},
+                "x-provider":{"parallelClass":"safe"}
+            })]),
             calls: Mutex::new(Vec::new()),
             authorizations: Mutex::new(Vec::new()),
         });
@@ -1216,7 +1305,17 @@ mod tests {
         )
         .await;
         assert_eq!(first["result"]["tools"].as_array().unwrap().len(), 1);
-        state.tools.lock().unwrap().push("newest".into());
+        assert_eq!(
+            first["result"]["tools"][0]["annotations"]["readOnlyHint"],
+            true
+        );
+        assert_eq!(
+            first["result"]["tools"][0]["x-provider"]["parallelClass"],
+            "safe"
+        );
+        state.tools.lock().unwrap().push(json!({
+            "name":"newest","description":"newest","inputSchema":{"type":"object"}
+        }));
         let second = rpc(
             &url,
             json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),

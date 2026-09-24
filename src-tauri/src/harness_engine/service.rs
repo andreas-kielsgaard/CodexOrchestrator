@@ -479,6 +479,7 @@ mod tests {
                 profile_ref: "runtime".into(),
                 exposure: capabilities.clone(),
                 locked: RuntimeSelections::default(),
+                codex_personality: None,
             },
             SessionCreationRequest {
                 contract_version: 1,

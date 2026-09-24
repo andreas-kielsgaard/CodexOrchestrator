@@ -385,7 +385,7 @@ where
             "jsonrpc":"2.0", "id":id,
             "result":{"tools": state.tools.values().map(|tool| json!({
                 "name":tool.id,"title":tool.name,"description":tool.description,
-                "inputSchema":tool.input_schema
+                "inputSchema":tool.input_schema,"annotations":tool.annotations
             })).collect::<Vec<_>>()}
         })),
         Some("tools/call") => {
@@ -566,6 +566,13 @@ mod tests {
                     expected_behavior: "Reads source summaries.".into(),
                     recommended_usage: "Use for source discovery.".into(),
                     required_grants: vec![],
+                    annotations: crate::otp_api::tool_annotations(
+                        "Get source catalog",
+                        true,
+                        false,
+                        true,
+                        false,
+                    ),
                 },
             )]
             .into_iter()
@@ -592,6 +599,7 @@ mod tests {
                 profile_ref: "configured-runtime".into(),
                 exposure: capabilities.clone(),
                 locked: RuntimeSelections::default(),
+                codex_personality: None,
             },
             SessionCreationRequest {
                 contract_version: 1,

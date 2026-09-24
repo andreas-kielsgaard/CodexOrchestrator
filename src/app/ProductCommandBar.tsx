@@ -1,4 +1,4 @@
-import { ArrowLeft, CornerUpLeft } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CornerUpLeft } from 'lucide-react';
 import type { AgentSessionProductOrigin } from '../application/orchestrations/navigation';
 import {
   isAgentSessionProductOrigin,
@@ -8,7 +8,9 @@ import {
 
 export interface ProductCommandBarProps {
   readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   readonly onBack: () => void;
+  readonly onForward: () => void;
   readonly returnOrigin?: ProductContextualOrigin | null;
   readonly onReturn?: (origin: ProductContextualOrigin) => void;
 }
@@ -16,7 +18,9 @@ export interface ProductCommandBarProps {
 /** Product navigation only; this bar deliberately does not expose arbitrary commands. */
 export function ProductCommandBar({
   canGoBack,
+  canGoForward,
   onBack,
+  onForward,
   returnOrigin,
   onReturn,
 }: ProductCommandBarProps) {
@@ -28,9 +32,19 @@ export function ProductCommandBar({
         onClick={onBack}
         disabled={!canGoBack}
         title={canGoBack ? 'Go to the previous product destination' : 'No previous destination'}
+        aria-label="Back"
       >
         <ArrowLeft size={15} aria-hidden="true" />
-        Back
+      </button>
+      <button
+        className="application-command-bar__forward"
+        type="button"
+        onClick={onForward}
+        disabled={!canGoForward}
+        title={canGoForward ? 'Go to the next product destination' : 'No next destination'}
+        aria-label="Forward"
+      >
+        <ArrowRight size={15} aria-hidden="true" />
       </button>
       {returnOrigin && onReturn ? (
         <div className="application-command-bar__return">

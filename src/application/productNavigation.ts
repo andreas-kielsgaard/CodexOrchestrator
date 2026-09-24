@@ -33,6 +33,16 @@ export type ProductNavigationDestination =
   | { readonly kind: 'harness_inspector' }
   | { readonly kind: 'worktree_review' }
   | {
+      readonly kind: 'capability_profiles';
+      readonly profileId: string | null;
+      readonly newProfile: boolean;
+    }
+  | {
+      readonly kind: 'technical_settings';
+      readonly section: 'devices' | 'inference' | 'native' | 'otp';
+      readonly selectedCodexProfileId?: string | null;
+    }
+  | {
       readonly kind: 'product_decision_publish';
       readonly epicId: string;
       readonly decisionId: string;
@@ -78,6 +88,8 @@ export interface ProductNavigationState {
   readonly current: ProductNavigationEntry;
   /** Only destinations entered through a product push are candidates for generic Back. */
   readonly history: readonly ProductNavigationEntry[];
+  /** Destinations displaced by Back. A new navigation clears this stack. */
+  readonly future: readonly ProductNavigationEntry[];
   /** This single contextual pointer is independent of generic history. */
   readonly contextualOrigin: ProductContextualOrigin | null;
 }
@@ -101,6 +113,7 @@ export type ProductNavigationAction =
     }
   | { readonly type: 'enter_agent_sessions_directly' }
   | { readonly type: 'back' }
+  | { readonly type: 'forward' }
   | { readonly type: 'return_to_contextual_origin'; readonly origin: ProductContextualOrigin }
   | { readonly type: 'clear_contextual_origin' };
 
@@ -116,6 +129,7 @@ export function createProductNavigation(
   return {
     current: { destination, intent },
     history: [],
+    future: [],
     contextualOrigin: null,
   };
 }
@@ -151,6 +165,7 @@ export function productNavigationReducer(
       return {
         current: { destination: action.destination, intent: action.intent },
         history: action.intent === 'push' ? [...state.history, state.current] : state.history,
+        future: [],
         contextualOrigin: keepsContextualOrigin(state.contextualOrigin, action.destination)
           ? state.contextualOrigin
           : null,
@@ -175,6 +190,7 @@ export function productNavigationReducer(
           intent: 'push',
         },
         history: [...state.history, state.current],
+        future: [],
         contextualOrigin: action.origin,
       };
     case 'open_contextual_file_review':
@@ -188,11 +204,13 @@ export function productNavigationReducer(
       return {
         current: { destination: { kind: 'file_review', target: action.target }, intent: 'push' },
         history: [...state.history, state.current],
+        future: [],
         contextualOrigin: action.origin,
       };
     case 'enter_agent_sessions_directly': {
+      const alreadyInAgentSessions = state.current.destination.kind === 'agent_sessions';
       const remembered =
-        state.current.destination.kind === 'agent_sessions'
+        alreadyInAgentSessions
           ? state.current.destination
           : state.history
               .slice()
@@ -211,8 +229,9 @@ export function productNavigationReducer(
         focusedInvocationId: null,
       };
       return {
-        current: { destination, intent: 'replace' },
-        history: state.history,
+        current: { destination, intent: alreadyInAgentSessions ? 'replace' : 'push' },
+        history: alreadyInAgentSessions ? state.history : [...state.history, state.current],
+        future: [],
         contextualOrigin: null,
       };
     }
@@ -228,6 +247,23 @@ export function productNavigationReducer(
       return {
         current: { destination: previous.destination, intent: 'restore' },
         history: state.history.slice(0, -1),
+        future: [state.current, ...state.future],
+        contextualOrigin: null,
+      };
+    }
+    case 'forward': {
+      const next = state.future[0];
+      if (!next) return clearForeignOrigin(state);
+      if (!supports(next.destination))
+        return {
+          ...state,
+          future: state.future.slice(1),
+          contextualOrigin: null,
+        };
+      return {
+        current: { destination: next.destination, intent: 'restore' },
+        history: [...state.history, state.current],
+        future: state.future.slice(1),
         contextualOrigin: null,
       };
     }
@@ -242,6 +278,7 @@ export function productNavigationReducer(
         return {
           current: { destination: orchestrationDestination(action.origin), intent: 'restore' },
           history: state.history,
+          future: [],
           contextualOrigin: null,
         };
       }
@@ -257,6 +294,7 @@ export function productNavigationReducer(
       return {
         current: { destination: action.origin.returnTo, intent: 'restore' },
         history: state.history,
+        future: [],
         contextualOrigin: null,
       };
     }
@@ -271,6 +309,14 @@ export function canNavigateBack(
 ): boolean {
   const previous = state.history.at(-1);
   return previous !== undefined && supports(previous.destination);
+}
+
+export function canNavigateForward(
+  state: ProductNavigationState,
+  supports: ProductNavigationDestinationSupport = () => true,
+): boolean {
+  const next = state.future[0];
+  return next !== undefined && supports(next.destination);
 }
 
 /** Maps an already-validated contextual origin to its typed restoration destination. */
@@ -326,6 +372,21 @@ export function isProductNavigationDestination(
     case 'harness_inspector':
     case 'worktree_review':
       return hasOnlyKeys(value, ['kind']);
+    case 'capability_profiles':
+      return (
+        hasOnlyKeys(value, ['kind', 'profileId', 'newProfile']) &&
+        (value.profileId === null || isIdentifier(value.profileId)) &&
+        typeof value.newProfile === 'boolean' &&
+        !(value.newProfile && value.profileId !== null)
+      );
+    case 'technical_settings':
+      return (
+        hasOnlyKeys(value, ['kind', 'section', 'selectedCodexProfileId']) &&
+        (value.selectedCodexProfileId === undefined ||
+          value.selectedCodexProfileId === null ||
+          isIdentifier(value.selectedCodexProfileId)) &&
+        ['devices', 'inference', 'native', 'otp'].includes(String(value.section))
+      );
     case 'product_decision_publish':
       return (
         hasOnlyKeys(value, ['kind', 'epicId', 'decisionId', 'versionId', 'version']) &&
@@ -419,6 +480,18 @@ export function sameProductNavigationDestination(
     case 'harness_inspector':
     case 'worktree_review':
       return true;
+    case 'capability_profiles':
+      return (
+        right.kind === 'capability_profiles' &&
+        left.profileId === right.profileId &&
+        left.newProfile === right.newProfile
+      );
+    case 'technical_settings':
+      return (
+        right.kind === 'technical_settings' &&
+        left.section === right.section &&
+        left.selectedCodexProfileId === right.selectedCodexProfileId
+      );
     case 'product_decision_publish':
       return (
         right.kind === 'product_decision_publish' &&

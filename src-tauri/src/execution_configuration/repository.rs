@@ -3,6 +3,7 @@ use super::{
     ports::{CapabilityProfileRepository, CapabilityProfileRepositoryError},
 };
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use serde_json::Value;
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -39,11 +40,30 @@ pub(crate) struct InMemoryCapabilityProfileRepository {
 }
 
 impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
-    fn model_catalogue(&self, configuration_ref: &str) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
-        Ok(self.model_catalogues.lock().map_err(|_| CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into()))?.get(configuration_ref).cloned())
+    fn model_catalogue(
+        &self,
+        configuration_ref: &str,
+    ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
+        Ok(self
+            .model_catalogues
+            .lock()
+            .map_err(|_| {
+                CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into())
+            })?
+            .get(configuration_ref)
+            .cloned())
     }
-    fn save_model_catalogue(&self, configuration_ref: &str, catalogue: &super::StoredModelCatalogue) -> Result<(), CapabilityProfileRepositoryError> {
-        self.model_catalogues.lock().map_err(|_| CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into()))?.insert(configuration_ref.into(), catalogue.clone());
+    fn save_model_catalogue(
+        &self,
+        configuration_ref: &str,
+        catalogue: &super::StoredModelCatalogue,
+    ) -> Result<(), CapabilityProfileRepositoryError> {
+        self.model_catalogues
+            .lock()
+            .map_err(|_| {
+                CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into())
+            })?
+            .insert(configuration_ref.into(), catalogue.clone());
         Ok(())
     }
     fn default_profile(
@@ -198,14 +218,22 @@ impl SqliteCapabilityProfileRepository {
 }
 
 impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
-    fn model_catalogue(&self, configuration_ref: &str) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
+    fn model_catalogue(
+        &self,
+        configuration_ref: &str,
+    ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
         self.read("read model catalogue", |connection| {
             let json: Option<String> = connection.query_row("SELECT catalogue_json FROM execution_model_catalogues WHERE configuration_ref=?1", [configuration_ref], |row| row.get(0)).optional().map_err(storage_error("read model catalogue"))?;
             json.map(|json| serde_json::from_str(&json).map_err(|error| CapabilityProfileRepositoryError::Storage(format!("Invalid cached model catalogue: {error}")))).transpose()
         })
     }
-    fn save_model_catalogue(&self, configuration_ref: &str, catalogue: &super::StoredModelCatalogue) -> Result<(), CapabilityProfileRepositoryError> {
-        let json = serde_json::to_string(catalogue).map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))?;
+    fn save_model_catalogue(
+        &self,
+        configuration_ref: &str,
+        catalogue: &super::StoredModelCatalogue,
+    ) -> Result<(), CapabilityProfileRepositoryError> {
+        let json = serde_json::to_string(catalogue)
+            .map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))?;
         self.write("save model catalogue", |transaction| {
             transaction.execute("INSERT INTO execution_model_catalogues(configuration_ref,catalogue_json) VALUES(?1,?2) ON CONFLICT(configuration_ref) DO UPDATE SET catalogue_json=excluded.catalogue_json", params![configuration_ref,json]).map_err(storage_error("save model catalogue"))?;
             Ok(())
@@ -214,7 +242,7 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
     fn default_profile(
         &self,
     ) -> Result<Option<CapabilityProfile>, CapabilityProfileRepositoryError> {
-        self.read("read default Capability Profile", |connection| connection.query_row("SELECT p.capability_profile_id,p.revision,p.profile_json FROM execution_capability_profiles p JOIN execution_default_capability_profile d ON d.capability_profile_id=p.capability_profile_id WHERE d.singleton=1", [], profile_row).optional().map_err(storage_error("read default Capability Profile"))?.map(decode_profile_row).transpose())
+        self.read("read default Capability Profile", |connection| connection.query_row("SELECT p.capability_profile_id,p.revision,p.profile_json FROM execution_capability_profiles p JOIN execution_default_capability_profile d ON d.capability_profile_id=p.capability_profile_id WHERE d.singleton=1", [], profile_row).optional().map_err(storage_error("read default Capability Profile"))?.map(|row| decode_profile_row(connection, row)).transpose())
     }
     fn default_profile_id(&self) -> Result<Option<String>, CapabilityProfileRepositoryError> {
         self.read("read default Capability Profile identity", |connection| connection.query_row("SELECT capability_profile_id FROM execution_default_capability_profile WHERE singleton=1", [], |row| row.get(0)).optional().map_err(storage_error("read default Capability Profile")))
@@ -237,15 +265,15 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
                  FROM execution_capability_profiles ORDER BY capability_profile_id COLLATE NOCASE",
                 )
                 .map_err(storage_error("prepare Capability Profile list"))?;
-            let profiles = statement
+            let rows = statement
                 .query_map([], profile_row)
                 .map_err(storage_error("query Capability Profile list"))?
-                .map(|row| {
-                    row.map_err(storage_error("read Capability Profile row"))
-                        .and_then(decode_profile_row)
-                })
-                .collect();
-            profiles
+                .map(|row| row.map_err(storage_error("read Capability Profile row")))
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(statement);
+            rows.into_iter()
+                .map(|row| decode_profile_row(connection, row))
+                .collect()
         })
     }
 
@@ -263,7 +291,7 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
                 )
                 .optional()
                 .map_err(storage_error("read Capability Profile"))?
-                .map(decode_profile_row)
+                .map(|row| decode_profile_row(connection, row))
                 .transpose()
         })
     }
@@ -275,6 +303,7 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
         validate_profile(capability_profile)?;
         let json = encode_profile(capability_profile)?;
         self.write("insert Capability Profile", |transaction| {
+            validate_registered_routes(transaction, capability_profile)?;
             match transaction.execute(
                 "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) \
                  VALUES(?1,?2,?3)",
@@ -306,6 +335,7 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
         validate_profile(capability_profile)?;
         let json = encode_profile(capability_profile)?;
         self.write("replace Capability Profile", |transaction| {
+        validate_registered_routes(transaction, capability_profile)?;
         let changed = transaction
             .execute(
                 "UPDATE execution_capability_profiles SET revision=?2,profile_json=?3 \
@@ -365,7 +395,17 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
 pub(crate) fn initialize_capability_profile_storage(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(CAPABILITY_PROFILE_SCHEMA)
-        .map_err(|error| format!("Unable to initialize Capability Profile storage: {error}"))
+        .map_err(|error| format!("Unable to initialize Capability Profile storage: {error}"))?;
+    connection
+        .execute_batch(crate::execution_devices::SCHEMA)
+        .map_err(|error| format!("Unable to initialize execution device storage: {error}"))?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO execution_devices(device_id,display_name,connection_json,updated_at) VALUES('local','This device','{\"kind\":\"local\"}',?1)",
+            [chrono::Utc::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("Unable to initialize the local execution device: {error}"))?;
+    migrate_profile_route_references(connection)
 }
 
 fn managed_error(
@@ -386,9 +426,14 @@ fn profile_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CapabilityProfileRow
 }
 
 fn decode_profile_row(
+    connection: &Connection,
     (stored_id, stored_revision, json): CapabilityProfileRow,
 ) -> Result<CapabilityProfile, CapabilityProfileRepositoryError> {
-    let profile: CapabilityProfile = serde_json::from_str(&json).map_err(|error| {
+    let mut value: Value = serde_json::from_str(&json).map_err(|error| {
+        CapabilityProfileRepositoryError::InvalidStoredProfile(error.to_string())
+    })?;
+    hydrate_profile_routes(connection, &mut value)?;
+    let profile: CapabilityProfile = serde_json::from_value(value).map_err(|error| {
         CapabilityProfileRepositoryError::InvalidStoredProfile(error.to_string())
     })?;
     profile
@@ -406,11 +451,220 @@ fn decode_profile_row(
 }
 
 fn encode_profile(profile: &CapabilityProfile) -> Result<String, CapabilityProfileRepositoryError> {
-    serde_json::to_string(profile).map_err(|error| {
+    let mut value = serde_json::to_value(profile).map_err(|error| {
+        CapabilityProfileRepositoryError::Storage(format!(
+            "Unable to encode Capability Profile: {error}"
+        ))
+    })?;
+    strip_resolved_profile_routes(&mut value)?;
+    serde_json::to_string(&value).map_err(|error| {
         CapabilityProfileRepositoryError::Storage(format!(
             "Unable to encode Capability Profile: {error}"
         ))
     })
+}
+
+fn strip_resolved_profile_routes(
+    value: &mut Value,
+) -> Result<(), CapabilityProfileRepositoryError> {
+    for_each_execution_mut(value, |execution| {
+        execution.remove("deviceName");
+        execution.remove("connection");
+        Ok(())
+    })
+}
+
+fn hydrate_profile_routes(
+    connection: &Connection,
+    value: &mut Value,
+) -> Result<(), CapabilityProfileRepositoryError> {
+    for_each_execution_mut(value, |execution| {
+        if execution.contains_key("connection") && execution.contains_key("deviceName") {
+            return Ok(());
+        }
+        let device_id = execution
+            .get("deviceId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                CapabilityProfileRepositoryError::InvalidStoredProfile(
+                    "Capability Profile route does not identify a device".into(),
+                )
+            })?;
+        let device = connection
+            .query_row(
+                "SELECT display_name,connection_json FROM execution_devices WHERE device_id=?1",
+                [device_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(storage_error("resolve Capability Profile device"))?
+            .ok_or_else(|| {
+                CapabilityProfileRepositoryError::InvalidStoredProfile(format!(
+                    "Capability Profile references unregistered device `{device_id}`"
+                ))
+            })?;
+        let connection_value = device
+            .1
+            .as_deref()
+            .ok_or_else(|| {
+                CapabilityProfileRepositoryError::InvalidStoredProfile(format!(
+                    "Capability Profile device `{device_id}` has no developer connection"
+                ))
+            })
+            .and_then(|json| {
+                serde_json::from_str(json).map_err(|error| {
+                    CapabilityProfileRepositoryError::InvalidStoredProfile(format!(
+                        "Capability Profile device `{device_id}` has an invalid connection: {error}"
+                    ))
+                })
+            })?;
+        execution.insert("deviceName".into(), Value::String(device.0));
+        execution.insert("connection".into(), connection_value);
+        Ok(())
+    })
+}
+
+fn for_each_execution_mut(
+    value: &mut Value,
+    mut visit: impl FnMut(
+        &mut serde_json::Map<String, Value>,
+    ) -> Result<(), CapabilityProfileRepositoryError>,
+) -> Result<(), CapabilityProfileRepositoryError> {
+    if let Some(execution) = value.get_mut("execution").and_then(Value::as_object_mut) {
+        visit(execution)?;
+    }
+    if let Some(routes) = value.get_mut("routePolicies").and_then(Value::as_array_mut) {
+        for route in routes {
+            let execution = route
+                .get_mut("execution")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| {
+                    CapabilityProfileRepositoryError::InvalidStoredProfile(
+                        "Capability Profile route has no execution reference".into(),
+                    )
+                })?;
+            visit(execution)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_registered_routes(
+    connection: &Connection,
+    profile: &CapabilityProfile,
+) -> Result<(), CapabilityProfileRepositoryError> {
+    let bindings = std::iter::once(&profile.execution)
+        .chain(profile.route_policies.iter().map(|route| &route.execution));
+    for binding in bindings {
+        let stored_connection = connection
+            .query_row(
+                "SELECT connection_json FROM execution_devices WHERE device_id=?1",
+                [&binding.device_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(storage_error("resolve Capability Profile device"))?
+            .flatten()
+            .ok_or_else(|| {
+                CapabilityProfileRepositoryError::Storage(format!(
+                    "Configure device `{}` in Technical Settings before using it in a Capability Profile",
+                    binding.device_id
+                ))
+            })?;
+        let stored_connection = serde_json::from_str::<
+            crate::execution_targets::domain::ExecutionConnection,
+        >(&stored_connection)
+        .map_err(|error| {
+            CapabilityProfileRepositoryError::Storage(format!(
+                "Configured device `{}` has an invalid connection: {error}",
+                binding.device_id
+            ))
+        })?;
+        if stored_connection != binding.connection {
+            return Err(CapabilityProfileRepositoryError::Storage(format!(
+                "Capability Profile route for device `{}` does not match its developer connection",
+                binding.device_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Moves legacy embedded connection definitions into device-owned rows and rewrites profiles to
+/// stable route references. Existing Session snapshots remain untouched.
+pub(crate) fn migrate_profile_route_references(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("SELECT capability_profile_id,profile_json FROM execution_capability_profiles")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    drop(statement);
+    for (profile_id, json) in rows {
+        let mut value: Value = serde_json::from_str(&json)
+            .map_err(|error| format!("Capability Profile `{profile_id}` is invalid: {error}"))?;
+        let mut bindings = Vec::new();
+        for_each_execution_mut(&mut value, |execution| {
+            let Some(connection_value) = execution.get("connection").cloned() else {
+                return Ok(());
+            };
+            let device_id = execution
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    CapabilityProfileRepositoryError::InvalidStoredProfile(
+                        "Legacy route does not identify a device".into(),
+                    )
+                })?
+                .to_string();
+            let display_name = execution
+                .get("deviceName")
+                .and_then(Value::as_str)
+                .unwrap_or(&device_id)
+                .to_string();
+            bindings.push((device_id, display_name, connection_value));
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+        for (device_id, display_name, connection_value) in bindings {
+            let encoded = serde_json::to_string(&connection_value).map_err(|e| e.to_string())?;
+            let existing = connection
+                .query_row(
+                    "SELECT connection_json FROM execution_devices WHERE device_id=?1",
+                    [&device_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .flatten();
+            if let Some(existing) = existing {
+                let existing: Value = serde_json::from_str(&existing).map_err(|e| e.to_string())?;
+                if existing != connection_value {
+                    return Err(format!(
+                        "Device `{device_id}` has conflicting developer connection definitions"
+                    ));
+                }
+            }
+            connection
+                .execute(
+                    "INSERT INTO execution_devices(device_id,display_name,connection_json,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(device_id) DO UPDATE SET display_name=excluded.display_name,connection_json=COALESCE(execution_devices.connection_json,excluded.connection_json),updated_at=excluded.updated_at",
+                    params![device_id, display_name, encoded, chrono::Utc::now().to_rfc3339()],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        strip_resolved_profile_routes(&mut value).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "UPDATE execution_capability_profiles SET profile_json=?2 WHERE capability_profile_id=?1",
+                params![profile_id, serde_json::to_string(&value).map_err(|e| e.to_string())?],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn validate_profile(profile: &CapabilityProfile) -> Result<(), CapabilityProfileRepositoryError> {
@@ -439,6 +693,7 @@ mod tests {
     use crate::execution_configuration::{
         runtime_profile::CapabilitySet, CAPABILITY_PROFILE_CONTRACT_VERSION,
     };
+    use crate::execution_targets::domain::{ExecutionBinding, ExecutionConnection};
 
     fn profile(id: &str, revision: u64) -> CapabilityProfile {
         CapabilityProfile {
@@ -508,5 +763,94 @@ mod tests {
             repository.remove("missing"),
             Err(CapabilityProfileRepositoryError::NotFound(id)) if id == "missing"
         ));
+    }
+
+    #[test]
+    fn legacy_embedded_route_is_migrated_to_a_device_owned_connection() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(CAPABILITY_PROFILE_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::execution_devices::SCHEMA)
+            .unwrap();
+        let mut legacy = profile("remote", 1);
+        legacy.execution = ExecutionBinding {
+            device_id: "worker".into(),
+            device_name: "Remote worker".into(),
+            provider: "codex".into(),
+            configuration_ref: "worker-codex".into(),
+            connection: ExecutionConnection::Ssh {
+                target: "orchid@worker".into(),
+                host_executable: "C:\\Orchid\\host.exe".into(),
+            },
+        };
+        connection
+            .execute(
+                "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) VALUES(?1,?2,?3)",
+                params![legacy.capability_profile_id, 1, serde_json::to_string(&legacy).unwrap()],
+            )
+            .unwrap();
+
+        initialize_capability_profile_storage(&connection).unwrap();
+
+        let stored_connection: String = connection
+            .query_row(
+                "SELECT connection_json FROM execution_devices WHERE device_id='worker'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<ExecutionConnection>(&stored_connection).unwrap(),
+            legacy.execution.connection
+        );
+        let stored_profile: String = connection
+            .query_row(
+                "SELECT profile_json FROM execution_capability_profiles WHERE capability_profile_id='remote'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_profile: Value = serde_json::from_str(&stored_profile).unwrap();
+        assert!(stored_profile["execution"].get("connection").is_none());
+        assert!(stored_profile["execution"].get("deviceName").is_none());
+    }
+
+    #[test]
+    fn legacy_route_migration_rejects_conflicting_device_connections() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(CAPABILITY_PROFILE_SCHEMA).unwrap();
+        connection
+            .execute_batch(crate::execution_devices::SCHEMA)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_devices(device_id,display_name,connection_json,updated_at) VALUES('worker','Worker',?1,'now')",
+                [serde_json::to_string(&ExecutionConnection::Ssh {
+                    target: "orchid@registered".into(),
+                    host_executable: "C:\\Orchid\\host.exe".into(),
+                })
+                .unwrap()],
+            )
+            .unwrap();
+        let mut legacy = profile("remote", 1);
+        legacy.execution = ExecutionBinding {
+            device_id: "worker".into(),
+            device_name: "Worker".into(),
+            provider: "codex".into(),
+            configuration_ref: "worker-codex".into(),
+            connection: ExecutionConnection::Ssh {
+                target: "orchid@different".into(),
+                host_executable: "C:\\Orchid\\host.exe".into(),
+            },
+        };
+        connection
+            .execute(
+                "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) VALUES(?1,?2,?3)",
+                params![legacy.capability_profile_id, 1, serde_json::to_string(&legacy).unwrap()],
+            )
+            .unwrap();
+
+        let error = initialize_capability_profile_storage(&connection).unwrap_err();
+        assert!(error.contains("conflicting developer connection definitions"));
     }
 }

@@ -79,7 +79,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -123,14 +122,16 @@ import { ProductDecisionPublishPlaceholder } from '../features/productDecisions'
 import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/components/WorkUnitDetailWorkspace';
 
 import { ProductCommandBar } from './ProductCommandBar';
+import { useHistoryMouseButtons } from './useHistoryMouseButtons';
+import {
+  useProductNavigation,
+  type ApplicationSurface,
+} from './useProductNavigation';
 
 import {
-  canNavigateBack,
   contextualOriginDestination,
-  createProductNavigation,
   isAgentSessionProductOrigin,
   isFileReviewProductOrigin,
-  productNavigationReducer,
   sameFileReviewNavigationTarget,
   sameProductNavigationDestination,
   type FileReviewNavigationTarget,
@@ -158,17 +159,6 @@ import type { WorktreeReviewClient } from '../application/worktreeReview';
 import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
 
 import { WorktreeReviewScreen } from '../features/worktreeReview';
-
-export type ApplicationSurface =
-  | 'epics'
-  | 'workflows'
-  | 'capability-profiles'
-  | 'agent-sessions'
-  | 'harness-inspector'
-  | 'file-review'
-  | 'worktree-review'
-  | 'native-settings'
-  | 'product-decision-publish';
 
 export interface AppProps {
   readonly agentSessionImportClient?: AgentSessionImportClient;
@@ -392,16 +382,12 @@ export function App({
       ? 'epics'
       : initialSurface;
 
-  const [surface, setSurface] = useState<ApplicationSurface>(initialApplicationSurface);
-
   const [workflowDrafts] = useState(() => new DraftWorkspace<WorkflowRecipeDraftDto>());
 
   const [capabilityDrafts] = useState(() => new DraftWorkspace<CapabilityProfileDraft>());
   const [capabilityEditorMemory] = useState(() => new CapabilityProfileEditorMemory());
 
   useDraftCloseWarning(() => workflowDrafts.dirty() || capabilityDrafts.dirty(), draftCloseGuard);
-
-  const productNavigationEpoch = useRef(0);
 
   type ContextualFileReviewState = {
     readonly target: Exclude<FileReviewNavigationTarget, { readonly kind: 'direct' }>;
@@ -454,6 +440,12 @@ export function App({
         case 'worktree_review':
           return Boolean(worktreeReviewClient && repositoryCatalogClient);
 
+        case 'capability_profiles':
+          return Boolean(executionConfigurationClient);
+
+        case 'technical_settings':
+          return Boolean(nativeProfileClient);
+
         case 'product_decision_publish':
           return Boolean(productDecisionClient);
       }
@@ -469,6 +461,8 @@ export function App({
       worktreeReviewClient,
 
       productDecisionClient,
+      executionConfigurationClient,
+      nativeProfileClient,
 
       workflowAuthoringClient,
     ],
@@ -483,19 +477,28 @@ export function App({
           ? { kind: 'file_review', target: { kind: 'direct' } }
           : initialApplicationSurface === 'harness-inspector'
             ? { kind: 'harness_inspector' }
-            : initialApplicationSurface === 'worktree-review'
+        : initialApplicationSurface === 'worktree-review'
               ? { kind: 'worktree_review' }
+              : initialApplicationSurface === 'capability-profiles'
+                ? { kind: 'capability_profiles', profileId: null, newProfile: false }
+                : initialApplicationSurface === 'native-settings'
+                  ? {
+                      kind: 'technical_settings',
+                      section: executionConfigurationClient ? 'devices' : 'native',
+                    }
               : { kind: 'orchestration', location: null };
 
-  const [productNavigation, dispatchProductNavigation] = useReducer(
-    (
-      state: ReturnType<typeof createProductNavigation>,
-
-      action: Parameters<typeof productNavigationReducer>[1],
-    ) => productNavigationReducer(state, action, supportsProductDestination),
-
-    createProductNavigation(initialNavigationDestination),
-  );
+  const {
+    state: productNavigation,
+    dispatch: dispatchProductNavigation,
+    epoch: productNavigationEpoch,
+    surface,
+    canGoBack,
+    canGoForward,
+    back: navigateProductBack,
+    forward: navigateProductForward,
+    invalidate: invalidateProductNavigation,
+  } = useProductNavigation(initialNavigationDestination, supportsProductDestination);
 
   useEffect(() => {
     if (!sessionDeepLinks) return;
@@ -537,7 +540,7 @@ export function App({
 
       stop?.();
     };
-  }, [sessionDeepLinks]);
+  }, [sessionDeepLinks, dispatchProductNavigation]);
 
   const agentSessionSelection: SessionNavigationSelection =
     productNavigation.current.destination.kind === 'agent_sessions'
@@ -555,7 +558,6 @@ export function App({
       : undefined;
 
   const currentProductDestination = productNavigation.current.destination;
-
   const navigationAgent = useSessionNavigationAgentConnection(sessionNavigationAgent, () => {
     if (currentProductDestination.kind !== 'agent_sessions')
       dispatchProductNavigation({
@@ -606,7 +608,22 @@ export function App({
       ? productNavigation.contextualOrigin
       : null;
 
-  const canGoBack = canNavigateBack(productNavigation, supportsProductDestination);
+  const navigateBack = useCallback(() => {
+    fileReviewRequestSequence.current += 1;
+    navigateProductBack();
+  }, [navigateProductBack]);
+
+  const navigateForward = useCallback(() => {
+    fileReviewRequestSequence.current += 1;
+    navigateProductForward();
+  }, [navigateProductForward]);
+
+  useHistoryMouseButtons({
+    canGoBack,
+    canGoForward,
+    onBack: navigateBack,
+    onForward: navigateForward,
+  });
 
   const contextualReturnDuplicatesBack =
     canGoBack &&
@@ -617,52 +634,15 @@ export function App({
       contextualOriginDestination(productReturnOrigin),
     );
 
-  const [requestedProductLocation, setRequestedProductLocation] =
-    useState<AgentSessionProductLocation | null>(null);
+  const requestedProductLocation =
+    currentProductDestination.kind === 'orchestration'
+      ? currentProductDestination.location
+      : null;
 
-  const [orchestrationRoute, setOrchestrationRoute] = useState<'overview' | 'plan-builder'>(
-    'overview',
-  );
+  const orchestrationRoute =
+    currentProductDestination.kind === 'plan_builder' ? 'plan-builder' : 'overview';
 
   const orchestrationLoad = useOrchestrationLoad(orchestrationClient);
-
-  const hasSynchronizedProductDestination = useRef(false);
-
-  useEffect(() => {
-    if (!hasSynchronizedProductDestination.current) {
-      hasSynchronizedProductDestination.current = true;
-
-      return;
-    }
-
-    const destination = currentProductDestination;
-
-    if (destination.kind === 'orchestration') {
-      setSurface('epics');
-
-      setRequestedProductLocation(destination.location);
-
-      setSelectedDraft(null);
-
-      setOrchestrationRoute('overview');
-    } else if (destination.kind === 'plan_builder') {
-      setSurface('epics');
-
-      setOrchestrationRoute('plan-builder');
-    } else if (destination.kind === 'workflow') {
-      setSurface('workflows');
-    } else if (destination.kind === 'agent_sessions') {
-      setSurface('agent-sessions');
-    } else if (destination.kind === 'harness_inspector') {
-      setSurface('harness-inspector');
-    } else if (destination.kind === 'worktree_review') {
-      setSurface('worktree-review');
-    } else if (destination.kind === 'file_review') {
-      setSurface('file-review');
-    } else if (destination.kind === 'product_decision_publish') {
-      setSurface('product-decision-publish');
-    }
-  }, [currentProductDestination]);
 
   const [selectedDraft, setSelectedDraft] = useState<EpicPlanningDraftBinding | null>(null);
 
@@ -965,8 +945,6 @@ export function App({
   );
 
   const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
-    productNavigationEpoch.current += 1;
-
     dispatchProductNavigation({
       type: 'navigate',
 
@@ -982,9 +960,7 @@ export function App({
 
       focusedInvocationId: null,
     });
-
-    setSurface('agent-sessions');
-  }, []);
+  }, [dispatchProductNavigation]);
 
   const openWorkUnitActivitySession = useCallback(
     (target: WorkUnitActivitySessionTarget, origin: AgentSessionProductOrigin) => {
@@ -998,8 +974,6 @@ export function App({
         origin.location.inspectionState.activityId !== target.activityId
       )
         return;
-
-      productNavigationEpoch.current += 1;
 
       dispatchProductNavigation({
         type: 'navigate',
@@ -1016,11 +990,9 @@ export function App({
 
         focusedInvocationId: target.invocationId,
       });
-
-      setSurface('agent-sessions');
     },
 
-    [],
+    [dispatchProductNavigation],
   );
 
   const openProductDecisionEvidence = useCallback(
@@ -1036,8 +1008,6 @@ export function App({
         origin.invocationId !== resolution.destination.invocationId
       )
         return;
-
-      productNavigationEpoch.current += 1;
 
       dispatchProductNavigation({
         type: 'navigate',
@@ -1056,11 +1026,9 @@ export function App({
 
         focusedEvidence: resolution.destination,
       });
-
-      setSurface('agent-sessions');
     },
 
-    [epicProductDecisionSource],
+    [dispatchProductNavigation, epicProductDecisionSource],
   );
 
   const openProductiveDecisionEvidence = useCallback(
@@ -1071,8 +1039,6 @@ export function App({
         origin.invocationId !== destination.invocationId
       )
         return;
-
-      productNavigationEpoch.current += 1;
 
       dispatchProductNavigation({
         type: 'navigate',
@@ -1091,18 +1057,14 @@ export function App({
 
         focusedEvidence: destination,
       });
-
-      setSurface('agent-sessions');
     },
 
-    [],
+    [dispatchProductNavigation],
   );
 
   const openProductDecisionPublish = useCallback(
     (target: ProductDecisionPublishTarget) => {
       if (!productDecisionClient) return;
-
-      productNavigationEpoch.current += 1;
 
       dispatchProductNavigation({
         type: 'navigate',
@@ -1111,17 +1073,13 @@ export function App({
 
         destination: { kind: 'product_decision_publish', ...target },
       });
-
-      setSurface('product-decision-publish');
     },
 
-    [productDecisionClient],
+    [dispatchProductNavigation, productDecisionClient],
   );
 
   const navigateFromOrchestration = useCallback(
     (location: AgentSessionProductLocation | null, intent: OrchestrationNavigationChangeIntent) => {
-      productNavigationEpoch.current += 1;
-
       const destination: ProductNavigationDestination = { kind: 'orchestration', location };
 
       const previous = productNavigation.history.at(-1)?.destination;
@@ -1137,13 +1095,9 @@ export function App({
           ? { type: 'back' }
           : { type: 'navigate', intent: intent === 'push' ? 'push' : 'replace', destination },
       );
-
-      setSurface('epics');
-
-      setOrchestrationRoute('overview');
     },
 
-    [productNavigation],
+    [dispatchProductNavigation, productNavigation],
   );
 
   const requestContextualFileReview = useCallback(
@@ -1208,8 +1162,6 @@ export function App({
         setContextualFileReviewState({ target, source: result.source });
 
         dispatchProductNavigation({ type: 'open_contextual_file_review', target, origin });
-
-        setSurface('file-review');
       }
 
       return result;
@@ -1222,6 +1174,10 @@ export function App({
 
       currentProductDestination,
 
+      dispatchProductNavigation,
+
+      productNavigationEpoch,
+
       setContextualFileReviewState,
     ],
   );
@@ -1232,7 +1188,7 @@ export function App({
 
       returnLocation?: AgentSessionProductLocation,
     ) => {
-      productNavigationEpoch.current += 1;
+      invalidateProductNavigation();
 
       fileReviewRequestSequence.current += 1;
 
@@ -1287,8 +1243,6 @@ export function App({
           destination: { kind: 'file_review', target: fileReviewTarget },
         });
       }
-
-      setSurface('file-review');
     },
 
     [
@@ -1296,7 +1250,11 @@ export function App({
 
       currentProductDestination,
 
+      dispatchProductNavigation,
+
       fileReviewSourceForEvidence,
+
+      invalidateProductNavigation,
 
       setContextualFileReviewState,
     ],
@@ -1322,8 +1280,6 @@ export function App({
             aria-current={surface === 'epics' ? 'page' : undefined}
 
             onClick={() => {
-              productNavigationEpoch.current += 1;
-
               dispatchProductNavigation({
                 type: 'navigate',
 
@@ -1331,8 +1287,6 @@ export function App({
 
                 destination: { kind: 'orchestration', location: null },
               });
-
-              setSurface('epics');
             }}
           >
             Orchestration
@@ -1347,8 +1301,6 @@ export function App({
               aria-current={surface === 'workflows' ? 'page' : undefined}
 
               onClick={() => {
-                productNavigationEpoch.current += 1;
-
                 dispatchProductNavigation({
                   type: 'navigate',
 
@@ -1362,8 +1314,6 @@ export function App({
                     workflowInstanceId: null,
                   },
                 });
-
-                setSurface('workflows');
               }}
             >
               Workflow
@@ -1379,9 +1329,17 @@ export function App({
               aria-current={surface === 'capability-profiles' ? 'page' : undefined}
 
               onClick={() => {
-                productNavigationEpoch.current += 1;
-
-                setSurface('capability-profiles');
+                const remembered = productNavigation.current.destination.kind === 'capability_profiles'
+                  ? productNavigation.current.destination
+                  : productNavigation.history.slice().reverse().find((entry) =>
+                    entry.destination.kind === 'capability_profiles')?.destination;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: remembered?.kind === 'capability_profiles'
+                    ? remembered
+                    : { kind: 'capability_profiles', profileId: null, newProfile: false },
+                });
               }}
             >
               Capability Profiles
@@ -1396,11 +1354,7 @@ export function App({
             aria-current={surface === 'agent-sessions' ? 'page' : undefined}
 
             onClick={() => {
-              productNavigationEpoch.current += 1;
-
               dispatchProductNavigation({ type: 'enter_agent_sessions_directly' });
-
-              setSurface('agent-sessions');
             }}
           >
             Agent Sessions
@@ -1415,8 +1369,6 @@ export function App({
               aria-current={surface === 'harness-inspector' ? 'page' : undefined}
 
               onClick={() => {
-                productNavigationEpoch.current += 1;
-
                 dispatchProductNavigation({
                   type: 'navigate',
 
@@ -1424,8 +1376,6 @@ export function App({
 
                   destination: { kind: 'harness_inspector' },
                 });
-
-                setSurface('harness-inspector');
               }}
             >
               Harness Management
@@ -1441,8 +1391,6 @@ export function App({
               aria-current={surface === 'worktree-review' ? 'page' : undefined}
 
               onClick={() => {
-                productNavigationEpoch.current += 1;
-
                 dispatchProductNavigation({
                   type: 'navigate',
 
@@ -1450,8 +1398,6 @@ export function App({
 
                   destination: { kind: 'worktree_review' },
                 });
-
-                setSurface('worktree-review');
               }}
             >
               Worktree Review
@@ -1467,8 +1413,6 @@ export function App({
               aria-current={surface === 'file-review' ? 'page' : undefined}
 
               onClick={() => {
-                productNavigationEpoch.current += 1;
-
                 fileReviewRequestSequence.current += 1;
 
                 dispatchProductNavigation({
@@ -1478,8 +1422,6 @@ export function App({
 
                   destination: { kind: 'file_review', target: { kind: 'direct' } },
                 });
-
-                setSurface('file-review');
               }}
             >
               Files &amp; diffs
@@ -1494,7 +1436,22 @@ export function App({
 
               aria-current={surface === 'native-settings' ? 'page' : undefined}
 
-              onClick={() => setSurface('native-settings')}
+              onClick={() => {
+                const remembered = productNavigation.current.destination.kind === 'technical_settings'
+                  ? productNavigation.current.destination
+                  : productNavigation.history.slice().reverse().find((entry) =>
+                    entry.destination.kind === 'technical_settings')?.destination;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: remembered?.kind === 'technical_settings'
+                    ? remembered
+                    : {
+                        kind: 'technical_settings',
+                        section: executionConfigurationClient ? 'devices' : 'native',
+                      },
+                });
+              }}
             >
               Technical Settings
             </button>
@@ -1503,21 +1460,15 @@ export function App({
 
         <ProductCommandBar
           canGoBack={canGoBack}
+          canGoForward={canGoForward}
 
-          onBack={() => {
-            productNavigationEpoch.current += 1;
-
-            fileReviewRequestSequence.current += 1;
-
-            dispatchProductNavigation({ type: 'back' });
-          }}
+          onBack={navigateBack}
+          onForward={navigateForward}
 
           returnOrigin={contextualReturnDuplicatesBack ? null : productReturnOrigin}
 
           onReturn={(origin) => {
             if (origin !== productReturnOrigin) return;
-
-            productNavigationEpoch.current += 1;
 
             fileReviewRequestSequence.current += 1;
 
@@ -1593,8 +1544,6 @@ export function App({
                 epicPlanningDraftId: draft.epicPlanningDraftId,
               },
             });
-
-            setOrchestrationRoute('plan-builder');
           }}
 
           onPlanEpic={() => {
@@ -1607,8 +1556,6 @@ export function App({
 
               destination: { kind: 'plan_builder', epicPlanningDraftId: null },
             });
-
-            setOrchestrationRoute('plan-builder');
           }}
 
           requestedLocation={requestedProductLocation}
@@ -1647,6 +1594,22 @@ export function App({
 
           workspace={capabilityDrafts}
           editorMemory={capabilityEditorMemory}
+          selection={
+            currentProductDestination.kind === 'capability_profiles'
+              ? {
+                  profileId: currentProductDestination.profileId,
+                  newProfile: currentProductDestination.newProfile,
+                }
+              : undefined
+          }
+          onSelectionChange={(selection) => {
+            if (currentProductDestination.kind !== 'capability_profiles') return;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'replace',
+              destination: { kind: 'capability_profiles', ...selection },
+            });
+          }}
         />
       ) : surface === 'workflows' &&
         workflowAuthoringClient &&
@@ -1680,8 +1643,6 @@ export function App({
           sessionFocus={currentProductDestination.session}
 
           onOpenRecipe={(recipeId) => {
-            productNavigationEpoch.current += 1;
-
             dispatchProductNavigation({
               type: 'navigate',
 
@@ -1692,8 +1653,6 @@ export function App({
           }}
 
           onOpenInstance={(instanceId) => {
-            productNavigationEpoch.current += 1;
-
             dispatchProductNavigation({
               type: 'navigate',
 
@@ -1756,8 +1715,6 @@ export function App({
           onOpenWorkflow={
             workflowAuthoringClient && workflowInstanceClient && executionConfigurationClient
               ? (target) => {
-                  productNavigationEpoch.current += 1;
-
                   dispatchProductNavigation({
                     type: 'navigate',
 
@@ -1820,6 +1777,40 @@ export function App({
           otpInstallations={otpInstallationClient}
 
           executionClient={executionConfigurationClient}
+          deviceClient={executionTargetClient}
+          section={
+            currentProductDestination.kind === 'technical_settings'
+              ? currentProductDestination.section
+              : undefined
+          }
+          selectedCodexProfileId={
+            currentProductDestination.kind === 'technical_settings'
+              ? currentProductDestination.selectedCodexProfileId
+              : undefined
+          }
+          onSectionChange={(section) => {
+            if (currentProductDestination.kind !== 'technical_settings') return;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'replace',
+              destination: {
+                kind: 'technical_settings',
+                section,
+                selectedCodexProfileId: currentProductDestination.selectedCodexProfileId,
+              },
+            });
+          }}
+          onSelectedCodexProfileChange={(selectedCodexProfileId) => {
+            if (currentProductDestination.kind !== 'technical_settings') return;
+            dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'replace',
+              destination: {
+                ...currentProductDestination,
+                selectedCodexProfileId,
+              },
+            });
+          }}
         />
       ) : (
         harnessManagementPreviewSurface
@@ -1832,7 +1823,16 @@ export function App({
       consumer={nativeProfileApplicationConsumer}
 
       onOpenTechnicalSettings={
-        nativeProfileClient ? () => setSurface('native-settings') : undefined
+        nativeProfileClient
+          ? () => dispatchProductNavigation({
+              type: 'navigate',
+              intent: 'push',
+              destination: {
+                kind: 'technical_settings',
+                section: executionConfigurationClient ? 'devices' : 'native',
+              },
+            })
+          : undefined
       }
     >
       {appShell}

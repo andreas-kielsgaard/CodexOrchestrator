@@ -260,6 +260,13 @@ impl PlanBuilderMcp {
 #[tool_router]
 impl PlanBuilderMcp {
     #[tool(
+        annotations(
+            title = "Update proposed Sprints",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
         description = "Create or revise the concise proposed-Sprint projection. Input is ONLY {suggestedEpicName?: string, sprints: 1..20 [{title: string, intendedMovement: string, concernSummaries: string[]}]}; concernSummaries is required for every Sprint (use [] when none). Do not send IDs, revision tokens, idempotency keys, Work Units, phases, objectives, risks, acceptance criteria, or broader plan aggregates. One successful response is final; do not retry it."
     )]
     fn submit_epic_plan_proposal(
@@ -277,6 +284,13 @@ impl PlanBuilderMcp {
     }
 
     #[tool(
+        annotations(
+            title = "Request Epic initiation",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        ),
         description = "Request user-confirmed Epic initiation for this managed Plan Builder session. Takes no input. The application derives all draft, session, role, invocation, revision, authority, and replay identities, then waits for explicit user confirmation. A request is not an applied initiation."
     )]
     fn request_epic_initiation(&self) -> CallToolResult {

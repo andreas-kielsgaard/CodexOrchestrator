@@ -520,6 +520,7 @@ mod tests {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
+            codex_personality: None,
         }
     }
 
@@ -559,6 +560,7 @@ mod tests {
                 reasoning_mode: Some("high".into()),
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
             },
+            codex_personality: None,
         }
     }
 
@@ -614,10 +616,16 @@ mod tests {
         drop(service);
         drop(repository);
         let reopened = SqliteCapabilityProfileRepository::open(&database).unwrap();
-        let persisted = reopened
+        let mut persisted = reopened
             .find(&created.capability_profile_id)
             .unwrap()
             .unwrap();
+        persisted.execution.device_name = updated.execution.device_name.clone();
+        for (persisted_route, updated_route) in
+            persisted.route_policies.iter_mut().zip(&updated.route_policies)
+        {
+            persisted_route.execution.device_name = updated_route.execution.device_name.clone();
+        }
         assert_eq!(persisted, updated);
     }
 

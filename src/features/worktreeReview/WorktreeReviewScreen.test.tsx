@@ -254,9 +254,9 @@ describe('WorktreeReviewScreen', () => {
     renderScreen(client);
     const builds = await screen.findByRole('heading', { name: 'Builds' });
     const region = builds.closest('section')!;
-    const failed = within(region)
-      .getByRole('heading', { name: 'Failed rebuild' })
-      .closest('article')!;
+    const failed = (
+      await within(region).findByRole('heading', { name: 'Failed rebuild' })
+    ).closest('article')!;
     expect(failed).toHaveTextContent('Compilation failed');
     expect(failed).toHaveTextContent('No retained build output');
     expect(failed).toHaveTextContent('Eligible for cleanup');

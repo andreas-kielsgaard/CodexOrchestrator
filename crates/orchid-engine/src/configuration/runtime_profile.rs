@@ -3,6 +3,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const RUNTIME_PROFILE_CONTRACT_VERSION: u32 = 1;
 
+/// A Codex app-server personality override. Absence means the selected Codex home resolves its
+/// own configured default.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexPersonality {
+    None,
+    Friendly,
+    Pragmatic,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
@@ -101,6 +111,8 @@ pub struct RuntimeProfileSnapshot {
     pub profile_ref: String,
     pub exposure: CapabilitySet,
     pub locked: RuntimeSelections,
+    #[serde(default)]
+    pub codex_personality: Option<CodexPersonality>,
 }
 
 impl RuntimeProfileSnapshot {

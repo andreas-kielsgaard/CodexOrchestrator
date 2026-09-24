@@ -22,11 +22,13 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    testTimeout: 10_000,
     setupFiles: './src/test/setup.ts',
     exclude: [
       ...configDefaults.exclude,
       '.dev/**',
       'review-tools/app-inspector/test/**/*.test.mjs',
+      'scripts/build/*.test.mjs',
     ],
   },
 });

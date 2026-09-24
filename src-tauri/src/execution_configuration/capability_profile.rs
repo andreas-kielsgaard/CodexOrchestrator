@@ -1,4 +1,6 @@
-use super::runtime_profile::{validate_identifier, CapabilitySet, RuntimeSelections};
+use super::runtime_profile::{
+    validate_identifier, CapabilitySet, CodexPersonality, RuntimeSelections,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -19,6 +21,9 @@ pub(crate) struct ProfileRoutePolicy {
     pub(crate) skill_groups: BTreeSet<String>,
     #[serde(default)]
     pub(crate) defaults: RuntimeSelections,
+    /// Codex-only override. Absence inherits the selected Codex profile preference.
+    #[serde(default)]
+    pub(crate) codex_personality: Option<CodexPersonality>,
 }
 
 impl ProfileRoutePolicy {
@@ -168,12 +173,9 @@ impl CapabilityProfile {
         &self,
         execution: &crate::execution_targets::domain::ExecutionBinding,
     ) -> Option<&ProfileRoutePolicy> {
-        self.route_policies.iter().find(|route| {
-            route.execution.device_id == execution.device_id
-                && route.execution.provider == execution.provider
-                && route.execution.configuration_ref == execution.configuration_ref
-                && route.execution.connection == execution.connection
-        })
+        self.route_policies
+            .iter()
+            .find(|route| route.execution.route_ref() == execution.route_ref())
     }
 
     pub(crate) fn contains_execution(
@@ -181,10 +183,7 @@ impl CapabilityProfile {
         execution: &crate::execution_targets::domain::ExecutionBinding,
     ) -> bool {
         if self.route_policies.is_empty() {
-            self.execution.device_id == execution.device_id
-                && self.execution.provider == execution.provider
-                && self.execution.configuration_ref == execution.configuration_ref
-                && self.execution.connection == execution.connection
+            self.execution.route_ref() == execution.route_ref()
         } else {
             self.route_for_execution(execution).is_some()
         }

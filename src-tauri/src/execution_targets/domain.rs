@@ -14,15 +14,27 @@ pub(crate) enum ExecutionConnection {
     },
 }
 
+/// Stable design-time reference stored by a Capability Profile.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ExecutionBinding {
+pub(crate) struct ExecutionRouteRef {
+    pub(crate) device_id: String,
+    pub(crate) provider: String,
+    pub(crate) configuration_ref: String,
+}
+
+/// Concrete, immutable execution snapshot used by Sessions and runtime operations.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedExecutionBinding {
     pub(crate) device_id: String,
     pub(crate) device_name: String,
     pub(crate) provider: String,
     pub(crate) configuration_ref: String,
     pub(crate) connection: ExecutionConnection,
 }
+
+pub(crate) type ExecutionBinding = ResolvedExecutionBinding;
 
 impl Default for ExecutionBinding {
     fn default() -> Self {
@@ -37,6 +49,13 @@ impl Default for ExecutionBinding {
 }
 
 impl ExecutionBinding {
+    pub(crate) fn route_ref(&self) -> ExecutionRouteRef {
+        ExecutionRouteRef {
+            device_id: self.device_id.clone(),
+            provider: self.provider.clone(),
+            configuration_ref: self.configuration_ref.clone(),
+        }
+    }
     pub(crate) fn is_remote(&self) -> bool {
         matches!(self.connection, ExecutionConnection::Ssh { .. })
     }

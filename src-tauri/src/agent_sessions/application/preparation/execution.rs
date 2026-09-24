@@ -1,6 +1,8 @@
 //! Resolve the destination, establish native readiness, then release the accepted turn.
 use super::*;
-use crate::agent_sessions::application::update_sink::PersistedRuntimeUpdateSink;
+use crate::agent_sessions::application::update_sink::{
+    DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink,
+};
 use crate::execution_configuration::{
     validate_session_skill_inputs, DirectUserInvocationRequest, NodeProfile,
     SessionCreationRequest, SessionProfileResolver,
@@ -294,9 +296,15 @@ impl AgentSessionApplication {
             }
         }
         Self::check_preparation_cancel(cancel)?;
-        let runtime = endpoints
-            .runtime(&destination.execution)
-            .map_err(AgentSessionApplicationError::invalid)?;
+        let runtime = if let Some(service) = &self.execution_target_service {
+            service
+                .runtime(&destination.execution)
+                .map_err(AgentSessionApplicationError::invalid)?
+        } else {
+            endpoints
+                .runtime(&destination.execution)
+                .map_err(AgentSessionApplicationError::invalid)?
+        };
         let requested = runtime_options(&resolution.selections);
         let resume_context = p
             .prepared_binding
@@ -359,14 +367,25 @@ impl AgentSessionApplication {
                 }
             }
         }
-        let sink = Arc::new(PreparationUpdateGate {
-            inner: Arc::new(PersistedRuntimeUpdateSink::new(
+        let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
+            Arc::new(PersistedRuntimeUpdateSink::new(
                 self.repository.clone(),
                 self.notifier.clone(),
                 self.clock.clone(),
                 self.ids.clone(),
                 self.update_lanes.clone(),
-            )),
+            ));
+        if let Some(targets) = &self.execution_target_service {
+            if destination.execution.is_remote() {
+                persisted_sink = Arc::new(DeviceActivityRuntimeUpdateSink::new(
+                    persisted_sink,
+                    targets.devices.clone(),
+                    destination.execution.device_id.clone(),
+                ));
+            }
+        }
+        let sink = Arc::new(PreparationUpdateGate {
+            inner: persisted_sink,
             buffer: Mutex::new(Some(Vec::new())),
         });
         self.step(
@@ -424,7 +443,25 @@ impl AgentSessionApplication {
                 self.clock.now(),
             )
             .map_err(AgentSessionApplicationError::repository)?;
-        sink.open().map_err(AgentSessionApplicationError::runtime)?;
+        let remote_activity = destination
+            .execution
+            .is_remote()
+            .then(|| destination.execution.device_id.clone());
+        if let (Some(targets), Some(device_id)) =
+            (&self.execution_target_service, remote_activity.as_deref())
+        {
+            targets
+                .synchronize_devices()
+                .map_err(AgentSessionApplicationError::invalid)?;
+            targets
+                .devices
+                .acquire_activity(device_id, "agent_invocation", id.as_str())
+                .map_err(AgentSessionApplicationError::invalid)?;
+        }
+        if let Err(error) = sink.open() {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::runtime(error));
+        }
         // Persist the boundary before transport write. A lost response never authorizes replay.
         let delivery_gate = self.preparation_workers.slots.lock().map_err(|_| {
             AgentSessionApplicationError::conflict("Preparation supervisor unavailable")
@@ -432,6 +469,7 @@ impl AgentSessionApplication {
         if let Err(error) = Self::check_preparation_cancel(cancel) {
             drop(delivery_gate);
             let _ = runtime.cancel_invocation(id);
+            self.release_invocation_activity(remote_activity.as_deref(), id);
             return Err(error);
         }
         p.delivery_started = true;
@@ -443,12 +481,17 @@ impl AgentSessionApplication {
             PreparationStepStatus::Running,
         )?;
         drop(delivery_gate);
-        runtime
-            .deliver_prepared_invocation(id)
-            .map_err(AgentSessionApplicationError::runtime)?;
-        self.repository
+        if let Err(error) = runtime.deliver_prepared_invocation(id) {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::runtime(error));
+        }
+        if let Err(error) = self
+            .repository
             .record_invocation_launch_accepted(id, self.clock.now())
-            .map_err(AgentSessionApplicationError::repository)?;
+        {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::repository(error));
+        }
         self.step(
             &mut p,
             "delivery",
@@ -456,6 +499,14 @@ impl AgentSessionApplication {
             PreparationStepStatus::Completed,
         )?;
         Ok(())
+    }
+
+    fn release_invocation_activity(&self, device_id: Option<&str>, id: &AgentInvocationId) {
+        if let (Some(targets), Some(device_id)) = (&self.execution_target_service, device_id) {
+            let _ = targets
+                .devices
+                .release_activity(device_id, "agent_invocation", id.as_str());
+        }
     }
 }
 

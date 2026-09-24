@@ -61,5 +61,6 @@ pub fn runtime_profile(
         profile_ref,
         exposure,
         locked: RuntimeSelections::default(),
+        codex_personality: None,
     }
 }

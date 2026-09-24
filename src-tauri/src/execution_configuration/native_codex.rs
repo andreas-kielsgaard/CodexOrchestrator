@@ -285,13 +285,16 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
                 SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
             })?
             .insert(cache_key, quick);
-        Ok(with_temporary_danger_full_access(
-            orchid_engine::configuration::runtime_profile(
-                &native,
-                format!("native-codex:{}", selected.profile_id),
-                self.product_tools.clone(),
-            ),
-        ))
+        let mut profile = orchid_engine::configuration::runtime_profile(
+            &native,
+            format!("native-codex:{}", selected.profile_id),
+            self.product_tools.clone(),
+        );
+        profile.codex_personality = self
+            .service
+            .profile_personality(&selected.profile_id)
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+        Ok(with_temporary_danger_full_access(profile))
     }
 }
 

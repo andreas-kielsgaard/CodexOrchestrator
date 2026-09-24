@@ -1,17 +1,25 @@
 use super::domain::*;
 use crate::{
     execution_configuration::CapabilityProfile,
+    execution_devices::ExecutionDeviceDto,
     repository_catalog::{device_locations::RepositoryDeviceLocation, RegisteredRepository},
 };
 use orchid_engine::protocol::WorktreeInstance;
 
-pub(super) fn configured_devices(profiles: &[CapabilityProfile]) -> Vec<ConfiguredExecutionDevice> {
-    grouped_profiles(profiles)
-        .into_iter()
-        .map(|(execution, profiles)| ConfiguredExecutionDevice {
-            device_id: execution.device_id.clone(),
-            device_name: execution.device_name.clone(),
-            profiles: profiles.into_iter().map(profile_identity).collect(),
+pub(super) fn configured_devices(
+    devices: &[ExecutionDeviceDto],
+    profiles: &[CapabilityProfile],
+) -> Vec<ConfiguredExecutionDevice> {
+    devices
+        .iter()
+        .map(|device| ConfiguredExecutionDevice {
+            device_id: device.device_id.clone(),
+            device_name: device.display_name.clone(),
+            profiles: profiles
+                .iter()
+                .filter(|profile| profile.execution.device_id == device.device_id)
+                .map(profile_identity)
+                .collect(),
         })
         .collect()
 }

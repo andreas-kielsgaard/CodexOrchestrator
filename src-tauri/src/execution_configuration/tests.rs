@@ -67,6 +67,7 @@ fn runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(SandboxMode::WorkspaceWrite),
         },
+        codex_personality: None,
     }
 }
 
@@ -150,23 +151,35 @@ fn route_groups_shape_session_exposure_without_enforcing_model_allowances() {
         route_id: "local".into(),
         execution: Default::default(),
         model_allowances: vec![super::ModelAllowance {
-            model_id: "future-only".into(), minimum_reasoning: "low".into(), maximum_reasoning: "high".into(),
+            model_id: "future-only".into(),
+            minimum_reasoning: "low".into(),
+            maximum_reasoning: "high".into(),
         }],
         mcp_groups: set(&["otp:repository:mcps"]),
         skill_groups: set(&["orchid-skills"]),
         defaults: RuntimeSelections::default(),
+        codex_personality: None,
     }];
     request.capability_profile.default_route_id = Some("local".into());
     request.capability_profile.allowed_capabilities = CapabilitySet::default();
     request.session_skill_inputs = vec![crate::agent_sessions::ports::RuntimeSkillInput {
-        id: "skill".into(), name: "review".into(), path: "/approved/SKILL.md".into(),
-        content_sha256: "pinned".into(), description: "Review".into(),
+        id: "skill".into(),
+        name: "review".into(),
+        path: "/approved/SKILL.md".into(),
+        content_sha256: "pinned".into(),
+        description: "Review".into(),
     }];
     let resolution = SessionProfileResolver::resolve_snapshot(runtime_profile(), request).unwrap();
     let pinned = resolution.session_profile();
     assert_eq!(pinned.native_mcp_enabled(), Some(false));
-    assert_eq!(pinned.node_capabilities().mcp_tools["repository"], set(&["read"]));
-    assert_eq!(pinned.node_capabilities().mcp_tools["orchid_skills"], set(&["read_skill"]));
+    assert_eq!(
+        pinned.node_capabilities().mcp_tools["repository"],
+        set(&["read"])
+    );
+    assert_eq!(
+        pinned.node_capabilities().mcp_tools["orchid_skills"],
+        set(&["read_skill"])
+    );
     assert!(pinned.node_capabilities().models.contains("codex-b"));
     resolution.verify_digest().unwrap();
 }
@@ -459,10 +472,54 @@ fn required_default_profile_is_atomic_retained_and_cannot_be_deleted() {
     repository.insert(&first).unwrap();
     repository.insert(&second).unwrap();
     repository.set_default_profile("first").unwrap();
-    assert_eq!(repository.default_profile().unwrap(), Some(first.clone()));
+    let mut resolved_first = repository.default_profile().unwrap().unwrap();
+    resolved_first.execution.device_name = first.execution.device_name.clone();
+    assert_eq!(resolved_first, first.clone());
     assert!(repository.remove("first").is_err());
     repository.set_default_profile("second").unwrap();
     repository.remove("first").unwrap();
     let reopened = super::SqliteCapabilityProfileRepository::open(&database).unwrap();
-    assert_eq!(reopened.default_profile().unwrap(), Some(second));
+    let mut resolved_second = reopened.default_profile().unwrap().unwrap();
+    resolved_second.execution.device_name = second.execution.device_name.clone();
+    assert_eq!(resolved_second, second);
+}
+
+#[test]
+fn sqlite_profiles_store_route_references_and_resolve_device_owned_connections() {
+    use super::CapabilityProfileRepository;
+    let folder = tempfile::tempdir().unwrap();
+    let database = folder.path().join("profile-route-refs.sqlite");
+    let repository = super::SqliteCapabilityProfileRepository::open(&database).unwrap();
+    let profile = CapabilityProfile {
+        revision: 1,
+        ..capability_profile()
+    };
+    repository.insert(&profile).unwrap();
+
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    let json: String = connection
+        .query_row(
+            "SELECT profile_json FROM execution_capability_profiles WHERE capability_profile_id=?1",
+            [&profile.capability_profile_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(value["execution"].get("connection").is_none());
+    assert!(value["execution"].get("deviceName").is_none());
+    assert_eq!(value["execution"]["deviceId"], "local");
+    let resolved = repository.find("implementation").unwrap().unwrap();
+    assert_eq!(
+        resolved.execution.route_ref(),
+        profile.execution.route_ref()
+    );
+    assert_eq!(resolved.execution.device_name, "This device");
+    assert_eq!(resolved.execution.connection, profile.execution.connection);
+    assert_eq!(
+        CapabilityProfile {
+            execution: profile.execution.clone(),
+            ..resolved.clone()
+        },
+        profile
+    );
 }
