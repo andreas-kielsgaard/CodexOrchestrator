@@ -1,9 +1,15 @@
-use super::*;
+//! Codex projection of an observed native environment into Orchid's neutral runtime profile.
+use crate::configuration::{
+    CapabilitySet, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
+    RUNTIME_PROFILE_CONTRACT_VERSION,
+};
+use crate::contracts::provider::ProviderConfigurationRef;
 use crate::providers::codex::app_server::environment::CodexEnvironment;
 use std::collections::{BTreeMap, BTreeSet};
+
 pub fn runtime_profile(
     native: &CodexEnvironment,
-    profile_ref: String,
+    configuration: ProviderConfigurationRef,
     product_tools: BTreeMap<String, BTreeSet<String>>,
 ) -> RuntimeProfileSnapshot {
     let mut exposure = CapabilitySet {
@@ -58,9 +64,9 @@ pub fn runtime_profile(
     }
     RuntimeProfileSnapshot {
         contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
-        profile_ref,
+        configuration,
         exposure,
         locked: RuntimeSelections::default(),
-        codex_personality: None,
+        provider_options: None,
     }
 }

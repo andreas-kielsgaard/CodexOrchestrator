@@ -1,7 +1,7 @@
 import type { SessionFolderTarget } from './organization';
 
 export interface AgentSessionQuickFeatures {
-  readonly profileRef: string;
+  readonly configuration: import('../agentProviders/contracts').ProviderConfigurationRefDto | null;
   readonly models: readonly {
     readonly id: string;
     readonly label: string;
@@ -13,7 +13,7 @@ export interface AgentSessionQuickFeatures {
     readonly id: string;
     readonly name: string;
     readonly description: string;
-    /** The provider owns invocation syntax; the composer only inserts it. */
+    /** Orchid's `$name` mention; the selected provider delivers the skill natively. */
     readonly invocationText: string;
   }[];
   readonly defaults: { readonly model: string | null; readonly reasoningMode: string | null };

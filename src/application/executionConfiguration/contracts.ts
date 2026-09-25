@@ -1,6 +1,9 @@
+import type {
+  ProviderConfigurationRefDto,
+  ProviderNativeOptionsDto,
+} from '../agentProviders/contracts';
 import type { ExecutionBindingDto } from '../executionTargets/contracts';
 export type SandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
-export type CodexPersonalityDto = 'none' | 'friendly' | 'pragmatic';
 
 /** Capabilities exposed or permitted at one execution-configuration boundary. */
 export interface CapabilitySetDto {
@@ -28,7 +31,8 @@ export interface ModelAllowanceDto {
 export interface ProfileRoutePolicyDto {
   readonly routeId: string;
   readonly execution: ExecutionBindingDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  /** Overrides the provider configuration's own native defaults; absent inherits them. */
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
   readonly modelAllowances: readonly ModelAllowanceDto[];
   readonly mcpGroups: readonly string[];
   readonly skillGroups: readonly string[];
@@ -38,10 +42,10 @@ export interface ProfileRoutePolicyDto {
 /** Read-only facts observed from the profile's configured device runtime. */
 export interface RuntimeProfileSnapshotDto {
   readonly contractVersion: 1;
-  readonly profileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly exposure: CapabilitySetDto;
   readonly locked: RuntimeSelectionsDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
 }
 
 export interface ProfileModelCatalogueDto {
@@ -80,14 +84,14 @@ export interface NodeProfileDto {
 /** Immutable configuration resolved and pinned when a Session is created. */
 export interface SessionProfileDto {
   readonly contractVersion: 1;
-  readonly runtimeProfileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly attachedRuntimeCapabilities: CapabilitySetDto;
   readonly attachedRuntimeLocked: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly capabilityProfileRevision: number;
   readonly nodeCapabilities: CapabilitySetDto;
   readonly pinnedDefaults: RuntimeSelectionsDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
 }
 
 export interface SessionCreationResolutionDto {

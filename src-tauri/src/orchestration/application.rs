@@ -496,7 +496,7 @@ impl ManagedPlanBuilderService {
             native_mcp_enabled: None,
             provider_options: None,
             managed_mcp_servers: Vec::new(),
-            skill_inputs: Vec::new(),
+            skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
             ignore_user_rules: false,
             reasoning_mode: None,
             config_overrides,
@@ -1341,7 +1341,7 @@ mod tests {
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
         RuntimeLaunchExtension { native_mcp_enabled: None, provider_options: None,
-            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
+            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides: Vec::new(),
             environment: Vec::new(),
             initial_prompt_prefix: Some(crate::agent_sessions::ports::InitialPromptPrefix {

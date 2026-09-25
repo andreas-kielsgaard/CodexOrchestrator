@@ -6,7 +6,7 @@ import type { AgentSessionQuickFeatures } from '../../application/agentSessions/
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 
 const capabilities: AgentSessionQuickFeatures = {
-  profileRef: 'test',
+  configuration: { provider: 'codex', configurationId: 'test' },
   defaults: { model: 'model-a', reasoningMode: 'deep' },
   models: [
     {

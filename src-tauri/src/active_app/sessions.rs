@@ -39,7 +39,7 @@ pub(super) fn compose(
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
     let local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime> =
         Arc::new(crate::runtime::providers::codex::app_server::CodexAppServerRuntime::system("codex"));
-    let (selected_runtime_profile, capability_profiles, endpoints) =
+    let (selected_runtime_profile, capability_profiles, endpoints, product_skills) =
         super::execution_configuration::compose(
             database.clone(),
             native_profiles.clone(),
@@ -64,6 +64,7 @@ pub(super) fn compose(
             None,
         )
         .with_profile_source(selected_runtime_profile.clone())
+        .with_product_skills(product_skills)
         .with_capability_profiles(capability_profiles.clone())
         .with_execution_endpoints(endpoints.clone())
         .with_execution_target_service(execution_targets.clone())

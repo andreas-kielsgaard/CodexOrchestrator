@@ -111,10 +111,10 @@ impl AgentSessionApplication {
         let profile = pinned.session_profile();
         let original_runtime = crate::execution_configuration::RuntimeProfileSnapshot {
             contract_version: 1,
-            profile_ref: profile.runtime_profile_ref().into(),
+            configuration: profile.configuration().clone(),
             exposure: profile.attached_runtime_capabilities().clone(),
             locked: profile.attached_runtime_locked().clone(),
-            codex_personality: profile.codex_personality(),
+            provider_options: profile.provider_options().cloned(),
         };
         let mut creation = creation.clone();
         creation.session_skill_inputs = profile.session_skill_inputs().to_vec();
@@ -160,10 +160,11 @@ impl AgentSessionApplication {
                 "Session Event delivery requires an immutable pinned Session Profile",
             )
         })?;
-        let runtime_profile_ref = creation.session_profile().runtime_profile_ref();
-        let configuration_ref = runtime_profile_ref
-            .strip_prefix("native-codex:")
-            .unwrap_or(runtime_profile_ref);
+        let configuration_ref = creation
+            .session_profile()
+            .configuration()
+            .configuration_id
+            .as_str();
         let source = crate::execution_configuration::PinnedConfigurationProfileSource {
             source: self
                 .profile_source()

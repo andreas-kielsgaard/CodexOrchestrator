@@ -17,3 +17,19 @@ export interface HarnessInferenceRouteOption {
   readonly detail: string;
   readonly execution: ExecutionBindingDto;
 }
+
+/** One registered configuration of one agent provider. Compared as a pair, never parsed. */
+export interface ProviderConfigurationRefDto {
+  readonly provider: string;
+  readonly configurationId: string;
+}
+
+/** Provider-native settings. Only the named provider's feature code reads `settings`. */
+export interface ProviderNativeOptionsDto {
+  readonly provider: string;
+  readonly settings: unknown;
+}
+
+export function providerConfigurationLabel(configuration: ProviderConfigurationRefDto): string {
+  return `${configuration.provider}/${configuration.configurationId}`;
+}

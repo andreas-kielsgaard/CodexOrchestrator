@@ -40,6 +40,8 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
     fn notify(&self, notification: AgentSessionNotification) -> Result<(), String>;
 }
 
+use orchid_engine::contracts::ProviderConfigurationRef;
+
 /// Application-owned authority for deriving the one native home used by a managed provider
 /// launch. Callers can supply invocation-specific extensions, but never profile authority.
 pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
@@ -51,14 +53,14 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     }
     fn prepare_destination_launch(
         &self,
-        configuration_ref: &str,
+        configuration: &ProviderConfigurationRef,
         session_id: &AgentSessionId,
         invocation_id: &AgentInvocationId,
         resuming: bool,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<RuntimeLaunchExtension, String> {
         self.prepare_configured_launch(
-            configuration_ref,
+            configuration,
             session_id,
             invocation_id,
             resuming,
@@ -67,7 +69,7 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
     }
     fn commit_destination(
         &self,
-        _configuration_ref: &str,
+        _configuration: &ProviderConfigurationRef,
         _session_id: &AgentSessionId,
     ) -> Result<(), String> {
         Ok(())
@@ -75,7 +77,7 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
 
     fn prepare_configured_launch(
         &self,
-        _configuration_ref: &str,
+        _configuration: &ProviderConfigurationRef,
         session_id: &AgentSessionId,
         invocation_id: &AgentInvocationId,
         resuming: bool,

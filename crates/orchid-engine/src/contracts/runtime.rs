@@ -31,9 +31,12 @@ pub struct RuntimeLaunchExtension {
     pub provider_options: Option<crate::contracts::provider::ProviderNativeOptions>,
     /// Explicit existing Harness intent; never inherited by ordinary sessions.
     pub ignore_user_rules: bool,
-    /// Pinned skills available to the session reader. Mentioned native skills may also become
-    /// explicit turn inputs; the manifest itself does not invoke them.
+    /// Pinned skills available to the session reader. The manifest itself invokes nothing.
     pub skill_inputs: Vec<RuntimeSkillInput>,
+    /// IDs of `skill_inputs` the user explicitly invoked in this prompt. Orchid resolves its own
+    /// mention syntax; the provider delivers each in its native form where it supports one.
+    #[serde(default)]
+    pub invoked_skill_ids: Vec<String>,
     /// Whether native Codex-configured MCP servers are exposed for this pinned session.
     pub native_mcp_enabled: Option<bool>,
     /// Codex KEY=TOML_VALUE overrides; this cannot carry process flags.

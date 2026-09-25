@@ -6,6 +6,7 @@
 pub(crate) mod app_server;
 pub(crate) mod configuration;
 pub(crate) mod continuation;
+pub(crate) mod legacy_migration;
 pub(crate) mod profiles;
 #[cfg(test)]
 mod arguments;

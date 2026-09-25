@@ -335,7 +335,7 @@ impl AgentSessionApplication {
                 extension = Some(
                     authority
                         .prepare_destination_launch(
-                            &destination.execution.configuration_ref,
+                            &destination.execution.configuration(),
                             &p.session_id,
                             &p.invocation_id,
                             resume_context.is_some(),
@@ -352,19 +352,13 @@ impl AgentSessionApplication {
             .ok_or_else(|| AgentSessionApplicationError::not_found("Invocation not found"))?;
         if !destination.execution.is_remote() {
             if let Some(extension) = extension.as_mut() {
-                for skill in self.direct_user_native_skill_inputs(
-                    &destination.execution.configuration_ref,
+                self.apply_skill_mentions(
+                    &destination.execution.configuration(),
                     Some(&destination.path),
                     &invocation.submitted_text,
-                ) {
-                    if !extension
-                        .skill_inputs
-                        .iter()
-                        .any(|existing| existing.path == skill.path)
-                    {
-                        extension.skill_inputs.push(skill);
-                    }
-                }
+                    true,
+                    extension,
+                );
             }
         }
         let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
@@ -422,7 +416,7 @@ impl AgentSessionApplication {
         if !destination.execution.is_remote() {
             if let Some(authority) = &self.native_profile_launch_authority {
                 authority
-                    .commit_destination(&destination.execution.configuration_ref, &p.session_id)
+                    .commit_destination(&destination.execution.configuration(), &p.session_id)
                     .map_err(AgentSessionApplicationError::invalid)?;
             }
         }

@@ -224,13 +224,13 @@ mod tests {
     fn runtime_profile() -> RuntimeProfileSnapshot {
         RuntimeProfileSnapshot {
             contract_version: 1,
-            profile_ref: "orchestration:configured-runtime/v1".into(),
+            configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "configured-runtime"),
             exposure: capabilities(),
             locked: RuntimeSelections {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 

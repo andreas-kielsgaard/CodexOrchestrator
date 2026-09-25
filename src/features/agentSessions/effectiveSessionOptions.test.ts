@@ -2,7 +2,7 @@ import type { AgentSessionQuickFeatures } from '../../application/agentSessions/
 import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOptions';
 
 const capabilities: AgentSessionQuickFeatures = {
-  profileRef: 'codex',
+  configuration: { provider: 'codex', configurationId: 'selected' },
   defaults: { model: 'astra', reasoningMode: 'high' },
   models: [
     {

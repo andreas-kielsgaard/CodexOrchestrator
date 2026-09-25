@@ -26,7 +26,7 @@ pub trait CodexEnvironmentSource: Send + Sync {
         &self,
         home: PathBuf,
         cwd: Option<PathBuf>,
-    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+    ) -> Result<crate::contracts::ProviderSkillCatalogue, RuntimePortError> {
         self.read(home, cwd)
             .map(|environment| super::skills::project(&environment.skills))
     }
@@ -90,7 +90,7 @@ impl CodexEnvironmentSource for CodexEnvironmentReader {
         &self,
         home: PathBuf,
         cwd: Option<PathBuf>,
-    ) -> Result<super::skills::CodexSkillCatalogue, RuntimePortError> {
+    ) -> Result<crate::contracts::ProviderSkillCatalogue, RuntimePortError> {
         let context = cwd.clone().unwrap_or_else(|| home.clone());
         self.with_connection(home, cwd, |connection| {
             super::skills::read_forced(connection, &context)

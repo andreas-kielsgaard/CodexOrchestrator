@@ -272,7 +272,7 @@ fn personality_is_omitted_for_inherit_and_matches_on_start_and_resume() {
 }
 
 #[test]
-fn mentioned_pinned_native_skill_is_an_explicit_turn_input() {
+fn invoked_pinned_native_skill_is_an_explicit_turn_input() {
     let directory = tempfile::tempdir().unwrap();
     let skill = directory.path().join("SKILL.md");
     std::fs::write(&skill, "---\nname: review\n---\n").unwrap();
@@ -288,6 +288,7 @@ fn mentioned_pinned_native_skill_is_an_explicit_turn_input() {
             content_sha256: "pinned-for-adapter-test".into(),
             description: String::new(),
         }],
+        invoked_skill_ids: vec![skill.to_string_lossy().into_owned()],
         ..Default::default()
     });
     let id = request.invocation_id.clone();

@@ -18,16 +18,14 @@ pub(crate) struct CapabilityProfileService {
 }
 
 impl CapabilityProfileService {
-    pub(crate) fn codex_skills_for_configuration(
+    pub(crate) fn native_skills_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<
-        orchid_engine::providers::codex::app_server::skills::CodexSkillCatalogue,
-        CapabilityProfileServiceError,
-    > {
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, CapabilityProfileServiceError>
+    {
         self.runtime_profile_source
-            .discover_skills_for_configuration(reference, cwd)
+            .native_skills_for_configuration(reference, cwd)
             .map_err(|error| CapabilityProfileServiceError::RuntimeUnavailable(error.to_string()))
     }
     pub(crate) fn model_catalogue(
@@ -508,7 +506,7 @@ mod tests {
     fn runtime() -> RuntimeProfileSnapshot {
         RuntimeProfileSnapshot {
             contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
-            profile_ref: "native-codex:selected".into(),
+            configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
             exposure: CapabilitySet {
                 models: set(&["codex-a", "codex-b"]),
                 reasoning_modes: set(&["medium", "high"]),
@@ -520,7 +518,7 @@ mod tests {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 
@@ -553,14 +551,14 @@ mod tests {
                 minimum_reasoning: "medium".into(),
                 maximum_reasoning: "high".into(),
             }],
-            mcp_groups: set(&["codex-profile-mcps"]),
-            skill_groups: set(&["codex-profile-skills"]),
+            mcp_groups: set(&["native-mcps"]),
+            skill_groups: set(&["native-skills"]),
             defaults: RuntimeSelections {
                 model: Some("codex-a".into()),
                 reasoning_mode: Some("high".into()),
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 

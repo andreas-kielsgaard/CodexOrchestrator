@@ -88,7 +88,7 @@ export function runtimeProfileViewModel(
   });
 
   return {
-    profileRef: runtime.profileRef,
+    configuration: runtime.configuration,
     sourceLabel,
     exposure: runtime.exposure,
     catalogs: {
@@ -109,7 +109,7 @@ export function sessionProfileViewModel(
 ): SessionProfileViewModel {
   const profile = resolution.sessionProfile;
   return {
-    runtimeProfileRef: profile.runtimeProfileRef,
+    configuration: profile.configuration,
     capabilityProfileId: profile.capabilityProfileId,
     capabilityProfileRevision: profile.capabilityProfileRevision,
     attachedRuntimeCapabilities: profile.attachedRuntimeCapabilities,

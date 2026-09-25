@@ -10,7 +10,7 @@ export function selectedTargetQuickFeatures(
   if (!runtime || !profile) return undefined;
   const reasoningModes = runtime.exposure.reasoningModes;
   return {
-    profileRef: runtime.profileRef,
+    configuration: runtime.configuration,
     defaults: {
       model: profile.defaults?.model ?? runtime.locked.model,
       reasoningMode: profile.defaults?.reasoningMode ?? runtime.locked.reasoningMode,

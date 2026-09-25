@@ -237,3 +237,88 @@ fn preparation_schema_upgrade_preserves_existing_sessions_and_is_idempotent() {
         assert_eq!(connection.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),super::ACTIVE_SCHEMA_VERSION);
     }
 }
+
+#[test]
+fn codex_era_profiles_become_provider_neutral_and_pinned_digests_verify() {
+    use crate::execution_configuration::SessionCreationResolution;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v58-profiles.sqlite");
+    let connection = open_active_database(&path).unwrap();
+    let binding = serde_json::json!({
+        "deviceId":"local","deviceName":"This laptop","provider":"codex",
+        "configurationRef":"profile-1","connection":{"kind":"local"}
+    });
+    let capabilities = serde_json::json!({
+        "models":["model-a"],"reasoningModes":["high"],"sandboxModes":["danger_full_access"],
+        "mcpTools":{},"skills":[]
+    });
+    let capability_profile = serde_json::json!({
+        "execution": binding, "defaults": {}, "defaultRouteId": "route",
+        "routePolicies": [{
+            "routeId":"route","execution":binding,"modelAllowances":[],
+            "mcpGroups":["codex-profile-mcps"],"skillGroups":["codex-profile-skills","orchid-skills"],
+            "defaults":{},"codexPersonality":"pragmatic"
+        }],
+        "contractVersion":1,"capabilityProfileId":"profile","name":"Profile","revision":1,
+        "allowedCapabilities": capabilities
+    });
+    let pinned = serde_json::json!({
+        "contractVersion": 1,
+        "sessionProfile": {
+            "contractVersion":1,"runtimeProfileRef":"native-codex:profile-1",
+            "attachedRuntimeCapabilities":capabilities,
+            "attachedRuntimeLocked":{"sandboxMode":"danger_full_access"},
+            "capabilityProfileId":"profile","capabilityProfileRevision":1,
+            "nodeCapabilities":capabilities,"agentMcpConfiguration":{},"sessionSkillInputs":[],
+            "pinnedDefaults":{"model":"model-a"},"nativeMcpEnabled":true,
+            "codexPersonality":"friendly"
+        },
+        "digest": "codex-era-digest"
+    });
+    let preparation = serde_json::json!({
+        "invocationId":"invocation","sessionId":"session","currentResolution":pinned,
+        "resolution":{"contractVersion":1,"sessionProfileDigest":"codex-era-digest","selections":{}}
+    });
+    connection.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+    connection.execute("INSERT INTO execution_capability_profiles VALUES('profile',1,?1)", [capability_profile.to_string()]).unwrap();
+    connection.execute(
+        "INSERT INTO agent_sessions(id,title,availability,requested_options_json,session_profile_json,created_at,updated_at) VALUES('session','Session','available','{}',?1,'t','t')",
+        [pinned.to_string()],
+    ).unwrap();
+    connection.execute("INSERT INTO agent_session_current_execution VALUES('session',?1)", [pinned.to_string()]).unwrap();
+    connection.execute("INSERT INTO agent_session_preparations VALUES('invocation','session',?1)", [preparation.to_string()]).unwrap();
+    connection.execute_batch("PRAGMA user_version=58;").unwrap();
+    drop(connection);
+
+    let connection = open_active_database(&path).unwrap();
+    let json = |sql: &str| -> serde_json::Value {
+        serde_json::from_str(&connection.query_row(sql, [], |row| row.get::<_, String>(0)).unwrap()).unwrap()
+    };
+    // Stored profiles keep compact route references; the repository hydrates devices on read.
+    let route = &json("SELECT profile_json FROM execution_capability_profiles")["routePolicies"][0];
+    assert_eq!(route["providerOptions"], serde_json::json!({"provider":"codex","settings":{"personality":"pragmatic"}}));
+    assert!(route.get("codexPersonality").is_none());
+    assert_eq!(route["mcpGroups"], serde_json::json!(["native-mcps"]));
+    assert_eq!(route["skillGroups"], serde_json::json!(["native-skills", "orchid-skills"]));
+
+    let mut resealed_digests = Vec::new();
+    for sql in [
+        "SELECT session_profile_json FROM agent_sessions",
+        "SELECT resolution_json FROM agent_session_current_execution",
+    ] {
+        let resolution: SessionCreationResolution = serde_json::from_value(json(sql)).unwrap();
+        resolution.verify_digest().unwrap();
+        let session_profile = resolution.session_profile();
+        assert_eq!(session_profile.configuration().to_string(), "codex/profile-1");
+        assert_eq!(session_profile.provider_options().unwrap().settings, serde_json::json!({"personality":"friendly"}));
+        resealed_digests.push(resolution.digest().to_owned());
+    }
+    let preparation = json("SELECT payload_json FROM agent_session_preparations");
+    let current: SessionCreationResolution = serde_json::from_value(preparation["currentResolution"].clone()).unwrap();
+    current.verify_digest().unwrap();
+    assert_eq!(resealed_digests[0], resealed_digests[1]);
+    assert_eq!(current.digest(), resealed_digests[0]);
+    assert_eq!(preparation["resolution"]["sessionProfileDigest"], resealed_digests[0]);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 59);
+}

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 58;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 59;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -67,6 +67,10 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         initialize_replacement_workflow_schema(&transaction)?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
+        if current_version < 59 {
+            crate::runtime::providers::codex::legacy_migration::migrate(&transaction)
+                .map_err(|error| format!("Unable to migrate provider-neutral profiles: {error}"))?;
+        }
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|e| e.to_string())?;
@@ -373,6 +377,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     )
                 })?;
         }
+        crate::runtime::providers::codex::legacy_migration::migrate(&transaction)
+            .map_err(|error| format!("Unable to migrate provider-neutral profiles: {error}"))?;
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;

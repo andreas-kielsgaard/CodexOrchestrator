@@ -78,12 +78,20 @@ It also makes the small remote-host change that typed references force, and one 
 - `HostCommand::Capabilities` builds `ProviderConfigurationRef { provider, configuration_id }` and calls the moved Codex projection. `host.rs` no longer formats `native-codex:`.
 - Bump `HOST_PROTOCOL_VERSION` to 2 in `protocol.rs`. Leave the configuration format, the construction in `Host::new` and the `"codex"` dispatch checks unchanged.
 
-### A4. Skill catalogue port (adjacent)
+### A4. Model-independent skills
 
-- Move `CodexSkill` and `CodexSkillCatalogue` into engine contracts as `ProviderSkill` and `ProviderSkillCatalogue`, with the same fields. Codex's `skills.rs` projects into them.
-- `SelectedRuntimeProfileSource::discover_skills_for_configuration` returns the neutral catalogue. Add `mentioned_skills(configuration_id, cwd, text)`, with an empty default. Codex implements it with its `$name` syntax.
-- Consumers: `agent_sessions/application/configuration.rs` drops its direct `skills::mentioned` call and its `contains('$')` check. Also update `session_skills::pin_discovered_skill`, rename `CapabilityProfileService::codex_skills_for_configuration` to `skills_for_configuration`, and change the return type of the Tauri `load_native_profile_skills` command.
-- `configuration_home` and the auxiliary workspaces under a Codex home are left for later (see Remaining).
+User direction (2026-09-25): skill content is not changed. Skills from every configured source are exposed through capability profiles and chat quick actions, and each is delivered to the selected provider in the format that provider expects.
+
+- **Sources.**
+  - Provider-native discovery returns the neutral `ProviderSkill` and `ProviderSkillCatalogue` types in engine contracts. Codex's `skills.rs` projects into them.
+  - Product skill roots (Orchid and each OTP package) belong to execution configuration as `ProductSkillRoots`. The Codex configuration source no longer holds them, and `skill_roots_for_configuration` leaves the provider port.
+- **Exposure.** Shared quick-feature assembly appends product-root skills for any provider. The capability groups are `native-skills`, `orchid-skills` and `otp:<package>:skills`. `$name` is Orchid's mention syntax for every skill. Shared code produces `QuickSkill.invocation_text`.
+- **Delivery.**
+  - Shared code parses `$name` mentions against the pinned manifest and the provider's native catalogue. It pins newly mentioned native skills, which is the current behavior, and sets `RuntimeLaunchExtension.invoked_skill_ids`.
+  - The manifest guidance becomes provider-neutral, because `read_skill` serves every pinned skill.
+  - Codex converts invoked skills that its catalogue can load into native skill input items, and no longer parses `$name` itself.
+- **Consumers.** Update `session_skills::pin_discovered_skill`, rename `CapabilityProfileService::codex_skills_for_configuration` to `skills_for_configuration`, and change the return type of the Tauri `load_native_profile_skills` command.
+- **Left for later** (see Remaining): `configuration_home`, and the auxiliary workspaces under a Codex home.
 
 ### A5. Frontend
 

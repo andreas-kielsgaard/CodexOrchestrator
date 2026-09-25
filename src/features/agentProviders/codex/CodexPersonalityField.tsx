@@ -1,13 +1,7 @@
-import type { ProfileRoutePolicyDto } from '../../../application/executionConfiguration';
+import type { ProviderRouteSettingsProps } from '../ProviderRouteSettings';
+import { codexOptions, codexPersonality, type CodexPersonality } from './codexOptions';
 
-export function CodexPersonalityField({
-  route,
-  onChange,
-}: {
-  readonly route: ProfileRoutePolicyDto;
-  readonly onChange: (route: ProfileRoutePolicyDto) => void;
-}) {
-  if (route.execution.provider !== 'codex') return null;
+export function CodexPersonalityField({ route, onChange }: ProviderRouteSettingsProps) {
   return (
     <section aria-labelledby={`${route.routeId}-personality`}>
       <div className="capability-route__section-heading">
@@ -18,14 +12,15 @@ export function CodexPersonalityField({
         <label>
           <span className="sr-only">Codex personality</span>
           <select
-            value={route.codexPersonality ?? 'inherit'}
+            value={codexPersonality(route.providerOptions) ?? 'inherit'}
             onChange={(event) =>
               onChange({
                 ...route,
-                codexPersonality:
+                providerOptions: codexOptions(
                   event.currentTarget.value === 'inherit'
                     ? null
-                    : (event.currentTarget.value as 'none' | 'friendly' | 'pragmatic'),
+                    : (event.currentTarget.value as CodexPersonality),
+                ),
               })
             }
           >

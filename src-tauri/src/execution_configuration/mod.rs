@@ -11,6 +11,9 @@ mod quick_features;
 pub(crate) use quick_features::{QuickModel, QuickReasoningMode, QuickSkill, RuntimeQuickFeatures};
 mod node_profile;
 mod ports;
+mod product_skills;
+pub(crate) use product_skills::ProductSkillRoots;
+pub(crate) mod skill_mentions;
 mod repository;
 mod resolution;
 mod runtime_profile;
@@ -22,7 +25,8 @@ pub(crate) use skill_reader::SessionSkillReaderProvisioner;
 pub(crate) mod transport;
 
 pub(crate) use capability_profile::{
-    CapabilityProfile, ModelAllowance, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
+    otp_skill_group, CapabilityProfile, ModelAllowance, ProfileRoutePolicy,
+    CAPABILITY_PROFILE_CONTRACT_VERSION, NATIVE_MCP_GROUP, NATIVE_SKILL_GROUP, ORCHID_SKILL_GROUP,
 };
 pub(crate) use creation_intent::SessionCreationIntent;
 pub(crate) use crate::runtime::providers::codex::configuration::NativeCodexSelectedRuntimeProfileSource;
@@ -43,6 +47,7 @@ pub(crate) use resolution::{
 };
 pub(crate) use runtime_profile::{
     CapabilitySet, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
+    RUNTIME_PROFILE_CONTRACT_VERSION,
 };
 pub(crate) use service::{CapabilityProfileService, CapabilityProfileServiceError};
 pub(crate) use session_profile::SessionProfile;

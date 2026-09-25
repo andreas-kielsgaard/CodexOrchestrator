@@ -1,4 +1,5 @@
 //! The selected native source and the saved Capability Profile catalogue share one identity.
+//! Product skill roots are composed here once and offered with every provider configuration.
 use crate::{
     agent_sessions::application::SessionWorkspaces, execution_configuration::*,
     runtime::providers::codex::profiles::NativeProfileService,
@@ -18,13 +19,20 @@ pub(super) fn compose(
         Arc<dyn SelectedRuntimeProfileSource>,
         Arc<CapabilityProfileService>,
         Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
+        Arc<ProductSkillRoots>,
     ),
     String,
 > {
+    let product_skills = Arc::new(ProductSkillRoots::new(
+        vec![workspaces.skills_root().into()],
+        otp_skill_roots
+            .into_iter()
+            .map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect()))
+            .collect(),
+    ));
     let source: Arc<dyn SelectedRuntimeProfileSource> = Arc::new(
         NativeCodexSelectedRuntimeProfileSource::new(profiles, product_tools.clone())
-            .with_skill_roots(vec![workspaces.skills_root()])
-            .with_otp_skill_roots(otp_skill_roots),
+            .with_product_skill_roots(&product_skills),
     );
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(
@@ -49,5 +57,5 @@ pub(super) fn compose(
         )
         .with_endpoints(endpoints.clone()),
     );
-    Ok((source, service, endpoints))
+    Ok((source, service, endpoints, product_skills))
 }

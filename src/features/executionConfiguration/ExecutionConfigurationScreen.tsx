@@ -35,7 +35,7 @@ export interface ExecutionConfigurationScreenProps {
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
   contractVersion: 1,
-  profileRef: 'unavailable',
+  configuration: { provider: 'unavailable', configurationId: 'unavailable' },
   exposure: {
     models: [],
     reasoningModes: [],
@@ -44,7 +44,6 @@ const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
     skills: [],
   },
   locked: { model: null, reasoningMode: null, sandboxMode: null },
-  codexPersonality: null,
 };
 
 function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft {
@@ -52,7 +51,6 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     ? {
         routeId: `${profile.capabilityProfileId}:legacy`,
         execution: profile.execution,
-        codexPersonality: null,
         modelAllowances: profile.allowedCapabilities.models.map((modelId) => ({
           modelId,
           minimumReasoning: profile.allowedCapabilities.reasoningModes[0] ?? 'none',

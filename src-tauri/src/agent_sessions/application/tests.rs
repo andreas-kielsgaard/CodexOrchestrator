@@ -9,6 +9,7 @@ use super::{
 mod import_tests;
 mod preparation_tests;
 mod repair_tests;
+mod skill_mention_tests;
 mod target_tests;
 
 #[test]
@@ -424,7 +425,7 @@ impl SelectedRuntimeProfileSource for FixedSelectedRuntimeProfileSource {
 fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {
     RuntimeProfileSnapshot {
         contract_version: 1,
-        profile_ref: "native-codex:selected".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
         exposure: CapabilitySet {
             models: ["node-default".to_string(), "user-only".to_string()]
                 .into_iter()
@@ -440,7 +441,7 @@ fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(ExecutionSandboxMode::WorkspaceWrite),
         },
-        codex_personality: None,
+        provider_options: None,
     }
 }
 
@@ -833,7 +834,7 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
             message(&session.id, "fresh"),
             Some(RuntimeLaunchExtension {
                 managed_mcp_servers: Vec::new(),
-                skill_inputs: Vec::new(),
+                skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
                 native_mcp_enabled: None,
                 provider_options: None,
                 ignore_user_rules: false,

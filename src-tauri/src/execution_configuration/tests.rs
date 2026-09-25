@@ -54,7 +54,7 @@ fn capabilities(
 fn runtime_profile() -> RuntimeProfileSnapshot {
     RuntimeProfileSnapshot {
         contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
-        profile_ref: "native-codex:selected".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
         exposure: capabilities(
             &["codex-a", "codex-b"],
             &["medium", "high"],
@@ -67,7 +67,7 @@ fn runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(SandboxMode::WorkspaceWrite),
         },
-        codex_personality: None,
+        provider_options: None,
     }
 }
 
@@ -125,7 +125,7 @@ fn creation_resolves_an_immutable_session_profile() {
     let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let profile = resolution.session_profile();
 
-    assert_eq!(profile.runtime_profile_ref(), "native-codex:selected");
+    assert_eq!(profile.configuration(), &orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"));
     assert_eq!(
         profile.attached_runtime_capabilities(),
         &runtime_profile().exposure
@@ -158,7 +158,7 @@ fn route_groups_shape_session_exposure_without_enforcing_model_allowances() {
         mcp_groups: set(&["otp:repository:mcps"]),
         skill_groups: set(&["orchid-skills"]),
         defaults: RuntimeSelections::default(),
-        codex_personality: None,
+        provider_options: None,
     }];
     request.capability_profile.default_route_id = Some("local".into());
     request.capability_profile.allowed_capabilities = CapabilitySet::default();
@@ -344,7 +344,7 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
     let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.profile_ref = "native-codex:other".into();
+    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
@@ -367,7 +367,7 @@ fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
     let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.profile_ref = "native-codex:other".into();
+    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
@@ -522,4 +522,67 @@ fn sqlite_profiles_store_route_references_and_resolve_device_owned_connections()
         },
         profile
     );
+}
+
+fn native_options(provider: &str, personality: &str) -> orchid_engine::contracts::ProviderNativeOptions {
+    orchid_engine::contracts::ProviderNativeOptions {
+        provider: provider.into(),
+        settings: serde_json::json!({ "personality": personality }),
+    }
+}
+
+fn routed_request(route_options: Option<orchid_engine::contracts::ProviderNativeOptions>) -> SessionCreationRequest {
+    let mut request = creation_request();
+    request.capability_profile.route_policies = vec![super::ProfileRoutePolicy {
+        route_id: "local".into(),
+        execution: Default::default(),
+        model_allowances: Vec::new(),
+        mcp_groups: set(&[super::NATIVE_MCP_GROUP]),
+        skill_groups: BTreeSet::new(),
+        defaults: RuntimeSelections::default(),
+        provider_options: route_options,
+    }];
+    request.capability_profile.default_route_id = Some("local".into());
+    request.capability_profile.allowed_capabilities = CapabilitySet::default();
+    request.node_profile.allowed_capabilities = CapabilitySet::default();
+    request
+}
+
+#[test]
+fn route_native_options_override_configuration_defaults_and_absence_inherits_them() {
+    let mut runtime = runtime_profile();
+    runtime.provider_options = Some(native_options("codex", "friendly"));
+
+    let inherited =
+        SessionProfileResolver::resolve_snapshot(runtime.clone(), routed_request(None)).unwrap();
+    assert_eq!(
+        inherited.session_profile().provider_options(),
+        Some(&native_options("codex", "friendly"))
+    );
+    assert_eq!(inherited.session_profile().native_mcp_enabled(), Some(true));
+
+    let overridden = SessionProfileResolver::resolve_snapshot(
+        runtime,
+        routed_request(Some(native_options("codex", "pragmatic"))),
+    )
+    .unwrap();
+    assert_eq!(
+        overridden.session_profile().provider_options(),
+        Some(&native_options("codex", "pragmatic"))
+    );
+    overridden.verify_digest().unwrap();
+}
+
+#[test]
+fn native_options_cannot_travel_with_another_provider() {
+    let request = routed_request(Some(native_options("test-provider", "friendly")));
+    assert!(request
+        .capability_profile
+        .validate()
+        .unwrap_err()
+        .contains("test-provider"));
+
+    let mut runtime = runtime_profile();
+    runtime.provider_options = Some(native_options("test-provider", "friendly"));
+    assert!(runtime.validate().unwrap_err().contains("test-provider"));
 }

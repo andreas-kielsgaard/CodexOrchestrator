@@ -1,31 +1,13 @@
 //! Codex-owned skill discovery for a registered home and working context.
 use super::connection::Connection;
-use crate::contracts::ports::RuntimePortError;
-use serde::Serialize;
+use crate::contracts::{ports::RuntimePortError, ProviderSkill, ProviderSkillCatalogue};
 use serde_json::{json, Value};
 use std::path::Path;
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexSkill {
-    pub name: String,
-    pub description: String,
-    pub path: String,
-    pub scope: String,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexSkillCatalogue {
-    pub skills: Vec<CodexSkill>,
-    pub limitations: Vec<String>,
-}
 
 pub(super) fn read(
     connection: &Connection,
     cwd: &Path,
-) -> Result<CodexSkillCatalogue, RuntimePortError> {
+) -> Result<ProviderSkillCatalogue, RuntimePortError> {
     let response = read_response(connection, cwd, false)?;
     Ok(project(&response))
 }
@@ -33,7 +15,7 @@ pub(super) fn read(
 pub(super) fn read_forced(
     connection: &Connection,
     cwd: &Path,
-) -> Result<CodexSkillCatalogue, RuntimePortError> {
+) -> Result<ProviderSkillCatalogue, RuntimePortError> {
     let response = read_response(connection, cwd, true)?;
     Ok(project(&response))
 }
@@ -49,8 +31,8 @@ pub(super) fn read_response(
     )
 }
 
-pub fn project(response: &Value) -> CodexSkillCatalogue {
-    let mut catalogue = CodexSkillCatalogue::default();
+pub fn project(response: &Value) -> ProviderSkillCatalogue {
+    let mut catalogue = ProviderSkillCatalogue::default();
     if !response["data"].is_array() {
         catalogue
             .limitations
@@ -72,7 +54,7 @@ pub fn project(response: &Value) -> CodexSkillCatalogue {
             let (Some(name), Some(path)) = (skill["name"].as_str(), skill["path"].as_str()) else {
                 continue;
             };
-            catalogue.skills.push(CodexSkill {
+            catalogue.skills.push(ProviderSkill {
                 name: name.into(),
                 description: skill["interface"]["shortDescription"]
                     .as_str()
@@ -92,27 +74,6 @@ pub fn project(response: &Value) -> CodexSkillCatalogue {
         .skills
         .dedup_by(|a, b| a.name == b.name && a.path == b.path);
     catalogue
-}
-
-pub fn mentioned<'a>(text: &str, catalogue: &'a CodexSkillCatalogue) -> Vec<&'a CodexSkill> {
-    let mut counts = std::collections::HashMap::new();
-    for skill in catalogue.skills.iter().filter(|skill| skill.enabled) {
-        *counts.entry(skill.name.as_str()).or_insert(0usize) += 1;
-    }
-    catalogue
-        .skills
-        .iter()
-        .filter(|skill| skill.enabled && counts.get(skill.name.as_str()) == Some(&1))
-        .filter(|skill| {
-            let marker = format!("${}", skill.name);
-            text.match_indices(&marker).any(|(start, _)| {
-                text[start + marker.len()..]
-                    .chars()
-                    .next()
-                    .is_none_or(|next| !next.is_alphanumeric() && next != '_' && next != '-')
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -504,21 +504,16 @@ fn initialize_turn(
         .ok_or_else(|| unavailable("App-server did not return a working directory"))?
         .to_owned();
     let mut input = vec![json!({"type":"text","text":request.submitted_text})];
-    if request.submitted_text.contains('$')
-        && request
-            .launch_extension
-            .as_ref()
-            .is_some_and(|extension| !extension.skill_inputs.is_empty())
+    if let Some(extension) = request
+        .launch_extension
+        .as_ref()
+        .filter(|extension| !extension.invoked_skill_ids.is_empty())
     {
         if let Ok(catalogue) = skills::read(
             &invocation.connection,
             std::path::Path::new(&working_directory),
         ) {
-            input.extend(skill_items_for_text(
-                &request.submitted_text,
-                &catalogue,
-                request.launch_extension.as_ref(),
-            ));
+            input.extend(native_skill_items(extension, &catalogue));
         }
     }
     let mut turn = json!({"threadId":thread_id,"input":input});
@@ -539,27 +534,26 @@ fn initialize_turn(
     ))
 }
 
-fn skill_items_for_text(
-    text: &str,
-    catalogue: &skills::CodexSkillCatalogue,
-    extension: Option<&RuntimeLaunchExtension>,
+/// Codex loads a skill input item only for a skill its own catalogue discovered. Other invoked
+/// skills remain available through the session's `read_skill` manifest.
+fn native_skill_items(
+    extension: &RuntimeLaunchExtension,
+    catalogue: &crate::contracts::ProviderSkillCatalogue,
 ) -> Vec<Value> {
-    let Some(extension) = extension else {
-        return Vec::new();
-    };
-    skills::mentioned(text, catalogue)
-        .into_iter()
-        .filter(|skill| {
-            extension.skill_inputs.iter().any(|input| {
-                input.name == skill.name
-                    && (input.path == skill.path
-                        || std::path::Path::new(&input.path)
-                            .canonicalize()
-                            .ok()
-                            .is_some_and(|path| {
-                                std::path::Path::new(&skill.path).canonicalize().ok() == Some(path)
-                            }))
-            })
+    let canonical = |path: &str| std::path::Path::new(path).canonicalize().ok();
+    extension
+        .invoked_skill_ids
+        .iter()
+        .filter_map(|id| extension.skill_inputs.iter().find(|input| &input.id == id))
+        .filter_map(|input| {
+            let mut matches = catalogue.skills.iter().filter(|skill| {
+                skill.enabled
+                    && skill.name == input.name
+                    && (skill.path == input.path
+                        || canonical(&input.path).is_some_and(|path| canonical(&skill.path) == Some(path)))
+            });
+            let skill = matches.next()?;
+            matches.next().is_none().then(|| skill)
         })
         .map(|skill| json!({"type":"skill","name":skill.name,"path":skill.path}))
         .collect()
@@ -569,28 +563,41 @@ fn skill_items_for_text(
 mod skill_item_tests {
     use super::*;
 
+    fn input(path: &str, name: &str) -> crate::contracts::ports::RuntimeSkillInput {
+        crate::contracts::ports::RuntimeSkillInput {
+            id: path.into(),
+            name: name.into(),
+            path: path.into(),
+            content_sha256: "hash".into(),
+            description: String::new(),
+        }
+    }
+
     #[test]
-    fn adds_only_unique_exact_native_skill_mentions() {
+    fn delivers_only_invoked_skills_that_codex_discovered() {
         let catalogue = skills::project(&json!({"data":[{"skills":[
             {"name":"review","path":"/first/SKILL.md","enabled":true},
             {"name":"reviewer","path":"/second/SKILL.md","enabled":true},
-            {"name":"duplicate","path":"/a/SKILL.md","enabled":true},
-            {"name":"duplicate","path":"/b/SKILL.md","enabled":true}
+            {"name":"disabled","path":"/third/SKILL.md","enabled":false}
         ]}]}));
         let extension = RuntimeLaunchExtension {
-            skill_inputs: vec![crate::contracts::ports::RuntimeSkillInput {
-                id: "/second/SKILL.md".into(),
-                name: "reviewer".into(),
-                path: "/second/SKILL.md".into(),
-                content_sha256: "hash".into(),
-                description: String::new(),
-            }],
+            skill_inputs: vec![
+                input("/first/SKILL.md", "review"),
+                input("/second/SKILL.md", "reviewer"),
+                input("/third/SKILL.md", "disabled"),
+                input("/orchid/owned/SKILL.md", "owned"),
+            ],
+            invoked_skill_ids: vec![
+                "/second/SKILL.md".into(),
+                "/third/SKILL.md".into(),
+                "/orchid/owned/SKILL.md".into(),
+            ],
             ..Default::default()
         };
-        let inputs = skill_items_for_text("$reviewer and $duplicate", &catalogue, Some(&extension));
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0]["name"], "reviewer");
-        assert_eq!(inputs[0]["path"], "/second/SKILL.md");
+        let items = native_skill_items(&extension, &catalogue);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "reviewer");
+        assert_eq!(items[0]["path"], "/second/SKILL.md");
     }
 }
 

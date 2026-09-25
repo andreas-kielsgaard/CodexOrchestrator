@@ -596,10 +596,10 @@ mod tests {
         SessionProfileResolver::resolve_snapshot(
             RuntimeProfileSnapshot {
                 contract_version: 1,
-                profile_ref: "configured-runtime".into(),
+                configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "configured-runtime"),
                 exposure: capabilities.clone(),
                 locked: RuntimeSelections::default(),
-                codex_personality: None,
+                provider_options: None,
             },
             SessionCreationRequest {
                 contract_version: 1,

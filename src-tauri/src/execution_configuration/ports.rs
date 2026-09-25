@@ -1,7 +1,8 @@
 use super::{capability_profile::CapabilityProfile, runtime_profile::RuntimeProfileSnapshot};
 use std::{error::Error, fmt};
 
-/// A master skill folder that a runtime source makes eligible for an explicit session manifest.
+/// A product-owned skill folder whose skills a route's capability group makes eligible for the
+/// session manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeSkillRoot {
     pub(crate) group_id: String,
@@ -112,23 +113,17 @@ pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
     ) -> Result<Option<String>, SelectedRuntimeProfileSourceError> {
         Ok(None)
     }
-    fn discover_skills_for_configuration(
+    /// Skills the provider configuration discovers natively. Product skill roots are not
+    /// provider concerns; see `ProductSkillRoots`.
+    fn native_skills_for_configuration(
         &self,
         _reference: &str,
         _cwd: Option<&str>,
-    ) -> Result<
-        orchid_engine::providers::codex::app_server::skills::CodexSkillCatalogue,
-        SelectedRuntimeProfileSourceError,
-    > {
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, SelectedRuntimeProfileSourceError>
+    {
         Err(SelectedRuntimeProfileSourceError::unavailable(
-            "Codex skill discovery is unavailable",
+            "Native skill discovery is unavailable",
         ))
-    }
-    fn skill_roots_for_configuration(
-        &self,
-        _reference: &str,
-    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
-        Ok(Vec::new())
     }
     fn configuration_home(
         &self,

@@ -1,7 +1,12 @@
 //! Selected native environment discovery. Defaults remain absent so Codex resolves them at launch.
 use crate::execution_configuration::{
-    RuntimeProfileSnapshot, RuntimeSkillRoot, SandboxMode, SelectedRuntimeProfileSource,
+    RuntimeProfileSnapshot, SandboxMode, SelectedRuntimeProfileSource,
     SelectedRuntimeProfileSourceError,
+};
+use orchid_engine::contracts::ProviderConfigurationRef;
+use orchid_engine::providers::codex::{
+    options::{CodexNativeOptions, PROVIDER as CODEX},
+    runtime_profile,
 };
 use crate::runtime::providers::codex::{
     app_server::environment::{CodexEnvironmentReader, CodexEnvironmentSource},
@@ -14,8 +19,6 @@ pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
     service: Arc<NativeProfileService>,
     product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     reader: Arc<dyn CodexEnvironmentSource>,
-    orchid_skill_roots: Vec<std::path::PathBuf>,
-    otp_skill_roots: std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
     quick_feature_cache:
         Mutex<std::collections::BTreeMap<String, crate::execution_configuration::RuntimeQuickFeatures>>,
 }
@@ -29,38 +32,25 @@ impl NativeCodexSelectedRuntimeProfileSource {
             service,
             product_tools,
             reader: Arc::new(CodexEnvironmentReader::new("codex")),
-            orchid_skill_roots: Vec::new(),
-            otp_skill_roots: Default::default(),
             quick_feature_cache: Mutex::new(Default::default()),
         }
     }
-    pub(crate) fn with_skill_roots(mut self, roots: Vec<String>) -> Self {
-        self.orchid_skill_roots = roots.iter().map(std::path::PathBuf::from).collect();
-        self.refresh_skill_reader();
-        self
-    }
-    pub(crate) fn with_otp_skill_roots(
+    /// Orchid-owned roots are offered by Orchid itself. Codex receives them only so its native
+    /// inventory can report which discovered entries they own.
+    pub(crate) fn with_product_skill_roots(
         mut self,
-        roots: std::collections::BTreeMap<String, Vec<String>>,
+        roots: &crate::execution_configuration::ProductSkillRoots,
     ) -> Self {
-        self.otp_skill_roots = roots
-            .into_iter()
-            .map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect()))
-            .collect();
-        self.refresh_skill_reader();
-        self
-    }
-    fn refresh_skill_reader(&mut self) {
-        let paths = self
-            .orchid_skill_roots
+        let paths = roots
+            .roots()
             .iter()
-            .chain(self.otp_skill_roots.values().flatten())
-            .map(|path| path.to_string_lossy().into_owned())
+            .map(|root| root.path.to_string_lossy().into_owned())
             .collect();
         self.reader = Arc::new(CodexEnvironmentReader::new("codex").with_skill_roots(paths));
         if let Ok(cache) = self.quick_feature_cache.get_mut() {
             cache.clear();
         }
+        self
     }
     #[cfg(test)]
     pub(crate) fn with_reader(mut self, reader: Arc<dyn CodexEnvironmentSource>) -> Self {
@@ -94,9 +84,9 @@ impl NativeCodexSelectedRuntimeProfileSource {
             }
         }
         let cwd_path = cwd.map(std::path::PathBuf::from);
-        let profile_ref = format!("native-codex:{}", selected.profile_id);
-        let mut features = match self.reader.read(selected.home.clone(), cwd_path.clone()) {
-            Ok(native) => quick_features::project(profile_ref, &native),
+        let configuration = codex_configuration(&selected.profile_id);
+        let features = match self.reader.read(selected.home.clone(), cwd_path.clone()) {
+            Ok(native) => quick_features::project(configuration, &native),
             Err(model_error) => {
                 let catalogue = self
                     .reader
@@ -105,35 +95,24 @@ impl NativeCodexSelectedRuntimeProfileSource {
                         SelectedRuntimeProfileSourceError::unavailable(error.to_string())
                     })?;
                 let mut fallback = crate::execution_configuration::RuntimeQuickFeatures {
-                    profile_ref,
+                    configuration: Some(configuration),
                     ..Default::default()
                 };
                 fallback.limitations.push(format!(
                     "Model/configuration discovery is unavailable: {model_error}"
                 ));
-                quick_features::append_codex_skills(&mut fallback, &catalogue);
+                fallback.append_native_skills(&catalogue);
                 fallback
             }
         };
-        self.append_owned_skills(&mut features);
         cache.insert(cache_key, features.clone());
         Ok(features)
     }
 
-    fn append_owned_skills(&self, features: &mut crate::execution_configuration::RuntimeQuickFeatures) {
-        quick_features::append_owned_root_skills(
-            features,
-            &self.orchid_skill_roots,
-            "orchid-skills",
-        );
-        for (package, paths) in &self.otp_skill_roots {
-            quick_features::append_owned_root_skills(
-                features,
-                paths,
-                &format!("otp:{package}:skills"),
-            );
-        }
-    }
+}
+
+fn codex_configuration(profile_id: &str) -> ProviderConfigurationRef {
+    ProviderConfigurationRef::new(CODEX, profile_id)
 }
 
 impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
@@ -145,14 +124,12 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .bound_profile_id(session_id)
             .map_err(SelectedRuntimeProfileSourceError::unavailable)
     }
-    fn discover_skills_for_configuration(
+    fn native_skills_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<
-        crate::runtime::providers::codex::app_server::skills::CodexSkillCatalogue,
-        SelectedRuntimeProfileSourceError,
-    > {
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, SelectedRuntimeProfileSourceError>
+    {
         let selected = self
             .service
             .resolve_configuration_home(reference)
@@ -160,31 +137,6 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
         self.reader
             .discover_skills(selected.home, cwd.map(Into::into))
             .map_err(|error| SelectedRuntimeProfileSourceError::unavailable(error.to_string()))
-    }
-    fn skill_roots_for_configuration(
-        &self,
-        reference: &str,
-    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
-        self.service
-            .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
-        let mut roots = Vec::new();
-        roots.extend(
-            self.orchid_skill_roots
-                .iter()
-                .cloned()
-                .map(|path| RuntimeSkillRoot {
-                    group_id: "orchid-skills".into(),
-                    path,
-                }),
-        );
-        for (package, paths) in &self.otp_skill_roots {
-            roots.extend(paths.iter().cloned().map(|path| RuntimeSkillRoot {
-                group_id: format!("otp:{package}:skills"),
-                path,
-            }));
-        }
-        Ok(roots)
     }
     fn configuration_home(
         &self,
@@ -272,9 +224,7 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
-        let mut quick =
-            quick_features::project(format!("native-codex:{}", selected.profile_id), &native);
-        self.append_owned_skills(&mut quick);
+        let quick = quick_features::project(codex_configuration(&selected.profile_id), &native);
         let cache_key = format!(
             "{}\0{}",
             selected.profile_id,
@@ -286,15 +236,21 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
                 SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
             })?
             .insert(cache_key, quick);
-        let mut profile = orchid_engine::configuration::runtime_profile(
+        let mut profile = runtime_profile::runtime_profile(
             &native,
-            format!("native-codex:{}", selected.profile_id),
+            codex_configuration(&selected.profile_id),
             self.product_tools.clone(),
         );
-        profile.codex_personality = self
+        profile.provider_options = self
             .service
             .profile_personality(&selected.profile_id)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(SelectedRuntimeProfileSourceError::unavailable)?
+            .map(|personality| {
+                CodexNativeOptions {
+                    personality: Some(personality),
+                }
+                .encode()
+            });
         Ok(with_temporary_danger_full_access(profile))
     }
 }

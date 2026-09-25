@@ -1,9 +1,23 @@
-use super::runtime_profile::{validate_identifier, CapabilitySet, RuntimeSelections};
-use orchid_engine::providers::codex::options::CodexPersonality;
+use super::runtime_profile::{
+    validate_identifier, validate_provider_options, CapabilitySet, RuntimeSelections,
+};
+use orchid_engine::contracts::ProviderNativeOptions;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub(crate) const CAPABILITY_PROFILE_CONTRACT_VERSION: u32 = 1;
+
+/// Capability group for MCP servers configured natively by the selected provider configuration.
+pub(crate) const NATIVE_MCP_GROUP: &str = "native-mcps";
+/// Capability group for skills discovered natively by the selected provider configuration.
+pub(crate) const NATIVE_SKILL_GROUP: &str = "native-skills";
+/// Capability group for Orchid's product-owned skill root.
+pub(crate) const ORCHID_SKILL_GROUP: &str = "orchid-skills";
+
+/// Capability group for the skills shipped by one installed OTP package.
+pub(crate) fn otp_skill_group(package: &str) -> String {
+    format!("otp:{package}:skills")
+}
 
 /// A named execution choice inside a Capability Profile. The IDs are durable transport identity;
 /// UI surfaces the device/harness/source labels from the route catalogue instead.
@@ -20,15 +34,20 @@ pub(crate) struct ProfileRoutePolicy {
     pub(crate) skill_groups: BTreeSet<String>,
     #[serde(default)]
     pub(crate) defaults: RuntimeSelections,
-    /// Codex-only override. Absence inherits the selected Codex profile preference.
-    #[serde(default)]
-    pub(crate) codex_personality: Option<CodexPersonality>,
+    /// Provider-native override, decoded only by the route's provider. Absence inherits the
+    /// provider configuration's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_options: Option<ProviderNativeOptions>,
 }
 
 impl ProfileRoutePolicy {
     pub(crate) fn validate(&self) -> Result<(), String> {
         validate_identifier("Capability Profile route", "routeId", &self.route_id)?;
         self.execution.validate()?;
+        validate_provider_options(
+            &self.execution.configuration(),
+            self.provider_options.as_ref(),
+        )?;
         for allowance in &self.model_allowances {
             allowance.validate()?;
         }

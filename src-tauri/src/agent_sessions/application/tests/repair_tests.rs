@@ -59,7 +59,7 @@ struct Fixture {
 
 use crate::execution_configuration::RuntimeQuickFeatures;
 struct QuickSource {
-    profile_ref: String,
+    configuration: orchid_engine::contracts::ProviderConfigurationRef,
     contexts: Mutex<Vec<Option<String>>>,
 }
 impl SelectedRuntimeProfileSource for QuickSource {
@@ -74,7 +74,7 @@ impl SelectedRuntimeProfileSource for QuickSource {
     ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
         self.contexts.lock().unwrap().push(cwd.map(String::from));
         Ok(RuntimeQuickFeatures {
-            profile_ref: self.profile_ref.clone(),
+            configuration: Some(self.configuration.clone()),
             ..Default::default()
         })
     }
@@ -84,7 +84,7 @@ impl SelectedRuntimeProfileSource for QuickSource {
 fn skill_discovery_does_not_require_a_capability_profile() {
     let fixture = Fixture::new();
     let source = Arc::new(QuickSource {
-        profile_ref: test_selected_runtime_profile().profile_ref,
+        configuration: test_selected_runtime_profile().configuration,
         contexts: Mutex::new(Vec::new()),
     });
     let mut application = fixture.direct.clone().with_profile_source(source.clone());
@@ -125,7 +125,7 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
 fn quick_features_use_session_context_and_reject_a_different_provider_profile() {
     let fixture = Fixture::new();
     let source = Arc::new(QuickSource {
-        profile_ref: test_selected_runtime_profile().profile_ref,
+        configuration: test_selected_runtime_profile().configuration,
         contexts: Mutex::new(Vec::new()),
     });
     let application = fixture.direct.clone().with_profile_source(source.clone());
@@ -161,7 +161,7 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
         .invocations
         .is_empty());
     let changed = application.with_profile_source(Arc::new(QuickSource {
-        profile_ref: "different-profile".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "different-profile"),
         contexts: Mutex::new(Vec::new()),
     }));
     assert!(changed

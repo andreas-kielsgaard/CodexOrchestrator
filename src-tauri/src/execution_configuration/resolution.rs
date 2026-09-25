@@ -48,6 +48,21 @@ impl SessionCreationResolution {
         &self.digest
     }
 
+    /// Seals an already-resolved Session Profile with a fresh digest. Used by the one-time
+    /// provider-boundary storage migration, which rewrites stored profiles into the current shape.
+    pub(crate) fn reseal(session_profile: SessionProfile) -> Result<Self, ResolutionError> {
+        session_profile
+            .validate()
+            .map_err(ResolutionError::InvalidInput)?;
+        let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
+        let digest = session_profile_digest(contract_version, &session_profile)?;
+        Ok(Self {
+            contract_version,
+            session_profile,
+            digest,
+        })
+    }
+
     pub(crate) fn verify_digest(&self) -> Result<(), ResolutionError> {
         if self.contract_version != SESSION_CREATION_RESOLUTION_CONTRACT_VERSION {
             return Err(ResolutionError::InvalidInput(format!(
@@ -265,7 +280,7 @@ impl SessionProfileResolver {
                     node_capabilities
                         .mcp_tools
                         .insert(server.to_string(), selected);
-                } else if group != "codex-profile-mcps" {
+                } else if group != super::capability_profile::NATIVE_MCP_GROUP {
                     return Err(ResolutionError::InvalidInput(format!(
                         "Unsupported MCP group `{group}`"
                     )));
@@ -293,12 +308,15 @@ impl SessionProfileResolver {
             ),
             &node_capabilities,
         )?;
-        let native_mcp_enabled = route.map(|route| route.mcp_groups.contains("codex-profile-mcps"));
-        let codex_personality = route
-            .and_then(|route| route.codex_personality)
-            .or(runtime_profile.codex_personality);
+        let native_mcp_enabled =
+            route.map(|route| route.mcp_groups.contains(super::capability_profile::NATIVE_MCP_GROUP));
+        // A route envelope overrides the configuration's defaults as a whole. Providers encode
+        // "inherit" as an absent envelope, never as an empty one.
+        let provider_options = route
+            .and_then(|route| route.provider_options.clone())
+            .or(runtime_profile.provider_options);
         let session_profile = SessionProfile::resolved(
-            runtime_profile.profile_ref,
+            runtime_profile.configuration,
             runtime_profile.exposure,
             runtime_profile.locked,
             request.capability_profile.capability_profile_id,
@@ -308,7 +326,7 @@ impl SessionProfileResolver {
             session_skill_inputs,
             pinned_defaults,
             native_mcp_enabled,
-            codex_personality,
+            provider_options,
         );
         let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
         let digest = session_profile_digest(contract_version, &session_profile)?;
@@ -374,10 +392,10 @@ impl SessionProfileResolver {
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
         let session_profile = creation.session_profile();
-        if runtime_profile.profile_ref != session_profile.runtime_profile_ref() {
+        if &runtime_profile.configuration != session_profile.configuration() {
             return Err(ResolutionError::RuntimeProfileChanged {
-                expected: session_profile.runtime_profile_ref().to_owned(),
-                actual: runtime_profile.profile_ref.clone(),
+                expected: session_profile.configuration().to_string(),
+                actual: runtime_profile.configuration.to_string(),
             });
         }
         Ok(())

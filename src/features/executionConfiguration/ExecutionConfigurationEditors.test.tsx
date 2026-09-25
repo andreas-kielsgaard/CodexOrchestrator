@@ -22,7 +22,7 @@ const emptyCapabilities: CapabilitySetViewModel = {
 };
 
 const runtime: RuntimeProfileViewModel = {
-  profileRef: 'native-codex/global',
+  configuration: { provider: 'codex', configurationId: 'global' },
   sourceLabel: 'Selected Codex profile',
   exposure: {
     models: ['gpt-5.6', 'gpt-5.4'],
@@ -270,7 +270,7 @@ describe('Execution Configuration editors', () => {
   it('presents a pinned Session Profile without editable or initial-prompt controls', async () => {
     const user = userEvent.setup();
     const profile: SessionProfileViewModel = {
-      runtimeProfileRef: runtime.profileRef,
+      configuration: runtime.configuration,
       capabilityProfileId: 'reviewer',
       capabilityProfileRevision: 2,
       attachedRuntimeCapabilities: runtime.exposure,

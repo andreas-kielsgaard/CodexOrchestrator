@@ -5,8 +5,10 @@ use crate::agent_sessions::{
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use crate::execution_configuration::{
-    compile_session_skill_inputs, CapabilityProfile, RuntimeSelections, SandboxMode,
+    compile_session_skill_inputs, skill_mentions, CapabilityProfile, RuntimeSelections,
+    SandboxMode,
 };
+use orchid_engine::contracts::ProviderConfigurationRef;
 
 pub(crate) fn runtime_options(selections: &RuntimeSelections) -> AgentRuntimeOptions {
     AgentRuntimeOptions {
@@ -40,24 +42,16 @@ pub(super) fn pinned_exposure_extension(
 ) -> Result<RuntimeLaunchExtension, String> {
     let pinned = profile.session_profile();
     extension.native_mcp_enabled = pinned.native_mcp_enabled();
-    extension.provider_options = pinned.codex_personality().map(|personality| {
-        orchid_engine::providers::codex::options::CodexNativeOptions {
-            personality: Some(personality),
-        }
-        .encode()
-    });
+    extension.provider_options = pinned.provider_options().cloned();
     let skills = crate::execution_configuration::validate_session_skill_inputs(
         pinned.session_skill_inputs(),
     )?;
     if !skills.is_empty() {
-        let manifest = skills
-            .iter()
-            .map(|skill| format!("- {}: {}", skill.name, skill.description,))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let context = format!("Skills available to this session (not invoked automatically). Codex-discovered skills use $name; Orchid and OTP skills use read_skill:\n{manifest}");
+        let context = skill_manifest_context(&skills);
         match extension.initial_prompt_prefix.as_mut() {
-            Some(prefix) => prefix.content = format!("{}\n\n{}", prefix.content, context),
+            Some(prefix) => prefix.content = format!("{}
+
+{}", prefix.content, context),
             None => {
                 extension.initial_prompt_prefix = Some(InitialPromptPrefix {
                     source: "session_skill_manifest".into(),
@@ -69,6 +63,42 @@ pub(super) fn pinned_exposure_extension(
     }
     extension.skill_inputs = skills;
     Ok(extension)
+}
+
+/// Provider-independent manifest guidance. `read_skill` serves every pinned skill whatever its
+/// source; a provider may additionally attach an invoked skill in its native form.
+fn skill_manifest_context(skills: &[crate::agent_sessions::ports::RuntimeSkillInput]) -> String {
+    let manifest = skills
+        .iter()
+        .map(|skill| format!("- {}: {}", skill.name, skill.description))
+        .collect::<Vec<_>>()
+        .join("
+");
+    format!(
+        "Skills available to this session (not invoked automatically). A $name mention refers to the skill with that name; read its instructions with read_skill unless they are already attached:
+{manifest}"
+    )
+}
+
+/// The provider configuration a Session executes with: its execution target, otherwise the
+/// configuration its profile pinned. Unbound legacy Sessions predate provider identity and ran
+/// only on the selected Codex configuration.
+pub(super) fn session_configuration(
+    session: &crate::agent_sessions::domain::AgentSession,
+) -> ProviderConfigurationRef {
+    session
+        .execution_target
+        .as_ref()
+        .map(|target| target.execution.configuration())
+        .or_else(|| {
+            session
+                .session_profile
+                .as_ref()
+                .map(|profile| profile.session_profile().configuration().clone())
+        })
+        .unwrap_or_else(|| {
+            ProviderConfigurationRef::new(orchid_engine::providers::codex::options::PROVIDER, "selected")
+        })
 }
 
 pub(super) fn default_node_capabilities(
@@ -147,25 +177,57 @@ impl fmt::Display for SessionConfigurationError {
 impl Error for SessionConfigurationError {}
 
 impl AgentSessionApplication {
-    pub(super) fn direct_user_native_skill_inputs(
+    /// Resolves Orchid `$name` mentions to skills in `extension.skill_inputs` and records them as
+    /// explicitly invoked; the provider delivers each in its native form. A Session with a pinned
+    /// profile invokes only its pinned manifest. An unprofiled Session may also invoke a skill
+    /// from the provider's native catalogue, which is pinned for this invocation.
+    pub(super) fn apply_skill_mentions(
         &self,
-        configuration_ref: &str,
+        configuration: &ProviderConfigurationRef,
         cwd: Option<&str>,
         submitted_text: &str,
-    ) -> Vec<crate::agent_sessions::ports::RuntimeSkillInput> {
+        pinned_profile: bool,
+        extension: &mut RuntimeLaunchExtension,
+    ) {
         if !submitted_text.contains('$') {
-            return Vec::new();
+            return;
         }
-        let Ok(source) = self.profile_source() else {
-            return Vec::new();
-        };
-        let Ok(catalogue) = source.discover_skills_for_configuration(configuration_ref, cwd) else {
-            return Vec::new();
-        };
-        crate::runtime::providers::codex::app_server::skills::mentioned(submitted_text, &catalogue)
-            .into_iter()
-            .filter_map(|skill| crate::execution_configuration::pin_discovered_skill(skill).ok())
-            .collect()
+        let mut invoked = extension
+            .skill_inputs
+            .iter()
+            .filter(|input| skill_mentions::mentions(submitted_text, &input.name))
+            .map(|input| input.id.clone())
+            .collect::<Vec<_>>();
+        let catalogue = (!pinned_profile).then(|| self.profile_source().ok()).flatten().and_then(|source| {
+            source
+                .native_skills_for_configuration(&configuration.configuration_id, cwd)
+                .ok()
+        });
+        for skill in catalogue.iter().flat_map(|catalogue| {
+            catalogue.skills.iter().filter(|skill| {
+                skill.enabled
+                    && catalogue
+                        .skills
+                        .iter()
+                        .filter(|other| other.enabled && other.name == skill.name)
+                        .count()
+                        == 1
+                    && skill_mentions::mentions(submitted_text, &skill.name)
+            })
+        }) {
+            if extension
+                .skill_inputs
+                .iter()
+                .any(|input| input.name == skill.name)
+            {
+                continue;
+            }
+            if let Ok(input) = crate::execution_configuration::pin_discovered_skill(skill) {
+                invoked.push(input.id.clone());
+                extension.skill_inputs.push(input);
+            }
+        }
+        extension.invoked_skill_ids = invoked;
     }
 
     pub(super) fn compile_capability_skill_inputs(
@@ -188,10 +250,9 @@ impl AgentSessionApplication {
         let features = source
             .quick_features_for_configuration(configuration_ref, cwd)
             .map_err(|error| error.to_string())?;
-        let roots = source
-            .skill_roots_for_configuration(configuration_ref)
-            .map_err(|error| error.to_string())?;
-        compile_session_skill_inputs(route, &features, &roots)
+        let mut features = features;
+        self.product_skills.append_quick_skills(&mut features);
+        compile_session_skill_inputs(route, &features, self.product_skills.roots())
     }
 
     pub(crate) fn create_default_session(
@@ -291,6 +352,15 @@ impl AgentSessionApplication {
         source: Arc<dyn SelectedRuntimeProfileSource>,
     ) -> Self {
         self.profile_source = Some(source);
+        self
+    }
+
+    /// Orchid-owned skill roots offered with every provider configuration.
+    pub(crate) fn with_product_skills(
+        mut self,
+        roots: Arc<crate::execution_configuration::ProductSkillRoots>,
+    ) -> Self {
+        self.product_skills = roots;
         self
     }
 

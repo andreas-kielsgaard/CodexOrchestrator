@@ -8,6 +8,7 @@ import type {
   RuntimeSelectionsDto,
   SandboxModeDto,
 } from '../../application/executionConfiguration';
+import type { ProviderConfigurationRefDto } from '../../application/agentProviders';
 export type { HarnessInferenceRouteOption } from '../../application/agentProviders';
 
 /** The capability contract is already browser-safe; editors consume it directly. */
@@ -25,7 +26,7 @@ export interface RuntimeCapabilityCatalogs {
 }
 
 export interface RuntimeProfileViewModel {
-  readonly profileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly sourceLabel: string;
   readonly exposure: CapabilitySetViewModel;
   readonly catalogs: RuntimeCapabilityCatalogs;
@@ -70,7 +71,7 @@ export interface NodeProfileCopySource {
 }
 
 export interface SessionProfileViewModel {
-  readonly runtimeProfileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly capabilityProfileId: string;
   readonly capabilityProfileRevision: number;
   readonly attachedRuntimeCapabilities: CapabilitySetViewModel;

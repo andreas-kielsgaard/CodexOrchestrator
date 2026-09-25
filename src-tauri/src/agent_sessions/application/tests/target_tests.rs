@@ -151,7 +151,7 @@ impl SelectedRuntimeProfileSource for ConfiguredSource {
             .unwrap()
             .push(format!("quick:{reference}:{}", cwd.unwrap_or_default()));
         Ok(crate::execution_configuration::RuntimeQuickFeatures {
-            profile_ref: test_selected_runtime_profile().profile_ref,
+            configuration: Some(test_selected_runtime_profile().configuration),
             defaults: RuntimeSelections {
                 model: Some("runtime-default".into()),
                 reasoning_mode: Some("runtime-effort".into()),

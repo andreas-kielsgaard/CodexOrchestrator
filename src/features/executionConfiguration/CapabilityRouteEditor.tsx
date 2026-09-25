@@ -8,7 +8,7 @@ import type {
 import { CapabilityModelPickerDialog } from './CapabilityModelPickerDialog';
 import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import type { HarnessInferenceRouteOption } from './types';
-import { CodexPersonalityField } from '../agentProviders/codex/CodexPersonalityField';
+import { ProviderRouteSettings } from '../agentProviders/ProviderRouteSettings';
 
 export const REASONING_ORDER = [
   'none',
@@ -230,7 +230,7 @@ function RouteCapabilities({
   };
   return (
     <div className="capability-route__configuration">
-      <CodexPersonalityField route={route} onChange={onChange} />
+      <ProviderRouteSettings route={route} onChange={onChange} />
       <section aria-labelledby={`${route.routeId}-models`}>
         <div className="capability-route__section-heading">
           <div>

@@ -1,10 +1,13 @@
 //! Destination-side execution ownership. Product history stays with the desktop application.
+pub use crate::providers::codex::host::CodexConfiguration;
 use crate::{
-    providers::codex::app_server::{
-        environment::{CodexEnvironmentReader, CodexEnvironmentSource},
-        CodexAppServerRuntime,
+    providers::codex::{
+        app_server::{
+            environment::{CodexEnvironmentReader, CodexEnvironmentSource},
+            CodexAppServerRuntime,
+        },
+        runtime_profile,
     },
-    configuration,
     contracts::*,
     protocol::*,
     repository_context::{RepositoryContext, WorktreeLocation},
@@ -25,20 +28,6 @@ pub struct HostConfiguration {
     pub device_id: String,
     pub device_name: String,
     pub configurations: Vec<CodexConfiguration>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexConfiguration {
-    pub id: String,
-    #[serde(default = "codex_provider")]
-    pub provider: String,
-    pub executable: String,
-    pub home: PathBuf,
-}
-
-fn codex_provider() -> String {
-    "codex".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -321,9 +310,9 @@ impl Host {
                 let cwd = working_directory.map(PathBuf::from);
                 let reader = CodexEnvironmentReader::new(&config.executable);
                 let native = reader.read(config.home.clone(), cwd.clone())?;
-                let profile = configuration::runtime_profile(
+                let profile = runtime_profile::runtime_profile(
                     &native,
-                    format!("native-codex:{configuration_ref}"),
+                    ProviderConfigurationRef::new(provider, configuration_ref),
                     Default::default(),
                 );
                 let inventory = reader.inventory(config.home.clone(), cwd)?;

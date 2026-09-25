@@ -1,14 +1,14 @@
-use crate::execution_configuration::{
-    QuickModel, QuickReasoningMode, QuickSkill, RuntimeQuickFeatures,
-};
+use crate::execution_configuration::{QuickModel, QuickReasoningMode, RuntimeQuickFeatures};
 use crate::runtime::providers::codex::app_server::environment::CodexEnvironment;
+use orchid_engine::contracts::ProviderConfigurationRef;
 use serde_json::Value;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 
-pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> RuntimeQuickFeatures {
+pub(super) fn project(
+    configuration: ProviderConfigurationRef,
+    native: &CodexEnvironment,
+) -> RuntimeQuickFeatures {
     let mut result = RuntimeQuickFeatures {
-        profile_ref,
+        configuration: Some(configuration),
         ..Default::default()
     };
     let config = &native.config["config"];
@@ -36,79 +36,10 @@ pub(super) fn project(profile_ref: String, native: &CodexEnvironment) -> Runtime
                 .collect(),
         });
     }
-    append_codex_skills(
-        &mut result,
-        &crate::runtime::providers::codex::app_server::skills::project(&native.skills),
-    );
+    result.append_native_skills(&crate::runtime::providers::codex::app_server::skills::project(
+        &native.skills,
+    ));
     result
-}
-
-pub(super) fn append_codex_skills(
-    result: &mut RuntimeQuickFeatures,
-    catalogue: &crate::runtime::providers::codex::app_server::skills::CodexSkillCatalogue,
-) {
-    result
-        .limitations
-        .extend(catalogue.limitations.iter().cloned());
-    let mut names =
-        BTreeMap::<&str, Vec<&crate::runtime::providers::codex::app_server::skills::CodexSkill>>::new();
-    for skill in catalogue.skills.iter().filter(|skill| skill.enabled) {
-        names.entry(&skill.name).or_default().push(skill);
-    }
-    for (name, entries) in names {
-        if entries.len() != 1 {
-            result.limitations.push(format!("Skill '{name}' has multiple sources; choose a source explicitly in the Codex profile."));
-            continue;
-        }
-        let skill = entries[0];
-        result.skills.push(QuickSkill {
-            id: skill.path.clone(),
-            name: skill.name.clone(),
-            description: skill.description.clone(),
-            invocation_text: format!("${name}"),
-            group_id: "codex-profile-skills".into(),
-        });
-    }
-}
-
-/// Orchid-owned roots are not registered with Codex discovery. Selected entries are pinned
-/// for the session's read_skill broker.
-pub(super) fn append_owned_root_skills(
-    result: &mut RuntimeQuickFeatures,
-    roots: &[PathBuf],
-    group_id: &str,
-) {
-    let mut discovered = BTreeMap::<String, String>::new();
-    for root in roots {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path().join("SKILL.md");
-            if !path.is_file() {
-                continue;
-            }
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            discovered.insert(name, path.to_string_lossy().into_owned());
-        }
-    }
-    for (name, path) in discovered {
-        if result.skills.iter().any(|skill| skill.name == name) {
-            result.limitations.push(format!(
-                "Skill '{name}' is available from multiple roots and is not selected automatically."
-            ));
-            continue;
-        }
-        result.skills.push(QuickSkill {
-            id: path,
-            invocation_text: format!("${name}"),
-            name,
-            description: "Orchid-owned skill".into(),
-            group_id: group_id.into(),
-        });
-    }
 }
 
 fn array(value: &Value) -> impl Iterator<Item = &Value> {
@@ -136,7 +67,7 @@ mod tests {
             config: json!({"config":{}}),
             requirements: json!({}),
         };
-        let projected = project("profile".into(), &native);
+        let projected = project(ProviderConfigurationRef::new("codex", "profile"), &native);
         assert_eq!(projected.models[0].reasoning_modes[0].id, "light");
         assert_eq!(projected.models[1].reasoning_modes[0].id, "deep");
         assert_eq!(projected.defaults.model.as_deref(), Some("model-a"));

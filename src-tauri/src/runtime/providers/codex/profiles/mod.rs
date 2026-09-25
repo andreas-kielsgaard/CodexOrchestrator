@@ -3815,6 +3815,19 @@ pub(crate) struct ResolvedNativeCodexHome {
     pub(crate) readiness: NativeProfileReadiness,
 }
 
+/// Codex prepares only Codex configurations; another provider's reference is never reinterpreted.
+fn codex_configuration_id(
+    configuration: &orchid_engine::contracts::ProviderConfigurationRef,
+) -> Result<&str, String> {
+    if configuration.provider != orchid_engine::providers::codex::options::PROVIDER {
+        return Err(format!(
+            "Codex cannot prepare a launch for agent provider `{}`",
+            configuration.provider
+        ));
+    }
+    Ok(&configuration.configuration_id)
+}
+
 impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
     fn bound_configuration_ref(
         &self,
@@ -3832,14 +3845,14 @@ impl crate::agent_sessions::application::NativeProfileLaunchAuthority for Native
     }
     fn prepare_destination_launch(
         &self,
-        reference: &str,
+        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
         session_id: &crate::agent_sessions::domain::AgentSessionId,
         invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
         resuming: bool,
         extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
     ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
         self.prepare_destination_native_launch(
-            reference,
+            codex_configuration_id(configuration)?,
             session_id.as_str(),
             invocation_id.as_str(),
             resuming,
@@ -3848,10 +3861,10 @@ impl crate::agent_sessions::application::NativeProfileLaunchAuthority for Native
     }
     fn commit_destination(
         &self,
-        reference: &str,
+        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
         session_id: &crate::agent_sessions::domain::AgentSessionId,
     ) -> Result<(), String> {
-        let home = self.resolve_configuration_home(reference)?;
+        let home = self.resolve_configuration_home(codex_configuration_id(configuration)?)?;
         self.write("commit Session native destination",|tx| {
             tx.execute("INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES(?1,?2,?3,?4) ON CONFLICT(session_id) DO UPDATE SET profile_id=excluded.profile_id,filesystem_identity=excluded.filesystem_identity,bound_at=excluded.bound_at",params![session_id.as_str(),home.profile_id,home.filesystem_identity,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;Ok(())
         })
@@ -3859,14 +3872,14 @@ impl crate::agent_sessions::application::NativeProfileLaunchAuthority for Native
 
     fn prepare_configured_launch(
         &self,
-        configuration_ref: &str,
+        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
         session_id: &crate::agent_sessions::domain::AgentSessionId,
         invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
         resuming: bool,
         extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
     ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
         self.prepare_configured_agent_session_launch(
-            configuration_ref,
+            codex_configuration_id(configuration)?,
             session_id.as_str(),
             invocation_id.as_str(),
             resuming,
@@ -5354,7 +5367,10 @@ mod tests {
                 .with_reader(Arc::new(Environment));
 
         let snapshot = source.selected_runtime_profile().unwrap();
-        assert_eq!(snapshot.profile_ref, format!("native-codex:{}", profile.id));
+        assert_eq!(
+            snapshot.configuration,
+            orchid_engine::contracts::ProviderConfigurationRef::new("codex", profile.id.clone())
+        );
         assert_eq!(
             snapshot.exposure.sandbox_modes,
             [SandboxMode::DangerFullAccess].into_iter().collect()
@@ -5388,7 +5404,7 @@ mod tests {
                 home: PathBuf,
                 _: Option<PathBuf>,
             ) -> Result<
-                crate::runtime::providers::codex::app_server::skills::CodexSkillCatalogue,
+                orchid_engine::contracts::ProviderSkillCatalogue,
                 crate::agent_sessions::ports::RuntimePortError,
             > {
                 self.0.lock().unwrap().push(home);
@@ -5403,10 +5419,10 @@ mod tests {
             NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
                 .with_reader(Arc::new(Environment(observed.clone())));
         source
-            .discover_skills_for_configuration(&first.id, None)
+            .native_skills_for_configuration(&first.id, None)
             .unwrap();
         source
-            .discover_skills_for_configuration(&second.id, None)
+            .native_skills_for_configuration(&second.id, None)
             .unwrap();
         let homes = observed.lock().unwrap();
         assert_eq!(homes.len(), 2);
@@ -5505,7 +5521,7 @@ mod tests {
                 false,
                 Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
                     managed_mcp_servers: Vec::new(),
-                    skill_inputs: Vec::new(),
+                    skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
                     native_mcp_enabled: None,
                     provider_options: None,
                     ignore_user_rules: false,
@@ -5560,7 +5576,7 @@ mod tests {
                 false,
                 Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
                     managed_mcp_servers: Vec::new(),
-                    skill_inputs: Vec::new(),
+                    skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
                     native_mcp_enabled: None,
                     provider_options: None,
                     ignore_user_rules: false,

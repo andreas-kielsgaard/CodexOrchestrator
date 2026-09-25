@@ -53,13 +53,12 @@ impl AgentSessionApplication {
             if let Some(pinned) = pinned {
                 pinned.verify_digest().map_err(|e| e.to_string())?;
             }
-            let expected = pinned.map(|pinned| pinned.session_profile().runtime_profile_ref());
+            let expected = pinned.map(|pinned| pinned.session_profile().configuration());
             let reference = target
                 .map(|target| target.execution.configuration_ref.clone())
-                .or_else(|| expected.and_then(|value| value.strip_prefix("native-codex:")).map(str::to_owned))
-                .or_else(|| pinned.map(|_| "selected".to_owned()))
+                .or_else(|| expected.map(|expected| expected.configuration_id.clone()))
                 .or_else(|| self.profile_source().ok().and_then(|source| source.configuration_ref_for_session(history.session.id.as_str()).ok().flatten()))
-                .ok_or("This older Session has no Codex profile binding; its original skill catalogue cannot be identified.")?;
+                .ok_or("This older Session has no provider configuration binding; its original skill catalogue cannot be identified.")?;
             (
                 history.session.working_directory.as_deref(),
                 pinned
@@ -134,11 +133,12 @@ impl AgentSessionApplication {
             .map_err(|e| e.to_string())?
             .quick_features_for_configuration(&configuration_ref, cwd)
             .map_err(|e| e.to_string())?;
-        if expected_profile.is_some_and(|expected| expected != features.profile_ref) {
+        if expected_profile.is_some_and(|expected| features.configuration.as_ref() != Some(expected)) {
             return Err("The selected runtime profile no longer matches this Session.".into());
         }
+        self.product_skills.append_quick_skills(&mut features);
         features.skills.retain(|skill| {
-            skill.group_id == "codex-profile-skills"
+            skill.group_id == crate::execution_configuration::NATIVE_SKILL_GROUP
                 || allowed_groups.contains(&skill.group_id)
                 || allowed_names.contains(&skill.name)
                 || std::path::Path::new(&skill.id)

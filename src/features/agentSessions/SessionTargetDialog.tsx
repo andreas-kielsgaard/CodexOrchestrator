@@ -19,6 +19,7 @@ import type {
   SessionExecutionTargetDto,
   SessionExecutionSelectionDto,
 } from '../../application/executionTargets/contracts';
+import { agentProviderLabel } from '../../application/agentProviders';
 import { toSessionExecutionTarget } from '../../application/executionTargets/presentation';
 import { orderTargetBranches } from '../../application/executionTargets/presentation';
 import type { ProfileWorktreeTargetsDto } from '../../application/executionTargets/contracts';
@@ -371,7 +372,8 @@ export function SessionTargetDialog({
                     {device.profiles.map((profile) => (
                       <div className="session-target-profile" key={profile.capabilityProfileId}>
                         <p>
-                          {profile.capabilityProfileName} · {profile.execution.provider}
+                          {profile.capabilityProfileName} ·{' '}
+                          {agentProviderLabel(profile.execution.provider)}
                         </p>
                         {profile.error ? (
                           <p role="status" className="session-target-unavailable">

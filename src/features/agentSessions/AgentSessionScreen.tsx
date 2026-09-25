@@ -297,7 +297,7 @@ export function StandaloneAgentSessionScreen({
     selectedTargetQuickFeatures(targetDraft.runtime, targetDraft.profile) ??
     (resolvedProfile
       ? {
-          profileRef: resolvedProfile.runtimeProfileRef,
+          configuration: resolvedProfile.configuration,
           defaults: {
             model: resolvedProfile.pinnedDefaults.model,
             reasoningMode: resolvedProfile.pinnedDefaults.reasoningMode,

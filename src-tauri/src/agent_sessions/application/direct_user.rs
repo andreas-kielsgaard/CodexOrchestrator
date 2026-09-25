@@ -246,37 +246,13 @@ impl AgentSessionApplication {
             reasoning_launch_extension(&invocation_resolution.selections).unwrap_or_default();
         launch_extension.skill_inputs = selected_skills;
         if let Ok(history) = self.load_session(&command.session_id) {
-            let reference = history
-                .session
-                .execution_target
-                .as_ref()
-                .map(|target| target.execution.configuration_ref.as_str())
-                .or_else(|| {
-                    history
-                        .session
-                        .session_profile
-                        .as_ref()
-                        .and_then(|profile| {
-                            profile
-                                .session_profile()
-                                .runtime_profile_ref()
-                                .strip_prefix("native-codex:")
-                        })
-                })
-                .unwrap_or("selected");
-            for skill in self.direct_user_native_skill_inputs(
-                reference,
+            self.apply_skill_mentions(
+                &super::configuration::session_configuration(&history.session),
                 history.session.working_directory.as_deref(),
                 &command.submitted_text,
-            ) {
-                if !launch_extension
-                    .skill_inputs
-                    .iter()
-                    .any(|existing| existing.path == skill.path)
-                {
-                    launch_extension.skill_inputs.push(skill);
-                }
-            }
+                history.session.session_profile.is_some(),
+                &mut launch_extension,
+            );
         }
         let acknowledgement = self
             .send_message_with_launch_extension(

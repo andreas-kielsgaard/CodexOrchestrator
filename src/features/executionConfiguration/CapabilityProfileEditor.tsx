@@ -87,14 +87,14 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
     kind === 'mcp'
       ? [
           {
-            id: 'codex-profile-mcps',
+            id: 'native-mcps',
             label: 'Provider configuration MCP tools',
             detail: 'MCP servers exposed by the selected provider configuration.',
           },
         ]
       : [
           {
-            id: 'codex-profile-skills',
+            id: 'native-skills',
             label: 'Provider-discovered skills',
             detail: 'Skills registered by the selected provider configuration.',
           },
@@ -167,7 +167,6 @@ export function CapabilityProfileEditor({
     const policy: ProfileRoutePolicyDto = {
       routeId: `route-${Date.now()}-${profile.routePolicies.length + 1}`,
       execution: route.execution,
-      codexPersonality: null,
       modelAllowances: [],
       mcpGroups: [],
       skillGroups: [],

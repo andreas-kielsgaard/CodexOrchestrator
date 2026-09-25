@@ -1,3 +1,4 @@
+import { providerConfigurationLabel } from '../../application/agentProviders';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ResolvedValueField } from '../../components/ResolvedValueField';
 import { CapabilitySetInspector } from './CapabilitySetInspector';
@@ -28,8 +29,8 @@ export function SessionProfileInspector({ profile }: SessionProfileInspectorProp
       >
         <dl className="execution-configuration__resolved-grid">
           <ResolvedValueField
-            label="Runtime profile"
-            value={profile.runtimeProfileRef}
+            label="Provider configuration"
+            value={providerConfigurationLabel(profile.configuration)}
             source="Session creation"
           />
           <ResolvedValueField
