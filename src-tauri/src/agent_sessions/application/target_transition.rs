@@ -107,7 +107,6 @@ impl AgentSessionApplication {
             transfer_estimate: Some(transfer_estimate),
             queued_prompt: None,
             resolved_target: None,
-            destination_session_id: None,
             error: None,
             created_at: now,
             updated_at: now,
@@ -180,16 +179,16 @@ impl AgentSessionApplication {
         let Some(mut transition) = self.load_target_transition(session_id)? else {
             return Ok(None);
         };
-        if transition.destination_session_id.is_some()
-            || self
-                .load_session(session_id)?
-                .session
-                .execution_target
-                .as_ref()
-                != Some(&transition.source_target)
+        if self
+            .load_session(session_id)?
+            .session
+            .execution_target
+            .as_ref()
+            != Some(&transition.source_target)
         {
-            // The first accepted prompt already created the destination instance. The retained
-            // transition remains history; later prompts in the source stay in the source.
+            // The first prepared prompt already committed the resolved destination. The retained
+            // transition remains useful history, but must not move later prompts back to its
+            // original source.
             return Ok(None);
         }
         if transition.phase.is_unfinished() && transition.error.is_some() {
@@ -216,46 +215,32 @@ impl AgentSessionApplication {
         Ok(Some(transition))
     }
 
-    /// Records the destination instance that accepted the move's first prompt.
-    pub(crate) fn hand_off_target_transition(
-        &self,
-        source_session_id: &AgentSessionId,
-        destination_session_id: &AgentSessionId,
-    ) -> Result<(), AgentSessionApplicationError> {
-        let Some(mut transition) = self.load_target_transition(source_session_id)? else {
-            return Ok(());
-        };
-        if transition.destination_session_id.is_none()
-            && (transition.phase.is_unfinished() || transition.phase == TargetTransitionPhase::Ready)
-        {
-            transition.destination_session_id = Some(destination_session_id.clone());
-            transition.updated_at = self.clock.now();
-            self.save_target_transition(&transition)?;
-        }
-        Ok(())
-    }
-
-    /// Called by a destination instance's preparation. It returns the source Session's move only
-    /// after it has started and reached the same durable ready boundary used by an explicit click.
+    /// Called by prompt preparation. It returns the move's resolved worktree only after a pending
+    /// move has started and reached the same durable ready boundary used by an explicit click.
     pub(crate) fn await_target_transition(
         &self,
-        source_session_id: &AgentSessionId,
-        destination_session_id: &AgentSessionId,
+        session_id: &AgentSessionId,
     ) -> Result<Option<SessionTargetTransition>, AgentSessionApplicationError> {
-        let Some(mut transition) = self.load_target_transition(source_session_id)? else {
+        let Some(mut transition) = self.load_target_transition(session_id)? else {
             return Ok(None);
         };
-        if transition.destination_session_id.as_ref() != Some(destination_session_id) {
+        if self
+            .load_session(session_id)?
+            .session
+            .execution_target
+            .as_ref()
+            != Some(&transition.source_target)
+        {
             return Ok(None);
         }
         if transition.phase == TargetTransitionPhase::Pending {
-            transition = self.start_target_transition(source_session_id)?;
+            transition = self.start_target_transition(session_id)?;
         }
         if transition.phase == TargetTransitionPhase::Running {
             let deadline = Instant::now() + Duration::from_secs(120);
             loop {
                 thread::sleep(Duration::from_millis(100));
-                transition = self.load_target_transition(source_session_id)?.ok_or_else(|| {
+                transition = self.load_target_transition(session_id)?.ok_or_else(|| {
                     AgentSessionApplicationError::not_found("Target transition disappeared")
                 })?;
                 if transition.phase != TargetTransitionPhase::Running || Instant::now() >= deadline

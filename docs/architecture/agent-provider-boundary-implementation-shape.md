@@ -13,7 +13,6 @@ Completed in this branch:
 - provider-tagged native options and continuation payloads;
 - generic interaction responses whose Codex wire encoding stays in the Codex adapter;
 - provider-aware remote commands and a checked host protocol version;
-- destination Agent Session creation when an already-bound ordinary session changes execution identity;
 - provider-neutral UI wording on shared execution surfaces and an explicit Codex personality component;
 - architecture and provider-registration documentation.
 
@@ -28,14 +27,13 @@ Completed by [the migration pass](agent-provider-boundary-migration-pass.md) (20
 Also completed on this branch:
 
 - provider configuration sources addressed only by configuration ID, with no shared "selected" configuration concept (commit `d993cb5`);
-- a fix for device moves: a prompt accepted during a move creates one destination Session that waits for the move, and later source prompts stay in the source (commit `9ab4706`).
+- the session-and-instance model restored: a target change moves the same session to a new instance instead of creating a new Agent Session (see [Sessions and instances](#sessions-and-instances)). This removed the destination-session creation that the foundation commit had added, and the follow-up fixes to it in `9ab4706`.
 
 **The integration boundary is complete.** A new provider implements only provider-owned modules. Further work starts with the Claude provider, and the boundary is changed only where that implementation shows a specific leak.
 
 Parked, and not planned as part of this work:
 
-- other destination-instance paths and the historical binding migration;
-- a separate native context for a destination Session on the same store. Today it resumes the source's native context (see [Destination-instance flow](#destination-instance-flow));
+- the historical binding migration;
 - a remote host provider factory, which belongs to the remote Claude work;
 - retiring the test-only CLI runtime;
 - the live desktop, restart, import, interaction and SSH checks listed in the validation section.
@@ -104,14 +102,16 @@ Paths below are proposed destinations. Existing entry points can be changed toge
 | Desktop Codex administration | Move under `src-tauri/src/runtime/providers/codex/profiles/` | Keep schema, process, discovery, readiness, and session-binding behavior inside the provider domain. |
 | Product execution configuration | Adapt `execution_configuration/{ports,runtime_profile,capability_profile,session_profile,resolution,service,session_skills,quick_features,model_catalogue}.rs` | Registered route references, offline profile CRUD, pinned exposure, common selections, provider extension storage and delegated validation. No native home parsing or Codex types. |
 | Device/workspace routing | Adapt `execution_targets/{domain,endpoints,preparation,remote_runtime}.rs` | Resolve device and provider configuration, materialize workspaces, route calls. Extract native continuation calls out of generic worktree preparation. |
-| Session lifecycle and persistence | Adapt `agent_sessions/{domain,preparation,target_transition}.rs`, `application/`, `repository/`, and `transport/`; create `application/session_binding.rs` | Resolve/freeze binding once; reuse it for every invocation; create destination instances on execution changes; retain history and accepted-prompt ownership. |
+| Session lifecycle and persistence | Adapt `agent_sessions/{domain,preparation,target_transition}.rs`, `application/`, `repository/`, and `transport/`; create `application/session_binding.rs` | Resolve and freeze the binding for each instance; move the same session to a new instance when its target changes between invocations; retain history and accepted-prompt ownership. |
 | Native history | Adapt existing `agent_sessions/{imports,ports/import,repository/import}.rs` and `runtime/providers/codex/app_server/history.rs` | Generic import receipt/materialization remains session-owned. Codex URI parsing, native reads/forks, and historical payload interpretation stay Codex-owned. |
 | Remote host | Adapt `crates/orchid-engine/src/{host,protocol}.rs` and host entry point | Provider-tagged configuration, factory dispatch, provider-scoped saved bindings, and opaque continuation transport. Git/snapshot commands stay provider-independent. |
 | Frontend provider contracts | Create `src/application/agentProviders/{contracts,index}.ts`; adapt existing session/execution DTOs | Provider descriptors, registered configuration identities, option catalogues, and neutral request/response types. |
 | Frontend provider implementation | Create `src/features/agentProviders/codex/`; move `features/nativeProfiles/` there; move `infrastructure/nativeProfiles/` to `infrastructure/agentProviders/codex/` | Codex administration and personality editor. Keep the existing Tauri command surface initially. Provider component selection is explicit frontend composition, not a dynamic plugin system. |
 | Shared frontend consumers | Adapt `ExecutionSetupOverview`, capability/profile editors, `AgentSessionScreen`, `SessionInteractions`, `transcriptProjector`, `sessionAttention`, composer quick features, and Tauri clients | Render provider metadata and normalized state; submit product choices. No Codex wire response construction or native event parsing. |
 
-## Identity and immutable instances
+## Identity and instances
+
+> **Correction (2026-09-25).** The earlier version of this section treated "instance" as "Agent Session" and created a new Agent Session for every target change. That was a misreading. The agreed model is below; the sections that described destination sessions are replaced.
 
 ### One source of execution identity
 
@@ -123,20 +123,13 @@ Resolve aliases such as `selected` at session creation. Store the actual registe
 
 The lock applies to selected configuration identity, not a hash of every native configuration file. Continue existing native-home continuity checks. Changing a model/reasoning override within an instance follows today's invocation semantics; no new policy enforcement is added.
 
-### Destination-instance flow
+### Sessions and instances
 
-Adapt `application/{direct_user,addressed,preparation,targets,target_transition}.rs`, `application/preparation/execution.rs`, and `repository/{preparation,addressing,target_transition}.rs` together:
-
-1. Resolve the requested provider/device/configuration/profile revision before choosing an invocation owner.
-2. If it matches the current session binding, prepare the invocation in that instance.
-3. If it differs, create one destination session and record its relationship to the source on the transition. Repeated preparation of the same transition reuses that destination.
-4. Keep the source session and its execution binding intact. A queued or newly accepted prompt belongs to the destination; do not move already-delivered invocations or existing transcript events between sessions.
-5. Reuse current worktree snapshot/migration services and sister-group locking. Transfer active ownership to the destination when preparation commits; failed preparation must leave the source recoverable. Audit every lock consumer for the new owner session ID.
-6. Commit the destination binding, optional native continuation receipt, profile snapshot, and preparation result without updating the source. Return the destination session ID so frontend navigation follows the right instance.
-
-Update `useSessionTarget.ts`, target/preparation DTOs, `AgentSessionScreen`, navigation/placement, and `workflows/{session_navigation,address_references}.rs` consumers. A workflow logical address may select a new current instance only through its existing application routing authority; an address is not permission to mutate an old instance. Historical workflow deliveries retain their original session IDs.
-
-Preserve the explicit Codex continuation action where it already exists. Its provider implementation decides whether to fork/copy native context and returns a destination-scoped result. Reusing one live native context for independently writable source/destination sessions is not acceptable; if a same-store transition cannot fork, create a fresh context. Not implemented: a destination on the same store currently resumes the source's native context. This is parked; see the status list. A changed provider starts fresh; no automatic summaries or cross-provider transcript translation are introduced. The previous suggestion that every binding change must discard native history is not adopted here.
+- An **Agent Session** is the Orchid conversation. It keeps its ID, history and transcript when its target changes.
+- An **instance** is the provider, device, configuration and harness that the session's invocations run on. It is fixed while an invocation is active: steering, request answers and cancellation go to the same instance.
+- Changing device, configuration or profile between invocations moves the same session to a new instance when the next prompt is prepared. The existing target-transition and preparation code does this: a device move snapshots the worktree, activates the sister worktree, and transfers the native conversation through the provider's continuation port before the prompt is delivered.
+- A native conversation record belongs to one Orchid session. Importing a Codex app conversation forks it through Codex, so the imported session owns a new record. Forking is a Codex capability that Orchid may use; no feature other than the import uses it.
+- Continuation across providers is rejected. What a provider change does to a session's conversation is decided when the second provider is added.
 
 ### Historical binding migration
 
@@ -217,7 +210,6 @@ Update `src/application/{agentSessions,executionConfiguration,executionTargets}/
 - Remove concrete Codex skill/personality/continuation types from generic ports and host protocol.
 - Remove raw native response construction and native event interpretation from shared application/UI code.
 - Remove duplicated launch assembly after current direct, addressed, prepared, and remote callers use the common product material builder plus provider preparation.
-- Remove same-instance provider/device/profile retarget writes after destination-instance transitions own the flow.
 - Retire the Tauri test-only `CodexCliRuntime`, its arguments module, and wrapper tests after adapting `agent_sessions/live_smoke.rs` and affected orchestration/product-decision live tests to production app-server behavior. Retain shared JSONL parsing and executable discovery that production import/runtime paths still use.
 - Keep the current process supervisor, Windows job handling, SSH transport, repositories, Harness Engine broker, and workflow control authority.
 
@@ -229,15 +221,15 @@ Each stage should leave Codex runnable; the boundary is complete only after all 
 
 1. **Shared contracts and provider dispatch.** Introduce provider identity, registered factory/composition, common options, and provider extension types. Adapt desktop and host configuration lookup. Validate distinct fake provider registrations dispatch correctly and unknown providers never fall back to Codex. Preserve offline profile CRUD and existing Codex option serialization.
 2. **Codex ownership and launch extraction.** Move native configuration/administration responsibilities, extract semantic launch material, migrate orchestration callers, and update frontend provider components. Test direct, addressed, workflow, and retained orchestration launches against the production app-server fixture, including managed MCP credentials/tool sets, selected skills, reasoning, personality inheritance/override, and current access modes. Ensure native secret values do not enter persisted public configuration.
-3. **Immutable instances and migration.** Freeze complete bindings at every creation/import path. Replace retargeting with destination-instance creation and adapt workflow/navigation/sister ownership. Test same-binding reuse, changed binding creation, repeated preparation without duplicate sessions, preserved source history, pending prompt delivery once to the destination, failure recovery, profile revision pinning, and migration from existing records. Preserve Codex continuation where supported and reject cross-provider native continuation.
+3. **Instances and migration.** Freeze complete bindings at every creation/import path. A target change between invocations moves the same session to a new instance. Test that an active invocation keeps its instance, that a changed target applies to the next prompt, failure recovery, profile revision pinning, and migration from existing records. Preserve Codex continuation where supported and reject cross-provider native continuation.
 4. **Events, interactions, and historical reads.** Adopt typed normalized events and generic responses. Test approval choice scopes, questions, invalid/stale responses, uncertain writes, cancellation, interruption/restart, imported history, usage display, transcript coalescing, and provider-versus-process completion. Use old stored fixtures to prove readable history without invented evidence.
-5. **Complete remote dispatch and retire competing paths.** Exercise provider/configuration identity across host requests, destination session binding, and continuation encoding. Move live coverage off the old CLI runtime before deleting it. Audit remaining Codex references: valid locations are provider implementations, composition, migration/legacy fixtures, and explicitly Codex-named UI/tests; generic execution code should have none.
+5. **Complete remote dispatch and retire competing paths.** Exercise provider/configuration identity across host requests, instance binding, and continuation encoding. Move live coverage off the old CLI runtime before deleting it. Audit remaining Codex references: valid locations are provider implementations, composition, migration/legacy fixtures, and explicitly Codex-named UI/tests; generic execution code should have none.
 
 Use a minimal test-only second provider to prove routing and native-payload independence, implementing only the operations used by those tests. It must not become a simulated Claude implementation or a shipped provider.
 
 Run focused Rust/Vitest suites during each stage, then `npm run build:frontend`, `npm run check:rust`, relevant `npm run test:rust:fast` coverage, engine tests through `cargo test --manifest-path crates/orchid-engine/Cargo.toml`, and `npm run test:codex-app-server`. Follow repository build tooling for the Tauri target and retain useful caches.
 
-Final live Codex checks should cover ordinary first send/resume, current full-access selection, one interactive question/approval under an appropriate existing configuration, steering/cancel, restart with a pending request, Codex import, and a representative managed workflow/MCP/skill flow. Inspect the desktop selection/navigation after a destination-instance transition. Exercise the existing local/SSH Codex continuation path when its configured host is available; report source/fixture proof separately if that host cannot be used.
+Final live Codex checks should cover ordinary first send/resume, current full-access selection, one interactive question/approval under an appropriate existing configuration, steering/cancel, restart with a pending request, Codex import, and a representative managed workflow/MCP/skill flow. Inspect the desktop selection after a target change between invocations. Exercise the existing local/SSH Codex continuation path when its configured host is available; report source/fixture proof separately if that host cannot be used.
 
 Completion means a future provider can implement the documented runtime/configuration/normalization ports and register its descriptor without editing shared session lifecycle, transcript parsing, interaction response encoding, or orchestration-native settings. Adding genuinely unsupported functionality would still require a deliberate contract change.
 

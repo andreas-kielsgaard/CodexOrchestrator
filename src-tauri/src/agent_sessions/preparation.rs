@@ -11,10 +11,6 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct SessionPreparation {
     pub(crate) invocation_id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
-    /// Set when a changed execution identity created `session_id` as a destination instance.
-    /// The source Session and its history are never modified by this preparation.
-    #[serde(default)]
-    pub(crate) source_session_id: Option<AgentSessionId>,
     pub(crate) phase: PreparationPhase,
     pub(crate) steps: Vec<PreparationStep>,
     pub(crate) error: Option<String>,

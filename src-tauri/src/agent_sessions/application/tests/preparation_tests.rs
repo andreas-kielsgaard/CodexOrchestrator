@@ -301,9 +301,15 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
         .unwrap();
     assert_eq!(invocation.status, AgentInvocationStatus::Pending);
     assert_eq!(invocation.submitted_text, "Frozen submitted text");
-    assert_ne!(ack.session_id, fixture.session.id);
-    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
-    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(fixture.old_target.clone())
+    );
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     input.submitted_text = "Next draft changed".into();
     input.model = Some("node-default".into());
@@ -361,9 +367,15 @@ fn native_failure_preserves_previous_binding_and_retry_reuses_resolved_workspace
             .status
             .is_terminal()
     });
-    assert_ne!(ack.session_id, fixture.session.id);
-    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
-    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(fixture.old_target.clone())
+    );
     assert!(fixture.preparation(&ack.invocation_id).can_retry);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     // The accepted destination stays fixed when the editable selection changes elsewhere.
@@ -426,126 +438,15 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
         .canceled
         .contains(&ack.invocation_id));
     assert!(fixture.old_runtime.calls.lock().unwrap().is_empty());
-    assert_ne!(ack.session_id, fixture.session.id);
-    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
-    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
-}
-
-#[test]
-fn repeating_a_submission_from_the_source_returns_its_destination() {
-    let fixture = PreparationFixture::new();
-    let input = fixture.input("repeat");
-    let first = fixture.app.accept_prepared_message(input.clone()).unwrap();
-    fixture.wait(|| fixture.runtime.attempts() == 1);
-    assert_ne!(first.session_id, fixture.session.id);
     assert_eq!(
-        fixture.preparation(&first.invocation_id).source_session_id,
-        Some(fixture.session.id.clone())
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(fixture.old_target.clone())
     );
-    let repeated = fixture.app.accept_prepared_message(input).unwrap();
-    assert_eq!(repeated.session_id, first.session_id);
-    assert_eq!(repeated.invocation_id, first.invocation_id);
-    assert_eq!(fixture.runtime.attempts(), 1);
-}
-
-#[test]
-fn a_device_move_hands_its_first_prompt_to_one_destination_only() {
-    use crate::agent_sessions::target_transition::*;
-    let fixture = PreparationFixture::new();
-    let with_repository = |mut target: SessionExecutionTarget| {
-        target.repository_id = "repository-1".into();
-        target.branch_ref = "refs/heads/main".into();
-        target
-    };
-    let source_target = with_repository(fixture.old_target.clone());
-    let SessionWorkspaceSelection::Existing { target } = fixture.selection.workspace.clone()
-    else {
-        unreachable!("the fixture selects an existing worktree")
-    };
-    let destination_target = with_repository(target);
-    let create = |title: &str, target: Option<SessionExecutionTarget>| {
-        fixture
-            .app
-            .create_session_with_ownership(
-                CreateAgentSessionCommand {
-                    title: Some(title.into()),
-                    working_directory: None,
-                    requested_options: Default::default(),
-                },
-                AgentSessionOwnership {
-                    execution_target: target,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-    };
-    let source = create("Source", Some(source_target.clone()));
-    let destination = create("Destination", None);
-    let now = fixture.app.clock.now();
-    fixture
-        .repository
-        .save_target_transition(&SessionTargetTransition {
-            session_id: source.id.clone(),
-            source_target,
-            destination_selection: SessionExecutionSelection {
-                workspace: SessionWorkspaceSelection::Existing {
-                    target: destination_target.clone(),
-                },
-                ..fixture.selection.clone()
-            },
-            sister_group_id: None,
-            phase: TargetTransitionPhase::Ready,
-            tasks: vec![TargetTransitionTask {
-                kind: TargetTransitionTaskKind::ActivateSister,
-                status: TargetTransitionTaskStatus::Completed,
-                detail: None,
-                error: None,
-            }],
-            snapshot: None,
-            transfer_estimate: None,
-            queued_prompt: None,
-            resolved_target: Some(destination_target),
-            destination_session_id: None,
-            error: None,
-            created_at: now,
-            updated_at: now,
-        })
-        .unwrap();
-    let queue = || {
-        fixture
-            .app
-            .queue_target_transition_prompt(&source.id, "Continue".into(), "prompt".into())
-            .unwrap()
-    };
-    assert!(queue().is_some());
-    fixture
-        .app
-        .hand_off_target_transition(&source.id, &destination.id)
-        .unwrap();
-    // Later prompts in the source are ordinary source prompts again.
-    assert!(queue().is_none());
-    assert!(fixture
-        .app
-        .await_target_transition(&source.id, &source.id)
-        .unwrap()
-        .is_none());
-    let awaited = fixture
-        .app
-        .await_target_transition(&source.id, &destination.id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(awaited.destination_session_id, Some(destination.id.clone()));
-    // A second destination cannot take over the move.
-    let other = create("Other", None);
-    fixture
-        .app
-        .hand_off_target_transition(&source.id, &other.id)
-        .unwrap();
-    assert!(fixture
-        .app
-        .await_target_transition(&source.id, &other.id)
-        .unwrap()
-        .is_none());
 }
 
 mod persistence;

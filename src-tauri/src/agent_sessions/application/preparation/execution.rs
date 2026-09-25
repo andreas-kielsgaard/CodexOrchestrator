@@ -18,11 +18,7 @@ impl AgentSessionApplication {
             .preparation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
-        let transition = match &p.source_session_id {
-            Some(source) => self.await_target_transition(source, &p.session_id)?,
-            None => None,
-        };
-        if let Some(transition) = transition {
+        if let Some(transition) = self.await_target_transition(&p.session_id)? {
             let target = transition.resolved_target.ok_or_else(|| {
                 AgentSessionApplicationError::invalid(
                     "The device switch completed without a destination worktree",

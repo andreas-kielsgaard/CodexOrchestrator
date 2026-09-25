@@ -508,8 +508,7 @@ export function useAgentSession(
             { text: draftRef.current, workingDirectory },
           );
         }
-        // A changed execution identity is accepted by a new destination Session; follow it.
-        if (acknowledgement.sessionId !== existingSessionId && contextRef.current === sendContext)
+        if (!existingSessionId && contextRef.current === sendContext)
           options.onSessionCreated?.(acknowledgement.sessionId);
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
           selectedIdRef.current = acknowledgement.sessionId;

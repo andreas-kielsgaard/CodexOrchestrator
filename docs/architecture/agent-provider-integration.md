@@ -95,9 +95,12 @@ Raw payloads are diagnostic evidence only. A Rust source guard (`provider_bounda
 - Continuation is optional and registered through `ProviderContinuationPort`. Its payload is provider-tagged and opaque to device transport. Cross-provider continuation is rejected.
 - Remote configuration-bound commands carry provider identity. During SSH connection setup, the desktop checks `HOST_PROTOCOL_VERSION` (currently 2) before issuing provider commands.
 
-## Session identity
+## Sessions, instances and conversations
 
-An already-bound ordinary session is not retargeted when its provider, device, configuration, capability-profile revision, or workspace selection changes. Prompt acceptance creates a destination session and leaves the source session and its history intact. A provider may transfer native continuation only through its continuation port.
+- An **Agent Session** is an Orchid conversation: its history, transcript and settings, stored in Orchid's database on the main device. It is not tied to one device or provider.
+- An **instance** is the provider, device, configuration and harness that the session's invocations run on. While an invocation is active, everything for it goes to that instance: steering, request answers and cancellation. It cannot change device, provider or harness partway through.
+- A different target selected between invocations gives the **same session** a new instance. The target change is applied when the next prompt is prepared; no new Agent Session is created. A device move copies the worktree state and transfers the provider's native conversation to the new device through `ProviderContinuationPort`. Continuation across providers is rejected. What a provider change does to the conversation is decided with the second provider.
+- A native conversation record is written by one Orchid session only. Importing a Codex app conversation uses Codex's thread fork to create a new Orchid-owned native conversation, so Orchid never writes to the Codex app's own record. Forking is a Codex capability; the import is the only feature that uses it today.
 
 ## Current Codex implementation
 

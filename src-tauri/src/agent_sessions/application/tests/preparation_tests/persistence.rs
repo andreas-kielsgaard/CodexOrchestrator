@@ -34,9 +34,15 @@ fn startup_classifies_stopped_setup_without_replaying_and_preserves_current_targ
     assert!(preparation.can_retry);
     assert_eq!(fixture.runtime.attempts(), 1);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
-    assert_ne!(ack.session_id, fixture.session.id);
-    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
-    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(fixture.old_target.clone())
+    );
     assert_eq!(
         fixture
             .repository
@@ -153,7 +159,6 @@ fn current_successful_profile_changes_without_relabeling_creation_or_previous_in
     input.model = None;
     input.reasoning_mode = None;
     let second = fixture.app.accept_prepared_message(input).unwrap();
-    assert_ne!(second.session_id, first.session_id);
     fixture.wait(|| fixture.runtime.attempts() == 2);
     assert_eq!(
         fixture
@@ -181,7 +186,7 @@ fn current_successful_profile_changes_without_relabeling_creation_or_previous_in
     });
     let current = fixture
         .app
-        .load_current_session_profile(&second.session_id)
+        .load_current_session_profile(&first.session_id)
         .unwrap()
         .creation_resolution;
     assert_eq!(
@@ -196,16 +201,8 @@ fn current_successful_profile_changes_without_relabeling_creation_or_previous_in
         fixture
             .app
             .load_pinned_session_profile(LoadPinnedSessionProfileQuery {
-                session_id: first.session_id.clone()
+                session_id: first.session_id
             })
-            .unwrap()
-            .creation_resolution,
-        original
-    );
-    assert_eq!(
-        fixture
-            .app
-            .load_current_session_profile(&first.session_id)
             .unwrap()
             .creation_resolution,
         original
