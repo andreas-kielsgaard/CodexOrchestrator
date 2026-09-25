@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub(super) fn compose(
     database: Arc<crate::persistence::ActiveDatabase>,
     profiles: Arc<NativeProfileService>,
+    claude_setups: Arc<crate::runtime::providers::claude::setups::ClaudeSetups>,
     workspaces: &SessionWorkspaces,
     product_tools: BTreeMap<String, BTreeSet<String>>,
     otp_skill_roots: BTreeMap<String, Vec<String>>,
@@ -32,9 +33,10 @@ pub(super) fn compose(
     crate::runtime::providers::codex::register(
         &mut providers,
         profiles,
-        product_tools,
+        product_tools.clone(),
         &product_skills,
     )?;
+    crate::runtime::providers::claude::register(&mut providers, claude_setups, product_tools)?;
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(providers)
             .with_local_sessions_directory(workspaces.sessions_directory()),

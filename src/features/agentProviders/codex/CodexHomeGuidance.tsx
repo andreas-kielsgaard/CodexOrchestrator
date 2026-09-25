@@ -1,37 +1,36 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { AgentRuntimeFailureDto } from '../../application/agentSessions';
+import type { AgentRuntimeFailureDto } from '../../../application/agentSessions';
 import type {
   NativeProfileApplicationConsumer,
   NativeProfileCurrentSelection,
-} from '../../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
+} from '../../../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 
-interface AgentSessionRuntimeGuidanceContextValue {
+interface CodexHomeGuidanceContextValue {
   readonly consumer?: Pick<NativeProfileApplicationConsumer, 'currentSelection'>;
   readonly onOpenTechnicalSettings?: () => void;
 }
 
-const AgentSessionRuntimeGuidanceContext = createContext<AgentSessionRuntimeGuidanceContextValue>(
-  {},
-);
+const CodexHomeGuidanceContext = createContext<CodexHomeGuidanceContextValue>({});
 
-export function AgentSessionRuntimeGuidanceProvider({
+export function CodexHomeGuidanceProvider({
   consumer,
   onOpenTechnicalSettings,
   children,
-}: AgentSessionRuntimeGuidanceContextValue & { readonly children: ReactNode }) {
+}: CodexHomeGuidanceContextValue & { readonly children: ReactNode }) {
   return (
-    <AgentSessionRuntimeGuidanceContext.Provider value={{ consumer, onOpenTechnicalSettings }}>
+    <CodexHomeGuidanceContext.Provider value={{ consumer, onOpenTechnicalSettings }}>
       {children}
-    </AgentSessionRuntimeGuidanceContext.Provider>
+    </CodexHomeGuidanceContext.Provider>
   );
 }
 
-export function AgentSessionRuntimeGuidance({
+/** Guidance for a session whose launch found no Codex home selected. */
+export function CodexHomeGuidance({
   failure,
 }: {
   readonly failure: AgentRuntimeFailureDto | null;
 }) {
-  const { consumer, onOpenTechnicalSettings } = useContext(AgentSessionRuntimeGuidanceContext);
+  const { consumer, onOpenTechnicalSettings } = useContext(CodexHomeGuidanceContext);
   const [selection, setSelection] = useState<
     NativeProfileCurrentSelection | { readonly kind: 'loading' } | { readonly kind: 'unavailable' }
   >({ kind: 'loading' });

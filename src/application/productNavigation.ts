@@ -39,7 +39,7 @@ export type ProductNavigationDestination =
     }
   | {
       readonly kind: 'technical_settings';
-      readonly section: 'devices' | 'inference' | 'native' | 'otp';
+      readonly section: TechnicalSettingsSection;
       readonly selectedCodexProfileId?: string | null;
     }
   | {
@@ -49,6 +49,15 @@ export type ProductNavigationDestination =
       readonly versionId: string;
       readonly version: number;
     };
+
+export const TECHNICAL_SETTINGS_SECTIONS: readonly string[] = [
+  'devices',
+  'inference',
+  'native',
+  'claude',
+  'otp',
+];
+export type TechnicalSettingsSection = 'devices' | 'inference' | 'native' | 'claude' | 'otp';
 
 /** A File Review destination names its authoritative input; it never stores a display label or source. */
 export type FileReviewNavigationTarget =
@@ -385,7 +394,7 @@ export function isProductNavigationDestination(
         (value.selectedCodexProfileId === undefined ||
           value.selectedCodexProfileId === null ||
           isIdentifier(value.selectedCodexProfileId)) &&
-        ['devices', 'inference', 'native', 'otp'].includes(String(value.section))
+        TECHNICAL_SETTINGS_SECTIONS.includes(String(value.section))
       );
     case 'product_decision_publish':
       return (

@@ -9,7 +9,7 @@ import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import type { AgentIdentity, RuntimeInteractionResponseDto } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
-import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
+import { RuntimeFailureGuidance } from '../agentProviders/RuntimeFailureGuidance';
 
 interface AgentSessionTranscriptProps {
   onRespondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
@@ -130,7 +130,7 @@ export function AgentSessionTranscript({
                       <p className={`invocation-outcome ${invocation.status}`} role="status">
                         <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
                       </p>
-                      <AgentSessionRuntimeGuidance failure={invocation.runtimeFailure} />
+                      <RuntimeFailureGuidance failure={invocation.runtimeFailure} />
                     </>
                   )}
                 {invocation.showOutcome &&

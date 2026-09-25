@@ -28,6 +28,7 @@ pub(super) fn compose(
     database: Arc<crate::persistence::ActiveDatabase>,
     database_path: &Path,
     native_profiles: Arc<NativeProfileService>,
+    claude_setups: Arc<crate::runtime::providers::claude::setups::ClaudeSetups>,
     repository: Arc<SqliteAgentSessionRepository>,
     harness_catalog: HarnessCatalogService,
     harness_engine: Arc<HarnessEngineService>,
@@ -40,6 +41,7 @@ pub(super) fn compose(
         super::execution_configuration::compose(
             database.clone(),
             native_profiles.clone(),
+            claude_setups,
             &workspaces,
             product_tools,
             otp_skill_roots,

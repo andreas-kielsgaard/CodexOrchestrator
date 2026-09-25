@@ -30,7 +30,7 @@ const profile = {
 it('offers the other providers models on the same device', () => {
   const models = otherRouteModels(profile, binding('codex'));
   expect(models.map((model) => model.id)).toEqual(['opus']);
-  expect(models[0].label).toBe('opus · claude');
+  expect(models[0].label).toBe('opus · Claude');
   expect(models[0].reasoningModes.map((mode) => mode.id)).toEqual(['low', 'medium', 'high']);
   const merged = withOtherRouteModels(
     {

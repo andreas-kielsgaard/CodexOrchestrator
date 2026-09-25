@@ -53,6 +53,9 @@ pub(crate) fn run() {
                 database.clone(),
                 app_data_dir.clone(),
             ));
+            let claude_setups = Arc::new(
+                crate::runtime::providers::claude::setups::ClaudeSetups::system(database.clone()),
+            );
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::from_database(
                     database.clone(),
@@ -122,7 +125,7 @@ pub(crate) fn run() {
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
+                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
             execution_targets.synchronize_devices()?;
             let execution_devices = execution_targets.devices.clone();
@@ -233,6 +236,9 @@ pub(crate) fn run() {
             ));
             app.manage(crate::runtime::providers::codex::profiles::NativeProfileTauriState::new(
                 native_profiles,
+            ));
+            app.manage(crate::runtime::providers::claude::setups::ClaudeSetupTauriState(
+                claude_setups,
             ));
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
@@ -382,6 +388,8 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
             crate::execution_configuration::transport::list_provider_setups,
+            crate::runtime::providers::claude::setups::add_claude_setup,
+            crate::runtime::providers::claude::setups::remove_claude_setup,
             crate::execution_configuration::transport::load_profile_model_catalogue,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_targets::transport::list_session_execution_targets,

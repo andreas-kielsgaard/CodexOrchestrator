@@ -500,6 +500,9 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
         .execute_batch(crate::execution_devices::SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
+        .execute_batch(crate::runtime::providers::claude::setups::SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
         .execute_batch(crate::repository_catalog::device_locations::DEVICE_LOCATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
@@ -570,11 +573,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_parked_conversations','agent_session_initial_prompt_prefixes','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_parked_conversations','agent_session_initial_prompt_prefixes','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts','claude_setups')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 12)
+        .map(|table_count| table_count == 13)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let otp_schema_is_present = connection
         .query_row(
@@ -803,6 +806,7 @@ mod tests {
                 "agent_session_target_transitions",
                 "agent_sessions",
                 "capability_profiles",
+                "claude_setups",
                 "effect_provenance",
                 "epic_bootstrap_attempt_completion_commands",
                 "epic_bootstrap_attempt_completion_facts",

@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import {
-  AgentSessionRuntimeGuidance,
-  AgentSessionRuntimeGuidanceProvider,
-} from './AgentSessionRuntimeGuidance';
+import { CodexHomeGuidance, CodexHomeGuidanceProvider } from './CodexHomeGuidance';
 
 const failure = {
   code: 'runtime_preflight_failed',
@@ -11,16 +8,16 @@ const failure = {
   details: null,
 };
 
-describe('AgentSessionRuntimeGuidance', () => {
+describe('CodexHomeGuidance', () => {
   it('offers Technical Settings when no home is selected', async () => {
     const onOpenTechnicalSettings = vi.fn();
     render(
-      <AgentSessionRuntimeGuidanceProvider
+      <CodexHomeGuidanceProvider
         consumer={{ currentSelection: async () => ({ kind: 'none' }) }}
         onOpenTechnicalSettings={onOpenTechnicalSettings}
       >
-        <AgentSessionRuntimeGuidance failure={failure} />
-      </AgentSessionRuntimeGuidanceProvider>,
+        <CodexHomeGuidance failure={failure} />
+      </CodexHomeGuidanceProvider>,
     );
     expect(
       await screen.findByText('No Codex home is selected in Technical Settings.'),
@@ -31,7 +28,7 @@ describe('AgentSessionRuntimeGuidance', () => {
 
   it('identifies the currently selected home without offering navigation', async () => {
     render(
-      <AgentSessionRuntimeGuidanceProvider
+      <CodexHomeGuidanceProvider
         consumer={{
           currentSelection: async () => ({
             kind: 'selected',
@@ -40,8 +37,8 @@ describe('AgentSessionRuntimeGuidance', () => {
           }),
         }}
       >
-        <AgentSessionRuntimeGuidance failure={failure} />
-      </AgentSessionRuntimeGuidanceProvider>,
+        <CodexHomeGuidance failure={failure} />
+      </CodexHomeGuidanceProvider>,
     );
     expect(await screen.findByText(/C:\/Users\/user\/\.codex/)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Open Technical Settings' })).toBeNull();
@@ -49,13 +46,9 @@ describe('AgentSessionRuntimeGuidance', () => {
 
   it('does not add guidance to an unrelated runtime failure', () => {
     render(
-      <AgentSessionRuntimeGuidanceProvider
-        consumer={{ currentSelection: async () => ({ kind: 'none' }) }}
-      >
-        <AgentSessionRuntimeGuidance
-          failure={{ ...failure, message: 'The selected profile is not ready' }}
-        />
-      </AgentSessionRuntimeGuidanceProvider>,
+      <CodexHomeGuidanceProvider consumer={{ currentSelection: async () => ({ kind: 'none' }) }}>
+        <CodexHomeGuidance failure={{ ...failure, message: 'The selected profile is not ready' }} />
+      </CodexHomeGuidanceProvider>,
     );
     expect(screen.queryByLabelText('Codex home guidance')).toBeNull();
   });
