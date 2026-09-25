@@ -12,7 +12,6 @@ use crate::agent_sessions::{
         SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
     },
     domain::{AgentInvocationId, AgentInvocationStatus, AgentSessionId},
-    ports::RuntimeLaunchExtension,
 };
 use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use bytes::Bytes;

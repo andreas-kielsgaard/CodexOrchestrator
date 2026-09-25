@@ -106,36 +106,6 @@ impl AgentRuntime for BlockingPreparationRuntime {
         panic!("Preparation must not use immediate resume")
     }
 }
-#[derive(Default)]
-struct RecordingContinuation {
-    forks: Mutex<Vec<(String, String)>>,
-}
-impl crate::runtime::providers::continuation::ProviderContinuationPort for RecordingContinuation {
-    fn export(
-        &self,
-        _: &str,
-        _: &ExternalRuntimeContextId,
-    ) -> Result<orchid_engine::contracts::provider::ProviderContinuationPayload, String> {
-        Err("export is not used by same-device destinations".into())
-    }
-    fn install(
-        &self,
-        _: &str,
-        _: &orchid_engine::contracts::provider::ProviderContinuationPayload,
-    ) -> Result<(), String> {
-        Err("install is not used by same-device destinations".into())
-    }
-    fn fork(
-        &self,
-        _: &str,
-        context: &ExternalRuntimeContextId,
-        working_directory: &str,
-    ) -> Result<ExternalRuntimeContextId, String> {
-        let mut forks = self.forks.lock().unwrap();
-        forks.push((context.as_str().into(), working_directory.into()));
-        Ok(ExternalRuntimeContextId::new(format!("forked-{}", forks.len())).unwrap())
-    }
-}
 struct PreparationProfileSource;
 impl ProviderConfigurationSource for PreparationProfileSource {
     fn profile_for_configuration(
@@ -159,7 +129,6 @@ struct PreparationFixture {
     repository: Arc<SqliteAgentSessionRepository>,
     runtime: Arc<BlockingPreparationRuntime>,
     old_runtime: Arc<FakeRuntime>,
-    continuation: Arc<RecordingContinuation>,
     old_target: SessionExecutionTarget,
     selection: SessionExecutionSelection,
     session: AgentSession,
@@ -190,11 +159,8 @@ impl PreparationFixture {
                 host_executable: "/opt/orchid-host".into(),
             },
         };
-        let continuation = Arc::new(RecordingContinuation::default());
         let endpoints = Arc::new(
             ExecutionEndpoints::new("codex", source.clone(), runtime.clone())
-                .unwrap()
-                .with_continuation("codex", continuation.clone())
                 .unwrap()
                 .with_runtime(&old_execution, old_runtime.clone()),
         );
@@ -282,7 +248,6 @@ impl PreparationFixture {
             repository,
             runtime,
             old_runtime,
-            continuation,
             old_target,
             selection,
             session,
@@ -481,73 +446,6 @@ fn repeating_a_submission_from_the_source_returns_its_destination() {
     assert_eq!(repeated.session_id, first.session_id);
     assert_eq!(repeated.invocation_id, first.invocation_id);
     assert_eq!(fixture.runtime.attempts(), 1);
-}
-
-#[test]
-fn a_destination_on_the_same_store_resumes_a_fork_of_the_source_context() {
-    let fixture = PreparationFixture::new();
-    let SessionWorkspaceSelection::Existing {
-        target: destination,
-    } = fixture.selection.workspace.clone()
-    else {
-        unreachable!("the fixture selects an existing worktree")
-    };
-    // The source uses the destination's device and configuration, but another worktree.
-    let mut source_target = destination.clone();
-    source_target.worktree_id = "source-instance".into();
-    source_target.path = fixture._directory.path().to_string_lossy().into_owned();
-    let source = fixture
-        .app
-        .create_session_with_ownership(
-            CreateAgentSessionCommand {
-                title: Some("Source".into()),
-                working_directory: None,
-                requested_options: Default::default(),
-            },
-            AgentSessionOwnership {
-                execution_target: Some(source_target),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    fixture
-        .repository
-        .update_runtime_binding(
-            &source.id,
-            AgentRuntimeBinding {
-                external_context_id: Some(ExternalRuntimeContextId::new("source-context").unwrap()),
-                runtime_version: None,
-            },
-            fixture.app.clock.now(),
-        )
-        .unwrap();
-    let mut input = fixture.input("fork");
-    input.session_id = Some(source.id.clone());
-    let ack = fixture.app.accept_prepared_message(input).unwrap();
-    fixture.wait(|| fixture.runtime.attempts() == 1);
-    assert_ne!(ack.session_id, source.id);
-    assert_eq!(
-        *fixture.continuation.forks.lock().unwrap(),
-        vec![("source-context".to_string(), destination.path.clone())]
-    );
-    fixture.runtime.release(true);
-    fixture.wait(|| fixture.preparation(&ack.invocation_id).delivery_started);
-    let destination_session = fixture.app.load_session(&ack.session_id).unwrap().session;
-    assert_eq!(
-        destination_session
-            .runtime_binding
-            .external_context_id
-            .map(|id| id.as_str().to_owned()),
-        Some("forked-1".into())
-    );
-    let source_session = fixture.app.load_session(&source.id).unwrap().session;
-    assert_eq!(
-        source_session
-            .runtime_binding
-            .external_context_id
-            .map(|id| id.as_str().to_owned()),
-        Some("source-context".into())
-    );
 }
 
 #[test]

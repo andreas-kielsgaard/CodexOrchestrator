@@ -74,36 +74,6 @@ impl SisterWorktreeStore {
             .map_err(|error| error.into_string())
     }
 
-    /// Moves editing authority to a destination Session instance created by a device move. A
-    /// group owned by any other Session is left untouched.
-    pub(crate) fn transfer_owner(
-        &self,
-        repository_id: &str,
-        branch_ref: &str,
-        from_session_id: &str,
-        to_session_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<(), String> {
-        self.0
-            .write("transfer sister worktree owner", |transaction| {
-                transaction
-                    .execute(
-                        "UPDATE sister_worktree_groups SET owner_session_id=?4, updated_at=?5
-                         WHERE repository_id=?1 AND branch_ref=?2 AND owner_session_id=?3",
-                        params![
-                            repository_id,
-                            branch_ref,
-                            from_session_id,
-                            to_session_id,
-                            at.to_rfc3339()
-                        ],
-                    )
-                    .map_err(|error| error.to_string())?;
-                Ok(())
-            })
-            .map_err(|error| error.into_string())
-    }
-
     pub(crate) fn activate(
         &self,
         source: &SessionExecutionTarget,

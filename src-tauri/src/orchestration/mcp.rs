@@ -13,6 +13,7 @@ use super::{
         PlanningDraftAgentSessionAssociationId, SaveEpicPlanProposalCommand, SaveProposalError,
     },
 };
+#[cfg(test)]
 use axum::http::StatusCode;
 use bytes::Bytes;
 use http_body_util::Empty;

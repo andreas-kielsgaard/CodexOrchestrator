@@ -227,12 +227,13 @@ Audit remaining Codex references:
 
 ## Remaining after this pass
 
-These are not part of this pass:
+Resolved afterwards: provider configuration sources are addressed by configuration ID only, and new auxiliary workspaces are created under the Orchid orchestration home instead of the Codex home (commit `d993cb5`).
+
+Parked. These are not needed for the boundary and are not planned as part of it:
 
 - Remote host provider factory, neutral host configuration entries, and removal of the `"codex"` checks. This belongs to the remote Claude work.
 - Retirement of the test-only `CodexCliRuntime`, after live coverage moves off it.
-- Auxiliary workspaces under the Codex home through `configuration_home`.
-- The single configuration source in `CapabilityProfileService`, and a model catalogue cache keyed by configuration ID alone. Both must become provider-addressed when a second provider registers.
+- The single configuration source in `CapabilityProfileService`, and a model catalogue cache keyed by configuration ID alone. Change these when a second provider registers and actually needs it.
 - Destination-instance paths and the historical binding migration from the base plan.
 - The base plan's live desktop, restart, import, interaction and SSH checks.
 

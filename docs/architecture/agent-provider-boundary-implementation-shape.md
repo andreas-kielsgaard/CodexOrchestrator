@@ -25,14 +25,20 @@ Completed by [the migration pass](agent-provider-boundary-migration-pass.md) (20
 - model-independent skills;
 - the remote `Capabilities` command using the typed reference.
 
-Still required before the full target described below is complete:
+Also completed on this branch:
 
-- finish destination-instance ownership/navigation handling for every target-transition path and historical migration case;
-- make the remote host construct providers through a provider factory rather than its Codex implementation directly;
-- migrate live coverage off the test-only CLI runtime, then remove that competing path;
-- perform the live desktop, restart, import, interaction, and SSH checks listed in the validation section.
+- provider configuration sources addressed only by configuration ID, with no shared "selected" configuration concept (commit `d993cb5`);
+- a fix for device moves: a prompt accepted during a move creates one destination Session that waits for the move, and later source prompts stay in the source (commit `9ab4706`).
 
-These are not Claude-integration tasks. They are the remaining Codex boundary migration and verification work.
+**The integration boundary is complete.** A new provider implements only provider-owned modules. Further work starts with the Claude provider, and the boundary is changed only where that implementation shows a specific leak.
+
+Parked, and not planned as part of this work:
+
+- other destination-instance paths and the historical binding migration;
+- a separate native context for a destination Session on the same store. Today it resumes the source's native context (see [Destination-instance flow](#destination-instance-flow));
+- a remote host provider factory, which belongs to the remote Claude work;
+- retiring the test-only CLI runtime;
+- the live desktop, restart, import, interaction and SSH checks listed in the validation section.
 
 The migration pass supersedes this document's historical-compatibility choices: stored profiles and references are rewritten once in SQLite, no permanent Codex compatibility reader or legacy decoder is kept, and old event streams are left as recorded without a compatibility projection.
 
@@ -130,7 +136,7 @@ Adapt `application/{direct_user,addressed,preparation,targets,target_transition}
 
 Update `useSessionTarget.ts`, target/preparation DTOs, `AgentSessionScreen`, navigation/placement, and `workflows/{session_navigation,address_references}.rs` consumers. A workflow logical address may select a new current instance only through its existing application routing authority; an address is not permission to mutate an old instance. Historical workflow deliveries retain their original session IDs.
 
-Preserve the explicit Codex continuation action where it already exists. Its provider implementation decides whether to fork/copy native context and returns a destination-scoped result. Reusing one live native context for independently writable source/destination sessions is not acceptable; if a same-store transition cannot fork, create a fresh context. A changed provider starts fresh; no automatic summaries or cross-provider transcript translation are introduced. The previous suggestion that every binding change must discard native history is not adopted here.
+Preserve the explicit Codex continuation action where it already exists. Its provider implementation decides whether to fork/copy native context and returns a destination-scoped result. Reusing one live native context for independently writable source/destination sessions is not acceptable; if a same-store transition cannot fork, create a fresh context. Not implemented: a destination on the same store currently resumes the source's native context. This is parked; see the status list. A changed provider starts fresh; no automatic summaries or cross-provider transcript translation are introduced. The previous suggestion that every binding change must discard native history is not adopted here.
 
 ### Historical binding migration
 

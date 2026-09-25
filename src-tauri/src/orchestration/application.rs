@@ -15,7 +15,6 @@ use crate::{
             AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
             AgentInvocationStatus, AgentRuntimeOptions, AgentSessionId,
         },
-        ports::RuntimeLaunchExtension,
     },
     orchestration::{
         managed_mcp::ManagedMcpGrant,
@@ -841,6 +840,7 @@ impl OrchestrationApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_sessions::ports::RuntimeLaunchExtension;
     use crate::agent_sessions::{
         application::{
             AgentSessionNotification, AgentSessionNotifier, SystemAgentSessionProviders,

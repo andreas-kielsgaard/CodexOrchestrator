@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const HOST_PROTOCOL_VERSION: u32 = 3;
+pub const HOST_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostRequest {
@@ -59,13 +59,6 @@ pub enum HostCommand {
         provider: String,
         configuration_ref: String,
         continuation: crate::contracts::provider::ProviderContinuationPayload,
-    },
-    /// Copies a stored native conversation into a new native context for a destination Session.
-    ForkContinuation {
-        provider: String,
-        configuration_ref: String,
-        external_context_id: ExternalRuntimeContextId,
-        working_directory: String,
     },
     PrepareInvocation {
         provider: String,

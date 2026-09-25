@@ -221,27 +221,6 @@ pub fn export(program: &str, home: &Path, id: &str) -> Result<CodexContinuation,
         attachments,
     })
 }
-/// Forks a stored conversation through its last settled turn, so a destination Session instance
-/// never writes to the thread that its source Session still owns. Returns the new thread ID.
-pub fn fork(program: &str, home: &Path, id: &str, cwd: &str) -> Result<String, RuntimePortError> {
-    let native = history::read_thread(program, home.to_owned(), id)?;
-    let last = native["thread"]["turns"]
-        .as_array()
-        .and_then(|turns| {
-            turns
-                .iter()
-                .rev()
-                .find(|turn| turn["status"] != "inProgress")
-        })
-        .and_then(|turn| turn["id"].as_str())
-        .ok_or_else(|| unavailable("Native history has no settled turn to continue from"))?
-        .to_owned();
-    let forked = history::fork_thread(program, home.to_owned(), id, &last, cwd)?;
-    forked["thread"]["id"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| unavailable("Codex did not return the forked thread ID"))
-}
 pub fn install(
     program: &str,
     home: &Path,
