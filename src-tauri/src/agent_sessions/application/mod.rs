@@ -11,6 +11,7 @@ mod creation;
 mod dependencies;
 mod diagnostics;
 mod direct_user;
+pub(crate) mod history_handoff;
 mod interactions;
 mod invocation;
 mod lifecycle;

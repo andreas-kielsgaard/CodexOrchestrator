@@ -24,6 +24,23 @@ pub(crate) struct AgentInvocationHistory {
     pub(crate) import_provenance: Option<ImportedTurnProvenance>,
 }
 
+impl AgentInvocationHistory {
+    /// The event carrying the agent's reply: the last message the provider marked final.
+    pub(crate) fn final_reply_event(&self) -> Option<&AgentRuntimeEvent> {
+        self.events.iter().rev().find(|event| {
+            event.normalized.as_ref().is_some_and(|normalized| {
+                normalized.agent_message_role()
+                    == Some(crate::agent_sessions::domain::agent_message_role::FINAL)
+            })
+        })
+    }
+
+    /// The agent's reply text.
+    pub(crate) fn final_reply(&self) -> Option<&str> {
+        self.final_reply_event()?.normalized.as_ref()?.text.as_deref()
+    }
+}
+
 /// Where an imported invocation came from. Imported invocations carry no Orchid execution
 /// evidence; source times are the provider's own.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -121,6 +138,31 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
             "Session preparation storage is unavailable",
         ))
     }
+    /// A provider's parked conversation in this Session, if it has one.
+    fn parked_native_conversation(
+        &self,
+        _session_id: &AgentSessionId,
+        _provider: &str,
+    ) -> Result<Option<crate::agent_sessions::domain::ParkedNativeConversation>, RepositoryError>
+    {
+        Ok(None)
+    }
+    /// Keeps the first initial prompt prefix a Session's messages were delivered with.
+    fn record_initial_prompt_prefix(
+        &self,
+        _session_id: &AgentSessionId,
+        _prefix: &super::InitialPromptPrefix,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+    fn initial_prompt_prefix(
+        &self,
+        _session_id: &AgentSessionId,
+    ) -> Result<Option<super::InitialPromptPrefix>, RepositoryError> {
+        Ok(None)
+    }
+    /// Commits the destination binding. When the preparation parks the source provider's
+    /// conversation, it is stored; the destination provider's parked conversation becomes current.
     fn commit_prepared_binding(
         &self,
         _preparation: &super::super::preparation::SessionPreparation,

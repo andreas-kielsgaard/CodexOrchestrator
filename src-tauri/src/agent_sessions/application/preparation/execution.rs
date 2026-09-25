@@ -1,5 +1,6 @@
 //! Resolve the destination, establish native readiness, then release the accepted turn.
 use super::*;
+use crate::agent_sessions::application::history_handoff::{handoff_prefix, Handoff};
 use crate::agent_sessions::application::update_sink::{
     DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink,
 };
@@ -33,7 +34,8 @@ impl AgentSessionApplication {
             p.source_target = Some(transition.source_target);
             self.save_progress(&p)?;
         }
-        let session = self.load_session(&p.session_id)?.session;
+        let history = self.load_session(&p.session_id)?;
+        let session = history.session.clone();
         let endpoints = self.endpoints.as_ref().ok_or_else(|| {
             AgentSessionApplicationError::invalid("Execution endpoints unavailable")
         })?;
@@ -107,14 +109,14 @@ impl AgentSessionApplication {
         } else {
             None
         };
+        let conversation =
+            self.plan_conversation(&history, &p, source, &selection.execution, endpoints)?;
+        p.parked_source = conversation.parked_source.clone();
         let mut required = vec![
             ("workspace", workspace_label),
             ("configuration", "Resolve execution settings"),
         ];
-        if source
-            .as_ref()
-            .is_some_and(|source| source != &selection.execution)
-        {
+        if conversation.needs_transfer(&selection.execution) {
             required.push(("history", "Transfer conversation history"));
         }
         required.extend([
@@ -268,10 +270,7 @@ impl AgentSessionApplication {
             "Resolve execution settings",
             PreparationStepStatus::Completed,
         )?;
-        if let Some(context) = p.source_binding.external_context_id.clone() {
-            let source = source
-                .as_ref()
-                .expect("existing context has a source binding");
+        if let Some((source, context)) = conversation.continued.as_ref() {
             if source != &destination.execution
                 && !p
                     .steps
@@ -285,7 +284,7 @@ impl AgentSessionApplication {
                     PreparationStepStatus::Running,
                 )?;
                 endpoints
-                    .transfer_continuation(source, &destination.execution, &context)
+                    .transfer_continuation(source, &destination.execution, context)
                     .map_err(AgentSessionApplicationError::invalid)?;
                 self.step(
                     &mut p,
@@ -310,7 +309,7 @@ impl AgentSessionApplication {
             .prepared_binding
             .as_ref()
             .and_then(|b| b.external_context_id.clone())
-            .or(p.source_binding.external_context_id.clone());
+            .or(conversation.continued.as_ref().map(|(_, id)| id.clone()));
         let mode = if resume_context.is_some() {
             RuntimeInvocationMode::Resume
         } else {
@@ -360,6 +359,28 @@ impl AgentSessionApplication {
                     extension,
                 );
             }
+        }
+        if let Some(extension) = extension.as_mut() {
+            let caller = extension.initial_prompt_prefix.take();
+            if let Some(prefix) = &caller {
+                self.repository
+                    .record_initial_prompt_prefix(&p.session_id, prefix)
+                    .map_err(AgentSessionApplicationError::repository)?;
+            }
+            let initial = match conversation.handoff {
+                Handoff::Full => self
+                    .repository
+                    .initial_prompt_prefix(&p.session_id)
+                    .map_err(AgentSessionApplicationError::repository)?,
+                _ => None,
+            };
+            extension.initial_prompt_prefix = handoff_prefix(
+                &history,
+                &p.invocation_id,
+                &conversation.handoff,
+                initial.as_ref(),
+                caller,
+            );
         }
         let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
             Arc::new(PersistedRuntimeUpdateSink::new(

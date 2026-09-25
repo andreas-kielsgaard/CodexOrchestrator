@@ -1,6 +1,6 @@
 use super::execution::WorkflowExecutionService;
 use crate::{
-    agent_sessions::{application::AgentSessionNotification, domain::NormalizedRuntimeEventKind},
+    agent_sessions::application::AgentSessionNotification,
     otp_api::*,
     otp_host::workflow::WorkflowHost,
 };
@@ -48,20 +48,9 @@ impl WorkflowExecutionService {
             .invocations
             .iter()
             .find(|i| i.invocation.id == invocation.id)
-            .and_then(|i| {
-                i.events.iter().rev().find_map(|event| {
-                    let n = event.normalized.as_ref()?;
-                    (n.kind == NormalizedRuntimeEventKind::AgentMessage
-                        && n.details
-                            .as_ref()
-                            .and_then(|d| d.get("role"))
-                            .and_then(|r| r.as_str())
-                            == Some("final"))
-                    .then(|| n.text.clone())
-                    .flatten()
-                })
-            })
-            .unwrap_or_default();
+            .and_then(|i| i.final_reply())
+            .unwrap_or_default()
+            .to_owned();
         let plan = self.compile_instance(&instance.id, None)?;
         let consumers = plan
             .connections

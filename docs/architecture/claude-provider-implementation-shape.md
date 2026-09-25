@@ -81,30 +81,21 @@ Status: plan, 2026-09-25. Nothing in this document is implemented yet. It builds
 
 ### 5. One native conversation per provider
 
-- **Domain.** `AgentRuntimeBinding.external_context_id` becomes a list of `NativeConversation { provider, external_context_id, location, last_invocation_id }`, where `location` is the route (`ExecutionRouteRef`) the conversation lives on. The "never changes" rule applies per provider.
-- **Storage.** A new table, `agent_session_native_conversations`, is keyed by session and provider. The `storage.rs` migration moves existing `agent_sessions.external_context_id` values in as provider `codex`, with the session's current route (or the local default) as location.
-- **Writers.**
-  - Context established: `update_sink.rs:220`.
-  - Invocation terminal: records `last_invocation_id`.
-  - Preparation commit: `repository/preparation.rs:144`.
-  - Recovery: `lifecycle.rs:166-205`.
-  - Import: `repository/import.rs`.
-- **Readers.** `invocation.rs:469,508,609` and `preparation/execution.rs:86,271,312` use the destination provider's conversation.
-- **Transfer.** When that conversation's location differs from the destination route:
-  - a provider with a continuation port transfers it, as today;
-  - a provider without one starts a new native conversation from the session log. Claude registers no port in this work.
+> **As implemented.** The list form planned here was replaced by a smaller shape with the same behavior: the Session keeps its current provider's conversation where it always has, and other providers' conversations are parked in their own table. This leaves every existing reader of the current conversation unchanged.
 
-  The cross-provider guard in `execution_targets/preparation.rs` stays, but can no longer trigger.
-
+- **Domain.** `AgentRuntimeBinding` stays the conversation of the provider the Session currently runs on. A new `ParkedNativeConversation { provider, external_context_id, runtime_version, location, last_invocation_id }` holds another provider's conversation; `location` is the execution binding it lives on.
+- **Storage.** `agent_session_parked_conversations`, keyed by Session and provider, and `agent_session_initial_prompt_prefixes`, keyed by Session (`agent_sessions/repository/native_conversations.rs`). Existing data needs no migration.
+- **Switching.** Preparation plans the conversation (`agent_sessions/application/preparation/conversation.rs`):
+  - the same provider continues its conversation, transferring it between routes as today;
+  - a provider change parks the current conversation, and continues the destination provider's parked conversation if it has one;
+  - the prepared-binding commit stores the parked conversation and removes the destination's, in one transaction.
+- **Transfer.** When the conversation to continue lives on another route, a provider with a continuation port transfers it. A provider without one starts a new native conversation from the Session log. Claude registers no port in this work.
 - **History handoff.**
-  - A new `agent_sessions/application/history_handoff.rs` builds the catch-up text: for each completed invocation after the provider's `last_invocation_id` (or all earlier invocations when the provider has no conversation), your submitted text and the final agent reply.
-  - The session stores the initial prompt prefix its first message was delivered with (a new `agent_sessions.initial_prompt_prefix_json`, written once). Today no prefix is stored; callers only put it in the launch extension.
-  - When a provider starts its first conversation for a session that already has history, its first message carries the stored initial prefix, then the catch-up text, then any prefix the caller supplied for this message. These are combined into one `initial_prompt_prefix` with source `orchid_provider_handoff`, so the wire format does not change.
-  - When switching back to a provider that already has a conversation, only the catch-up text is added; the stored prefix is not repeated, because that provider loads it through its own conversation.
-  - Both launch paths use the same builder.
-- **Final reply.**
-  - Add one reader, `final_reply(invocation)`, on the session history type. Adopt it in `product_decisions.rs:1929`, `workflows/event_sources.rs:54`, `orchestration/bootstrap_transition.rs:2258` and the handoff.
-  - Name the message-role values once in the engine contracts; both normalizers use them. The stored format is unchanged.
+  - `agent_sessions/application/history_handoff.rs` builds the catch-up text: for each completed invocation after the provider's `last_invocation_id` (or all earlier invocations when it starts a conversation), your submitted text and the final agent reply.
+  - The Session stores the first initial prompt prefix its messages were delivered with, on both launch paths.
+  - A provider starting a conversation in a Session that already has history receives the stored initial prefix, then the catch-up text, then any prefix the caller supplied for this message, combined into one `initial_prompt_prefix` with source `orchid_provider_handoff`. The wire format does not change.
+  - A provider returning to its parked conversation receives only the catch-up text.
+- **Final reply.** `AgentInvocationHistory::final_reply()` (and `final_reply_event()`) read the agent's reply; `workflows/event_sources.rs`, the Product Decision live test and the handoff use them. The message-role values are named once in the engine contracts (`agent_message_role`), and the Codex normalizer uses them. The stored format is unchanged.
 
 ### 6. Neutral interaction requests
 
@@ -234,7 +225,6 @@ Noticed but not planned:
 - `runtime_registry.rs`, `configuration_registry.rs` and the registry half of `continuation.rs`.
 - The single `profile_source`, launch-hook and runtime-profile-source slots in the session application, event adapter and Capability Profile service.
 - `NativeProfileLaunchAuthority`, replaced by `ProviderLaunchPreparation`.
-- `AgentRuntimeBinding.external_context_id` and the `agent_sessions.external_context_id` column, after migration.
 - `src/application/agentProviders/codex/localRoutes.ts` and its test.
 - Codex hard-coding in `orchid-engine/src/host.rs`.
 - The cross-provider rejection as a user-facing failure; a provider change now uses the history handoff.

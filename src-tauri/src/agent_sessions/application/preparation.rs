@@ -225,6 +225,7 @@ impl AgentSessionApplication {
             source_target: session.execution_target.clone(),
             source_binding: session.runtime_binding.clone(),
             prepared_binding: None,
+            parked_source: None,
             resolved_target: None,
             accepted_working_directory: input.working_directory.clone(),
             resolved_working_directory: input
@@ -464,4 +465,5 @@ impl AgentSessionApplication {
     }
 }
 
+mod conversation;
 mod execution;

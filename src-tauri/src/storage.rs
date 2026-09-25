@@ -482,6 +482,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
         .execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
+        .execute_batch(crate::agent_sessions::repository::NATIVE_CONVERSATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
         .execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
@@ -567,11 +570,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_parked_conversations','agent_session_initial_prompt_prefixes','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 10)
+        .map(|table_count| table_count == 12)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let otp_schema_is_present = connection
         .query_row(
@@ -787,12 +790,14 @@ mod tests {
                 "agent_session_file_changes",
                 "agent_session_imported_turns",
                 "agent_session_imports",
+                "agent_session_initial_prompt_prefixes",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
                 "agent_session_native_profile_bindings",
                 "agent_session_native_profile_launch_provenance",
                 "agent_session_organization",
+                "agent_session_parked_conversations",
                 "agent_session_preparations",
                 "agent_session_runtime_events",
                 "agent_session_target_transitions",

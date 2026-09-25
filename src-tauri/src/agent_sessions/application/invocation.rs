@@ -505,6 +505,21 @@ impl AgentSessionApplication {
 
             launch_extension
         };
+        if let Some(prefix) = launch_extension
+            .as_ref()
+            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
+        {
+            if let Err(error) = self.repository.record_initial_prompt_prefix(&session.id, prefix) {
+                self.finish_preflight_failure(
+                    &invocation,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, error.to_string()),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        }
 
         let mode = if session.runtime_binding.external_context_id.is_some() {
             RuntimeInvocationMode::Resume

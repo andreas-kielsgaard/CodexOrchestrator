@@ -1926,7 +1926,7 @@ mod tests {
             let continuation_id = AgentInvocationId::new(continuation.invocation_id)
                 .map_err(|error| error.to_string())?;
             let history = wait_for_terminal_invocation(&state, &session_id, &continuation_id)?;
-            let response = history.invocations.iter().find(|item| item.invocation.id == continuation_id).and_then(|item| item.events.iter().rev().find(|event| event.normalized.as_ref().is_some_and(|normalized| normalized.kind == crate::agent_sessions::domain::NormalizedRuntimeEventKind::AgentMessage && normalized.details.as_ref().and_then(|details| details["role"].as_str()) == Some("final")))).ok_or_else(|| "no persisted final response".to_string())?;
+            let response = history.invocations.iter().find(|item| item.invocation.id == continuation_id).and_then(|item| item.final_reply_event()).ok_or_else(|| "no persisted final response".to_string())?;
             let proposal = retain_product_decision_correction_proposal(
                 &state,
                 SaveProductDecisionCorrectionProposalInput {

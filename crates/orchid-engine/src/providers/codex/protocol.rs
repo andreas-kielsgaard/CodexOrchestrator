@@ -1,6 +1,6 @@
 use crate::contracts::{
     domain::{
-        AgentRuntimeEventSource, AgentRuntimeUsage, ExternalRuntimeContextId,
+        agent_message_role, AgentRuntimeEventSource, AgentRuntimeUsage, ExternalRuntimeContextId,
         NormalizedRuntimeEvent, NormalizedRuntimeEventKind, NormalizedToolActivity,
         ToolActivityKind, ToolActivityPhase, ToolResultClassification,
     },
@@ -49,7 +49,7 @@ impl CodexJsonlProtocol {
             let line = std::mem::take(&mut self.buffer);
             outputs.push(self.parse_line(line));
         }
-        if let Some(event) = self.take_agent_message("intermediate") {
+        if let Some(event) = self.take_agent_message(agent_message_role::INTERMEDIATE) {
             outputs.push(ProtocolOutput {
                 events: vec![event],
                 terminal: None,
@@ -158,7 +158,7 @@ impl CodexJsonlProtocol {
                 }
             }
             "turn.completed" => {
-                if let Some(message) = self.take_agent_message("final") {
+                if let Some(message) = self.take_agent_message(agent_message_role::FINAL) {
                     events.push(message);
                 }
                 if let Some(usage_value) = raw.get("usage") {
@@ -194,7 +194,7 @@ impl CodexJsonlProtocol {
                 terminal = Some(JsonlTerminalEvidence::Completed);
             }
             "turn.failed" => {
-                if let Some(message) = self.take_agent_message("intermediate") {
+                if let Some(message) = self.take_agent_message(agent_message_role::INTERMEDIATE) {
                     events.push(message);
                 }
                 events.push(runtime_error(raw, "Codex reported turn.failed", "failed"));
@@ -235,12 +235,12 @@ impl CodexJsonlProtocol {
                             );
                         };
                         if event == "item.completed" {
-                            if let Some(previous) = self.take_agent_message("intermediate") {
+                            if let Some(previous) = self.take_agent_message(agent_message_role::INTERMEDIATE) {
                                 events.push(previous);
                             }
                             self.pending_agent_message = Some((raw, text));
                         } else {
-                            events.push(agent_message(raw, &text, "intermediate"));
+                            events.push(agent_message(raw, &text, agent_message_role::INTERMEDIATE));
                         }
                     }
                     "reasoning" => {

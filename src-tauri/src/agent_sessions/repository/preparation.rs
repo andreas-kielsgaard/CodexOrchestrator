@@ -154,6 +154,15 @@ impl SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_write("commit ready target"))?;
+            if let Some(target) = &p.resolved_target {
+                super::native_conversations::swap_parked_conversations(
+                    tx,
+                    &p.session_id,
+                    p.parked_source.as_ref(),
+                    &target.execution.provider,
+                    at,
+                )?;
+            }
             tx.execute(
                 "INSERT INTO agent_session_current_execution(session_id,resolution_json)
                  VALUES(?1,?2) ON CONFLICT(session_id)

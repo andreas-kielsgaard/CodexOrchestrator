@@ -70,6 +70,10 @@ impl ExecutionEndpoints {
     ) -> Option<Arc<dyn ProviderLaunchPreparation>> {
         self.providers.launches.find(provider)
     }
+    /// Whether the provider can transfer its native conversations between routes.
+    pub(crate) fn supports_continuation(&self, provider: &str) -> bool {
+        self.providers.continuations.find(provider).is_some()
+    }
     pub(crate) fn local_runtime(&self, provider: &str) -> Result<Arc<dyn AgentRuntime>, String> {
         self.providers.runtimes.get(provider)
     }
