@@ -26,7 +26,7 @@ pub(crate) struct SessionProfile {
     pinned_defaults: RuntimeSelections,
     #[serde(default)]
     native_mcp_enabled: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     codex_personality: Option<CodexPersonality>,
 }
 
