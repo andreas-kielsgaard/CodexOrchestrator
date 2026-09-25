@@ -195,7 +195,9 @@ impl SessionProfileResolver {
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
-        let route = request.capability_profile.default_route();
+        let route = request
+            .capability_profile
+            .route_for_configuration(&runtime_profile.configuration);
         if route.is_none() {
             validate_narrowing(
                 &runtime_profile,

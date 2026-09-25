@@ -19,6 +19,7 @@ export function createTauriExecutionConfigurationClient(
       invokeCommand<ProfileModelCatalogueDto>('load_profile_model_catalogue', {
         input: { route },
       }),
+    listProviderSetups: () => invokeCommand('list_provider_setups'),
     loadDefaultCapabilityProfile: () => invokeCommand('load_default_capability_profile'),
     setDefaultCapabilityProfile: (capabilityProfileId) =>
       invokeCommand('set_default_capability_profile', { input: { capabilityProfileId } }),

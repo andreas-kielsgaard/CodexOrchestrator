@@ -85,6 +85,15 @@ impl CapabilityProfileService {
             observation_error,
         })
     }
+    pub(crate) fn provider_setups(
+        &self,
+    ) -> Result<Vec<super::ProviderSetup>, CapabilityProfileServiceError> {
+        self.endpoints
+            .as_ref()
+            .ok_or("Execution endpoints are not configured".to_string())
+            .and_then(|endpoints| endpoints.provider_setups())
+            .map_err(CapabilityProfileServiceError::RuntimeUnavailable)
+    }
     pub(crate) fn native_inventory_for_configuration(
         &self,
         configuration: &ProviderConfigurationRef,
@@ -587,7 +596,10 @@ mod tests {
         let repository = Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap());
         let service = CapabilityProfileService::new(repository.clone()).with_configuration_source(Arc::new(FixedRuntimeSource(runtime())));
         let local = route("local", "selected");
-        let alternate = route("alternate", "other-codex-home");
+        // One route per provider on a device: the alternate route uses another provider.
+        let mut alternate = route("alternate", "other-codex-home");
+        alternate.execution.provider = "claude".into();
+        alternate.model_allowances.clear();
 
         let created = service
             .create_generated_with_routes(

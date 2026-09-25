@@ -228,17 +228,19 @@ impl AgentSessionApplication {
         extension.invoked_skill_ids = invoked;
     }
 
+    /// A device has at most one route per provider, so the execution's device and provider
+    /// identify its route even when the route names a configuration alias.
     pub(super) fn compile_capability_skill_inputs(
         &self,
         capability: &CapabilityProfile,
-        configuration_ref: &str,
+        execution: &crate::execution_targets::domain::ExecutionBinding,
         cwd: Option<&str>,
     ) -> Result<Vec<crate::agent_sessions::ports::RuntimeSkillInput>, String> {
-        let Some(route) = capability
-            .route_policies
-            .iter()
-            .find(|route| route.execution.configuration_ref == configuration_ref)
-        else {
+        let configuration_ref = execution.configuration_ref.as_str();
+        let Some(route) = capability.route_policies.iter().find(|route| {
+            route.execution.device_id == execution.device_id
+                && route.execution.provider == execution.provider
+        }) else {
             return Ok(Vec::new());
         };
         if route.skill_groups.is_empty() {
@@ -312,7 +314,7 @@ impl AgentSessionApplication {
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,
-                &capability.execution.configuration_ref,
+                &capability.execution,
                 working_directory,
             )
             .map_err(|error| {

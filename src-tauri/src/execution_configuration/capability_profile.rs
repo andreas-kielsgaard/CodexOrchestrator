@@ -163,6 +163,32 @@ impl CapabilityProfile {
                     ));
                 }
             }
+            // The provider for a message follows from its device and model, so each device has
+            // at most one route per provider and a model belongs to one route on a device.
+            for (index, route) in self.route_policies.iter().enumerate() {
+                for other in &self.route_policies[..index] {
+                    if other.execution.device_id != route.execution.device_id {
+                        continue;
+                    }
+                    if other.execution.provider == route.execution.provider {
+                        return Err(format!(
+                            "Capability Profile has two `{}` routes on device `{}`",
+                            route.execution.provider, route.execution.device_name
+                        ));
+                    }
+                    if let Some(model) = route.model_allowances.iter().find(|allowance| {
+                        other
+                            .model_allowances
+                            .iter()
+                            .any(|existing| existing.model_id == allowance.model_id)
+                    }) {
+                        return Err(format!(
+                            "Capability Profile offers model `{}` on two routes of device `{}`",
+                            model.model_id, route.execution.device_name
+                        ));
+                    }
+                }
+            }
             let default_route = self.default_route_id.as_deref().ok_or_else(|| {
                 "Capability Profile route policies require a default route".to_string()
             })?;
@@ -196,6 +222,34 @@ impl CapabilityProfile {
             .find(|route| route.execution.route_ref() == execution.route_ref())
     }
 
+    /// The route on a device that offers a model.
+    pub(crate) fn route_for_model(
+        &self,
+        device_id: &str,
+        model: &str,
+    ) -> Option<&ProfileRoutePolicy> {
+        self.route_policies.iter().find(|route| {
+            route.execution.device_id == device_id
+                && route
+                    .model_allowances
+                    .iter()
+                    .any(|allowance| allowance.model_id == model)
+        })
+    }
+
+    /// The route a resolved runtime configuration belongs to: the default route when it matches,
+    /// otherwise the first route with that configuration.
+    pub(crate) fn route_for_configuration(
+        &self,
+        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
+    ) -> Option<&ProfileRoutePolicy> {
+        let matches = |route: &&ProfileRoutePolicy| &route.execution.configuration() == configuration;
+        self.default_route()
+            .filter(matches)
+            .or_else(|| self.route_policies.iter().find(matches))
+            .or_else(|| self.default_route())
+    }
+
     pub(crate) fn contains_execution(
         &self,
         execution: &crate::execution_targets::domain::ExecutionBinding,
@@ -205,5 +259,81 @@ impl CapabilityProfile {
         } else {
             self.route_for_execution(execution).is_some()
         }
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use crate::execution_targets::domain::{ExecutionBinding, ExecutionConnection};
+
+    fn route(id: &str, device: &str, provider: &str, models: &[&str]) -> ProfileRoutePolicy {
+        ProfileRoutePolicy {
+            route_id: id.into(),
+            execution: ExecutionBinding {
+                device_id: device.into(),
+                device_name: device.into(),
+                provider: provider.into(),
+                configuration_ref: format!("{provider}-setup"),
+                connection: ExecutionConnection::Local,
+            },
+            model_allowances: models
+                .iter()
+                .map(|model| ModelAllowance {
+                    model_id: (*model).into(),
+                    minimum_reasoning: "low".into(),
+                    maximum_reasoning: "high".into(),
+                })
+                .collect(),
+            mcp_groups: Default::default(),
+            skill_groups: Default::default(),
+            defaults: Default::default(),
+            provider_options: None,
+        }
+    }
+
+    fn profile(routes: Vec<ProfileRoutePolicy>) -> CapabilityProfile {
+        CapabilityProfile {
+            execution: routes[0].execution.clone(),
+            defaults: Default::default(),
+            default_route_id: Some(routes[0].route_id.clone()),
+            route_policies: routes,
+            contract_version: CAPABILITY_PROFILE_CONTRACT_VERSION,
+            capability_profile_id: "profile".into(),
+            name: "Profile".into(),
+            revision: 1,
+            allowed_capabilities: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_device_routes_each_model_to_its_provider() {
+        let profile = profile(vec![
+            route("codex", "laptop", "codex", &["gpt-5"]),
+            route("claude", "laptop", "claude", &["opus"]),
+        ]);
+        profile.validate().unwrap();
+        assert_eq!(profile.route_for_model("laptop", "opus").unwrap().route_id, "claude");
+        assert_eq!(profile.route_for_model("laptop", "gpt-5").unwrap().route_id, "codex");
+        assert!(profile.route_for_model("server", "opus").is_none());
+    }
+
+    #[test]
+    fn a_device_has_one_route_per_provider_and_one_route_per_model() {
+        let two_codex = profile(vec![
+            route("one", "laptop", "codex", &["gpt-5"]),
+            route("two", "laptop", "codex", &["gpt-5-mini"]),
+        ]);
+        assert!(two_codex.validate().unwrap_err().contains("two `codex` routes"));
+        let shared_model = profile(vec![
+            route("codex", "laptop", "codex", &["shared"]),
+            route("claude", "laptop", "claude", &["shared"]),
+        ]);
+        assert!(shared_model.validate().unwrap_err().contains("model `shared`"));
+        let other_device = profile(vec![
+            route("laptop", "laptop", "codex", &["gpt-5"]),
+            route("server", "server", "codex", &["gpt-5"]),
+        ]);
+        other_device.validate().unwrap();
     }
 }

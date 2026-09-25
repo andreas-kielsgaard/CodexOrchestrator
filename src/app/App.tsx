@@ -1607,8 +1607,6 @@ export function App({
 
           readOtpCatalogue={otpCatalogueReader}
 
-          nativeProfileClient={nativeProfileClient}
-
           workspace={capabilityDrafts}
           editorMemory={capabilityEditorMemory}
           selection={

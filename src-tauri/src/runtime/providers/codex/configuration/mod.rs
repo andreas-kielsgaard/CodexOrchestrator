@@ -162,6 +162,14 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
     ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.read_quick_features(reference, cwd, true)
     }
+    fn setups(
+        &self,
+    ) -> Result<Vec<crate::execution_configuration::ProviderSetup>, ProviderConfigurationSourceError>
+    {
+        self.service
+            .provider_setups()
+            .map_err(ProviderConfigurationSourceError::unavailable)
+    }
     fn resolve_configuration_ref(
         &self,
         reference: &str,

@@ -1,4 +1,5 @@
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
+import { otherRouteModels, withOtherRouteModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
@@ -292,7 +293,7 @@ export function StandaloneAgentSessionScreen({
   const resolvedProfile =
     session.currentProfile?.creationResolution.sessionProfile ??
     view.profile?.creationResolution.sessionProfile;
-  const capabilities =
+  const routeCapabilities =
     session.quickCatalogue ??
     selectedTargetQuickFeatures(targetDraft.runtime, targetDraft.profile) ??
     (resolvedProfile
@@ -315,6 +316,13 @@ export function StandaloneAgentSessionScreen({
           limitations: [],
         }
       : undefined);
+  const capabilities = withOtherRouteModels(
+    routeCapabilities,
+    otherRouteModels(
+      targetDraft.profile,
+      targetDraft.selection?.execution ?? currentTarget?.execution,
+    ),
+  );
   const models = capabilities?.models.map((model) => model.id) ?? [];
   const hasRuntimeFacts = Boolean(capabilities);
   const selectionError = targetDraft.branchChoice?.requiresWorktree

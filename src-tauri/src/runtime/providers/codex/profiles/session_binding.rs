@@ -200,6 +200,39 @@ impl NativeProfileService {
 }
 
 impl NativeProfileService {
+    /// Active Codex homes as provider setups on this device.
+    pub(crate) fn provider_setups(
+        &self,
+    ) -> Result<Vec<crate::execution_configuration::ProviderSetup>, String> {
+        use crate::execution_configuration::{ProviderSetup, ProviderSetupState};
+        let profiles = self.read("list Codex setups", load_profiles)?;
+        Ok(profiles
+            .into_iter()
+            .filter(|profile| profile.lifecycle == Lifecycle::Active)
+            .map(|profile| {
+                let (state, detail) = match profile.readiness.authentication.as_str() {
+                    "authenticated" => (ProviderSetupState::Ready, None),
+                    "unauthenticated" => (
+                        ProviderSetupState::NeedsLogin,
+                        Some("Sign in to Codex for this home.".to_string()),
+                    ),
+                    _ => (ProviderSetupState::Unavailable, None),
+                };
+                ProviderSetup {
+                    device_id: "local".into(),
+                    provider: orchid_engine::providers::codex::options::PROVIDER.into(),
+                    configuration_id: profile.id,
+                    folder: profile.home.to_string_lossy().into_owned(),
+                    executable: crate::runtime::providers::codex::resolve_program("codex".into())
+                        .ok(),
+                    state,
+                    detail,
+                    selected: profile.selected,
+                }
+            })
+            .collect())
+    }
+
     /// Binds a Session to the home it now runs on after a target change.
     pub(crate) fn bind_session_home(&self, reference: &str, session_id: &str) -> Result<(), String> {
         let home = self.resolve_configuration_home(reference)?;

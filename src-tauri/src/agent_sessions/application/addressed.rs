@@ -31,7 +31,7 @@ impl AgentSessionApplication {
         creation.session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &creation.capability_profile,
-                &creation.capability_profile.execution.configuration_ref,
+                &creation.capability_profile.execution,
                 working_directory.as_deref(),
             )
             .map_err(SessionDirectoryError::new)?;

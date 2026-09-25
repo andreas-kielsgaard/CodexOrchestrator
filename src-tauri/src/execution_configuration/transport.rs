@@ -115,6 +115,18 @@ pub(crate) fn load_native_profile_capability_inventory(
 }
 
 #[tauri::command]
+pub(crate) async fn list_provider_setups(
+    state: State<'_, CapabilityProfileTauriState>,
+) -> Result<Vec<super::ProviderSetup>, String> {
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.provider_setups().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn load_selected_runtime_profile(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<RuntimeProfileSnapshot, String> {

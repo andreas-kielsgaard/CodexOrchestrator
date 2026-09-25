@@ -129,6 +129,8 @@ export interface ExecutionConfigurationClient {
   loadProfileModelCatalogue?(
     route: import('../executionTargets/contracts').ExecutionRouteRefDto,
   ): Promise<ProfileModelCatalogueDto>;
+  /** Every provider's setups on each device, offered as Capability Profile routes. */
+  listProviderSetups?(): Promise<readonly import('../agentProviders/contracts').ProviderSetupDto[]>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;
   loadSelectedRuntimeProfile(): Promise<RuntimeProfileSnapshotDto>;

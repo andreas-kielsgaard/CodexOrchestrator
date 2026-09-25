@@ -19,6 +19,8 @@ mod resolution;
 mod runtime_profile;
 mod service;
 mod session_profile;
+mod setups;
+pub(crate) use setups::{ProviderSetup, ProviderSetupState};
 mod session_skills;
 mod skill_reader;
 pub(crate) use skill_reader::SessionSkillReaderProvisioner;

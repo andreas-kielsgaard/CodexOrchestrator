@@ -1,9 +1,8 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
-import { localCodexRoutes } from '../../application/agentProviders/codex/localRoutes';
+import { providerSetupRoutes } from '../../application/agentProviders';
 import {
   executionRouteKey,
   executionRouteRef,
@@ -30,7 +29,6 @@ export interface ExecutionConfigurationScreenProps {
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
   readonly editorMemory?: CapabilityProfileEditorMemory;
   /** Native profiles are projected into non-secret local harness/source routes. */
-  readonly nativeProfileClient?: NativeProfileClient;
   readonly selection?: { readonly profileId: string | null; readonly newProfile: boolean };
   readonly onSelectionChange?: (selection: {
     readonly profileId: string | null;
@@ -106,7 +104,6 @@ export function ExecutionConfigurationScreen({
   readOtpCatalogue,
   workspace: providedWorkspace,
   editorMemory: providedEditorMemory,
-  nativeProfileClient,
   selection,
   onSelectionChange,
 }: ExecutionConfigurationScreenProps) {
@@ -171,16 +168,16 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] = await Promise.all([
+      const [nextProfiles, nextDefault, nextOtpPackages, setups] = await Promise.all([
         client.listCapabilityProfiles(),
         client.loadDefaultCapabilityProfile?.().catch(() => null) ?? Promise.resolve(null),
         // The catalogue is local design-time metadata. A read failure must not
         // prevent a capability profile from being viewed or edited. The selected
         // native runtime remains an available local route below.
         readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
-        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
+        client.listProviderSetups?.().catch(() => []) ?? Promise.resolve([]),
       ]);
-      const nextRoutes = localCodexRoutes(nativeProfiles?.profiles ?? []);
+      const nextRoutes = providerSetupRoutes(setups);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
@@ -214,7 +211,7 @@ export function ExecutionConfigurationScreen({
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadModelCatalogue]);
+  }, [client, workspace, readOtpCatalogue, loadModelCatalogue]);
 
   useEffect(() => {
     void load();

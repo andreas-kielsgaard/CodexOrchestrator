@@ -95,7 +95,7 @@ impl AgentSessionApplication {
             let session_skill_inputs = self
                 .compile_capability_skill_inputs(
                     &capability,
-                    &target.execution.configuration_ref,
+                    &target.execution,
                     Some(&target.path),
                 )
                 .map_err(|error| {

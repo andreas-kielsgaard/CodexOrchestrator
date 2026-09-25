@@ -1,2 +1,3 @@
 export * from './contracts';
-export { agentProviderLabel } from './descriptors';
+export { agentProviderDescriptor, agentProviderLabel } from './descriptors';
+export { displayFolderPath, providerSetupRoutes } from './setupRoutes';

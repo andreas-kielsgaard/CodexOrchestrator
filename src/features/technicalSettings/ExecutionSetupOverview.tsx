@@ -1,32 +1,27 @@
 import { useEffect, useState } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
 import {
-  displayCodexHomePath,
-  localCodexRoutes,
-} from '../../application/agentProviders/codex/localRoutes';
-import type {
-  NativeProfile,
-  NativeProfileClient,
-} from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
+  agentProviderDescriptor,
+  displayFolderPath,
+  type ProviderSetupDto,
+} from '../../application/agentProviders';
+import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type {
   DeviceCommandSpecDto,
   ExecutionDeviceConfigurationDto,
   ExecutionTargetClient,
 } from '../../application/executionTargets/contracts';
 
-function useLocalHarnesses(client: NativeProfileClient) {
-  const [harnesses, setHarnesses] = useState<readonly NativeProfile[]>([]);
+/** Every provider's setups; each provider owns its own setup screen. */
+function useProviderSetups(client: ExecutionConfigurationClient | undefined) {
+  const [setups, setSetups] = useState<readonly ProviderSetupDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void client.load().then(
-      (query) => {
-        if (active) {
-          const routeIds = new Set(
-            localCodexRoutes(query.profiles).map((route) => route.execution.configurationRef),
-          );
-          setHarnesses(query.profiles.filter((profile) => routeIds.has(profile.id)));
-        }
+    if (!client?.listProviderSetups) return;
+    void client.listProviderSetups().then(
+      (next) => {
+        if (active) setSetups(next);
       },
       (cause) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
@@ -36,19 +31,28 @@ function useLocalHarnesses(client: NativeProfileClient) {
       active = false;
     };
   }, [client]);
-  return { harnesses, error };
+  return { setups, error };
 }
 
+const SETUP_STATE_LABELS: Record<ProviderSetupDto['state'], string> = {
+  ready: 'Ready',
+  needs_login: 'Needs sign-in',
+  unavailable: 'Unavailable',
+};
+
 export function DeviceSetupOverview({
-  nativeClient,
+  executionClient,
   deviceClient,
-  onOpenCodexHarness,
+  providers,
+  onConfigureProvider,
 }: {
-  readonly nativeClient: NativeProfileClient;
+  readonly executionClient?: ExecutionConfigurationClient;
   readonly deviceClient?: ExecutionTargetClient;
-  readonly onOpenCodexHarness: () => void;
+  /** Providers with a setup screen in Technical Settings. */
+  readonly providers: readonly string[];
+  readonly onConfigureProvider: (provider: string) => void;
 }) {
-  const { harnesses, error } = useLocalHarnesses(nativeClient);
+  const { setups, error } = useProviderSetups(executionClient);
   const [devices, setDevices] = useState<readonly ExecutionDeviceConfigurationDto[]>([]);
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ExecutionDeviceConfigurationDto | 'new' | null>(null);
@@ -151,38 +155,52 @@ export function DeviceSetupOverview({
           </p>
         </section>
       ))}
-      {harnesses.map((harness) => (
-        <section
-          className="execution-setup-overview__card"
-          aria-labelledby={`local-harness-${harness.id}`}
-          key={harness.id}
-        >
-          <div>
-            <p>Harness</p>
-            <h3 id={`local-harness-${harness.id}`}>
-              Codex CLI{harness.selected ? ' · selected' : ''}
-            </h3>
-            <span>Runs on this device</span>
-          </div>
-          <button type="button" onClick={onOpenCodexHarness}>
-            Configure this harness
-          </button>
-          <p>
-            {displayCodexHomePath(harness.homePath)} · connected inference source: OpenAI via this Codex CLI
-            configuration. Account credentials remain in this device-local Codex profile.
-          </p>
-        </section>
-      ))}
-      {!harnesses.length && !error ? (
+      {setups.map((setup) => {
+        const descriptor = agentProviderDescriptor(setup.provider);
+        const key = `${setup.deviceId}-${setup.provider}-${setup.configurationId}`;
+        return (
+          <section
+            className="execution-setup-overview__card"
+            aria-labelledby={`harness-${key}`}
+            key={key}
+          >
+            <div>
+              <p>Harness</p>
+              <h3 id={`harness-${key}`}>
+                {descriptor.harnessLabel}
+                {setup.selected ? ' · selected' : ''}
+              </h3>
+              <span>
+                {setup.deviceId === 'local' ? 'Runs on this device' : `Runs on ${setup.deviceId}`} ·{' '}
+                {SETUP_STATE_LABELS[setup.state]}
+              </span>
+            </div>
+            {providers.includes(setup.provider) ? (
+              <button type="button" onClick={() => onConfigureProvider(setup.provider)}>
+                Configure this harness
+              </button>
+            ) : null}
+            <p>
+              {displayFolderPath(setup.folder)}
+              {setup.executable ? ` · ${setup.executable}` : ''} · connected inference source:{' '}
+              {descriptor.inferenceLabel}. Account credentials remain in this device-local{' '}
+              {descriptor.configurationLabel}.{setup.detail ? ` ${setup.detail}` : ''}
+            </p>
+          </section>
+        );
+      })}
+      {!setups.length && !error ? (
         <section className="execution-setup-overview__card" aria-label="No configured harnesses">
           <div>
             <p>Harness</p>
-            <h3>No Codex CLI harness configured</h3>
+            <h3>No harness configured</h3>
           </div>
-          <button type="button" onClick={onOpenCodexHarness}>
-            Add local Codex harness
-          </button>
-          <p>Add a Codex profile to create the first local harness.</p>
+          {providers.map((provider) => (
+            <button key={provider} type="button" onClick={() => onConfigureProvider(provider)}>
+              Add local {agentProviderDescriptor(provider).harnessLabel} harness
+            </button>
+          ))}
+          <p>Add a provider setup to create the first local harness.</p>
         </section>
       ) : null}
       {error ? (
@@ -322,42 +340,49 @@ function LifecycleCommandEditor({
 }
 
 export function InferenceSourceOverview({
-  nativeClient,
+  executionClient,
 }: {
-  readonly nativeClient: NativeProfileClient;
+  readonly executionClient?: ExecutionConfigurationClient;
 }) {
-  const { harnesses, error } = useLocalHarnesses(nativeClient);
+  const { setups, error } = useProviderSetups(executionClient);
   return (
     <section className="execution-setup-overview" aria-labelledby="inference-source-title">
       <header>
         <p>Execution setup</p>
         <h2 id="inference-source-title">Inference sources</h2>
-        <span>{harnesses.length} connected locally</span>
+        <span>{setups.length} connected locally</span>
       </header>
       <p>
         Sources name the account or provider path a harness may use. Orchid stores display metadata
-        and bindings, never a Codex account credential or API key.
+        and bindings, never a provider account credential or API key.
       </p>
-      {harnesses.map((harness) => (
-        <section
-          className="execution-setup-overview__card"
-          aria-labelledby={`openai-source-${harness.id}`}
-          key={harness.id}
-        >
-          <div>
-            <p>Inference source</p>
-            <h3 id={`openai-source-${harness.id}`}>OpenAI via Codex CLI</h3>
-            <span>Connected to Codex CLI · {displayCodexHomePath(harness.homePath)}</span>
-          </div>
-          <p>
-            This is the source binding for one harness configuration. A second account needs its own
-            authenticated Codex profile and therefore a separate harness connection.
-          </p>
-        </section>
-      ))}
-      {!harnesses.length && !error ? (
+      {setups.map((setup) => {
+        const descriptor = agentProviderDescriptor(setup.provider);
+        const key = `${setup.deviceId}-${setup.provider}-${setup.configurationId}`;
+        return (
+          <section
+            className="execution-setup-overview__card"
+            aria-labelledby={`source-${key}`}
+            key={key}
+          >
+            <div>
+              <p>Inference source</p>
+              <h3 id={`source-${key}`}>{descriptor.inferenceLabel}</h3>
+              <span>
+                Connected to {descriptor.harnessLabel} · {displayFolderPath(setup.folder)}
+              </span>
+            </div>
+            <p>
+              This is the source binding for one harness configuration. A second account needs its
+              own authenticated {descriptor.configurationLabel} and therefore a separate harness
+              connection.
+            </p>
+          </section>
+        );
+      })}
+      {!setups.length && !error ? (
         <p className="execution-setup-overview__note">
-          No local source is available until a local Codex CLI harness is configured.
+          No local source is available until a local harness is configured.
         </p>
       ) : null}
       {error ? (

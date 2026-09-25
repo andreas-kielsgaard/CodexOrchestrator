@@ -381,6 +381,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::list_provider_setups,
             crate::execution_configuration::transport::load_profile_model_catalogue,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_targets::transport::list_session_execution_targets,

@@ -165,4 +165,8 @@ pub(crate) trait ProviderConfigurationSource: Send + Sync {
             "Native inventory discovery is unavailable",
         ))
     }
+    /// The provider's setups on this device.
+    fn setups(&self) -> Result<Vec<super::ProviderSetup>, ProviderConfigurationSourceError> {
+        Ok(Vec::new())
+    }
 }

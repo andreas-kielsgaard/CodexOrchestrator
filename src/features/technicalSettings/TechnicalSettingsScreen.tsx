@@ -80,12 +80,13 @@ export function TechnicalSettingsScreen({
       <div className="technical-settings__content">
         {section === 'devices' && executionClient ? (
           <DeviceSetupOverview
-            nativeClient={nativeClient}
+            executionClient={executionClient}
             deviceClient={deviceClient}
-            onOpenCodexHarness={() => setSection('native')}
+            providers={['codex']}
+            onConfigureProvider={() => setSection('native')}
           />
         ) : section === 'inference' && executionClient ? (
-          <InferenceSourceOverview nativeClient={nativeClient} />
+          <InferenceSourceOverview executionClient={executionClient} />
         ) : section === 'otp' && readOtpCatalogue ? (
           <OtpConfigurationPanel
             readCatalogue={readOtpCatalogue}

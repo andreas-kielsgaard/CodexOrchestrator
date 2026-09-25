@@ -5,21 +5,20 @@ import { DraftWorkspace } from '../../components/draftWorkspace';
 import { repairClients } from '../workflowAuthoring/testFixtures';
 import { ExecutionConfigurationScreen } from './ExecutionConfigurationScreen';
 import type { CapabilityProfileDraft } from './types';
-import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
+import type { ProviderSetupDto } from '../../application/agentProviders';
 
-const nativeProfiles = {
-  load: vi.fn(async () => ({
-    contract: 'native-codex-profile-query/v1' as const,
-    profiles: [
-      {
-        id: 'team',
-        homePath: 'C:/codex-team',
-        lifecycle: 'active',
-        selected: true,
-      },
-    ],
-  })),
-} as unknown as NativeProfileClient;
+const codexSetups = async (): Promise<readonly ProviderSetupDto[]> => [
+  {
+    deviceId: 'local',
+    provider: 'codex',
+    configurationId: 'team',
+    folder: 'C:/codex-team',
+    executable: 'codex',
+    state: 'ready',
+    detail: null,
+    selected: true,
+  },
+];
 
 it('preserves typing during a save, even after selecting another profile', async () => {
   const user = userEvent.setup();
@@ -52,16 +51,13 @@ it('preserves typing during a save, even after selecting another profile', async
 it('retains a new unsaved profile across remount and failed save', async () => {
   const user = userEvent.setup();
   const fixture = repairClients();
+  fixture.configuration.listProviderSetups = codexSetups;
   const workspace = new DraftWorkspace<CapabilityProfileDraft>();
   fixture.configuration.createCapabilityProfile = vi.fn(async () => {
     throw new Error('Save failed');
   });
   const element = (
-    <ExecutionConfigurationScreen
-      client={fixture.configuration}
-      workspace={workspace}
-      nativeProfileClient={nativeProfiles}
-    />
+    <ExecutionConfigurationScreen client={fixture.configuration} workspace={workspace} />
   );
   const mounted = render(element);
   await screen.findByRole('button', { name: 'New profile' });
@@ -81,20 +77,16 @@ it('retains a new unsaved profile across remount and failed save', async () => {
   expect(screen.queryByRole('textbox', { name: 'Capability profile ID' })).not.toBeInTheDocument();
 });
 
-it('projects each active local Codex home as a profile route without exposing credentials', async () => {
+it('offers each provider setup as a profile route without exposing credentials', async () => {
   const fixture = repairClients();
-  render(
-    <ExecutionConfigurationScreen
-      client={fixture.configuration}
-      nativeProfileClient={nativeProfiles}
-    />,
-  );
+  fixture.configuration.listProviderSetups = codexSetups;
+  render(<ExecutionConfigurationScreen client={fixture.configuration} />);
 
   await screen.findByRole('button', { name: 'New profile' });
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'New profile' }));
   await user.click(screen.getByRole('button', { name: 'Add execution route' }));
-  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
+  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local/codex/team');
   expect(screen.getByText('OpenAI account via Codex CLI')).toBeVisible();
   expect(screen.queryByText(/SSH/i)).not.toBeInTheDocument();
 });
@@ -102,6 +94,7 @@ it('projects each active local Codex home as a profile route without exposing cr
 it('saves a registered route and cached model choice while runtime observation fails', async () => {
   const user = userEvent.setup();
   const fixture = repairClients();
+  fixture.configuration.listProviderSetups = codexSetups;
   fixture.configuration.createCapabilityProfile = vi.fn(
     fixture.configuration.createCapabilityProfile,
   );
@@ -125,16 +118,11 @@ it('saves a registered route and cached model choice while runtime observation f
     ],
     observationError: 'Codex runtime unavailable',
   });
-  render(
-    <ExecutionConfigurationScreen
-      client={fixture.configuration}
-      nativeProfileClient={nativeProfiles}
-    />,
-  );
+  render(<ExecutionConfigurationScreen client={fixture.configuration} />);
 
   await user.click(await screen.findByRole('button', { name: 'New profile' }));
   await user.click(screen.getByRole('button', { name: 'Add execution route' }));
-  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local-codex:team');
+  expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('local/codex/team');
   await user.click(screen.getByRole('button', { name: 'Add route' }));
   await user.click(
     screen.getByRole('button', { name: 'This device Codex CLI OpenAI account via Codex CLI' }),

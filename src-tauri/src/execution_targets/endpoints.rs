@@ -70,6 +70,20 @@ impl ExecutionEndpoints {
     ) -> Option<Arc<dyn ProviderLaunchPreparation>> {
         self.providers.launches.find(provider)
     }
+    /// Every registered provider's setups on this device.
+    pub(crate) fn provider_setups(
+        &self,
+    ) -> Result<Vec<crate::execution_configuration::ProviderSetup>, String> {
+        let mut setups = Vec::new();
+        for source in self.providers.configurations.values() {
+            setups.extend(source.setups().map_err(|error| error.to_string())?);
+        }
+        setups.sort_by(|left, right| {
+            (&left.device_id, &left.provider, &left.configuration_id)
+                .cmp(&(&right.device_id, &right.provider, &right.configuration_id))
+        });
+        Ok(setups)
+    }
     /// Whether the provider can transfer its native conversations between routes.
     pub(crate) fn supports_continuation(&self, provider: &str) -> bool {
         self.providers.continuations.find(provider).is_some()

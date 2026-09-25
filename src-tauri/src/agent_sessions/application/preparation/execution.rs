@@ -82,6 +82,18 @@ impl AgentSessionApplication {
         } else {
             "Resolve working folder"
         };
+        // The provider follows from the device and model: a model offered by another route of the
+        // profile on this device moves the Session to that route.
+        if let Some(model) = p.model.as_deref() {
+            let capability = profiles
+                .read(&selection.capability_profile_id)
+                .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+            if let Some(route) =
+                capability.route_for_model(&selection.execution.device_id, model)
+            {
+                selection.execution = route.execution.clone();
+            }
+        }
         selection.execution = endpoints
             .freeze_binding(selection.execution.clone())
             .map_err(AgentSessionApplicationError::invalid)?;
@@ -207,12 +219,23 @@ impl AgentSessionApplication {
         let capability = profiles
             .read(&selection.capability_profile_id)
             .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
-        if capability.revision != selection.capability_profile_revision
-            || endpoints
-                .freeze_binding(capability.execution.clone())
+        let profile_routes = if capability.route_policies.is_empty() {
+            vec![capability.execution.clone()]
+        } else {
+            capability
+                .route_policies
+                .iter()
+                .map(|route| route.execution.clone())
+                .collect()
+        };
+        let mut in_profile = false;
+        for execution in profile_routes {
+            in_profile |= endpoints
+                .freeze_binding(execution)
                 .map_err(AgentSessionApplicationError::invalid)?
-                != destination.execution
-        {
+                == destination.execution;
+        }
+        if capability.revision != selection.capability_profile_revision || !in_profile {
             return Err(AgentSessionApplicationError::conflict(
                 "Capability Profile changed during setup",
             ));
@@ -229,7 +252,7 @@ impl AgentSessionApplication {
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,
-                &destination.execution.configuration_ref,
+                &destination.execution,
                 Some(&destination.path),
             )
             .map_err(AgentSessionApplicationError::invalid)?;
