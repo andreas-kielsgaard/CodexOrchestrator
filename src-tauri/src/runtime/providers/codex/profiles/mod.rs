@@ -5519,17 +5519,7 @@ mod tests {
                 "session-1",
                 "invocation-1",
                 false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                    managed_mcp_servers: Vec::new(),
-                    skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-                    native_mcp_enabled: None,
-                    provider_options: None,
-                    ignore_user_rules: false,
-                    reasoning_mode: None,
-                    config_overrides: vec!["--role-config".into()],
-                    environment: vec![("ROLE_ENV".into(), "preserved".into())],
-                    initial_prompt_prefix: None,
-                }),
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {                    environment: vec![("ROLE_ENV".into(), "preserved".into())],                    ..Default::default()                }),
             )
             .expect("fresh launch binding");
         assert!(prepared
@@ -5574,17 +5564,7 @@ mod tests {
                 "session-2",
                 "invocation-4",
                 false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
-                    managed_mcp_servers: Vec::new(),
-                    skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-                    native_mcp_enabled: None,
-                    provider_options: None,
-                    ignore_user_rules: false,
-                    reasoning_mode: None,
-                    config_overrides: vec![],
-                    environment: vec![("CODEX_HOME".into(), "foreign".into())],
-                    initial_prompt_prefix: None,
-                }),
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {                    environment: vec![("CODEX_HOME".into(), "foreign".into())],                    ..Default::default()                }),
             )
             .is_err());
     }

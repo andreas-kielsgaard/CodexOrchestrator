@@ -1,9 +1,10 @@
 //! Invocation-scoped MCP adapter for the one Plan Builder proposal semantic.
 //!
-//! This module deliberately owns the local listener and child-only configuration; it does not
+//! This module deliberately owns the local listener and its invocation grant; it does not
 //! alter provider-neutral Agent Session identity or expose persistence as generic CRUD.
 use super::{
     application::OrchestrationApplication,
+    managed_mcp::{transport_denial, ManagedMcpGrant},
     confirmation::{
         InitiationConfirmationCoordinator, InitiationConfirmationError, InitiationRequestSource,
     },
@@ -12,7 +13,7 @@ use super::{
         PlanningDraftAgentSessionAssociationId, SaveEpicPlanProposalCommand, SaveProposalError,
     },
 };
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use bytes::Bytes;
 use http_body_util::Empty;
 use hyper::{server::conn::http1, service::service_fn, Response};
@@ -35,114 +36,6 @@ use tower::ServiceExt;
 
 const SUBMIT_TOOL: &str = "submit_epic_plan_proposal";
 const INITIATE_TOOL: &str = "request_epic_initiation";
-
-/// Child-scoped Codex configuration. The runtime/process port can append these `-c` values and
-/// environment pair without learning any orchestration identity or endpoint semantics.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CodexMcpInjection {
-    pub(crate) config_overrides: Vec<String>,
-    pub(crate) environment: (String, String),
-}
-
-impl CodexMcpInjection {
-    pub(crate) fn new(
-        server_url: &str,
-        bearer: String,
-        enabled_tools: &[String],
-        required: bool,
-    ) -> Self {
-        Self::new_named("plan_builder", server_url, bearer, enabled_tools, required)
-    }
-
-    pub(crate) fn new_named(
-        scope: &str,
-        server_url: &str,
-        bearer: String,
-        enabled_tools: &[String],
-        required: bool,
-    ) -> Self {
-        let name = format!("{scope}_{}", uuid::Uuid::new_v4().simple());
-        let variable = format!("CODEX_ORCHESTRATOR_MCP_{}", uuid::Uuid::new_v4().simple());
-        let values = [
-            format!("mcp_servers.{name}.url=\"{server_url}\""),
-            format!("mcp_servers.{name}.bearer_token_env_var=\"{variable}\""),
-            format!(
-                "mcp_servers.{name}.enabled_tools={}",
-                serde_json::to_string(enabled_tools).expect("tool names serialize")
-            ),
-            format!("mcp_servers.{name}.required={required}"),
-            format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
-            format!("mcp_servers.{name}.startup_timeout_sec=10"),
-            format!("mcp_servers.{name}.tool_timeout_sec=300"),
-        ];
-        Self {
-            config_overrides: values.into_iter().map(String::from).collect(),
-            environment: (variable, bearer),
-        }
-    }
-
-    /// The sole WorkspaceWrite exception: the exact same-Session Implementer reporting
-    /// continuation needs its token-protected loopback MCP transport on codex-cli 0.144.
-    pub(crate) fn work_unit_implementer_reporting(server_url: &str, bearer: String) -> Self {
-        let tools = [
-            "submit_implementation_outcome".to_string(),
-            "complete_implementation_outcome".to_string(),
-        ];
-        let mut injection = Self::new_named(
-            "work_unit_implementer_reporting",
-            server_url,
-            bearer,
-            &tools,
-            true,
-        );
-        injection.config_overrides.extend([
-            "sandbox_workspace_write.network_access=true".to_string(),
-            "features.network_proxy=true".to_string(),
-        ]);
-        injection
-    }
-
-    pub(crate) fn is_exact_work_unit_implementer_reporting_transport(&self) -> bool {
-        if self.config_overrides.len() != 9 {
-            return false;
-        }
-        let values = self
-            .config_overrides
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let Some(name) = values.iter().find_map(|value| {
-            value
-                .strip_prefix("mcp_servers.")
-                .and_then(|value| value.split_once(".url="))
-                .and_then(|(name, url)| (!url.is_empty()).then_some(name))
-        }) else {
-            return false;
-        };
-        if !name.starts_with("work_unit_implementer_reporting_") {
-            return false;
-        }
-        let expected = [
-            format!("mcp_servers.{name}.bearer_token_env_var="),
-            format!(
-                "mcp_servers.{name}.enabled_tools=[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"
-            ),
-            format!("mcp_servers.{name}.required=true"),
-            format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""),
-            format!("mcp_servers.{name}.startup_timeout_sec=10"),
-            format!("mcp_servers.{name}.tool_timeout_sec=300"),
-            "sandbox_workspace_write.network_access=true".into(),
-            "features.network_proxy=true".into(),
-        ];
-        values.iter().any(|value| {
-            value
-                .strip_prefix(&expected[0])
-                .is_some_and(|variable| !variable.is_empty())
-        }) && expected[1..]
-            .iter()
-            .all(|expected| values.contains(&expected.as_str()))
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct PlanBuilderInvocation {
@@ -561,47 +454,13 @@ pub(crate) fn start_managed_invocation(
         workflow_prepare_url: None,
         caller_context: false,
     };
-    let injection = CodexMcpInjection::new(&upstream.url, bearer, enabled_tools, required);
+    let grant = ManagedMcpGrant::plan_builder(&upstream.url, bearer, enabled_tools, required);
     Ok(ManagedPlanBuilderInvocation {
         server,
-        injection,
+        grant,
         invocation,
         upstream,
     })
-}
-
-pub(crate) fn transport_denial<B>(
-    expected: &str,
-    allowed_host: &str,
-    allowed_origins: &[String],
-    request: &hyper::Request<B>,
-) -> Option<StatusCode> {
-    let valid = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.strip_prefix("Bearer ") == Some(expected));
-    if !valid {
-        return Some(StatusCode::UNAUTHORIZED);
-    }
-    if request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        != Some(allowed_host)
-    {
-        return Some(StatusCode::FORBIDDEN);
-    }
-    if let Some(origin) = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-    {
-        if !allowed_origins.iter().any(|allowed| allowed == origin) {
-            return Some(StatusCode::FORBIDDEN);
-        }
-    }
-    None
 }
 
 pub(crate) struct ManagedMcpServer {
@@ -623,7 +482,7 @@ impl ManagedMcpServer {
 
 pub(crate) struct ManagedPlanBuilderInvocation {
     server: ManagedMcpServer,
-    pub(crate) injection: CodexMcpInjection,
+    pub(crate) grant: ManagedMcpGrant,
     invocation: PlanBuilderInvocation,
     upstream: crate::harness_engine::ManagedMcpUpstreamDescriptor,
 }
@@ -722,61 +581,6 @@ mod tests {
             ),
             receiver,
         )
-    }
-
-    #[test]
-    fn codex_injection_is_child_scoped_and_contains_only_accepted_configuration() {
-        let tools = vec![SUBMIT_TOOL.to_string(), INITIATE_TOOL.to_string()];
-        let injection =
-            CodexMcpInjection::new("http://127.0.0.1:5555/mcp", "secret".into(), &tools, true);
-        assert_eq!(injection.config_overrides.len(), 7);
-        assert!(injection
-            .config_overrides
-            .iter()
-            .any(|value| value.contains("bearer_token_env_var")));
-        assert!(!injection
-            .config_overrides
-            .iter()
-            .any(|value| value == "secret"));
-        assert_eq!(injection.environment.1, "secret");
-        assert!(!injection.config_overrides.iter().any(|value| {
-            value == "features.network_proxy=true"
-                || value == "sandbox_workspace_write.network_access=true"
-        }));
-        assert!(!injection.is_exact_work_unit_implementer_reporting_transport());
-    }
-
-    #[test]
-    fn only_implementer_reporting_gets_the_workspace_write_loopback_exception() {
-        let injection = CodexMcpInjection::work_unit_implementer_reporting(
-            "http://127.0.0.1:5555/mcp",
-            "secret".into(),
-        );
-        assert_eq!(injection.config_overrides.len(), 9);
-        assert!(injection
-            .config_overrides
-            .iter()
-            .any(|value| { value == "sandbox_workspace_write.network_access=true" }));
-        assert!(injection
-            .config_overrides
-            .iter()
-            .any(|value| value == "features.network_proxy=true"));
-        let tools = injection
-            .config_overrides
-            .iter()
-            .find(|value| value.contains(".enabled_tools="))
-            .expect("managed tool allow list");
-        assert!(tools
-            .ends_with("[\"submit_implementation_outcome\",\"complete_implementation_outcome\"]"));
-        assert!(injection
-            .config_overrides
-            .iter()
-            .any(|value| value.contains("work_unit_implementer_reporting_")));
-        assert!(injection.is_exact_work_unit_implementer_reporting_transport());
-
-        let mut malformed = injection;
-        malformed.config_overrides.pop();
-        assert!(!malformed.is_exact_work_unit_implementer_reporting_transport());
     }
 
     #[test]

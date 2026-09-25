@@ -255,11 +255,7 @@ impl CodexAppServerRuntime {
         >,
     ) -> Result<(), RuntimePortError> {
         let program = self.program.clone().map_err(unavailable)?;
-        let environment = request
-            .launch_extension
-            .as_ref()
-            .map(|e| e.environment.clone())
-            .unwrap_or_default();
+        let environment = configuration::launch_environment(request.launch_extension.as_ref());
         let cwd = request
             .working_directory
             .as_ref()

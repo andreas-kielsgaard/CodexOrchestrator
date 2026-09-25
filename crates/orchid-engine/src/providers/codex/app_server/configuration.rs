@@ -1,7 +1,80 @@
-//! Provider launch configuration and support checks. No arbitrary process arguments cross the port.
-use crate::contracts::ports::{RuntimeLaunchExtension, RuntimePortError, RuntimePortErrorKind};
+//! Codex translation of Orchid's launch intent. No arbitrary process arguments cross the port.
+//!
+//! Managed MCP servers and native MCP suppression are thread configuration; the remaining
+//! intents are process-level `-c` values. The test-only CLI runtime applies the same values.
+use crate::contracts::ports::{
+    RuntimeApprovalIntent, RuntimeLaunchExtension, RuntimeManagedMcpServer, RuntimePortError,
+    RuntimePortErrorKind,
+};
 use serde_json::{json, Value};
 use std::path::Path;
+
+/// Environment variable carrying the bearer of the `index`th managed server that has one.
+fn bearer_variable(index: usize) -> String {
+    format!("ORCHID_MCP_BEARER_{index}")
+}
+
+fn bearer_variables(
+    extension: &RuntimeLaunchExtension,
+) -> impl Iterator<Item = (&RuntimeManagedMcpServer, String, &str)> {
+    extension
+        .managed_mcp_servers
+        .iter()
+        .filter_map(|server| server.bearer_token.as_deref().map(|bearer| (server, bearer)))
+        .enumerate()
+        .map(|(index, (server, bearer))| (server, bearer_variable(index), bearer))
+}
+
+/// Process environment for one launch: the provider-prepared environment plus managed bearers.
+pub fn launch_environment(extension: Option<&RuntimeLaunchExtension>) -> Vec<(String, String)> {
+    let Some(extension) = extension else {
+        return Vec::new();
+    };
+    let mut environment = extension.environment.clone();
+    environment.extend(
+        bearer_variables(extension).map(|(_, variable, bearer)| (variable, bearer.to_owned())),
+    );
+    environment
+}
+
+/// Native configuration for one managed server. Managed tools never prompt for approval.
+pub fn managed_server_config(
+    server: &RuntimeManagedMcpServer,
+    bearer_variable: Option<&str>,
+) -> Value {
+    let mut config = json!({
+        "url": server.url,
+        "required": server.required,
+        "default_tools_approval_mode": "approve",
+        "startup_timeout_sec": 10,
+        "tool_timeout_sec": 300,
+    });
+    if let Some(variable) = bearer_variable {
+        config["bearer_token_env_var"] = variable.into();
+    }
+    if let Some(tools) = &server.enabled_tools {
+        config["enabled_tools"] = json!(tools);
+    }
+    config
+}
+
+/// Managed servers keyed by native name, each naming its bearer variable when it has one.
+pub fn managed_servers(extension: &RuntimeLaunchExtension) -> Vec<(&str, Value)> {
+    let bearers = bearer_variables(extension)
+        .map(|(server, variable, _)| (server.name.as_str(), variable))
+        .collect::<Vec<_>>();
+    extension
+        .managed_mcp_servers
+        .iter()
+        .map(|server| {
+            let variable = bearers
+                .iter()
+                .find(|(name, _)| *name == server.name)
+                .map(|(_, variable)| variable.as_str());
+            (server.name.as_str(), managed_server_config(server, variable))
+        })
+        .collect()
+}
 
 pub(super) fn thread_configuration(
     connection: &super::connection::Connection,
@@ -24,35 +97,65 @@ fn merge_managed_servers(
     if extension.native_mcp_enabled == Some(false) {
         if let Some(servers) = native.as_object() {
             for name in servers.keys() {
-                if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                if !valid_server_name(name) {
                     return Err(unsupported("Cannot safely mask a native MCP server with an unsupported name"));
                 }
                 result.insert(format!("mcp_servers.{name}.enabled"), json!(false));
             }
         }
     }
-    for server in &extension.managed_mcp_servers {
-        if server.name.is_empty()
-            || !server
-                .name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
+    for (name, config) in managed_servers(extension) {
+        if !valid_server_name(name) {
             return Err(unsupported("Invalid product MCP server name"));
         }
-        if native.get(&server.name).is_some() || !names.insert(&server.name) {
-            return Err(unsupported(&format!("Product MCP server '{}' conflicts with an existing native or product connection. Rename that connection before launching.",server.name)));
+        if native.get(name).is_some() || !names.insert(name) {
+            return Err(unsupported(&format!("Product MCP server '{name}' conflicts with an existing native or product connection. Rename that connection before launching.")));
         }
-        result.insert(
-            format!("mcp_servers.{}", server.name),
-            managed_server_config(server),
-        );
+        result.insert(format!("mcp_servers.{name}"), config);
     }
     Ok(Value::Object(result))
 }
 
-pub fn managed_server_config(server: &crate::contracts::ports::RuntimeManagedMcpServer) -> Value {
-    json!({"url":server.url,"required":true,"default_tools_approval_mode":"approve","startup_timeout_sec":10,"tool_timeout_sec":300})
+fn valid_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Process-level `-c` values for intents Codex resolves when the app-server starts.
+pub fn process_overrides(extension: &RuntimeLaunchExtension, cwd: Option<&Path>) -> Vec<String> {
+    let mut values = Vec::new();
+    if extension.approval == RuntimeApprovalIntent::Unattended {
+        values.push("approval_policy=\"never\"".to_owned());
+    }
+    if let Some(cwd) = cwd.filter(|_| extension.trusted_workspace) {
+        values.push(workspace_trust(cwd));
+    }
+    if extension.sandbox_network_access {
+        // Codex 0.144 reaches a token-protected loopback MCP transport from WorkspaceWrite only
+        // through its network proxy.
+        values.push("sandbox_workspace_write.network_access=true".to_owned());
+        values.push("features.network_proxy=true".to_owned());
+    }
+    values
+}
+
+/// A private CODEX_HOME has no trust record for a just-created isolated worktree, and Codex then
+/// reduces a requested WorkspaceWrite with approval `never` to read-only. This ephemeral
+/// exact-project override neither persists trust nor widens the workspace boundary. Codex keys
+/// Windows project trust by the lower-case path.
+fn workspace_trust(cwd: &Path) -> String {
+    let normalized = cwd.to_string_lossy().to_ascii_lowercase();
+    let mut encoded = String::with_capacity(normalized.len());
+    for character in normalized.chars() {
+        match character {
+            '\'' => encoded.push_str("''"),
+            '\n' | '\r' | '\t' => encoded.push(' '),
+            value => encoded.push(value),
+        }
+    }
+    format!("projects.'{encoded}'.trust_level=\"trusted\"")
 }
 
 pub(super) fn apply_resume_reasoning(config: &mut Value, resolved_effort: &Value) {
@@ -66,7 +169,77 @@ pub(super) fn apply_resume_reasoning(config: &mut Value, resolved_effort: &Value
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contracts::ports::RuntimeManagedMcpServer;
+
+    fn server(name: &str, url: &str) -> RuntimeManagedMcpServer {
+        RuntimeManagedMcpServer {
+            name: name.into(),
+            url: url.into(),
+            bearer_token: None,
+            enabled_tools: None,
+            required: true,
+        }
+    }
+
+    #[test]
+    fn managed_servers_carry_their_bearer_only_through_the_process_environment() {
+        let extension = RuntimeLaunchExtension {
+            managed_mcp_servers: vec![
+                server("harness", "http://127.0.0.1:1/proxy/token/0"),
+                RuntimeManagedMcpServer {
+                    bearer_token: Some("secret".into()),
+                    enabled_tools: Some(vec!["submit".into()]),
+                    required: false,
+                    ..server("plan_builder_1", "http://127.0.0.1:2/mcp")
+                },
+            ],
+            environment: vec![("CODEX_HOME".into(), "home".into())],
+            ..Default::default()
+        };
+        let config = merge_managed_servers(&json!({}), &extension).unwrap();
+        assert_eq!(
+            config["mcp_servers.plan_builder_1"],
+            json!({
+                "url": "http://127.0.0.1:2/mcp",
+                "bearer_token_env_var": "ORCHID_MCP_BEARER_0",
+                "enabled_tools": ["submit"],
+                "required": false,
+                "default_tools_approval_mode": "approve",
+                "startup_timeout_sec": 10,
+                "tool_timeout_sec": 300
+            })
+        );
+        assert!(config["mcp_servers.harness"].get("bearer_token_env_var").is_none());
+        assert!(config["mcp_servers.harness"].get("enabled_tools").is_none());
+        assert!(!config.to_string().contains("secret"));
+        assert_eq!(
+            launch_environment(Some(&extension)),
+            [
+                ("CODEX_HOME".to_string(), "home".to_string()),
+                ("ORCHID_MCP_BEARER_0".to_string(), "secret".to_string()),
+            ]
+        );
+        assert!(!format!("{:?}", extension.managed_mcp_servers).contains("secret"));
+    }
+
+    #[test]
+    fn process_overrides_translate_only_requested_intents() {
+        assert!(process_overrides(&RuntimeLaunchExtension::default(), Some(Path::new("C:/w"))).is_empty());
+        let extension = RuntimeLaunchExtension {
+            approval: RuntimeApprovalIntent::Unattended,
+            trusted_workspace: true,
+            sandbox_network_access: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            process_overrides(&extension, Some(Path::new(r"C:\Isolated\it's"))),
+            [
+                r#"approval_policy="never""#,
+                r#"projects.'c:\isolated\it''s'.trust_level="trusted""#,
+                "sandbox_workspace_write.network_access=true",
+                "features.network_proxy=true",
+            ]
+        );
+    }
 
     #[test]
     fn resume_omits_absent_native_effort_and_preserves_explicit_selection() {
@@ -84,10 +257,7 @@ mod tests {
     #[test]
     fn managed_mcp_is_additive_and_collisions_fail_without_exposing_connection_data() {
         let extension = RuntimeLaunchExtension {
-            managed_mcp_servers: vec![RuntimeManagedMcpServer {
-                name: "workflow".into(),
-                url: "http://localhost/private-token".into(),
-            }],
+            managed_mcp_servers: vec![server("workflow", "http://localhost/private-token")],
             ..Default::default()
         };
         let config =
@@ -105,10 +275,7 @@ mod tests {
     fn enabled_native_mcp_remains_codex_owned_while_managed_servers_are_additive() {
         let extension = RuntimeLaunchExtension {
             native_mcp_enabled: Some(true),
-            managed_mcp_servers: vec![RuntimeManagedMcpServer {
-                name: "orchid".into(),
-                url: "http://localhost/owned".into(),
-            }],
+            managed_mcp_servers: vec![server("orchid", "http://localhost/owned")],
             ..Default::default()
         };
 
@@ -126,9 +293,7 @@ mod tests {
     fn disabled_native_mcp_group_masks_native_servers_but_retains_managed_servers() {
         let extension = RuntimeLaunchExtension {
             native_mcp_enabled: Some(false),
-            managed_mcp_servers: vec![RuntimeManagedMcpServer {
-                name: "orchid".into(), url: "http://localhost/owned".into(),
-            }],
+            managed_mcp_servers: vec![server("orchid", "http://localhost/owned")],
             ..Default::default()
         };
         let config = merge_managed_servers(&json!({"native":{"command":"secret"}}), &extension).unwrap();
@@ -146,15 +311,8 @@ pub(super) fn arguments(
     let Some(extension) = extension else {
         return Ok(args);
     };
-    for value in &extension.config_overrides {
-        if value.starts_with('-')
-            || !value
-                .split_once('=')
-                .is_some_and(|(key, _)| !key.trim().is_empty())
-        {
-            return Err(unsupported("Invalid native configuration assignment"));
-        }
-        args.extend(["-c".into(), value.clone()]);
+    for value in process_overrides(extension, Some(cwd)) {
+        args.extend(["-c".into(), value]);
     }
     if extension.ignore_user_rules {
         // CLI 0.144 exposes --ignore-rules only to exec. The existing Implementer contract can

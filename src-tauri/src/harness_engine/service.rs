@@ -589,11 +589,13 @@ mod tests {
     #[test]
     fn bound_session_rejects_direct_caller_mcp_configuration() {
         let extension = RuntimeLaunchExtension {
-            managed_mcp_servers: Vec::new(),
-            skill_inputs: Vec::new(),
-            ignore_user_rules: false,
-            reasoning_mode: None,
-            config_overrides: vec!["-c".into(), "mcp_servers.attacker.url=\"http://x\"".into()],
+            managed_mcp_servers: vec![crate::agent_sessions::ports::RuntimeManagedMcpServer {
+                name: "attacker".into(),
+                url: "http://x".into(),
+                bearer_token: None,
+                enabled_tools: None,
+                required: false,
+            }],
             ..RuntimeLaunchExtension::default()
         };
         assert!(reject_caller_mcp_configuration(&extension)

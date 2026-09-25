@@ -211,7 +211,7 @@ fn builds_supported_first_turn_and_resume_commands() {
         InvocationCommand::Start,
         "hello",
         &start_effective,
-        None,
+        None, None
     );
     assert_eq!(
         start,
@@ -237,7 +237,7 @@ fn builds_supported_first_turn_and_resume_commands() {
         InvocationCommand::Resume(&context),
         "continue",
         &resume_effective,
-        None,
+        None, None
     );
     assert_eq!(
         resume,
@@ -275,7 +275,7 @@ fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
             InvocationCommand::Resume(&context),
             "continue",
             &effective,
-            None,
+            None, None
         ),
         [
             "exec",
@@ -334,53 +334,45 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
         sandbox: Some(RuntimeSandboxMode::ReadOnly),
     };
     let extension = RuntimeLaunchExtension {
-        managed_mcp_servers: Vec::new(),
-        skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-        native_mcp_enabled: None,
-        provider_options: None,
-        ignore_user_rules: false,
-        reasoning_mode: None,
-        config_overrides: vec![
-            "approval_policy=\"never\"".into(),
-            "mcp_servers.role.required=true".into(),
-        ],
-        environment: vec![],
-        initial_prompt_prefix: None,
+        approval: crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended,
+        managed_mcp_servers: vec![crate::agent_sessions::ports::RuntimeManagedMcpServer {
+            name: "role".into(),
+            url: "http://127.0.0.1:1/mcp".into(),
+            bearer_token: Some("secret".into()),
+            enabled_tools: Some(vec!["submit".into()]),
+            required: true,
+        }],
+        ..RuntimeLaunchExtension::default()
     };
-    assert_eq!(
-        build_args_from_effective_options(
-            InvocationCommand::Start,
-            "plan",
-            &effective,
-            Some(&extension),
-        ),
-        [
-            "exec",
-            "--json",
-            "--sandbox",
-            "read-only",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "mcp_servers.role.required=true",
-            "plan",
-        ]
+    let args = build_args_from_effective_options(
+        InvocationCommand::Start,
+        "plan",
+        &effective,
+        Some(&extension),
+        None,
     );
+    assert_eq!(
+        &args[..6],
+        ["exec", "--json", "--sandbox", "read-only", "-c", "approval_policy=\"never\""]
+    );
+    for expected in [
+        "mcp_servers.role.url=\"http://127.0.0.1:1/mcp\"",
+        "mcp_servers.role.bearer_token_env_var=\"ORCHID_MCP_BEARER_0\"",
+        "mcp_servers.role.enabled_tools=[\"submit\"]",
+        "mcp_servers.role.required=true",
+    ] {
+        assert!(args.iter().any(|value| value == expected), "{expected}");
+    }
+    assert!(!args.iter().any(|value| value.contains("secret")));
+    assert_eq!(args.last().map(String::as_str), Some("plan"));
 }
 
 #[test]
 fn resume_places_child_configuration_before_the_session_id() {
     let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     let extension = RuntimeLaunchExtension {
-        managed_mcp_servers: Vec::new(),
-        skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-        native_mcp_enabled: None,
-        provider_options: None,
-        ignore_user_rules: false,
-        reasoning_mode: None,
-        config_overrides: vec!["mcp_servers.plan_builder.required=true".into()],
-        environment: vec![],
-        initial_prompt_prefix: None,
+        native_mcp_enabled: Some(false),
+        ..RuntimeLaunchExtension::default()
     };
     assert_eq!(
         build_args_from_effective_options(
@@ -388,13 +380,14 @@ fn resume_places_child_configuration_before_the_session_id() {
             "build",
             &AgentRuntimeOptions::default(),
             Some(&extension),
+            None,
         ),
         [
             "exec",
             "resume",
             "--json",
             "-c",
-            "mcp_servers.plan_builder.required=true",
+            "mcp_servers={}",
             "thread-resume",
             "build",
         ]
@@ -402,14 +395,10 @@ fn resume_places_child_configuration_before_the_session_id() {
 }
 
 #[test]
-fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume() {
+fn typed_reasoning_is_applied_for_start_and_resume() {
     let context = ExternalRuntimeContextId::new("thread-resume").unwrap();
     let extension = RuntimeLaunchExtension {
-        managed_mcp_servers: Vec::new(),
-        skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-        ignore_user_rules: false,
         reasoning_mode: Some("high".into()),
-        config_overrides: vec!["model_reasoning_effort=\"low\"".into()],
         ..RuntimeLaunchExtension::default()
     };
     for (command, expected) in [
@@ -418,8 +407,6 @@ fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume
             vec![
                 "exec",
                 "--json",
-                "-c",
-                "model_reasoning_effort=\"low\"",
                 "-c",
                 "model_reasoning_effort=\"high\"",
                 "continue",
@@ -432,8 +419,6 @@ fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume
                 "resume",
                 "--json",
                 "-c",
-                "model_reasoning_effort=\"low\"",
-                "-c",
                 "model_reasoning_effort=\"high\"",
                 "thread-resume",
                 "continue",
@@ -445,7 +430,7 @@ fn typed_reasoning_is_applied_after_compatibility_arguments_for_start_and_resume
                 command,
                 "continue",
                 &AgentRuntimeOptions::default(),
-                Some(&extension),
+                Some(&extension), None
             ),
             expected,
         );

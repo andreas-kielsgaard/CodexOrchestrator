@@ -20,6 +20,9 @@ pub struct RuntimeInvocationRequest {
 }
 
 /// Launch data prepared by the application. Authority is established before crossing this port.
+///
+/// Every field states product intent. The provider adapter translates it into native
+/// configuration and reports an unsupported intent instead of substituting another behavior.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeLaunchExtension {
@@ -27,6 +30,17 @@ pub struct RuntimeLaunchExtension {
     pub managed_mcp_servers: Vec<RuntimeManagedMcpServer>,
     /// Semantic invocation choice. Only the provider adapter serializes its configuration.
     pub reasoning_mode: Option<String>,
+    /// Whether the agent may ask the user to approve actions during this invocation.
+    #[serde(default)]
+    pub approval: RuntimeApprovalIntent,
+    /// The application has authorized this invocation's isolated working directory, so the
+    /// provider may treat it as a trusted project without persisting that trust.
+    #[serde(default)]
+    pub trusted_workspace: bool,
+    /// A restricted sandbox must still permit network access. Requested only by the Work Unit
+    /// Implementer reporting continuation, whose managed MCP transport needs it.
+    #[serde(default)]
+    pub sandbox_network_access: bool,
     /// Opaque provider-native settings. Only the provider named by the envelope may decode them.
     pub provider_options: Option<crate::contracts::provider::ProviderNativeOptions>,
     /// Explicit existing Harness intent; never inherited by ordinary sessions.
@@ -37,21 +51,56 @@ pub struct RuntimeLaunchExtension {
     /// mention syntax; the provider delivers each in its native form where it supports one.
     #[serde(default)]
     pub invoked_skill_ids: Vec<String>,
-    /// Whether native Codex-configured MCP servers are exposed for this pinned session.
+    /// Whether MCP servers configured natively by the provider configuration are exposed.
+    /// `Some(false)` suppresses them; absence inherits the native configuration.
     pub native_mcp_enabled: Option<bool>,
-    /// Codex KEY=TOML_VALUE overrides; this cannot carry process flags.
-    pub config_overrides: Vec<String>,
+    /// Process environment written only by the selected provider's own launch preparation, for
+    /// example its native home. Product code never writes it.
     pub environment: Vec<(String, String)>,
     /// Neutral, application-provenance text delivered before the initial user prompt. The
     /// persisted invocation remains the user's submitted text and generic callers leave this absent.
     pub initial_prompt_prefix: Option<InitialPromptPrefix>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeApprovalIntent {
+    /// Keep the provider configuration's own approval behavior.
+    #[default]
+    Inherit,
+    /// Never prompt. This does not widen a restricted access mode.
+    Unattended,
+}
+
+/// An Orchid-owned MCP connection for one invocation. Managed tools are trusted: a provider must
+/// not ask the user to approve them.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeManagedMcpServer {
+    /// Unique among this invocation's managed servers.
     pub name: String,
     pub url: String,
+    /// Secret the provider presents as an HTTP bearer token. Never persisted or reported.
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+    /// Tools the provider exposes from this server. Absence exposes every tool it offers.
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
+    /// Whether the invocation must fail when the server cannot be reached.
+    pub required: bool,
+}
+
+impl fmt::Debug for RuntimeManagedMcpServer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeManagedMcpServer")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("bearer_token", &self.bearer_token.as_ref().map(|_| "<redacted>"))
+            .field("enabled_tools", &self.enabled_tools)
+            .field("required", &self.required)
+            .finish()
+    }
 }
 
 /// One immutable skill selection from Orchid's session capability manifest.

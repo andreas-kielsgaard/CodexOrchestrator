@@ -37,9 +37,13 @@ impl HarnessEngineService {
         for (index, exposure) in plan.exposures.iter().enumerate() {
             let name = &exposure.proxy_server_name;
             let url = proxy_url(address, token, index);
+            // The Harness token is part of the proxy URL; the proxy authorizes each tool call.
             extension.managed_mcp_servers.push(RuntimeManagedMcpServer {
                 name: name.clone(),
                 url,
+                bearer_token: None,
+                enabled_tools: None,
+                required: true,
             });
         }
         Ok(extension)
@@ -94,12 +98,7 @@ impl SessionHarnessLaunchAuthority for HarnessEngineService {
 pub(super) fn reject_caller_mcp_configuration(
     extension: &RuntimeLaunchExtension,
 ) -> Result<(), String> {
-    if !extension.managed_mcp_servers.is_empty()
-        || extension
-            .config_overrides
-            .iter()
-            .any(|argument| argument.to_ascii_lowercase().contains("mcp_servers"))
-    {
+    if !extension.managed_mcp_servers.is_empty() {
         return Err(
             "A Harness-bound Session cannot accept caller-supplied MCP configuration.".to_string(),
         );

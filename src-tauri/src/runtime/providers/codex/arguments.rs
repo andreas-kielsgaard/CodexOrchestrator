@@ -13,6 +13,7 @@ pub(super) fn build_args_from_effective_options(
     prompt: &str,
     effective_options: &AgentRuntimeOptions,
     launch_extension: Option<&crate::agent_sessions::ports::RuntimeLaunchExtension>,
+    working_directory: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec!["exec".to_string()];
     let resume_context = match command {
@@ -29,22 +30,19 @@ pub(super) fn build_args_from_effective_options(
         }
     };
     if let Some(extension) = launch_extension {
-        // Historical exec fixtures share the managed connection projection with production.
-        for server in &extension.managed_mcp_servers {
-            let config = super::app_server::configuration::managed_server_config(server);
+        // Historical exec fixtures apply the production Codex translation as process values.
+        use super::app_server::configuration::{managed_servers, process_overrides};
+        for value in process_overrides(extension, working_directory.map(std::path::Path::new)) {
+            args.extend(["-c".into(), value]);
+        }
+        if extension.native_mcp_enabled == Some(false) {
+            args.extend(["-c".into(), "mcp_servers={}".into()]);
+        }
+        for (name, config) in managed_servers(extension) {
             for (key, value) in config.as_object().expect("managed connection is an object") {
-                args.extend([
-                    "-c".into(),
-                    format!("mcp_servers.{}.{key}={value}", server.name),
-                ]);
+                args.extend(["-c".into(), format!("mcp_servers.{name}.{key}={value}")]);
             }
         }
-        args.extend(
-            extension
-                .config_overrides
-                .iter()
-                .flat_map(|value| ["-c".into(), value.clone()]),
-        );
         if extension.ignore_user_rules {
             args.push("--ignore-rules".into());
         }

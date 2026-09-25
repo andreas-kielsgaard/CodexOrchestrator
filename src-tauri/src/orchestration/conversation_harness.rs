@@ -11,7 +11,7 @@ use super::conversation_harness_working_copy::{
 };
 use crate::agent_sessions::{
     domain::{AgentRuntimeOptions, RuntimeSandboxMode},
-    ports::InitialPromptPrefix,
+    ports::{InitialPromptPrefix, RuntimeApprovalIntent, RuntimeLaunchExtension},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -506,17 +506,16 @@ impl ConversationHarnessProfile {
         }
     }
 
-    pub(crate) fn runtime_config_overrides(&self) -> Vec<String> {
-        let mut values = vec![match self.runtime.approval_policy {
-            HarnessApprovalPolicy::Never => "approval_policy=\"never\"".to_string(),
-        }];
-        if let Some(effort) = self.runtime.reasoning_effort.as_deref() {
-            values.push(format!("model_reasoning_effort=\"{effort}\""));
+    /// The role's declared launch intent. Callers add their managed MCP grant and, where the
+    /// contract requires it, the role's initial prompt prefix.
+    pub(crate) fn launch_extension(&self) -> RuntimeLaunchExtension {
+        RuntimeLaunchExtension {
+            approval: match self.runtime.approval_policy {
+                HarnessApprovalPolicy::Never => RuntimeApprovalIntent::Unattended,
+            },
+            reasoning_mode: self.runtime.reasoning_effort.clone(),
+            ..RuntimeLaunchExtension::default()
         }
-        values
-            .into_iter()
-            .map(String::from)
-            .collect()
     }
 }
 
@@ -657,8 +656,8 @@ mod tests {
         assert_eq!(sprint_runner.mcp.enabled_tools, Vec::<String>::new());
         assert!(!sprint_runner.mcp.required);
         assert_eq!(
-            plan_builder.runtime_config_overrides(),
-            ["approval_policy=\"never\""]
+            plan_builder.launch_extension().approval,
+            RuntimeApprovalIntent::Unattended
         );
         assert!(plan_builder.runtime_options().model.is_none());
         assert!(plan_builder.runtime.reasoning_effort.is_none());

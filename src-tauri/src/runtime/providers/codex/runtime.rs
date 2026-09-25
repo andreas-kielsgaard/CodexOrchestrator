@@ -284,6 +284,7 @@ impl CodexCliRuntime {
             &request.submitted_text,
             &request.options,
             request.launch_extension.as_ref(),
+            request.working_directory.as_deref(),
         );
         let program = self
             .program
@@ -294,11 +295,9 @@ impl CodexCliRuntime {
             program,
             args,
             working_directory: request.working_directory.as_deref().map(PathBuf::from),
-            environment: request
-                .launch_extension
-                .as_ref()
-                .map(|extension| extension.environment.clone())
-                .unwrap_or_default(),
+            environment: super::app_server::configuration::launch_environment(
+                request.launch_extension.as_ref(),
+            ),
         };
         #[cfg(test)]
         if let Some(observer) = &self.launch_observer {

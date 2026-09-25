@@ -795,9 +795,7 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         .all(|request| request
             .launch_extension
             .as_ref()
-            .is_some_and(|extension| extension
-                .config_overrides
-                .contains(&"mcp_servers={}".to_string()))));
+            .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
 }
 
 #[test]
@@ -833,15 +831,8 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
         .send_message_with_launch_extension(
             message(&session.id, "fresh"),
             Some(RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(),
-                skill_inputs: Vec::new(), invoked_skill_ids: Vec::new(),
-                native_mcp_enabled: None,
-                provider_options: None,
-                ignore_user_rules: false,
-                reasoning_mode: None,
-                config_overrides: vec![],
                 environment: vec![("ROLE_CONFIG".into(), "present".into())],
-                initial_prompt_prefix: None,
+                ..RuntimeLaunchExtension::default()
             }),
         )
         .expect("fresh launch");
@@ -2026,9 +2017,7 @@ impl SessionHarnessLaunchAuthority for RecordingSessionHarnessAuthority {
     ) -> Result<Option<RuntimeLaunchExtension>, String> {
         self.invocations.lock().unwrap().push(invocation_id.clone());
         let mut extension = extension.unwrap_or_default();
-        extension
-            .config_overrides
-            .extend(["-c".to_string(), "mcp_servers={}".to_string()]);
+        extension.native_mcp_enabled = Some(false);
         Ok(Some(extension))
     }
 }
