@@ -98,7 +98,10 @@ Status: plan, 2026-09-25. Nothing in this document is implemented yet. It builds
 
 - **History handoff.**
   - A new `agent_sessions/application/history_handoff.rs` builds the catch-up text: for each completed invocation after the provider's `last_invocation_id` (or all earlier invocations when the provider has no conversation), your submitted text and the final agent reply.
-  - It is delivered through the existing `initial_prompt_prefix`, with source `orchid_session_history`, and both launch paths use it.
+  - The session stores the initial prompt prefix its first message was delivered with (a new `agent_sessions.initial_prompt_prefix_json`, written once). Today no prefix is stored; callers only put it in the launch extension.
+  - When a provider starts its first conversation for a session that already has history, its first message carries the stored initial prefix, then the catch-up text, then any prefix the caller supplied for this message. These are combined into one `initial_prompt_prefix` with source `orchid_provider_handoff`, so the wire format does not change.
+  - When switching back to a provider that already has a conversation, only the catch-up text is added; the stored prefix is not repeated, because that provider loads it through its own conversation.
+  - Both launch paths use the same builder.
 - **Final reply.**
   - Add one reader, `final_reply(invocation)`, on the session history type. Adopt it in `product_decisions.rs:1929`, `workflows/event_sources.rs:54`, `orchestration/bootstrap_transition.rs:2258` and the handoff.
   - Name the message-role values once in the engine contracts; both normalizers use them. The stored format is unchanged.
@@ -266,7 +269,7 @@ Choices made in this plan (not yet discussed):
 - Rust drives the installed `claude` CLI in stream-json mode, including the control messages the official SDKs use for permission prompts, interrupts and `initialize`.
 - Each provider has one `register` function and there is one generic provider map. `ExecutionEndpoints` stays the router consumers ask and keeps its name.
 - Where a provider has no continuation port, a conversation whose location changed restarts from the session log. Claude registers no port in this work.
-- The history handoff carries your prompts and the final replies, without tool detail, through the existing initial prompt prefix. Harness prefixes and the handoff are assumed not to coincide: a harness prefix is only sent on a session's first message.
+- The history handoff carries your prompts and the final replies, without tool detail, through the existing initial prompt prefix, combined with any caller prefix into one block.
 - Setups carry their executable through a provider-written `executable` launch field.
 - Model choice across routes is resolved in the backend at send time. A model from another route records a target change to that route.
 - On each device, the default route is the one offering the profile's default model, otherwise the first route listed.
@@ -301,6 +304,7 @@ Decided by you:
 - Keep it simple: happy path, no workarounds for bugs not yet seen.
 - Access modes are a profile setting, and Claude need not offer Codex's set.
 - Session IDs are an optimization. A provider switch rebuilds context from the session log, and switching back resumes the old conversation with the later turns appended.
+- A provider's first conversation in a session receives the session's initial prompt prefix, stored for this if it is not already; a provider returning to its own conversation does not.
 - Personal use only: your own provider credentials.
 
 ## Documentation handoff
