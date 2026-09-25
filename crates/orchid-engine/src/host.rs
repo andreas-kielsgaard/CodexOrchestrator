@@ -1,13 +1,7 @@
 //! Destination-side execution ownership. Product history stays with the desktop application.
-pub use crate::providers::codex::host::CodexConfiguration;
+pub mod providers;
+pub use providers::{HostProvider, HostProviderConfiguration};
 use crate::{
-    providers::codex::{
-        app_server::{
-            environment::{CodexEnvironmentReader, CodexEnvironmentSource},
-            CodexAppServerRuntime,
-        },
-        runtime_profile,
-    },
     contracts::*,
     protocol::*,
     repository_context::{RepositoryContext, WorktreeLocation},
@@ -27,7 +21,7 @@ use std::{
 pub struct HostConfiguration {
     pub device_id: String,
     pub device_name: String,
-    pub configurations: Vec<CodexConfiguration>,
+    pub configurations: Vec<HostProviderConfiguration>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,6 +35,7 @@ struct SessionBinding {
 
 pub struct Host {
     configuration: HostConfiguration,
+    providers: HashMap<String, Arc<dyn HostProvider>>,
     sessions_directory: PathBuf,
     runtimes: HashMap<String, Arc<dyn AgentRuntime>>,
     invocations: Mutex<HashMap<AgentInvocationId, String>>,
@@ -98,25 +93,23 @@ impl Host {
         sessions_directory: PathBuf,
     ) -> Result<Self, RuntimePortError> {
         fs::create_dir_all(&sessions_directory).map_err(unavailable)?;
+        let providers = providers::registered();
         let runtimes = configuration
             .configurations
             .iter()
             .map(|config| {
-                if config.provider != "codex" {
-                    return Err(unavailable(format!(
+                let provider = providers.get(&config.provider).ok_or_else(|| {
+                    unavailable(format!(
                         "Agent provider `{}` is not registered on this Orchid host",
                         config.provider
-                    )));
-                }
-                Ok((
-                    config.id.clone(),
-                    Arc::new(CodexAppServerRuntime::system(&config.executable))
-                        as Arc<dyn AgentRuntime>,
-                ))
+                    ))
+                })?;
+                Ok((config.id.clone(), provider.runtime(config)))
             })
             .collect::<Result<HashMap<_, _>, RuntimePortError>>()?;
         Ok(Self {
             configuration,
+            providers,
             sessions_directory,
             runtimes,
             invocations: Mutex::new(HashMap::new()),
@@ -124,7 +117,7 @@ impl Host {
         })
     }
 
-    fn configuration(&self, id: &str) -> Result<&CodexConfiguration, RuntimePortError> {
+    fn configuration(&self, id: &str) -> Result<&HostProviderConfiguration, RuntimePortError> {
         self.configuration
             .configurations
             .iter()
@@ -136,14 +129,29 @@ impl Host {
         &self,
         provider: &str,
         id: &str,
-    ) -> Result<&CodexConfiguration, RuntimePortError> {
+    ) -> Result<(&HostProviderConfiguration, &dyn HostProvider), RuntimePortError> {
         let configuration = self.configuration(id)?;
         if configuration.provider != provider {
             return Err(unavailable(format!(
                 "Execution configuration `{id}` does not belong to agent provider `{provider}`"
             )));
         }
-        Ok(configuration)
+        Ok((configuration, self.host_provider(configuration)?))
+    }
+
+    fn host_provider(
+        &self,
+        configuration: &HostProviderConfiguration,
+    ) -> Result<&dyn HostProvider, RuntimePortError> {
+        self.providers
+            .get(&configuration.provider)
+            .map(|provider| provider.as_ref())
+            .ok_or_else(|| {
+                unavailable(format!(
+                    "Agent provider `{}` is not registered on this Orchid host",
+                    configuration.provider
+                ))
+            })
     }
 
     fn runtime(&self, id: &str) -> Result<Arc<dyn AgentRuntime>, RuntimePortError> {
@@ -231,40 +239,22 @@ impl Host {
                 configuration_ref,
                 external_context_id,
             } => {
-                if provider != "codex" {
-                    return Err(unavailable(format!(
-                        "Agent provider `{provider}` is not registered on this Orchid host"
-                    )));
-                }
+                let (config, host_provider) =
+                    self.provider_configuration(&provider, &configuration_ref)?;
                 self.assert_native_idle(&configuration_ref, &external_context_id)?;
-                let config = self.provider_configuration(&provider, &configuration_ref)?;
-                serde_json::to_value(
-                    crate::providers::codex::app_server::continuation::encode(
-                        crate::providers::codex::app_server::continuation::export(
-                            &config.executable,
-                            &config.home,
-                            external_context_id.as_str(),
-                        )?,
-                    )?,
-                )
-                .map_err(unavailable)
+                serde_json::to_value(host_provider.export_continuation(config, &external_context_id)?)
+                    .map_err(unavailable)
             }
             HostCommand::InstallContinuation {
                 provider,
                 configuration_ref,
                 continuation,
             } => {
-                let _ = self.provider_configuration(&provider, &configuration_ref)?;
-                let native =
-                    crate::providers::codex::app_server::continuation::decode(&continuation)?;
-                let id = ExternalRuntimeContextId::new(&native.thread_id).map_err(unavailable)?;
+                let (config, host_provider) =
+                    self.provider_configuration(&provider, &configuration_ref)?;
+                let id = host_provider.continuation_context(&continuation)?;
                 self.assert_native_idle(&configuration_ref, &id)?;
-                let config = self.configuration(&configuration_ref)?;
-                crate::providers::codex::app_server::continuation::install(
-                    &config.executable,
-                    &config.home,
-                    &native,
-                )?;
+                host_provider.install_continuation(config, &continuation)?;
                 Ok(Value::Null)
             }
             HostCommand::PrepareInvocation {
@@ -306,18 +296,14 @@ impl Host {
                 configuration_ref,
                 working_directory,
             } => {
-                let config = self.provider_configuration(&provider, &configuration_ref)?;
-                let cwd = working_directory.map(PathBuf::from);
-                let reader = CodexEnvironmentReader::new(&config.executable);
-                let native = reader.read(config.home.clone(), cwd.clone())?;
-                let profile = runtime_profile::runtime_profile(
-                    &native,
-                    ProviderConfigurationRef::new(provider, configuration_ref),
-                    Default::default(),
-                );
-                let inventory = reader.inventory(config.home.clone(), cwd)?;
-                serde_json::to_value(RuntimeCapabilities { profile, inventory })
-                    .map_err(unavailable)
+                let (config, host_provider) =
+                    self.provider_configuration(&provider, &configuration_ref)?;
+                let capabilities = host_provider.capabilities(
+                    config,
+                    ProviderConfigurationRef::new(provider, configuration_ref.clone()),
+                    working_directory.map(PathBuf::from),
+                )?;
+                serde_json::to_value(capabilities).map_err(unavailable)
             }
             HostCommand::Preflight {
                 provider,
@@ -423,11 +409,10 @@ impl Host {
                 "Remote workflow tools are outside this prototype",
             ));
         }
-        extension.environment.retain(|(key, _)| key != "CODEX_HOME");
-        extension.environment.push((
-            "CODEX_HOME".into(),
-            config.home.to_string_lossy().into_owned(),
-        ));
+        for (key, value) in self.host_provider(config)?.launch_environment(config) {
+            extension.environment.retain(|(existing, _)| existing != &key);
+            extension.environment.push((key, value));
+        }
         let runtime = self.runtime(&configuration_ref)?;
         let id = request.invocation_id.clone();
         let session = request.session_id.clone();
@@ -770,7 +755,7 @@ mod tests {
             HostConfiguration {
                 device_id: "server".into(),
                 device_name: "Server".into(),
-                configurations: vec![CodexConfiguration {
+                configurations: vec![HostProviderConfiguration {
                     provider: "codex".into(),
                     id: "codex-default".into(),
                     executable: "fake-codex".into(),
@@ -965,7 +950,7 @@ mod tests {
         let configuration = HostConfiguration {
             device_id: "remote".into(),
             device_name: "Remote".into(),
-            configurations: vec![CodexConfiguration {
+            configurations: vec![HostProviderConfiguration {
                 provider: "codex".into(),
                 id: "codex".into(),
                 executable: "fake".into(),
