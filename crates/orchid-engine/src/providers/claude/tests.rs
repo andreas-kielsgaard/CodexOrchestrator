@@ -133,25 +133,40 @@ impl ChildProcessFactory for Factory {
     }
 }
 
-#[derive(Default)]
-struct Sink(Mutex<Vec<RuntimeUpdate>>);
+struct Sink {
+    updates: Mutex<Vec<RuntimeUpdate>>,
+    patience: Duration,
+}
+
+impl Default for Sink {
+    fn default() -> Self {
+        Self::waiting(Duration::from_secs(5))
+    }
+}
 impl AgentRuntimeUpdateSink for Sink {
     fn emit_update(
         &self,
         _: &AgentInvocationId,
         update: RuntimeUpdate,
     ) -> Result<(), RuntimePortError> {
-        self.0.lock().unwrap().push(update);
+        self.updates.lock().unwrap().push(update);
         Ok(())
     }
     fn report_delivery_failure(&self, _: &AgentInvocationId, _: RuntimeUpdateDeliveryFailure) {}
 }
 
 impl Sink {
+    fn waiting(patience: Duration) -> Self {
+        Self {
+            updates: Mutex::default(),
+            patience,
+        }
+    }
+
     fn wait_for(&self, found: impl Fn(&[RuntimeUpdate]) -> bool) -> Vec<RuntimeUpdate> {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + self.patience;
         loop {
-            let updates = self.0.lock().unwrap().clone();
+            let updates = self.updates.lock().unwrap().clone();
             if found(&updates) {
                 return updates;
             }
@@ -179,7 +194,7 @@ impl Sink {
     }
 
     fn normalized(&self) -> Vec<NormalizedRuntimeEvent> {
-        self.0
+        self.updates
             .lock()
             .unwrap()
             .iter()
@@ -191,7 +206,7 @@ impl Sink {
     }
 
     fn controls(&self) -> Vec<RuntimeControlRecord> {
-        self.0
+        self.updates
             .lock()
             .unwrap()
             .iter()
@@ -514,7 +529,7 @@ fn steering_joins_the_running_turn_and_completes_once() {
     );
     let finished = harness
         .sink
-        .0
+        .updates
         .lock()
         .unwrap()
         .iter()
@@ -584,4 +599,130 @@ fn a_failed_result_fails_the_invocation_with_its_errors() {
         .unwrap()
         .message
         .contains("ede_diagnostic"));
+}
+
+/// Drives the installed, signed-in `claude` CLI. Paid: runs only when `ORCHID_CLAUDE_LIVE=true`,
+/// with `cargo test -p orchid-engine live_claude_code -- --ignored`.
+#[test]
+#[ignore = "runs the installed Claude Code CLI against the signed-in account"]
+fn live_claude_code() {
+    if std::env::var("ORCHID_CLAUDE_LIVE").as_deref() != Ok("true") {
+        eprintln!("skipped: set ORCHID_CLAUDE_LIVE=true to run");
+        return;
+    }
+    let models = super::discovery::models("claude", &[]).expect("initialize reports models");
+    assert!(!models.is_empty());
+    let work = tempfile::tempdir().unwrap();
+    let runtime = ClaudeRuntime::system("claude");
+    let live_request = |id: &str, text: &str| RuntimeInvocationRequest {
+        invocation_id: AgentInvocationId::new(id).unwrap(),
+        submitted_text: text.into(),
+        working_directory: Some(work.path().to_string_lossy().into_owned()),
+        ..request(None)
+    };
+    let invocation = |id: &str| AgentInvocationId::new(id).unwrap();
+    let reply = |sink: &Sink| {
+        messages(&sink.normalized())
+            .last()
+            .map(|(_, text)| text.clone())
+    };
+
+    let first = Arc::new(Sink::waiting(Duration::from_secs(180)));
+    runtime
+        .start_invocation(
+            live_request("first", "Reply with exactly the word: ok"),
+            first.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        first.outcome().status,
+        AgentInvocationTerminalStatus::Completed
+    );
+    assert!(reply(&first).unwrap().to_lowercase().contains("ok"));
+    let conversation = first.normalized()[0].external_context_id.clone().unwrap();
+
+    let resumed = Arc::new(Sink::waiting(Duration::from_secs(180)));
+    runtime
+        .resume_invocation(
+            live_request(
+                "resumed",
+                "Which single word did you reply with last time? Answer with that word only.",
+            ),
+            conversation,
+            resumed.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        resumed.outcome().status,
+        AgentInvocationTerminalStatus::Completed
+    );
+    assert!(reply(&resumed).unwrap().to_lowercase().contains("ok"));
+
+    let asked = Arc::new(Sink::waiting(Duration::from_secs(180)));
+    runtime
+        .start_invocation(
+            live_request("asked", "Use the AskUserQuestion tool once to ask which color I prefer, offering exactly red and blue. Then reply with only the chosen color."),
+            asked.clone(),
+        )
+        .unwrap();
+    asked.wait_for(|updates| updates.iter().any(|u| matches!(u, RuntimeUpdate::Event(e) if e.raw_payload["kind"] == "runtime_request_opened")));
+    let question = asked
+        .controls()
+        .into_iter()
+        .find_map(|record| match record {
+            RuntimeControlRecord::RequestOpened { request } => request.questions,
+            _ => None,
+        })
+        .unwrap();
+    let blue = question[0]
+        .options
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|o| o.label.to_lowercase() == "blue")
+        .unwrap()
+        .label
+        .clone();
+    let request_id = asked
+        .controls()
+        .into_iter()
+        .find_map(|record| match record {
+            RuntimeControlRecord::RequestOpened { request } => Some(request.id),
+            _ => None,
+        });
+    runtime
+        .respond(
+            &invocation("asked"),
+            &request_id.unwrap(),
+            RuntimeInteractionResponse::Answer {
+                answers: BTreeMap::from([(question[0].id.clone(), vec![blue])]),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        asked.outcome().status,
+        AgentInvocationTerminalStatus::Completed
+    );
+    assert!(reply(&asked).unwrap().to_lowercase().contains("blue"));
+
+    let canceled = Arc::new(Sink::waiting(Duration::from_secs(180)));
+    runtime
+        .start_invocation(
+            live_request(
+                "canceled",
+                "Count slowly from 1 to 500, one number per line.",
+            ),
+            canceled.clone(),
+        )
+        .unwrap();
+    canceled.wait_for(|updates| {
+        updates
+            .iter()
+            .any(|u| matches!(u, RuntimeUpdate::Event(e) if e.raw_payload["type"] == "assistant"))
+    });
+    runtime.cancel_invocation(&invocation("canceled")).unwrap();
+    assert_eq!(
+        canceled.outcome().status,
+        AgentInvocationTerminalStatus::Canceled
+    );
 }
