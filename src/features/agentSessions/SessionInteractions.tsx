@@ -33,7 +33,7 @@ function RuntimeRequest({
   onRespond?: (invocationId: string, requestId: string, response: RuntimeInteractionResponseDto) => Promise<void>;
 }) {
   const choiceDescriptionId = useId();
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = request.state === 'pending' && Boolean(onRespond);
@@ -90,42 +90,32 @@ function RuntimeRequest({
         </div>
       ))}
       {request.content.questions?.map((question) => (
-        <label key={question.id}>
-          <span>{question.question}</span>
-          {question.options?.length && !question.isOther ? (
-            <select
-              disabled={!pending || busy}
-              value={answers[question.id] ?? ''}
-              onChange={(event) => setAnswers({ ...answers, [question.id]: event.target.value })}
-            >
-              <option value="">Choose an answer</option>
-              {question.options.map((option) => (
-                <option key={option.label} value={option.label}>
-                  {option.label} — {option.description}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type={question.isSecret ? 'password' : 'text'}
-              disabled={!pending || busy}
-              value={answers[question.id] ?? ''}
-              onChange={(event) => setAnswers({ ...answers, [question.id]: event.target.value })}
-            />
-          )}
-        </label>
+        <QuestionField
+          key={question.id}
+          question={question}
+          answer={answers[question.id] ?? EMPTY_ANSWER}
+          disabled={!pending || busy}
+          onChange={(answer) => setAnswers({ ...answers, [question.id]: answer })}
+        />
       ))}
       {request.content.questions?.length ? (
         <button
           type="button"
           disabled={
-            !pending || busy || request.content.questions.some((q) => !answers[q.id]?.trim())
+            !pending ||
+            busy ||
+            request.content.questions.some(
+              (question) => answerValues(question, answers[question.id]).length === 0,
+            )
           }
           onClick={() =>
             void respond({
               kind: 'answer',
               answers: Object.fromEntries(
-                Object.entries(answers).map(([id, answer]) => [id, [answer]]),
+                (request.content.questions ?? []).map((question) => [
+                  question.id,
+                  answerValues(question, answers[question.id]),
+                ]),
               ),
             })
           }
@@ -137,5 +127,102 @@ function RuntimeRequest({
       {request.result && <p role="status">{request.result}</p>}
       {request.state === 'unsupported' && <p>This request is not supported by this integration.</p>}
     </article>
+  );
+}
+
+type RuntimeQuestionDto = NonNullable<SessionInteractionDto['content']['questions']>[number];
+
+/** Offered options the user selected, and a typed answer where the question accepts one. */
+interface QuestionAnswer {
+  readonly selected: readonly string[];
+  readonly typed: string;
+}
+
+const EMPTY_ANSWER: QuestionAnswer = { selected: [], typed: '' };
+
+/** A typed answer replaces the selection of a single-answer question and adds to a multi-select. */
+function answerValues(question: RuntimeQuestionDto, answer: QuestionAnswer | undefined): string[] {
+  const typed = answer?.typed.trim() ?? '';
+  const selected = answer?.selected ?? [];
+  if (!question.multiSelect) return typed ? [typed] : selected.slice(0, 1);
+  return typed ? [...selected, typed] : [...selected];
+}
+
+function QuestionField({
+  question,
+  answer,
+  disabled,
+  onChange,
+}: {
+  question: RuntimeQuestionDto;
+  answer: QuestionAnswer;
+  disabled: boolean;
+  onChange: (answer: QuestionAnswer) => void;
+}) {
+  const options = question.options ?? [];
+  const typedInput = (label: string | undefined) => (
+    <input
+      type={question.isSecret ? 'password' : 'text'}
+      aria-label={label}
+      placeholder={label}
+      disabled={disabled}
+      value={answer.typed}
+      onChange={(event) => onChange({ ...answer, typed: event.target.value })}
+    />
+  );
+  if (options.length === 0) {
+    return (
+      <label>
+        {question.header && <small>{question.header}</small>}
+        <span>{question.question}</span>
+        {typedInput(undefined)}
+      </label>
+    );
+  }
+  return (
+    <fieldset className="session-runtime-question">
+      <legend>
+        {question.header && <small>{question.header}</small>}
+        <span>{question.question}</span>
+      </legend>
+      {question.multiSelect ? (
+        options.map((option) => (
+          <label key={option.label}>
+            <input
+              type="checkbox"
+              disabled={disabled}
+              checked={answer.selected.includes(option.label)}
+              onChange={(event) =>
+                onChange({
+                  ...answer,
+                  selected: event.target.checked
+                    ? [...answer.selected, option.label]
+                    : answer.selected.filter((label) => label !== option.label),
+                })
+              }
+            />
+            {option.label}
+            {option.description && <small> — {option.description}</small>}
+          </label>
+        ))
+      ) : (
+        <select
+          aria-label={question.question}
+          disabled={disabled}
+          value={answer.selected[0] ?? ''}
+          onChange={(event) =>
+            onChange({ ...answer, selected: event.target.value ? [event.target.value] : [] })
+          }
+        >
+          <option value="">Choose an answer</option>
+          {options.map((option) => (
+            <option key={option.label} value={option.label}>
+              {option.description ? `${option.label} — ${option.description}` : option.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {question.isOther && typedInput('Or type an answer')}
+    </fieldset>
   );
 }

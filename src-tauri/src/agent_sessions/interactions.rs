@@ -50,12 +50,18 @@ fn project_invocation_interactions(
                     "steering",
                     "pending",
                 )),
-                RuntimeControlRecord::RequestOpened { request } => request["id"]
-                    .as_str()
-                    .map(|id| (id.to_owned(), request.clone(), "request", "pending")),
-                RuntimeControlRecord::RequestUnsupported { request, .. } => request["id"]
-                    .as_str()
-                    .map(|id| (id.to_owned(), request.clone(), "request", "unsupported")),
+                RuntimeControlRecord::RequestOpened { request } => Some((
+                    request.id.clone(),
+                    serde_json::to_value(request).expect("requests serialize"),
+                    "request",
+                    "pending",
+                )),
+                RuntimeControlRecord::RequestUnsupported { request, .. } => Some((
+                    request.id.clone(),
+                    serde_json::to_value(request).expect("requests serialize"),
+                    "request",
+                    "unsupported",
+                )),
                 _ => None,
             };
             if let Some((id, content, kind, state)) = opened {

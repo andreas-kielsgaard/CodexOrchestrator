@@ -17,12 +17,15 @@ pub enum RuntimeControlRecord {
     /// The provider started a steerable turn.
     #[serde(rename = "runtime_turn_active")]
     TurnActive { target: RuntimeTurnTarget },
-    /// A provider request awaiting the user, already projected into Orchid's display shape.
+    /// A provider request awaiting the user.
     #[serde(rename = "runtime_request_opened")]
-    RequestOpened { request: Value },
+    RequestOpened { request: super::interactions::RuntimeRequest },
     /// A provider request Orchid cannot answer; the provider has already declined it.
     #[serde(rename = "runtime_request_unsupported")]
-    RequestUnsupported { request: Value, method: String },
+    RequestUnsupported {
+        request: super::interactions::RuntimeRequest,
+        method: String,
+    },
     #[serde(rename = "runtime_request_response")]
     RequestResponse {
         id: String,
@@ -118,6 +121,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("{payload}"));
             let reencoded = record.into_draft().raw_payload;
             for (key, value) in payload.as_object().unwrap() {
+                if key == "request" {
+                    // Typed requests add their defaults; the stored fields stay as recorded.
+                    for (field, stored) in value.as_object().unwrap() {
+                        assert_eq!(&reencoded[key][field], stored, "{key}.{field} in {payload}");
+                    }
+                    continue;
+                }
                 assert_eq!(&reencoded[key], value, "{key} in {payload}");
             }
         }

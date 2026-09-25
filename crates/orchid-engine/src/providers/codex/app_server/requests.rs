@@ -1,6 +1,10 @@
 //! Server request projection and response validation; native IDs never become product IDs.
 use super::{connection::unavailable, Invocation};
-use crate::contracts::{ports::{RuntimePortError, RuntimePortErrorKind}, RuntimeInteractionResponse};
+use crate::contracts::{
+    ports::{RuntimePortError, RuntimePortErrorKind},
+    RuntimeInteractionResponse, RuntimeQuestion, RuntimeRequest, RuntimeRequestChoice,
+    RuntimeRequestKind,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -8,7 +12,15 @@ use std::sync::atomic::Ordering;
 pub(super) struct PendingRequest {
     native_id: Value,
     choices: BTreeMap<String, Value>,
-    questions: Option<Value>,
+    questions: Option<Vec<RuntimeQuestion>>,
+}
+
+fn choice(id: &str, label: &str) -> RuntimeRequestChoice {
+    RuntimeRequestChoice {
+        id: id.into(),
+        label: label.into(),
+        ..Default::default()
+    }
 }
 
 pub(super) fn receive(invocation: &Invocation, message: Value) -> Result<(), RuntimePortError> {
@@ -29,54 +41,73 @@ pub(super) fn receive(invocation: &Invocation, message: Value) -> Result<(), Run
                 .cloned()
                 .unwrap_or_else(|| vec![json!("accept"), json!("decline"), json!("cancel")]);
             for decision in decisions {
-                let mut choice = super::approval_choices::project(decision);
-                if method == "item/fileChange/requestApproval" {
-                    // Command-specific explanations do not apply to file-change requests.
-                    choice.as_object_mut().unwrap().remove("description");
-                }
+                let projected = super::approval_choices::project(decision);
                 let id = format!("choice-{}", choices.len() + 1);
-                native_choices.insert(id.clone(), choice["response"].clone());
-                choice.as_object_mut().unwrap().remove("response");
-                choice["id"] = id.into();
-                choices.push(choice);
+                native_choices.insert(id.clone(), projected["response"].clone());
+                choices.push(RuntimeRequestChoice {
+                    id,
+                    label: projected["label"].as_str().unwrap_or_default().into(),
+                    // Command-specific explanations do not apply to file-change requests.
+                    description: (method != "item/fileChange/requestApproval")
+                        .then(|| projected["description"].as_str().map(str::to_owned))
+                        .flatten(),
+                    scope: projected["scope"].as_str().map(str::to_owned),
+                });
             }
-            "approval"
+            RuntimeRequestKind::Approval
         }
         "item/permissions/requestApproval" => {
             native_choices.insert("allow_turn".into(), json!({"permissions":params["permissions"],"scope":"turn"}));
             native_choices.insert("decline".into(), json!({"permissions":{},"scope":"turn"}));
-            choices = vec![
-                json!({"id":"allow_turn","label":"Allow for this turn"}),
-                json!({"id":"decline","label":"Decline"}),
-            ];
-            "approval"
+            choices = vec![choice("allow_turn", "Allow for this turn"), choice("decline", "Decline")];
+            RuntimeRequestKind::Approval
         }
         "item/tool/requestUserInput" => {
-            questions = Some(params["questions"].clone());
-            "questions"
+            match serde_json::from_value::<Vec<RuntimeQuestion>>(params["questions"].clone()) {
+                Ok(parsed) => {
+                    questions = Some(parsed);
+                    RuntimeRequestKind::Questions
+                }
+                Err(_) => RuntimeRequestKind::Unsupported,
+            }
         }
         "mcpServer/elicitation/request" if params["mode"] == "url" => {
             native_choices.insert("completed".into(), json!({"action":"accept"}));
             native_choices.insert("decline".into(), json!({"action":"decline"}));
             native_choices.insert("cancel".into(), json!({"action":"cancel"}));
             choices = vec![
-                json!({"id":"completed","label":"Completed"}),
-                json!({"id":"decline","label":"Decline"}),
-                json!({"id":"cancel","label":"Cancel"}),
+                choice("completed", "Completed"),
+                choice("decline", "Decline"),
+                choice("cancel", "Cancel"),
             ];
-            "external_action"
+            RuntimeRequestKind::ExternalAction
         }
-        _ => "unsupported",
+        _ => RuntimeRequestKind::Unsupported,
     };
     let request_id = uuid::Uuid::new_v4().to_string();
     let default_title = match kind {
-        "approval" => "Approval requested",
-        "questions" => "The agent needs your input",
-        "external_action" => "Complete the requested action",
-        _ => method,
+        RuntimeRequestKind::Approval => "Approval requested",
+        RuntimeRequestKind::Questions => "The agent needs your input",
+        RuntimeRequestKind::ExternalAction => "Complete the requested action",
+        RuntimeRequestKind::Unsupported => method,
     };
-    let request = json!({"id":request_id,"kind":kind,"title":params["reason"].as_str().or(params["message"].as_str()).unwrap_or(default_title),"command":params["command"],"cwd":params["cwd"],"url":params["url"],"permissions":params["permissions"],"grantRoot":params["grantRoot"],"choices":choices,"questions":questions,"supported":kind != "unsupported"});
-    if kind == "unsupported" {
+    let text = |key: &str| params[key].as_str().map(str::to_owned);
+    let request = RuntimeRequest {
+        id: request_id.clone(),
+        kind,
+        title: text("reason")
+            .or_else(|| text("message"))
+            .unwrap_or_else(|| default_title.into()),
+        command: text("command"),
+        cwd: text("cwd"),
+        url: text("url"),
+        permissions: (!params["permissions"].is_null()).then(|| params["permissions"].clone()),
+        grant_root: text("grantRoot"),
+        choices,
+        questions: questions.clone(),
+        supported: kind != RuntimeRequestKind::Unsupported,
+    };
+    if kind == RuntimeRequestKind::Unsupported {
         invocation
             .control(crate::contracts::RuntimeControlRecord::RequestUnsupported {
                 request,
@@ -137,7 +168,7 @@ fn encode(request: &PendingRequest, response: &RuntimeInteractionResponse) -> Re
     if let RuntimeInteractionResponse::Choose { choice_id } = response {
         return request.choices.get(choice_id).cloned().ok_or_else(|| rejected("Response is outside the offered choices"));
     }
-    if let Some(questions) = request.questions.as_ref().and_then(Value::as_array) {
+    if let Some(questions) = &request.questions {
         let RuntimeInteractionResponse::Answer { answers } = response else {
             return Err(rejected("Answers must be supplied by question ID"));
         };
@@ -145,25 +176,10 @@ fn encode(request: &PendingRequest, response: &RuntimeInteractionResponse) -> Re
             return Err(rejected("Answer every question exactly once"));
         }
         for question in questions {
-            let id = question["id"]
-                .as_str()
-                .ok_or_else(|| rejected("Malformed runtime question"))?;
             let values = answers
-                .get(id)
+                .get(&question.id)
                 .ok_or_else(|| rejected("Missing question answer"))?;
-            if values.is_empty() || values.iter().any(|v| v.is_empty()) {
-                return Err(rejected("Question answers must contain text"));
-            }
-            if question["isOther"] != true {
-                if let Some(options) = question["options"].as_array() {
-                    if values
-                        .iter()
-                        .any(|v| !options.iter().any(|option| option["label"] == v.as_str()))
-                    {
-                        return Err(rejected("Answer is outside the offered choices"));
-                    }
-                }
-            }
+            question.validate_answer(values).map_err(rejected)?;
         }
         return Ok(json!({"answers":answers.iter().map(|(id, answers)| (id.clone(), json!({"answers":answers}))).collect::<serde_json::Map<_,_>>() }));
     }
@@ -196,10 +212,13 @@ mod tests {
         let request = PendingRequest {
             native_id: json!(1),
             choices: BTreeMap::new(),
-            questions: Some(json!([
-                {"id":"choice","options":[{"label":"One"}],"isOther":false},
-                {"id":"text","isOther":true,"isSecret":true}
-            ])),
+            questions: Some(
+                serde_json::from_value(json!([
+                    {"id":"choice","question":"Pick","options":[{"label":"One"}],"isOther":false},
+                    {"id":"text","question":"Secret","isOther":true,"isSecret":true}
+                ]))
+                .unwrap(),
+            ),
         };
         let answers = |choice: &str, second_id: &str| RuntimeInteractionResponse::Answer {
             answers: BTreeMap::from([

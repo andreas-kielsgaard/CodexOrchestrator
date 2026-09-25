@@ -355,11 +355,15 @@ export interface SessionInteractionDto {
       description?: string;
       scope?: string | null;
     }>;
+    /** Any subset of the features a provider offers: options, several selections, a typed
+     * answer alongside or instead of the options, and secret input. */
     questions?: Array<{
       id: string;
+      header?: string;
       question: string;
       isSecret?: boolean;
       isOther?: boolean;
+      multiSelect?: boolean;
       options?: Array<{ label: string; description: string }>;
     }>;
   };
