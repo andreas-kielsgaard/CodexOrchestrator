@@ -1,6 +1,6 @@
 # Execution configuration
 
-Execution configuration connects a session to a native Codex environment and records the product choices used to run it. The important distinction is between **what is configured**, **what is currently available**, and **what a particular invocation actually received**.
+Execution configuration connects a session to a provider setup (a native Codex home or a Claude configuration folder) and records the product choices used to run it. The important distinction is between **what is configured**, **what is currently available**, and **what a particular invocation actually received**.
 
 This guide describes main `60c3798` (14 September 2026). [Agent Sessions](agent-session/README.md) owns conversation and lifecycle behavior; [Workflows](workflows.md) owns recipe-driven creation and delivery.
 
@@ -9,6 +9,7 @@ This guide describes main `60c3798` (14 September 2026). [Agent Sessions](agent-
 | Layer                     | What it owns                                                                                                                           | Lifetime                                                                                        |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Native Codex home         | Filesystem identity, native configuration, authentication and native skill/tool environment selected through `CODEX_HOME`              | Registered independently; continuity checked before use.                                        |
+| Claude setup              | A Claude configuration folder and the `claude` CLI that uses it; authentication stays with Claude                                      | Registered per device; the default folder registers itself once it exists.                     |
 | Runtime Profile           | Observed models, reasoning modes, sandbox capabilities, skills and application-provided tools for the selected runtime                 | Read from the selected home and working context.                                                |
 | Capability Profile        | A saved set of allowed capabilities and optional model/reasoning/sandbox defaults                                                      | Revisioned shared configuration; one saved profile is selected as the ordinary-session default. |
 | Node Profile              | A Workflow node's embedded allowed capabilities and pinned defaults                                                                    | Part of its recipe; copying produces independent values.                                        |
@@ -95,7 +96,17 @@ The agent-provider migration pass (`feature/claude-support`, 25 September 2026) 
 - *Mentions.* `$name` is Orchid's own mention syntax for every skill. Orchid resolves mentions into `invokedSkillIds`. A profiled Session invokes only the skills its manifest pinned.
 - *Delivery.* `read_skill` serves every pinned skill, whatever its source. A provider may also deliver an invoked skill in its native form. Codex attaches the skills its own catalogue discovered as skill input items. Skill content is never copied into a provider's native home.
 
-**Launch intent.** Orchestration and Harness launches state their intent rather than native settings: managed MCP servers (URL, optional bearer, tools, required), unattended approval, a trusted application workspace, and sandbox network access. Codex translates this intent. It sends managed servers as thread configuration, with their bearers passed in the process environment, and sends the other intents as process-level configuration values.
+**Launch intent.** Orchestration and Harness launches state their intent rather than native settings: managed MCP servers (URL, optional bearer, tools, required), unattended approval, a trusted application workspace, and sandbox network access. Each provider translates this intent. Codex sends managed servers as thread configuration, with their bearers passed in the process environment, and sends the other intents as process-level configuration values. Claude translates it into CLI arguments; see [the Claude implementation](architecture/agent-provider-integration.md#current-claude-implementation).
+
+## Provider setups and routes across providers
+
+**Setups.** Each provider lists its setups on a device: a native folder, the CLI executable, and whether it is signed in. **Technical Settings → Devices** shows every provider's setups together, and each provider has its own setup section (**Codex profiles**, **Claude setups**). Remote devices list no setups yet.
+
+**Routes.** A Capability Profile route names a device, a provider and one of that provider's setups. A profile can have routes to both providers. It has at most one route per provider per device, and a model ID belongs to one route per device, so the device and the chosen model decide which provider runs a prompt. Choosing a model from another route records a target change to that route before the next prompt.
+
+**Model catalogue.** Each route's models are cached by device, provider and configuration in `execution_route_model_catalogues` (schema v60). The composer offers the models of every route on the session's device.
+
+**Access modes.** Access modes are part of the provider's exposure. Claude offers full access only, so a launch that asks a Claude route for a restricted mode fails with the unsupported-intent error.
 
 ## Harness configuration and delivery
 
@@ -129,7 +140,9 @@ A recorded development view may display editable configuration and simulated Com
 | Responsibility                                                   | Current source                                                                                                                                                                                                                                     |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Native registration, continuity and readiness                    | [`runtime/providers/codex/profiles/`](../src-tauri/src/runtime/providers/codex/profiles/)                                                                                                                                                          |
-| Native settings UI                                               | [`NativeProfileSettings.tsx`](../src/features/agentProviders/codex/profiles/NativeProfileSettings.tsx)                                                                                                                                             |
+| Native settings UI                                               | [`NativeProfileSettings.tsx`](../src/features/agentProviders/codex/profiles/NativeProfileSettings.tsx), [`ClaudeSetupSettings.tsx`](../src/features/agentProviders/claude/ClaudeSetupSettings.tsx)                                                  |
+| Claude setups, discovery and launch preparation                  | [`runtime/providers/claude/`](../src-tauri/src/runtime/providers/claude/), [`providers/claude/discovery.rs`](../crates/orchid-engine/src/providers/claude/discovery.rs)                                                                            |
+| Routes across providers                                          | [`capability_profile.rs`](../src-tauri/src/execution_configuration/capability_profile.rs), [`setupRoutes.ts`](../src/application/agentProviders/setupRoutes.ts)                                                                                     |
 | Profiles, defaults, resolution, digest, shared catalog           | [`execution_configuration/`](../src-tauri/src/execution_configuration/)                                                                                                                                                                            |
 | Product skill roots and `$name` mentions                         | [`product_skills.rs`](../src-tauri/src/execution_configuration/product_skills.rs), [`skill_mentions.rs`](../src-tauri/src/execution_configuration/skill_mentions.rs)                                                                                |
 | Codex environment observation and effective launch configuration | [`app_server/environment.rs`](../crates/orchid-engine/src/providers/codex/app_server/environment.rs), [`app_server/mod.rs`](../crates/orchid-engine/src/providers/codex/app_server/mod.rs), [`configuration.rs`](../crates/orchid-engine/src/providers/codex/app_server/configuration.rs) |

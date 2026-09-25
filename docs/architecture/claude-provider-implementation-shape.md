@@ -1,6 +1,19 @@
 # Claude provider: implementation shape
 
-Status: plan, 2026-09-25. Nothing in this document is implemented yet. It builds on the provider boundary described in [agent-provider-integration.md](agent-provider-integration.md) and the parked items in [agent-provider-boundary-implementation-shape.md](agent-provider-boundary-implementation-shape.md).
+Status: implemented, 2026-09-25, in stages 1–7 below. The current behavior is described in [agent-provider-integration.md](agent-provider-integration.md), [Agent Sessions](../agent-session/README.md) and [execution configuration](../execution-configuration.md); this document keeps the plan and its decisions. It builds on the parked items in [agent-provider-boundary-implementation-shape.md](agent-provider-boundary-implementation-shape.md).
+
+Where the implementation differs from the plan below:
+
+- **Native conversations** stay on the runtime binding for the current provider, with the others parked in a table, instead of a list per session (section 5).
+- **Claude connection** only writes. Claude handles its input in order, so Orchid never waits on its own control requests and drops their responses; the `initialize` response carries account details that must not be stored as evidence.
+- **Steering** relies on `--replay-user-messages`: Claude echoes each user message when it takes the message in, and the invocation finishes at the result after the last echo. A message sent while a tool runs joins the running turn, so counting results alone would not work.
+- **Claude setup folders**: the default folder is not passed as `CLAUDE_CONFIG_DIR`, because naming it moves Claude's global settings file into the folder.
+- **Managed tool lists**: Claude has no per-server tool filter. The listed tools are pre-approved, and the server's other tools remain visible; Orchid's servers authorize their own tools.
+- **Ignoring user rules** is `--setting-sources ""`.
+- **Invoked skills** are not delivered in Claude's native form; the prompt names them and `read_skill` serves Orchid's pinned skills.
+- **Claude setups** are created with the other execution-configuration tables, not in a numbered migration.
+- **Runtime failure guidance**: Codex home guidance moved to `src/features/agentProviders/codex/CodexHomeGuidance.tsx`, composed through `RuntimeFailureGuidance.tsx`.
+- **Live check**: `live_claude_code` in the engine drives the installed CLI through a reply, a resume, a question and a cancel. It passed against Claude Code 2.1.282 on Linux. `bypassPermissions` is refused under root, so full access was not exercised live.
 
 ## Functional target
 
