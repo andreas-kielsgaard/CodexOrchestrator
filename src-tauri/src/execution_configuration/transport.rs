@@ -40,7 +40,7 @@ pub(crate) struct NativeProfileSkillInput {
 pub(crate) async fn load_native_profile_skills(
     state: State<'_, CapabilityProfileTauriState>,
     input: NativeProfileSkillInput,
-) -> Result<crate::runtime::codex::app_server::skills::CodexSkillCatalogue, String> {
+) -> Result<crate::runtime::providers::codex::app_server::skills::CodexSkillCatalogue, String> {
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service

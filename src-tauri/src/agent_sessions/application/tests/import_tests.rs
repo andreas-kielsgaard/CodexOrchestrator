@@ -165,8 +165,8 @@ fn uncertain_fork_is_not_repeated_and_changed_home_does_not_fork() {
 #[test]
 #[ignore = "Run through the isolated Node app-server contract fixture"]
 fn installed_codex_import_reopens_and_continues_through_orchid() {
-    use crate::native_profiles::NativeProfileService;
-    use crate::runtime::codex::app_server::{history::CodexHistoryReader, CodexAppServerRuntime};
+    use crate::runtime::providers::codex::profiles::NativeProfileService;
+    use crate::runtime::providers::codex::app_server::{history::CodexHistoryReader, CodexAppServerRuntime};
     let home = std::env::var("ORCHID_IMPORT_CONTRACT_HOME").unwrap();
     let root = std::path::PathBuf::from(std::env::var("ORCHID_IMPORT_CONTRACT_ROOT").unwrap());
     let program = std::env::var("CODEX_APP_SERVER_CONTRACT_PROGRAM").unwrap();

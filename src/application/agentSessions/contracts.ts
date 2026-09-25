@@ -255,6 +255,10 @@ export type AgentSessionUpdateDto =
 
 export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void;
 
+export type RuntimeInteractionResponseDto =
+  | { readonly kind: 'choose'; readonly choiceId: string }
+  | { readonly kind: 'answer'; readonly answers: Readonly<Record<string, readonly string[]>> };
+
 export interface AgentSessionClient {
   readonly historySource?: import('./liveHistory').AgentSessionHistorySource;
   resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;
@@ -268,7 +272,7 @@ export interface AgentSessionClient {
     sessionId: string;
     invocationId: string;
     requestId: string;
-    response: unknown;
+    response: RuntimeInteractionResponseDto;
   }): Promise<void>;
 
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
@@ -328,10 +332,10 @@ export interface SessionInteractionDto {
     supported?: boolean;
     kind?: string;
     choices?: Array<{
+      id: string;
       label: string;
       description?: string;
       scope?: string | null;
-      response: unknown;
     }>;
     questions?: Array<{
       id: string;

@@ -1,6 +1,5 @@
-use super::runtime_profile::{
-    validate_identifier, CapabilitySet, CodexPersonality, RuntimeSelections,
-};
+use super::runtime_profile::{validate_identifier, CapabilitySet, RuntimeSelections};
+use orchid_engine::providers::codex::options::CodexPersonality;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

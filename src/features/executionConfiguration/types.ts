@@ -8,7 +8,7 @@ import type {
   RuntimeSelectionsDto,
   SandboxModeDto,
 } from '../../application/executionConfiguration';
-export type { HarnessInferenceRouteOption } from '../../application/executionConfiguration';
+export type { HarnessInferenceRouteOption } from '../../application/agentProviders';
 
 /** The capability contract is already browser-safe; editors consume it directly. */
 export type CapabilitySetViewModel = CapabilitySetDto;

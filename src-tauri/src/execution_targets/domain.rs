@@ -68,8 +68,8 @@ impl ExecutionBinding {
                 "Execution binding requires a device, name, and configuration reference".into(),
             );
         }
-        if self.provider != "codex" {
-            return Err("Remote session execution currently supports Codex only".into());
+        if self.provider.trim().is_empty() {
+            return Err("Execution binding requires an agent provider".into());
         }
         if let ExecutionConnection::Ssh {
             target,

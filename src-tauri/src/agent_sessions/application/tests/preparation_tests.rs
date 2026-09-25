@@ -156,7 +156,8 @@ impl PreparationFixture {
             },
         };
         let endpoints = Arc::new(
-            ExecutionEndpoints::new(source.clone(), runtime.clone())
+            ExecutionEndpoints::new("codex", source.clone(), runtime.clone())
+                .unwrap()
                 .with_runtime(&old_execution, old_runtime.clone()),
         );
         let profiles = Arc::new(
@@ -296,15 +297,9 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
         .unwrap();
     assert_eq!(invocation.status, AgentInvocationStatus::Pending);
     assert_eq!(invocation.submitted_text, "Frozen submitted text");
-    assert_eq!(
-        fixture
-            .app
-            .load_session(&ack.session_id)
-            .unwrap()
-            .session
-            .execution_target,
-        Some(fixture.old_target.clone())
-    );
+    assert_ne!(ack.session_id, fixture.session.id);
+    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
+    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     input.submitted_text = "Next draft changed".into();
     input.model = Some("node-default".into());
@@ -362,15 +357,9 @@ fn native_failure_preserves_previous_binding_and_retry_reuses_resolved_workspace
             .status
             .is_terminal()
     });
-    assert_eq!(
-        fixture
-            .app
-            .load_session(&ack.session_id)
-            .unwrap()
-            .session
-            .execution_target,
-        Some(fixture.old_target.clone())
-    );
+    assert_ne!(ack.session_id, fixture.session.id);
+    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
+    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
     assert!(fixture.preparation(&ack.invocation_id).can_retry);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     // The accepted destination stays fixed when the editable selection changes elsewhere.
@@ -433,15 +422,9 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
         .canceled
         .contains(&ack.invocation_id));
     assert!(fixture.old_runtime.calls.lock().unwrap().is_empty());
-    assert_eq!(
-        fixture
-            .app
-            .load_session(&ack.session_id)
-            .unwrap()
-            .session
-            .execution_target,
-        Some(fixture.old_target.clone())
-    );
+    assert_ne!(ack.session_id, fixture.session.id);
+    assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
+    assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
 }
 
 mod persistence;

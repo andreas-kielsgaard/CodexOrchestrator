@@ -1,12 +1,12 @@
 import { useId, useState } from 'react';
-import type { SessionInteractionDto } from '../../application/agentSessions';
+import type { RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
 
 export function SessionInteractions({
   interactions,
   onRespond,
 }: {
   interactions: readonly SessionInteractionDto[];
-  onRespond?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  onRespond?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
 }) {
   return (
     <div className="session-interactions" aria-label="Turn inputs and requests">
@@ -30,14 +30,14 @@ function RuntimeRequest({
   onRespond,
 }: {
   request: SessionInteractionDto;
-  onRespond?: (invocationId: string, requestId: string, response: unknown) => Promise<void>;
+  onRespond?: (invocationId: string, requestId: string, response: RuntimeInteractionResponseDto) => Promise<void>;
 }) {
   const choiceDescriptionId = useId();
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = request.state === 'pending' && Boolean(onRespond);
-  const respond = async (response: unknown) => {
+  const respond = async (response: RuntimeInteractionResponseDto) => {
     if (!pending || busy) return;
     setBusy(true);
     setError(null);
@@ -76,7 +76,7 @@ function RuntimeRequest({
             type="button"
             aria-describedby={choice.description ? `${choiceDescriptionId}-${index}` : undefined}
             disabled={!pending || busy}
-            onClick={() => void respond(choice.response)}
+            onClick={() => void respond({ kind: 'choose', choiceId: choice.id })}
           >
             {choice.label}
           </button>
@@ -123,8 +123,9 @@ function RuntimeRequest({
           }
           onClick={() =>
             void respond({
+              kind: 'answer',
               answers: Object.fromEntries(
-                Object.entries(answers).map(([id, answer]) => [id, { answers: [answer] }]),
+                Object.entries(answers).map(([id, answer]) => [id, [answer]]),
               ),
             })
           }

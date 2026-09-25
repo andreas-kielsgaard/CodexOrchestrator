@@ -1,7 +1,7 @@
 use super::runtime_profile::{
-    validate_identifier, validate_selection_availability, CapabilitySet, CodexPersonality,
-    RuntimeSelections,
+    validate_identifier, validate_selection_availability, CapabilitySet, RuntimeSelections,
 };
+use orchid_engine::providers::codex::options::CodexPersonality;
 use crate::agent_sessions::ports::RuntimeSkillInput;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

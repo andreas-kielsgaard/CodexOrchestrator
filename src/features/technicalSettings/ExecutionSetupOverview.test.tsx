@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 
 const nativeClient = {

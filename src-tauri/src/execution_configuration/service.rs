@@ -23,7 +23,7 @@ impl CapabilityProfileService {
         reference: &str,
         cwd: Option<&str>,
     ) -> Result<
-        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
+        orchid_engine::providers::codex::app_server::skills::CodexSkillCatalogue,
         CapabilityProfileServiceError,
     > {
         self.runtime_profile_source

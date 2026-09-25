@@ -494,7 +494,7 @@ impl ManagedPlanBuilderService {
         config_overrides.extend(managed.injection().config_overrides.clone());
         let extension = RuntimeLaunchExtension {
             native_mcp_enabled: None,
-            codex_personality: None,
+            provider_options: None,
             managed_mcp_servers: Vec::new(),
             skill_inputs: Vec::new(),
             ignore_user_rules: false,
@@ -1082,7 +1082,7 @@ mod tests {
         _directory: tempfile::TempDir,
         database_path: PathBuf,
         service: Arc<ManagedPlanBuilderService>,
-        runtime: Arc<crate::runtime::codex::CodexCliRuntime>,
+        runtime: Arc<crate::runtime::providers::codex::CodexCliRuntime>,
         repository: Arc<SqliteOrchestrationRepository>,
         terminal: Arc<(Mutex<Option<AgentInvocation>>, std::sync::Condvar)>,
     }
@@ -1095,7 +1095,7 @@ mod tests {
             drop(crate::storage::open_active_database(&database_path).unwrap());
             let registry = Arc::new(ManagedPlanBuilderRegistry::default());
             let terminal = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
-            let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+            let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
                 "codex", None,
             ));
             let providers = Arc::new(SystemAgentSessionProviders);
@@ -1340,7 +1340,7 @@ mod tests {
     fn context_extension(
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
-        RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
+        RuntimeLaunchExtension { native_mcp_enabled: None, provider_options: None,
             managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
             config_overrides: Vec::new(),
             environment: Vec::new(),
@@ -2418,7 +2418,7 @@ mod tests {
 
         let registry = Arc::new(ManagedPlanBuilderRegistry::default());
         let terminal = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
-        let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+        let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
             "codex", None,
         ));
         let providers = Arc::new(SystemAgentSessionProviders);

@@ -9,7 +9,7 @@ use crate::{
     },
     execution_configuration::{CapabilityProfileService, SelectedRuntimeProfileSource},
     harness_engine::{catalog_service::HarnessCatalogService, HarnessEngineService},
-    native_profiles::NativeProfileService,
+    runtime::providers::codex::profiles::NativeProfileService,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -38,7 +38,7 @@ pub(super) fn compose(
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
     let local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime> =
-        Arc::new(crate::runtime::codex::app_server::CodexAppServerRuntime::system("codex"));
+        Arc::new(crate::runtime::providers::codex::app_server::CodexAppServerRuntime::system("codex"));
     let (selected_runtime_profile, capability_profiles, endpoints) =
         super::execution_configuration::compose(
             database.clone(),
@@ -82,7 +82,7 @@ pub(super) fn compose(
             application: application.clone(),
             homes: native_profiles,
             history: Arc::new(
-                crate::runtime::codex::app_server::history::CodexHistoryReader("codex".into()),
+                crate::runtime::providers::codex::app_server::history::CodexHistoryReader("codex".into()),
             ),
             store: repository,
             lane: std::sync::Mutex::new(()),

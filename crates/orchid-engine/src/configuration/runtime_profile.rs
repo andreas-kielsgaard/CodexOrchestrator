@@ -1,17 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use crate::providers::codex::options::CodexPersonality;
 
 pub const RUNTIME_PROFILE_CONTRACT_VERSION: u32 = 1;
-
-/// A Codex app-server personality override. Absence means the selected Codex home resolves its
-/// own configured default.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexPersonality {
-    None,
-    Friendly,
-    Pragmatic,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]

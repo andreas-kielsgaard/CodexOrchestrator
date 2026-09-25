@@ -117,7 +117,7 @@ pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
         _reference: &str,
         _cwd: Option<&str>,
     ) -> Result<
-        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
+        orchid_engine::providers::codex::app_server::skills::CodexSkillCatalogue,
         SelectedRuntimeProfileSourceError,
     > {
         Err(SelectedRuntimeProfileSourceError::unavailable(

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
 import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
-import { NativeProfileSettings } from '../nativeProfiles/NativeProfileSettings';
+import { NativeProfileSettings } from '../agentProviders/codex/profiles/NativeProfileSettings';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import './technicalSettings.css';

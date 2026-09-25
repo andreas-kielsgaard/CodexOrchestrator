@@ -12,7 +12,7 @@ flowchart TD
     Contracts --> Transport[Tauri client adapters]
     Transport --> Apps[Rust application services]
     Apps --> Persistence[Capability repositories and ActiveDatabase]
-    Apps --> Runtime[Codex app-server and process supervision]
+    Apps --> Runtime[Registered agent provider and process supervision]
     Apps --> Git[Repository and worktree operations]
 ```
 
@@ -27,8 +27,8 @@ There are real unsupported operations in product composition: generic artifact a
 | Responsibility                                                 | Principal source owner                                                                          | Contract explained in                                 |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Durable Session context, invocations and history               | `src-tauri/src/agent_sessions/`; `src/application/agentSessions/`                               | [Agent Sessions](agent-session/README.md)             |
-| Provider interaction and supervised processes                  | `src-tauri/src/runtime/`; `src-tauri/src/active_app/sessions.rs`                                | [Agent Sessions](agent-session/README.md)             |
-| Native homes, profile resolution and identities                | `src-tauri/src/native_profiles/`, `execution_configuration/`, `identities/`                     | [Execution configuration](execution-configuration.md) |
+| Provider interaction and supervised processes                  | `src-tauri/src/runtime/providers/`; `src-tauri/src/active_app/sessions.rs`                      | [Agent provider boundary](architecture/agent-provider-integration.md) |
+| Native homes, profile resolution and identities                | `src-tauri/src/runtime/providers/codex/profiles/`, `execution_configuration/`, `identities/`    | [Execution configuration](execution-configuration.md) |
 | Workflow authoring, compilation, instances and routing         | `src-tauri/src/workflows/`; `src/features/workflows/`                                           | [Workflows](workflows.md)                             |
 | Generic Session Event addressing, materialization and delivery | `src-tauri/src/session_events/`                                                                 | [Workflows](workflows.md)                             |
 | Shared local repository registrations and Git observations     | `src-tauri/src/repository_catalog/`                                                             | [Worktree Review](worktree-review.md)                 |

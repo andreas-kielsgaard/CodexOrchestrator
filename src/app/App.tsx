@@ -113,9 +113,9 @@ import type {
 
 import { FileReviewScreen } from '../features/fileReview';
 
-import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 
-import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
+import type { NativeProfileApplicationConsumer } from '../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 

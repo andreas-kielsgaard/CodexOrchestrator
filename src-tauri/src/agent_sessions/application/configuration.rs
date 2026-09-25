@@ -40,7 +40,12 @@ pub(super) fn pinned_exposure_extension(
 ) -> Result<RuntimeLaunchExtension, String> {
     let pinned = profile.session_profile();
     extension.native_mcp_enabled = pinned.native_mcp_enabled();
-    extension.codex_personality = pinned.codex_personality();
+    extension.provider_options = pinned.codex_personality().map(|personality| {
+        orchid_engine::providers::codex::options::CodexNativeOptions {
+            personality: Some(personality),
+        }
+        .encode()
+    });
     let skills = crate::execution_configuration::validate_session_skill_inputs(
         pinned.session_skill_inputs(),
     )?;
@@ -157,7 +162,7 @@ impl AgentSessionApplication {
         let Ok(catalogue) = source.discover_skills_for_configuration(configuration_ref, cwd) else {
             return Vec::new();
         };
-        crate::runtime::codex::app_server::skills::mentioned(submitted_text, &catalogue)
+        crate::runtime::providers::codex::app_server::skills::mentioned(submitted_text, &catalogue)
             .into_iter()
             .filter_map(|skill| crate::execution_configuration::pin_discovered_skill(skill).ok())
             .collect()

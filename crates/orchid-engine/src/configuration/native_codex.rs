@@ -1,5 +1,5 @@
 use super::*;
-use crate::codex::app_server::environment::CodexEnvironment;
+use crate::providers::codex::app_server::environment::CodexEnvironment;
 use std::collections::{BTreeMap, BTreeSet};
 pub fn runtime_profile(
     native: &CodexEnvironment,

@@ -7,12 +7,12 @@ import {
 } from './transcriptProjector';
 import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
-import type { AgentIdentity } from '../../application/agentSessions';
+import type { AgentIdentity, RuntimeInteractionResponseDto } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
 
 interface AgentSessionTranscriptProps {
-  onRespondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  onRespondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
   transcript: ProjectedTranscript | null;
   content?: readonly ProjectedTranscriptContent[];
   loading: boolean;

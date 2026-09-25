@@ -1,6 +1,12 @@
 use super::{domain::*, remote_runtime::RemoteRuntime, ssh_connection::SshConnection};
 use crate::{
-    agent_sessions::ports::AgentRuntime, execution_configuration::SelectedRuntimeProfileSource,
+    agent_sessions::ports::AgentRuntime,
+    execution_configuration::SelectedRuntimeProfileSource,
+    runtime::providers::{
+        configuration_registry::ProviderConfigurationRegistry,
+        continuation::ProviderContinuationRegistry,
+        runtime_registry::ProviderRuntimeRegistry,
+    },
 };
 use orchid_engine::protocol::{HostCommand, RuntimeCapabilities, WorktreeInstance};
 use std::{
@@ -9,8 +15,9 @@ use std::{
 };
 
 pub(crate) struct ExecutionEndpoints {
-    pub(super) local_source: Arc<dyn SelectedRuntimeProfileSource>,
-    local_runtime: Arc<dyn AgentRuntime>,
+    pub(super) configurations: ProviderConfigurationRegistry,
+    pub(super) continuations: ProviderContinuationRegistry,
+    local_runtimes: ProviderRuntimeRegistry,
     remote_runtimes: Mutex<HashMap<String, Arc<dyn AgentRuntime>>>,
 }
 
@@ -28,14 +35,24 @@ impl ExecutionEndpoints {
         self
     }
     pub(crate) fn new(
+        provider: &str,
         local_source: Arc<dyn SelectedRuntimeProfileSource>,
         local_runtime: Arc<dyn AgentRuntime>,
-    ) -> Self {
-        Self {
-            local_source,
-            local_runtime,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            configurations: ProviderConfigurationRegistry::one(provider, local_source)?,
+            continuations: ProviderContinuationRegistry::default(),
+            local_runtimes: ProviderRuntimeRegistry::one(provider, local_runtime)?,
             remote_runtimes: Default::default(),
-        }
+        })
+    }
+    pub(crate) fn with_continuation(
+        mut self,
+        provider: &str,
+        port: Arc<dyn crate::runtime::providers::continuation::ProviderContinuationPort>,
+    ) -> Result<Self, String> {
+        self.continuations.register(provider, port)?;
+        Ok(self)
     }
     pub(crate) fn describe_runtime(
         &self,
@@ -46,7 +63,8 @@ impl ExecutionEndpoints {
         match &binding.connection {
             ExecutionConnection::Local => Ok(ExecutionTargetRuntime {
                 runtime_profile: self
-                    .local_source
+                    .configurations
+                    .source(&binding.provider)?
                     .profile_for_configuration(&binding.configuration_ref, cwd)
                     .map_err(|e| e.to_string())?,
             }),
@@ -58,6 +76,7 @@ impl ExecutionEndpoints {
                     SshConnection::connect(target, host_executable).map_err(|e| e.to_string())?;
                 let capabilities: RuntimeCapabilities = connection
                     .request(HostCommand::Capabilities {
+                        provider: binding.provider.clone(),
                         configuration_ref: binding.configuration_ref.clone(),
                         working_directory: cwd.map(str::to_owned),
                     })
@@ -74,7 +93,8 @@ impl ExecutionEndpoints {
     ) -> Result<ExecutionBinding, String> {
         if !binding.is_remote() {
             binding.configuration_ref = self
-                .local_source
+                .configurations
+                .source(&binding.provider)?
                 .resolve_configuration_ref(&binding.configuration_ref)
                 .map_err(|e| e.to_string())?;
         }
@@ -107,7 +127,7 @@ impl ExecutionEndpoints {
         binding: &ExecutionBinding,
     ) -> Result<Arc<dyn AgentRuntime>, String> {
         match &binding.connection {
-            ExecutionConnection::Local => Ok(self.local_runtime.clone()),
+            ExecutionConnection::Local => self.local_runtimes.runtime(&binding.provider),
             ExecutionConnection::Ssh { .. } => {
                 let key = serde_json::to_string(binding).map_err(|e| e.to_string())?;
                 let mut runtimes = self

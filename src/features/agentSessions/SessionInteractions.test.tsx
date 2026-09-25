@@ -13,16 +13,13 @@ const request: SessionInteractionDto = {
   content: {
     title: 'Allow this command?',
     choices: [
-      { label: 'Allow once', response: { decision: 'accept' } },
-      { label: 'Decline', response: { decision: 'decline' } },
+      { id: 'allow_once', label: 'Allow once' },
+      { id: 'decline', label: 'Decline' },
     ],
   },
 };
 
-it('explains saved-rule scope and submits the exact offered response', async () => {
-  const response = {
-    decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['git', 'status'] } },
-  };
+it('explains saved-rule scope and submits only the opaque offered choice ID', async () => {
   const respond = vi.fn().mockResolvedValue(undefined);
   render(
     <SessionInteractions
@@ -33,10 +30,10 @@ it('explains saved-rule scope and submits the exact offered response', async () 
             ...request.content,
             choices: [
               {
+                id: 'save_rule',
                 label: 'Allow and save rule',
                 description: 'Allow future matching commands.',
                 scope: 'git status',
-                response,
               },
             ],
           },
@@ -51,14 +48,20 @@ it('explains saved-rule scope and submits the exact offered response', async () 
   await userEvent.click(screen.getByText('Rule scope'));
   expect(screen.getByText('git status')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Allow and save rule' }));
-  expect(respond).toHaveBeenCalledWith('turn', 'approval', response);
+  expect(respond).toHaveBeenCalledWith('turn', 'approval', {
+    kind: 'choose',
+    choiceId: 'save_rule',
+  });
 });
 
 it('sends an explicit offered approval response and disables settled requests', async () => {
   const respond = vi.fn().mockResolvedValue(undefined);
   const { rerender } = render(<SessionInteractions interactions={[request]} onRespond={respond} />);
   await userEvent.click(screen.getByRole('button', { name: 'Allow once' }));
-  expect(respond).toHaveBeenCalledWith('turn', 'approval', { decision: 'accept' });
+  expect(respond).toHaveBeenCalledWith('turn', 'approval', {
+    kind: 'choose',
+    choiceId: 'allow_once',
+  });
   rerender(
     <SessionInteractions interactions={[{ ...request, state: 'answered' }]} onRespond={respond} />,
   );

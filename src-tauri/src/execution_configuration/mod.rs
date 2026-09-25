@@ -7,7 +7,6 @@ mod model_catalogue;
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
 pub(crate) use model_catalogue::{ModelCatalogueView, StoredModelCatalogue};
 mod creation_intent;
-mod native_codex;
 mod quick_features;
 pub(crate) use quick_features::{QuickModel, QuickReasoningMode, QuickSkill, RuntimeQuickFeatures};
 mod node_profile;
@@ -26,7 +25,7 @@ pub(crate) use capability_profile::{
     CapabilityProfile, ModelAllowance, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
 };
 pub(crate) use creation_intent::SessionCreationIntent;
-pub(crate) use native_codex::NativeCodexSelectedRuntimeProfileSource;
+pub(crate) use crate::runtime::providers::codex::configuration::NativeCodexSelectedRuntimeProfileSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
     CapabilityProfileRepository, CapabilityProfileRepositoryError,

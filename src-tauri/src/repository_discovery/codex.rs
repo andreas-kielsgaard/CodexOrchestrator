@@ -36,7 +36,7 @@ struct CodexAppServerSession {
 
 impl CodexAppServerSession {
     fn start() -> Result<Self, String> {
-        let program = crate::runtime::codex::resolve_program("codex".into())?;
+        let program = crate::runtime::providers::codex::resolve_program("codex".into())?;
         let mut child = Command::new(program)
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())

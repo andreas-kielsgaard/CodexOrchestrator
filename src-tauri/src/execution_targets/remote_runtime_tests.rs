@@ -1,4 +1,5 @@
 use super::*;
+use orchid_engine::contracts::RuntimeInteractionResponse;
 use std::{
     collections::HashMap,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -162,6 +163,7 @@ fn closed_idle_connection_is_replaced_before_preflight_and_resume() {
             configuration_ref,
             request: sent,
             external_context_id,
+            ..
         } => {
             assert_eq!(configuration_ref, "pinned-remote-codex");
             assert_eq!(sent, &request);
@@ -187,7 +189,7 @@ fn active_connection_is_not_replaced_for_preflight_or_interaction() {
         .is_err());
     assert!(runtime.cancel_invocation(&request.invocation_id).is_err());
     assert!(runtime
-        .respond(&request.invocation_id, "approval", Value::Bool(true))
+        .respond(&request.invocation_id, "approval", RuntimeInteractionResponse::Choose { choice_id: "allow".into() })
         .is_err());
     assert_eq!(attempts.load(Ordering::SeqCst), 0);
     assert!(replacement.calls.lock().unwrap().is_empty());

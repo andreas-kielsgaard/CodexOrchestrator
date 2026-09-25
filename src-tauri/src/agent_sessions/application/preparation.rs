@@ -149,7 +149,7 @@ impl AgentSessionApplication {
         mut input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         let now = self.clock.now();
-        let session = match &input.session_id {
+        let source_session = match &input.session_id {
             Some(id) => self.load_session(id)?.session,
             None => AgentSession {
                 id: self.ids.session_id(),
@@ -173,7 +173,7 @@ impl AgentSessionApplication {
                 updated_at: now,
             },
         };
-        if session.harness_version.is_some() {
+        if source_session.harness_version.is_some() {
             return Err(AgentSessionApplicationError::invalid(
                 "Mutable execution targets are available for ordinary sessions only",
             ));
@@ -196,6 +196,37 @@ impl AgentSessionApplication {
                 }
             }
         }
+        let creates_destination = input.session_id.is_some()
+            && input.execution_selection.as_ref().is_some_and(|selection| {
+                source_session.execution_target.as_ref().is_some_and(|target| {
+                    target.execution != selection.execution
+                        || target.capability_profile_id != selection.capability_profile_id
+                        || target.capability_profile_revision != selection.capability_profile_revision
+                        || !matches!(&selection.workspace, SessionWorkspaceSelection::Existing { target: selected } if selected == target)
+                })
+            });
+        let session = if creates_destination {
+            AgentSession {
+                id: self.ids.session_id(),
+                title: source_session.title.clone(),
+                execution_target: None,
+                working_directory: None,
+                workspace_origin: None,
+                availability: AgentSessionAvailability::Available,
+                runtime_binding: AgentRuntimeBinding {
+                    external_context_id: None,
+                    runtime_version: self.runtime_version.clone(),
+                },
+                requested_options: source_session.requested_options.clone(),
+                session_profile: None,
+                harness_version: None,
+                assigned_identity: source_session.assigned_identity.clone(),
+                created_at: now,
+                updated_at: now,
+            }
+        } else {
+            source_session.clone()
+        };
         let id = input.submission_id.clone();
         let pending = AgentInvocation {
             id: id.clone(),
@@ -222,8 +253,8 @@ impl AgentSessionApplication {
             error: None,
             can_retry: false,
             selection: input.execution_selection,
-            source_target: session.execution_target.clone(),
-            source_binding: session.runtime_binding.clone(),
+            source_target: source_session.execution_target.clone(),
+            source_binding: source_session.runtime_binding.clone(),
             prepared_binding: None,
             resolved_target: None,
             accepted_working_directory: input.working_directory.clone(),
@@ -237,9 +268,7 @@ impl AgentSessionApplication {
             sandbox_mode: input.sandbox_mode,
             delivery_started: false,
         };
-        let new_session = input
-            .session_id
-            .is_none()
+        let new_session = (input.session_id.is_none() || creates_destination)
             .then(|| (session.clone(), input.folder_target.map(Into::into)));
         self.repository
             .accept_preparation(new_session, pending, preparation)

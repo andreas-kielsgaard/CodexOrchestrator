@@ -67,7 +67,7 @@ impl AgentSessionImportStore for SqliteAgentSessionRepository {
             let session = &receipt.session;
             validate_session(session).map_err(contract_error)?;
             insert_session(tx, session)?;
-            crate::native_profiles::session_binding::insert_import_binding(tx, session.id.as_str(), &receipt.home, &timestamp(session.created_at))
+            crate::runtime::providers::codex::profiles::session_binding::insert_import_binding(tx, session.id.as_str(), &receipt.home, &timestamp(session.created_at))
                 .map_err(|e| RepositoryError::new(RepositoryErrorKind::Conflict, e))?;
             for (ordinal, turn) in fork.turns.iter().enumerate() {
                 let id = AgentInvocationId::new(format!("{}-import-{ordinal:08}", session.id.as_str())).map_err(contract_error)?;

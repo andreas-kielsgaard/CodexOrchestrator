@@ -1281,7 +1281,7 @@ mod tests {
         repository::SqliteAgentSessionRepository,
     };
     #[cfg(feature = "live-tests")]
-    use crate::runtime::codex::CodexCliRuntime;
+    use crate::runtime::providers::codex::CodexCliRuntime;
     #[cfg(feature = "live-tests")]
     use crate::runtime::processes::ProcessLaunchSpec;
     #[cfg(feature = "live-tests")]

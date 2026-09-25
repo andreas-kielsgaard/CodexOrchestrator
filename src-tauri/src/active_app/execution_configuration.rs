@@ -1,7 +1,7 @@
 //! The selected native source and the saved Capability Profile catalogue share one identity.
 use crate::{
     agent_sessions::application::SessionWorkspaces, execution_configuration::*,
-    native_profiles::NativeProfileService,
+    runtime::providers::codex::profiles::NativeProfileService,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -27,7 +27,20 @@ pub(super) fn compose(
             .with_otp_skill_roots(otp_skill_roots),
     );
     let endpoints = Arc::new(
-        crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
+        crate::execution_targets::endpoints::ExecutionEndpoints::new(
+            "codex",
+            source.clone(),
+            local_runtime,
+        )?
+        .with_continuation(
+            "codex",
+            Arc::new(
+                crate::runtime::providers::codex::continuation::CodexContinuationPort::new(
+                    "codex",
+                    source.clone(),
+                ),
+            ),
+        )?,
     );
     let service = Arc::new(
         CapabilityProfileService::new(

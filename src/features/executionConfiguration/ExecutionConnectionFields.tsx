@@ -90,17 +90,17 @@ export function ExecutionConnectionFields({
         </>
       )}
       <label className="execution-configuration__field">
-        <span>Codex configuration</span>
+        <span>Provider configuration</span>
         <input
-          aria-label="Codex configuration reference"
+          aria-label="Provider configuration reference"
           value={value.configurationRef}
-          placeholder={value.connection.kind === 'local' ? 'selected' : 'codex-default'}
+          placeholder={value.connection.kind === 'local' ? 'selected' : 'provider-default'}
           onChange={(event) => onChange({ ...value, configurationRef: event.target.value })}
         />
         <small>
           {value.connection.kind === 'ssh'
-            ? 'Named configuration on the Orchid host. Codex runs and signs in on that device.'
-            : 'Use selected to follow the selected local Codex home, or enter a local native profile ID.'}
+            ? 'Named provider configuration on the Orchid host.'
+            : 'Use selected to follow the selected local provider configuration, or enter a registered configuration ID.'}
         </small>
       </label>
     </div>

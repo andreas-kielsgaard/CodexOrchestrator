@@ -1409,7 +1409,7 @@ impl PostConfirmationTransitionService {
                         .map_err(TransitionError::Unavailable)?;
                     let mut config_overrides = bootstrap_harness.runtime_config_overrides();
                     config_overrides.extend(managed.injection().config_overrides.clone());
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
+                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, provider_options: None,
                         managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![managed.injection().environment.clone()],
@@ -1570,7 +1570,7 @@ impl PostConfirmationTransitionService {
                         .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
                     let mut config_overrides = harness.runtime_config_overrides();
                     config_overrides.extend(injection.config_overrides);
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
+                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, provider_options: None,
                         managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                         config_overrides,
                         environment: vec![injection.environment],
@@ -1692,7 +1692,7 @@ impl PostConfirmationTransitionService {
                                 requested_options: Some(harness.runtime_options()),
                             },
                         },
-                        Some(RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
+                        Some(RuntimeLaunchExtension { native_mcp_enabled: None, provider_options: None,
                             managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
                             config_overrides,
                             environment: vec![injection.environment],
@@ -2091,7 +2091,7 @@ mod tests {
                 WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
             },
         },
-        runtime::codex::CodexCliRuntime,
+        runtime::providers::codex::CodexCliRuntime,
     };
     #[cfg(feature = "live-tests")]
     use crate::agent_sessions::domain::{AgentInvocation, ToolActivityPhase};
@@ -4901,7 +4901,7 @@ mod tests {
             })
             .unwrap();
 
-        let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+        let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
             "codex", None,
         ));
         let notifier = Arc::new(LiveTransitionNotifier::default());
@@ -8718,7 +8718,7 @@ mod tests {
         let fixture = Fixture::unstarted();
         let home = PrivateCodexHome::new(fixture._directory.path()).expect("private Codex home");
         let scope = ScopedCodexHome::set(home.path());
-        let executable = crate::runtime::codex::resolve_program("codex".into())
+        let executable = crate::runtime::providers::codex::resolve_program("codex".into())
             .expect("resolve installed native Codex executable");
         let output = Command::new(&executable)
             .args(["doctor", "--json"])

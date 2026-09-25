@@ -9,6 +9,7 @@ use crate::agent_sessions::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use orchid_engine::contracts::RuntimeInteractionResponse;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
@@ -46,7 +47,7 @@ pub(crate) struct RespondToRuntimeRequestCommand {
     pub(crate) session_id: AgentSessionId,
     pub(crate) invocation_id: AgentInvocationId,
     pub(crate) request_id: String,
-    pub(crate) response: Value,
+    pub(crate) response: RuntimeInteractionResponse,
 }
 
 use crate::agent_sessions::interactions::{project_interactions, SessionInteraction};

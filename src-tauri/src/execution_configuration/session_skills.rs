@@ -84,7 +84,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn pin_discovered_skill(
-    skill: &orchid_engine::codex::app_server::skills::CodexSkill,
+    skill: &orchid_engine::providers::codex::app_server::skills::CodexSkill,
 ) -> Result<RuntimeSkillInput, String> {
     let path = Path::new(&skill.path)
         .canonicalize()

@@ -3,11 +3,11 @@ import { ModalDialog } from '../../components/ModalDialog';
 import {
   displayCodexHomePath,
   localCodexRoutes,
-} from '../../application/executionConfiguration';
+} from '../../application/agentProviders/codex/localRoutes';
 import type {
   NativeProfile,
   NativeProfileClient,
-} from '../../infrastructure/nativeProfiles/nativeProfileClient';
+} from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import type {
   DeviceCommandSpecDto,
   ExecutionDeviceConfigurationDto,

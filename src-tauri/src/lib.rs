@@ -6,7 +6,6 @@ mod execution_targets;
 mod git_process;
 mod harness_engine;
 mod identities;
-mod native_profiles;
 mod otp_api;
 mod otp_host;
 mod otp_packages;

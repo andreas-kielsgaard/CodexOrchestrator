@@ -1,6 +1,6 @@
 //! Destination-side execution ownership. Product history stays with the desktop application.
 use crate::{
-    codex::app_server::{
+    providers::codex::app_server::{
         environment::{CodexEnvironmentReader, CodexEnvironmentSource},
         CodexAppServerRuntime,
     },
@@ -31,8 +31,14 @@ pub struct HostConfiguration {
 #[serde(rename_all = "camelCase")]
 pub struct CodexConfiguration {
     pub id: String,
+    #[serde(default = "codex_provider")]
+    pub provider: String,
     pub executable: String,
     pub home: PathBuf,
+}
+
+fn codex_provider() -> String {
+    "codex".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,13 +113,19 @@ impl Host {
             .configurations
             .iter()
             .map(|config| {
-                (
+                if config.provider != "codex" {
+                    return Err(unavailable(format!(
+                        "Agent provider `{}` is not registered on this Orchid host",
+                        config.provider
+                    )));
+                }
+                Ok((
                     config.id.clone(),
                     Arc::new(CodexAppServerRuntime::system(&config.executable))
                         as Arc<dyn AgentRuntime>,
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<HashMap<_, _>, RuntimePortError>>()?;
         Ok(Self {
             configuration,
             sessions_directory,
@@ -129,6 +141,20 @@ impl Host {
             .iter()
             .find(|config| config.id == id)
             .ok_or_else(|| unavailable(format!("Unknown host execution configuration: {id}")))
+    }
+
+    fn provider_configuration(
+        &self,
+        provider: &str,
+        id: &str,
+    ) -> Result<&CodexConfiguration, RuntimePortError> {
+        let configuration = self.configuration(id)?;
+        if configuration.provider != provider {
+            return Err(unavailable(format!(
+                "Execution configuration `{id}` does not belong to agent provider `{provider}`"
+            )));
+        }
+        Ok(configuration)
     }
 
     fn runtime(&self, id: &str) -> Result<Arc<dyn AgentRuntime>, RuntimePortError> {
@@ -212,50 +238,62 @@ impl Host {
             )
             .map_err(unavailable),
             HostCommand::ExportContinuation {
+                provider,
                 configuration_ref,
                 external_context_id,
             } => {
+                if provider != "codex" {
+                    return Err(unavailable(format!(
+                        "Agent provider `{provider}` is not registered on this Orchid host"
+                    )));
+                }
                 self.assert_native_idle(&configuration_ref, &external_context_id)?;
-                let config = self.configuration(&configuration_ref)?;
-                serde_json::to_value(crate::codex::app_server::continuation::export(
-                    &config.executable,
-                    &config.home,
-                    external_context_id.as_str(),
-                )?)
+                let config = self.provider_configuration(&provider, &configuration_ref)?;
+                serde_json::to_value(
+                    crate::providers::codex::app_server::continuation::encode(
+                        crate::providers::codex::app_server::continuation::export(
+                            &config.executable,
+                            &config.home,
+                            external_context_id.as_str(),
+                        )?,
+                    )?,
+                )
                 .map_err(unavailable)
             }
             HostCommand::InstallContinuation {
+                provider,
                 configuration_ref,
                 continuation,
             } => {
-                let id =
-                    ExternalRuntimeContextId::new(&continuation.thread_id).map_err(unavailable)?;
+                let _ = self.provider_configuration(&provider, &configuration_ref)?;
+                let native =
+                    crate::providers::codex::app_server::continuation::decode(&continuation)?;
+                let id = ExternalRuntimeContextId::new(&native.thread_id).map_err(unavailable)?;
                 self.assert_native_idle(&configuration_ref, &id)?;
                 let config = self.configuration(&configuration_ref)?;
-                crate::codex::app_server::continuation::install(
+                crate::providers::codex::app_server::continuation::install(
                     &config.executable,
                     &config.home,
-                    &continuation,
+                    &native,
                 )?;
                 Ok(Value::Null)
             }
             HostCommand::PrepareInvocation {
+                provider,
                 configuration_ref,
                 request,
                 external_context_id,
-            } => self.launch_invocation(
-                configuration_ref,
-                request,
-                external_context_id,
-                output,
-                true,
-            ),
+            } => {
+                let _ = self.provider_configuration(&provider, &configuration_ref)?;
+                self.launch_invocation(configuration_ref, request, external_context_id, output, true)
+            }
             HostCommand::DeliverPreparedInvocation { invocation_id } => {
                 self.invocation_runtime(&invocation_id)?
                     .deliver_prepared_invocation(&invocation_id)?;
                 Ok(Value::Null)
             }
             HostCommand::Describe => serde_json::to_value(HostDescription {
+                contract_version: HOST_PROTOCOL_VERSION,
                 device_id: self.configuration.device_id.clone(),
                 device_name: self.configuration.device_name.clone(),
                 configurations: self
@@ -264,7 +302,7 @@ impl Host {
                     .iter()
                     .map(|config| HostConfigurationDescription {
                         id: config.id.clone(),
-                        provider_kind: "codex".into(),
+                        provider_kind: config.provider.clone(),
                     })
                     .collect(),
             })
@@ -275,10 +313,11 @@ impl Host {
             } => serde_json::to_value(list_worktrees(&repository_root, branch_ref.as_deref())?)
                 .map_err(unavailable),
             HostCommand::Capabilities {
+                provider,
                 configuration_ref,
                 working_directory,
             } => {
-                let config = self.configuration(&configuration_ref)?;
+                let config = self.provider_configuration(&provider, &configuration_ref)?;
                 let cwd = working_directory.map(PathBuf::from);
                 let reader = CodexEnvironmentReader::new(&config.executable);
                 let native = reader.read(config.home.clone(), cwd.clone())?;
@@ -292,25 +331,25 @@ impl Host {
                     .map_err(unavailable)
             }
             HostCommand::Preflight {
+                provider,
                 configuration_ref,
                 mode,
                 options,
-            } => serde_json::to_value(
-                self.runtime(&configuration_ref)?
+            } => {
+                let _ = self.provider_configuration(&provider, &configuration_ref)?;
+                serde_json::to_value(self.runtime(&configuration_ref)?
                     .preflight_invocation(mode, &options)?,
-            )
-            .map_err(unavailable),
+                ).map_err(unavailable)
+            },
             HostCommand::Invoke {
+                provider,
                 configuration_ref,
                 request,
                 external_context_id,
-            } => self.launch_invocation(
-                configuration_ref,
-                request,
-                external_context_id,
-                output,
-                false,
-            ),
+            } => {
+                let _ = self.provider_configuration(&provider, &configuration_ref)?;
+                self.launch_invocation(configuration_ref, request, external_context_id, output, false)
+            }
             HostCommand::Respond {
                 invocation_id,
                 request_id,
@@ -701,10 +740,10 @@ mod tests {
             &self,
             id: &AgentInvocationId,
             request: &str,
-            response: Value,
+            response: RuntimeInteractionResponse,
         ) -> Result<(), RuntimePortError> {
             assert_eq!(request, "approval-1");
-            assert_eq!(response, json!({"decision":"accept"}));
+            assert_eq!(response, RuntimeInteractionResponse::Choose { choice_id: "accept".into() });
             let active = self.active.lock().unwrap();
             let (invocation, sink) = active.as_ref().unwrap();
             assert_eq!(&invocation.invocation_id, id);
@@ -743,6 +782,7 @@ mod tests {
                 device_id: "server".into(),
                 device_name: "Server".into(),
                 configurations: vec![CodexConfiguration {
+                    provider: "codex".into(),
                     id: "codex-default".into(),
                     executable: "fake-codex".into(),
                     home: native_home.clone(),
@@ -768,6 +808,7 @@ mod tests {
         };
         let commands = [
             HostCommand::Invoke {
+                provider: "codex".into(),
                 configuration_ref: "codex-default".into(),
                 request: request.clone(),
                 external_context_id: None,
@@ -775,7 +816,7 @@ mod tests {
             HostCommand::Respond {
                 invocation_id: request.invocation_id.clone(),
                 request_id: "approval-1".into(),
-                response: json!({"decision":"accept"}),
+                response: RuntimeInteractionResponse::Choose { choice_id: "accept".into() },
             },
             HostCommand::Cancel {
                 invocation_id: request.invocation_id.clone(),
@@ -815,6 +856,7 @@ mod tests {
         continuation.invocation_id = AgentInvocationId::new("invocation-2").unwrap();
         host.execute(
             HostCommand::Invoke {
+                provider: "codex".into(),
                 configuration_ref: "codex-default".into(),
                 request: continuation.clone(),
                 external_context_id: binding.external_context_id.clone(),
@@ -837,6 +879,7 @@ mod tests {
         assert!(host
             .execute(
                 HostCommand::Invoke {
+                    provider: "codex".into(),
                     configuration_ref: "codex-default".into(),
                     request: continuation,
                     external_context_id: binding.external_context_id
@@ -934,6 +977,7 @@ mod tests {
             device_id: "remote".into(),
             device_name: "Remote".into(),
             configurations: vec![CodexConfiguration {
+                provider: "codex".into(),
                 id: "codex".into(),
                 executable: "fake".into(),
                 home: folder.path().into(),
@@ -966,6 +1010,7 @@ mod tests {
         let capture = Arc::new(Capture::default());
         host.execute(
             HostCommand::PrepareInvocation {
+                provider: "codex".into(),
                 configuration_ref: "codex".into(),
                 request: request.clone(),
                 external_context_id: Some(external.clone()),
@@ -983,6 +1028,7 @@ mod tests {
         assert!(host
             .execute(
                 HostCommand::PrepareInvocation {
+                    provider: "codex".into(),
                     configuration_ref: "codex".into(),
                     request: blocked,
                     external_context_id: Some(external)

@@ -48,7 +48,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             )
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
         transaction
-            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::execution_devices::SCHEMA)
@@ -177,7 +177,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             )
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
         transaction
-            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::execution_devices::SCHEMA)
@@ -187,21 +187,21 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
         if current_version <= 21 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V22_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile readiness schema: {error}")
                 })?;
         }
         if current_version <= 22 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V23_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile attention schema: {error}")
                 })?;
         }
         if current_version <= 23 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V24_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile producer-attempt schema: {error}")
                 })?;
@@ -220,21 +220,21 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
             }
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V25_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native execution-mode authority schema: {error}")
                 })?;
         }
         if current_version <= 25 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V26_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native full-access canary schema: {error}")
                 })?;
         }
         if current_version <= 26 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V27_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V27_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native login-attempt schema: {error}")
                 })?;
@@ -250,7 +250,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if legacy_setup_attempts {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V28_MIGRATION)
+                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V28_MIGRATION)
                     .map_err(|error| {
                         format!("Unable to migrate native setup-attempt evidence schema: {error}")
                     })?;
@@ -258,35 +258,35 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         if current_version <= 28 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V29_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V29_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy schema: {error}")
                 })?;
         }
         if current_version <= 29 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V30_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V30_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy invariants: {error}")
                 })?;
         }
         if current_version <= 30 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V31_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V31_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption evidence: {error}")
                 })?;
         }
         if current_version <= 31 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V32_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V32_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption confirmations: {error}")
                 })?;
         }
         if current_version <= 32 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V33_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V33_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native canary receipt classification: {error}")
                 })?;
@@ -302,7 +302,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if !versioned_danger_authorization {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_MIGRATION)
+                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_MIGRATION)
                     .map_err(|error| {
                         format!("Unable to migrate native danger authorization evidence: {error}")
                     })?;
@@ -318,7 +318,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             if legacy_full_access_canary {
                 transaction
                     .execute_batch(
-                        crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
+                        crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
                     )
                     .map_err(|error| {
                         format!("Unable to migrate native full-access canary evidence: {error}")
@@ -328,7 +328,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if current_version <= 34 {
             transaction
                 .execute_batch(
-                    crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
                 )
                 .map_err(|error| {
                     format!("Unable to migrate native MCP reporting dispatch claims: {error}")
@@ -440,7 +440,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         )
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
     transaction
-        .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     transaction
         .execute_batch(crate::execution_devices::SCHEMA)

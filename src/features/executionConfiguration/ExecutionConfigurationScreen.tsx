@@ -1,9 +1,9 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
-import { localCodexRoutes } from '../../application/executionConfiguration';
+import { localCodexRoutes } from '../../application/agentProviders/codex/localRoutes';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,

@@ -5,7 +5,7 @@ import { DraftWorkspace } from '../../components/draftWorkspace';
 import { repairClients } from '../workflowAuthoring/testFixtures';
 import { ExecutionConfigurationScreen } from './ExecutionConfigurationScreen';
 import type { CapabilityProfileDraft } from './types';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 
 const nativeProfiles = {
   load: vi.fn(async () => ({

@@ -328,7 +328,7 @@ export function StandaloneAgentSessionScreen({
             view.selection.model &&
             !targetDraft.loading &&
             !models.includes(view.selection.model)
-          ? `Model ${view.selection.model} is unavailable on the selected Codex route.`
+          ? `Model ${view.selection.model} is unavailable on the selected provider route.`
           : hasRuntimeFacts &&
               view.selection.reasoningMode &&
               !targetDraft.loading &&

@@ -3,7 +3,7 @@ import type { AgentRuntimeFailureDto } from '../../application/agentSessions';
 import type {
   NativeProfileApplicationConsumer,
   NativeProfileCurrentSelection,
-} from '../../infrastructure/nativeProfiles/nativeProfileConsumer';
+} from '../../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 
 interface AgentSessionRuntimeGuidanceContextValue {
   readonly consumer?: Pick<NativeProfileApplicationConsumer, 'currentSelection'>;

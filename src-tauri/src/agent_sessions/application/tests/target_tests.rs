@@ -35,7 +35,8 @@ fn remote_target_preserves_linux_path_and_routes_continuation_without_local_laun
     ));
     let target = remote_target();
     let endpoints = Arc::new(
-        ExecutionEndpoints::new(source, harness.runtime.clone())
+        ExecutionEndpoints::new("codex", source, harness.runtime.clone())
+            .unwrap()
             .with_runtime(&target.execution, remote.clone()),
     );
     let folder = tempfile::tempdir().unwrap();
@@ -93,11 +94,13 @@ fn cancellation_uses_the_bound_remote_runtime() {
     let target = remote_target();
     let endpoints = Arc::new(
         ExecutionEndpoints::new(
+            "codex",
             Arc::new(FixedSelectedRuntimeProfileSource(
                 test_selected_runtime_profile(),
             )),
             harness.runtime.clone(),
         )
+        .unwrap()
         .with_runtime(&target.execution, remote.clone()),
     );
     let app = harness.application.with_execution_endpoints(endpoints);
@@ -189,9 +192,10 @@ fn profiled_first_send_freezes_target_and_followup_uses_its_endpoint() {
     let selected_runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let source = Arc::new(ConfiguredSource::default());
     let endpoints = Arc::new(ExecutionEndpoints::new(
+        "codex",
         source.clone(),
         selected_runtime.clone(),
-    ));
+    ).unwrap());
     let profiles = Arc::new(
         CapabilityProfileService::new(
             Arc::new(InMemoryCapabilityProfileRepository::default()),

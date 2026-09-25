@@ -8,6 +8,7 @@ import type {
 import { CapabilityModelPickerDialog } from './CapabilityModelPickerDialog';
 import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import type { HarnessInferenceRouteOption } from './types';
+import { CodexPersonalityField } from '../agentProviders/codex/CodexPersonalityField';
 
 export const REASONING_ORDER = [
   'none',
@@ -229,31 +230,7 @@ function RouteCapabilities({
   };
   return (
     <div className="capability-route__configuration">
-      <section aria-labelledby={`${route.routeId}-personality`}>
-        <div className="capability-route__section-heading">
-          <div>
-            <h4 id={`${route.routeId}-personality`}>Codex personality</h4>
-            <p>Override the selected Codex profile default for sessions launched on this route.</p>
-          </div>
-          <label>
-            <span className="sr-only">Codex personality</span>
-            <select
-              value={route.codexPersonality ?? 'inherit'}
-              onChange={(event) => onChange({
-                ...route,
-                codexPersonality: event.currentTarget.value === 'inherit'
-                  ? null
-                  : event.currentTarget.value as 'none' | 'friendly' | 'pragmatic',
-              })}
-            >
-              <option value="inherit">Use Codex profile default</option>
-              <option value="none">None</option>
-              <option value="friendly">Friendly</option>
-              <option value="pragmatic">Pragmatic</option>
-            </select>
-          </label>
-        </div>
-      </section>
+      <CodexPersonalityField route={route} onChange={onChange} />
       <section aria-labelledby={`${route.routeId}-models`}>
         <div className="capability-route__section-heading">
           <div>

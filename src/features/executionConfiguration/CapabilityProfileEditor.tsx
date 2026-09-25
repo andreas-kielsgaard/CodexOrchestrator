@@ -88,15 +88,15 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
       ? [
           {
             id: 'codex-profile-mcps',
-            label: 'Codex profile MCP tools',
-            detail: 'MCP servers configured by this Codex profile.',
+            label: 'Provider configuration MCP tools',
+            detail: 'MCP servers exposed by the selected provider configuration.',
           },
         ]
       : [
           {
             id: 'codex-profile-skills',
-            label: 'Skills discovered by Codex',
-            detail: 'Skills registered by the selected Codex profile.',
+            label: 'Provider-discovered skills',
+            detail: 'Skills registered by the selected provider configuration.',
           },
           {
             id: 'orchid-skills',

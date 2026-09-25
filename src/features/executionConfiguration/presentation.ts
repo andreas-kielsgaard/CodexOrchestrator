@@ -99,7 +99,7 @@ export function runtimeProfileViewModel(
     },
     lockedSelections: runtime.locked,
     notes: [
-      'Capabilities come from the Codex configuration on this profile’s device. Session creation also reads the selected worktree’s configuration.',
+      'Capabilities come from the provider configuration on this profile’s device. Session creation also reads the selected worktree’s configuration.',
     ],
   };
 }

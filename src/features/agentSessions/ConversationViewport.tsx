@@ -3,7 +3,7 @@ import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
-import type { SessionInteractionDto } from '../../application/agentSessions';
+import type { RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   projectedTranscriptContent,
@@ -30,7 +30,7 @@ export interface ConversationViewportComposerTarget {
   steeringAvailable?: boolean;
   needsWorkingDirectory?: boolean;
   interactions?: readonly SessionInteractionDto[];
-  respondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  respondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
   sessionId: string | null;
   draft: string;
   workingDirectory: string;

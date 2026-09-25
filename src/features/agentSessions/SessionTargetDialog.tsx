@@ -370,7 +370,9 @@ export function SessionTargetDialog({
                     </h4>
                     {device.profiles.map((profile) => (
                       <div className="session-target-profile" key={profile.capabilityProfileId}>
-                        <p>{profile.capabilityProfileName} · Codex</p>
+                        <p>
+                          {profile.capabilityProfileName} · {profile.execution.provider}
+                        </p>
                         {profile.error ? (
                           <p role="status" className="session-target-unavailable">
                             Unavailable: {profile.error}

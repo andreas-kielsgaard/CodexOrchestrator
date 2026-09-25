@@ -28,14 +28,16 @@ Groups show five sessions initially with **Show more**; Pinned shows all. Drag t
 | -------------------- | -------------------------------------------------------------------------------------------------------- |
 | Local Session ID     | Stable application identity used to load the conversation and relate it to product records.              |
 | Invocation ID        | One submitted turn and its lifecycle. A session can contain many invocations.                            |
-| Provider context ID  | Codex's external thread identity, recorded separately and used for continuation.                         |
+| Provider context ID  | The selected provider's external context identity, scoped to that provider/configuration/device.         |
 | Session availability | Whether the session can accept work; completing a turn does not close the session.                       |
 | Invocation status    | Pending, running, completed, failed, canceled, or interrupted.                                           |
 | Runtime interaction  | A steering input or provider request correlated to the active invocation, with its own recorded outcome. |
 
 Only one invocation can be active in a session. Separate sessions can run concurrently. A follow-up resumes the external provider context when one exists; neither the local Session ID nor the invocation ID is a substitute for it.
 
-Production uses **Codex app-server**, behind the provider-neutral `AgentRuntime` port. The adapter owns executable resolution, provider messages, start/resume, steering, requests, and interruption. The older `codex exec` adapter is retained in test-only modules.
+Production currently registers **Codex app-server** behind the provider-neutral `AgentRuntime` port. Provider runtime, configuration, options, interaction encoding, and continuation are separate contracts; see the [agent provider boundary](../architecture/agent-provider-integration.md). The Codex adapter owns executable resolution, native messages, start/resume, steering, requests, and interruption.
+
+Once a session has a concrete provider/device/configuration/capability-profile/workspace binding, selecting a different binding creates a destination session. The source session and its history remain unchanged. Provider-native continuation can be installed only through the matching provider's continuation implementation.
 
 Each invocation has a supervised app-server process. The supervisor owns process handles, input/output, terminal observation, and shutdown. On Windows, the factories launch suspended children and attach a kill-on-close Job Object before resuming them. The old July recovery evidence's direct-child-only limit belongs to that older checkpoint.
 
@@ -69,7 +71,7 @@ Session history is not an orchestration event store. A model's prose, final resp
 | Creation, invocation, updates, requests and reconciliation | [`agent_sessions/application/`](../../src-tauri/src/agent_sessions/application/)                                                                                                                                 |
 | Ordered history, profiles and logical addresses            | [`agent_sessions/repository/`](../../src-tauri/src/agent_sessions/repository/)                                                                                                                                   |
 | Retained workspace allocation                              | [`agent_sessions/workspace.rs`](../../src-tauri/src/agent_sessions/workspace.rs)                                                                                                                                 |
-| Codex protocol and process ownership                       | [`runtime/codex/app_server/`](../../src-tauri/src/runtime/codex/app_server/), [`runtime/processes/`](../../src-tauri/src/runtime/processes/)                                                                     |
+| Codex protocol and process ownership                       | [`runtime/providers/codex/app_server/`](../../src-tauri/src/runtime/providers/codex/app_server/), [`runtime/processes/`](../../src-tauri/src/runtime/processes/)                                                   |
 | Production selection and notification fan-out              | [`active_app/sessions.rs`](../../src-tauri/src/active_app/sessions.rs), [`session_notifications.rs`](../../src-tauri/src/active_app/session_notifications.rs)                                                    |
 | Frontend clients, collection, conversation and projection  | [`application/agentSessions/`](../../src/application/agentSessions/), [`infrastructure/agentSessions/`](../../src/infrastructure/agentSessions/), [`features/agentSessions/`](../../src/features/agentSessions/) |
 
