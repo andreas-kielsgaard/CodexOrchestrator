@@ -1,12 +1,47 @@
 use super::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
-    CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
+    CancelAgentInvocationCommand, CreateAgentSessionCommand, ProviderLaunchPreparation,
     SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 mod import_tests;
+
+/// Test composition: register fakes as the `codex` provider, served by this application's runtime.
+impl AgentSessionApplication {
+    pub(crate) fn with_profile_source(self, source: Arc<dyn ProviderConfigurationSource>) -> Self {
+        self.with_codex_parts(|providers| providers.configurations.replace("codex", source))
+    }
+
+    pub(crate) fn with_launch_preparation(
+        self,
+        preparation: Arc<dyn ProviderLaunchPreparation>,
+    ) -> Self {
+        self.with_codex_parts(|providers| providers.launches.replace("codex", preparation))
+    }
+
+    fn with_codex_parts(
+        mut self,
+        register: impl FnOnce(&mut crate::runtime::providers::registrations::ProviderRegistrations),
+    ) -> Self {
+        let mut providers = self
+            .endpoints
+            .as_ref()
+            .map(|endpoints| endpoints.providers().clone())
+            .unwrap_or_default();
+        if providers.runtimes.find("codex").is_none() {
+            providers.runtimes.replace("codex", self.runtime.clone());
+        }
+        register(&mut providers);
+        let endpoints = match &self.endpoints {
+            Some(endpoints) => endpoints.with_providers(providers),
+            None => crate::execution_targets::endpoints::ExecutionEndpoints::new(providers),
+        };
+        self.endpoints = Some(Arc::new(endpoints));
+        self
+    }
+}
 mod preparation_tests;
 mod repair_tests;
 mod skill_mention_tests;
@@ -160,9 +195,13 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
         .expect("Identity definition");
     let adapter = Arc::new(AgentSessionEventAdapter::new(
-        application.clone(),
+        Arc::new(
+            application
+                .as_ref()
+                .clone()
+                .with_profile_source(profile_source.clone()),
+        ),
         repository,
-        profile_source.clone(),
         identities,
     ));
     let event_store =
@@ -822,7 +861,7 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
         providers,
         Some("codex-test".into()),
     )
-    .with_native_profile_launch_authority(authority.clone());
+    .with_launch_preparation(authority.clone());
     let session = application
         .create_session(CreateAgentSessionCommand {
             title: None,
@@ -895,7 +934,7 @@ fn managed_profile_authority_failure_is_durable_and_prevents_provider_preflight_
         providers,
         None,
     )
-    .with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+    .with_launch_preparation(Arc::new(RejectingProfileAuthority));
     let session = application
         .create_session(CreateAgentSessionCommand {
             title: None,
@@ -1881,7 +1920,7 @@ fn harness_resolution_application(
         Some("codex-test".into()),
     )
     .with_session_harness_version_resolver(resolver)
-    .with_native_profile_launch_authority(native_authority.clone())
+    .with_launch_preparation(native_authority.clone())
     .with_session_harness_launch_authority(harness_authority.clone());
     (
         application,
@@ -1965,9 +2004,10 @@ impl SessionHarnessVersionResolver for RecordingHarnessVersionResolver {
     }
 }
 
-impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
+impl ProviderLaunchPreparation for RecordingProfileAuthority {
     fn prepare_launch(
         &self,
+        _: &orchid_engine::contracts::ProviderConfigurationRef,
         session_id: &AgentSessionId,
         _: &AgentInvocationId,
         resuming: bool,
@@ -1995,9 +2035,10 @@ impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
 
 struct RejectingProfileAuthority;
 
-impl NativeProfileLaunchAuthority for RejectingProfileAuthority {
+impl ProviderLaunchPreparation for RejectingProfileAuthority {
     fn prepare_launch(
         &self,
+        _: &orchid_engine::contracts::ProviderConfigurationRef,
         _: &AgentSessionId,
         _: &AgentInvocationId,
         _: bool,

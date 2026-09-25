@@ -52,11 +52,11 @@ impl Error for CapabilityProfileRepositoryError {}
 pub(crate) trait CapabilityProfileRepository: Send + Sync {
     fn model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &crate::execution_targets::domain::ExecutionRouteRef,
     ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError>;
     fn save_model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &crate::execution_targets::domain::ExecutionRouteRef,
         catalogue: &super::StoredModelCatalogue,
     ) -> Result<(), CapabilityProfileRepositoryError>;
     fn default_profile(

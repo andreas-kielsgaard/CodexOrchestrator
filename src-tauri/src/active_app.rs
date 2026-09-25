@@ -121,7 +121,7 @@ pub(crate) fn run() {
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
-            let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
+            let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
                 database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
             execution_targets.synchronize_devices()?;
@@ -136,7 +136,6 @@ pub(crate) fn run() {
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
                     application.clone(),
                     repository.clone(),
-                    selected_runtime_profile.clone(),
                     identities.clone(),
                 ).with_capability_profiles(capability_profiles.clone()),
             );

@@ -26,7 +26,7 @@ impl AgentSessionApplication {
             return Ok(existing);
         }
         let source = self
-            .profile_source()
+            .configuration_source(&creation.capability_profile.execution.provider)
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         creation.session_skill_inputs = self
             .compile_capability_skill_inputs(
@@ -36,7 +36,7 @@ impl AgentSessionApplication {
             )
             .map_err(SessionDirectoryError::new)?;
         let resolution = SessionProfileResolver::resolve_creation(
-            source,
+            source.as_ref(),
             working_directory.as_deref(),
             creation.clone(),
         )
@@ -162,8 +162,9 @@ impl AgentSessionApplication {
             )
         })?;
         let source = self
-            .profile_source()
+            .configuration_source(&creation.session_profile().configuration().provider)
             .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        let source = source.as_ref();
         let cwd = history.session.working_directory.as_deref();
         let selections = match direct_user_options {
             Some(options) => {

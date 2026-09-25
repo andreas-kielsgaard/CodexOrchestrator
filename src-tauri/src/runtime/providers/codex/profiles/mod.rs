@@ -3815,93 +3815,6 @@ pub(crate) struct ResolvedNativeCodexHome {
     pub(crate) readiness: NativeProfileReadiness,
 }
 
-/// Codex prepares only Codex configurations; another provider's reference is never reinterpreted.
-fn codex_configuration_id(
-    configuration: &orchid_engine::contracts::ProviderConfigurationRef,
-) -> Result<&str, String> {
-    if configuration.provider != orchid_engine::providers::codex::options::PROVIDER {
-        return Err(format!(
-            "Codex cannot prepare a launch for agent provider `{}`",
-            configuration.provider
-        ));
-    }
-    Ok(&configuration.configuration_id)
-}
-
-impl crate::agent_sessions::application::NativeProfileLaunchAuthority for NativeProfileService {
-    fn bound_configuration_ref(
-        &self,
-        session_id: &crate::agent_sessions::domain::AgentSessionId,
-    ) -> Result<Option<String>, String> {
-        self.read("read Session native configuration", |c| {
-            c.query_row(
-                "SELECT profile_id FROM agent_session_native_profile_bindings WHERE session_id=?1",
-                [session_id.as_str()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
-        })
-    }
-    fn prepare_destination_launch(
-        &self,
-        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
-        session_id: &crate::agent_sessions::domain::AgentSessionId,
-        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
-        resuming: bool,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        self.prepare_destination_native_launch(
-            codex_configuration_id(configuration)?,
-            session_id.as_str(),
-            invocation_id.as_str(),
-            resuming,
-            extension,
-        )
-    }
-    fn commit_destination(
-        &self,
-        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
-        session_id: &crate::agent_sessions::domain::AgentSessionId,
-    ) -> Result<(), String> {
-        let home = self.resolve_configuration_home(codex_configuration_id(configuration)?)?;
-        self.write("commit Session native destination",|tx| {
-            tx.execute("INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES(?1,?2,?3,?4) ON CONFLICT(session_id) DO UPDATE SET profile_id=excluded.profile_id,filesystem_identity=excluded.filesystem_identity,bound_at=excluded.bound_at",params![session_id.as_str(),home.profile_id,home.filesystem_identity,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;Ok(())
-        })
-    }
-
-    fn prepare_configured_launch(
-        &self,
-        configuration: &orchid_engine::contracts::ProviderConfigurationRef,
-        session_id: &crate::agent_sessions::domain::AgentSessionId,
-        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
-        resuming: bool,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        self.prepare_configured_agent_session_launch(
-            codex_configuration_id(configuration)?,
-            session_id.as_str(),
-            invocation_id.as_str(),
-            resuming,
-            extension,
-        )
-    }
-    fn prepare_launch(
-        &self,
-        session_id: &crate::agent_sessions::domain::AgentSessionId,
-        invocation_id: &crate::agent_sessions::domain::AgentInvocationId,
-        resuming: bool,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        self.prepare_managed_agent_session_launch(
-            session_id.as_str(),
-            invocation_id.as_str(),
-            resuming,
-            extension,
-        )
-    }
-}
-
 fn validated_absolute_directory(supplied: &str) -> Result<PathBuf, String> {
     let path = Path::new(supplied);
     if !path.is_absolute() {
@@ -5056,9 +4969,8 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution_configuration::{
-        CodexConfigurationSource, SandboxMode, ProviderConfigurationSource,
-    };
+    use crate::execution_configuration::{ProviderConfigurationSource, SandboxMode};
+    use crate::runtime::providers::codex::configuration::CodexConfigurationSource;
     use std::sync::Barrier;
     use std::thread;
 
@@ -5515,7 +5427,7 @@ mod tests {
         mark_mcp_ready(&service, &first.id);
         let first_home = first.home_path.clone();
         let prepared = service
-            .prepare_managed_agent_session_launch(
+            .prepare_configured_agent_session_launch("selected", 
                 "session-1",
                 "invocation-1",
                 false,
@@ -5541,7 +5453,7 @@ mod tests {
         ).unwrap();
         assert_eq!(stored_path_count, 1);
         assert!(service
-            .prepare_managed_agent_session_launch("session-1", "invocation-1", false, None)
+            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-1", false, None)
             .is_ok());
 
         drop(service);
@@ -5551,16 +5463,16 @@ mod tests {
         )
         .expect("reopen profile service");
         assert!(reopened
-            .prepare_managed_agent_session_launch("session-1", "invocation-2", true, None)
+            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-2", true, None)
             .is_ok());
 
         let second = selected_profile_ready_except_mcp(&reopened);
         mark_mcp_ready(&reopened, &second.id);
         assert!(reopened
-            .prepare_managed_agent_session_launch("session-1", "invocation-3", true, None)
+            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-3", true, None)
             .is_err());
         assert!(reopened
-            .prepare_managed_agent_session_launch(
+            .prepare_configured_agent_session_launch("selected", 
                 "session-2",
                 "invocation-4",
                 false,

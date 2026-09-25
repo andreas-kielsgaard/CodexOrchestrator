@@ -1,8 +1,10 @@
 use super::AgentSessionApplication;
 use crate::{
-    agent_sessions::domain::AgentSessionId, execution_configuration::RuntimeQuickFeatures,
-    execution_targets::domain::SessionExecutionTarget,
+    agent_sessions::domain::AgentSessionId,
+    execution_configuration::RuntimeQuickFeatures,
+    execution_targets::domain::{ExecutionBinding, SessionExecutionTarget},
 };
+use orchid_engine::contracts::ProviderConfigurationRef;
 use std::collections::BTreeSet;
 
 impl AgentSessionApplication {
@@ -25,7 +27,7 @@ impl AgentSessionApplication {
         session_id: Option<&AgentSessionId>,
         working_directory: Option<&str>,
         execution_target: Option<&SessionExecutionTarget>,
-        configuration_ref: Option<&str>,
+        configuration: Option<&ProviderConfigurationRef>,
     ) -> Result<RuntimeQuickFeatures, String> {
         let history = session_id
             .map(|id| self.load_session(id))
@@ -44,7 +46,7 @@ impl AgentSessionApplication {
             cwd,
             defaults,
             expected_profile,
-            configuration_ref,
+            reference,
             allowed_groups,
             allowed_paths,
             allowed_names,
@@ -54,10 +56,16 @@ impl AgentSessionApplication {
                 pinned.verify_digest().map_err(|e| e.to_string())?;
             }
             let expected = pinned.map(|pinned| pinned.session_profile().configuration());
+            let legacy_provider = ExecutionBinding::default().provider;
             let reference = target
-                .map(|target| target.execution.configuration_ref.clone())
-                .or_else(|| expected.map(|expected| expected.configuration_id.clone()))
-                .or_else(|| self.profile_source().ok().and_then(|source| source.configuration_ref_for_session(history.session.id.as_str()).ok().flatten()))
+                .map(|target| target.execution.configuration())
+                .or_else(|| expected.cloned())
+                .or_else(|| {
+                    self.configuration_source(&legacy_provider)
+                        .ok()
+                        .and_then(|source| source.configuration_ref_for_session(history.session.id.as_str()).ok().flatten())
+                        .map(|id| ProviderConfigurationRef::new(&legacy_provider, id))
+                })
                 .ok_or("This older Session has no provider configuration binding; its original skill catalogue cannot be identified.")?;
             (
                 history.session.working_directory.as_deref(),
@@ -97,11 +105,9 @@ impl AgentSessionApplication {
                     .and_then(|profiles| profiles.default_profile().ok()),
             };
             let reference = target
-                .map(|target| target.execution.configuration_ref.clone())
-                .or_else(|| configuration_ref.map(str::to_owned))
-                .unwrap_or_else(|| {
-                    crate::execution_targets::domain::ExecutionBinding::default().configuration_ref
-                });
+                .map(|target| target.execution.configuration())
+                .or_else(|| configuration.cloned())
+                .unwrap_or_else(|| ExecutionBinding::default().configuration());
             let allowed_groups = capability
                 .as_ref()
                 .and_then(|profile| {
@@ -131,9 +137,9 @@ impl AgentSessionApplication {
             )
         };
         let mut features = self
-            .profile_source()
+            .configuration_source(&reference.provider)
             .map_err(|e| e.to_string())?
-            .quick_features_for_configuration(&configuration_ref, cwd)
+            .quick_features_for_configuration(&reference.configuration_id, cwd)
             .map_err(|e| e.to_string())?;
         if expected_profile.is_some_and(|expected| features.configuration.as_ref() != Some(expected)) {
             return Err("The selected runtime profile no longer matches this Session.".into());

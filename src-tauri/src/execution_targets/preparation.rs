@@ -110,8 +110,9 @@ impl ExecutionEndpoints {
         let payload: orchid_engine::contracts::provider::ProviderContinuationPayload =
             match &source.connection {
             ExecutionConnection::Local => self
+                .providers
                 .continuations
-                .port(&source.provider)?
+                .get(&source.provider)?
                 .export(&source.configuration_ref, external_id)?,
             ExecutionConnection::Ssh {
                 target,
@@ -127,8 +128,9 @@ impl ExecutionEndpoints {
         };
         match &destination.connection {
             ExecutionConnection::Local => self
+                .providers
                 .continuations
-                .port(&destination.provider)?
+                .get(&destination.provider)?
                 .install(&destination.configuration_ref, &payload),
             ExecutionConnection::Ssh {
                 target,

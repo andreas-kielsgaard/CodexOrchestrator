@@ -57,6 +57,10 @@ pub struct RuntimeLaunchExtension {
     /// Process environment written only by the selected provider's own launch preparation, for
     /// example its native home. Product code never writes it.
     pub environment: Vec<(String, String)>,
+    /// The configuration's CLI executable, written only by the provider's own launch preparation.
+    /// Absence uses the provider runtime's default executable.
+    #[serde(default)]
+    pub executable: Option<String>,
     /// Neutral, application-provenance text delivered before the initial user prompt. The
     /// persisted invocation remains the user's submitted text and generic callers leave this absent.
     pub initial_prompt_prefix: Option<InitialPromptPrefix>,

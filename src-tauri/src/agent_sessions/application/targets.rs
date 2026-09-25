@@ -39,7 +39,12 @@ impl AgentSessionApplication {
                         .map_err(AgentSessionApplicationError::invalid)
                 }
             }
-            None => Ok(self.runtime.clone()),
+            None => match &self.endpoints {
+                Some(endpoints) => endpoints
+                    .local_runtime(&super::configuration::session_configuration(session).provider)
+                    .map_err(AgentSessionApplicationError::invalid),
+                None => Ok(self.runtime.clone()),
+            },
         }
     }
     pub(super) fn runtime_for_session_id(

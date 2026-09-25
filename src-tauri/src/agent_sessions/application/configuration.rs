@@ -196,7 +196,7 @@ impl AgentSessionApplication {
             .filter(|input| skill_mentions::mentions(submitted_text, &input.name))
             .map(|input| input.id.clone())
             .collect::<Vec<_>>();
-        let catalogue = (!pinned_profile).then(|| self.profile_source().ok()).flatten().and_then(|source| {
+        let catalogue = (!pinned_profile).then(|| self.configuration_source(&configuration.provider).ok()).flatten().and_then(|source| {
             source
                 .native_skills_for_configuration(&configuration.configuration_id, cwd)
                 .ok()
@@ -244,7 +244,9 @@ impl AgentSessionApplication {
         if route.skill_groups.is_empty() {
             return Ok(Vec::new());
         }
-        let source = self.profile_source().map_err(|error| error.to_string())?;
+        let source = self
+            .configuration_source(&route.execution.provider)
+            .map_err(|error| error.to_string())?;
         let features = source
             .quick_features_for_configuration(configuration_ref, cwd)
             .map_err(|error| error.to_string())?;
@@ -345,14 +347,6 @@ impl AgentSessionApplication {
         self
     }
 
-    pub(crate) fn with_profile_source(
-        mut self,
-        source: Arc<dyn ProviderConfigurationSource>,
-    ) -> Self {
-        self.profile_source = Some(source);
-        self
-    }
-
     /// Orchid-owned skill roots offered with every provider configuration.
     pub(crate) fn with_product_skills(
         mut self,
@@ -362,15 +356,31 @@ impl AgentSessionApplication {
         self
     }
 
-    pub(super) fn profile_source(
+    /// The configuration source of the provider a route or Session runs on.
+    pub(super) fn configuration_source(
         &self,
-    ) -> Result<&dyn ProviderConfigurationSource, SessionConfigurationError> {
-        self.profile_source.as_deref().ok_or_else(|| {
-            SessionConfigurationError::new(
-                SessionConfigurationErrorKind::MissingPinnedProfile,
-                "No runtime profile source is configured",
-            )
-        })
+        provider: &str,
+    ) -> Result<Arc<dyn ProviderConfigurationSource>, SessionConfigurationError> {
+        self.endpoints
+            .as_ref()
+            .ok_or("No execution endpoints are configured".to_string())
+            .and_then(|endpoints| endpoints.configuration_source(provider))
+            .map_err(|message| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::MissingPinnedProfile,
+                    message,
+                )
+            })
+    }
+
+    /// The native launch preparation of a provider, if it has one.
+    pub(super) fn launch_preparation(
+        &self,
+        provider: &str,
+    ) -> Option<Arc<dyn super::ProviderLaunchPreparation>> {
+        self.endpoints
+            .as_ref()
+            .and_then(|endpoints| endpoints.launch_preparation(provider))
     }
 
     pub(crate) fn load_pinned_session_profile(

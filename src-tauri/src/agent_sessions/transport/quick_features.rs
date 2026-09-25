@@ -12,7 +12,7 @@ pub(crate) struct LoadQuickFeaturesInput {
     session_id: Option<AgentSessionId>,
     working_directory: Option<String>,
     folder_target: Option<crate::agent_sessions::organization::SessionFolderTarget>,
-    configuration_ref: Option<String>,
+    configuration: Option<orchid_engine::contracts::ProviderConfigurationRef>,
 }
 
 #[tauri::command]
@@ -34,7 +34,7 @@ pub(crate) async fn load_agent_session_quick_features(
             input.working_directory.as_deref(),
             input.folder_target.as_ref(),
             input.execution_target.as_ref(),
-            input.configuration_ref.as_deref(),
+            input.configuration.as_ref(),
         )
     })
     .await

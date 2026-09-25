@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 59;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 60;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -70,6 +70,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if current_version < 59 {
             crate::runtime::providers::codex::legacy_migration::migrate(&transaction)
                 .map_err(|error| format!("Unable to migrate provider-neutral profiles: {error}"))?;
+        }
+        if current_version < 60 {
+            crate::execution_configuration::migrate_route_model_catalogues(&transaction)?;
         }
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
@@ -564,7 +567,7 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_model_catalogues','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
             [],
             |row| row.get::<_, i64>(0),
         )
@@ -683,16 +686,41 @@ mod tests {
         let connection = Connection::open_in_memory().expect("memory database");
         initialize_active_database(&connection).expect("initialize database");
         connection
-            .execute_batch("DROP TABLE execution_model_catalogues; PRAGMA user_version=54;")
+            .execute_batch("DROP TABLE execution_route_model_catalogues; PRAGMA user_version=54;")
             .expect("simulate predecessor database");
 
         initialize_active_database(&connection).expect("upgrade database");
 
-        assert!(table_exists(&connection, "execution_model_catalogues"));
+        assert!(table_exists(&connection, "execution_route_model_catalogues"));
         assert_eq!(
             pragma_i64(&connection, "user_version"),
             ACTIVE_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn moves_configuration_keyed_model_catalogues_to_the_local_codex_route() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        initialize_active_database(&connection).expect("initialize database");
+        connection
+            .execute_batch(
+                "CREATE TABLE execution_model_catalogues (configuration_ref TEXT PRIMARY KEY, catalogue_json TEXT NOT NULL);
+                 INSERT INTO execution_model_catalogues VALUES ('profile-one','{\"observedAt\":\"t\",\"models\":[]}');
+                 PRAGMA user_version=59;",
+            )
+            .expect("simulate v59 catalogue");
+
+        initialize_active_database(&connection).expect("upgrade database");
+
+        assert!(!table_exists(&connection, "execution_model_catalogues"));
+        let migrated: (String, String, String) = connection
+            .query_row(
+                "SELECT device_id,provider,configuration_ref FROM execution_route_model_catalogues",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("migrated catalogue");
+        assert_eq!(migrated, ("local".into(), "codex".into(), "profile-one".into()));
     }
 
     fn seed_file_review_predecessor(
@@ -796,7 +824,7 @@ mod tests {
                 "execution_default_capability_profile",
                 "execution_device_activity_leases",
                 "execution_devices",
-                "execution_model_catalogues",
+                "execution_route_model_catalogues",
                 "execution_support_attempt_authorizations",
                 "execution_support_grants",
                 "file_review_changed_files",

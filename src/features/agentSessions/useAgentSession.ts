@@ -662,7 +662,10 @@ export function useAgentSession(
           sessionId: null,
           workingDirectory:
             desired.workspace.kind === 'existing' ? desired.workspace.target.path : null,
-          configurationRef: desired.execution.configurationRef,
+          configuration: {
+            provider: desired.execution.provider,
+            configurationId: desired.execution.configurationRef,
+          },
           ...(desired.workspace.kind === 'existing'
             ? { executionTarget: desired.workspace.target }
             : {}),

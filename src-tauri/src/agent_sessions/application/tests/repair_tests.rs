@@ -121,7 +121,7 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
     let mut application = fixture.direct.clone().with_profile_source(source.clone());
     application.capability_profiles = None;
     application
-        .load_quick_features_for_configuration(None, None, None, Some("profile-two"))
+        .load_quick_features_for_configuration(None, None, None, Some(&orchid_engine::contracts::ProviderConfigurationRef::new("codex", "profile-two")))
         .unwrap();
     assert_eq!(*source.0.lock().unwrap(), ["profile-two"]);
 }
@@ -296,12 +296,9 @@ impl Fixture {
             );
         }
         let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(SqliteCapabilityProfileRepository::from_database(
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(SqliteCapabilityProfileRepository::from_database(
                 database.clone(),
-            )),
-            source.clone(),
-        ));
+            ))).with_configuration_source(source.clone()));
         let definition = test_session_creation_request().capability_profile;
         profiles
             .create(
@@ -321,12 +318,7 @@ impl Fixture {
                 .with_capability_profiles(profiles.clone()),
         );
         let adapter = Arc::new(
-            AgentSessionEventAdapter::new(
-                sessions.clone(),
-                repository.clone(),
-                source.clone(),
-                identities,
-            )
+            AgentSessionEventAdapter::new(sessions.clone(), repository.clone(), identities)
             .with_capability_profiles(profiles.clone()),
         );
         let events = Arc::new(SessionEventApplication::new(

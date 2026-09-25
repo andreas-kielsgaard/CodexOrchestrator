@@ -29,14 +29,14 @@ pub(crate) use capability_profile::{
     CAPABILITY_PROFILE_CONTRACT_VERSION, NATIVE_MCP_GROUP, NATIVE_SKILL_GROUP, ORCHID_SKILL_GROUP,
 };
 pub(crate) use creation_intent::SessionCreationIntent;
-pub(crate) use crate::runtime::providers::codex::configuration::CodexConfigurationSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
     CapabilityProfileRepository, CapabilityProfileRepositoryError, ProviderConfigurationSource,
     ProviderConfigurationSourceError, RuntimeSkillRoot,
 };
 pub(crate) use repository::{
-    initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,
+    initialize_capability_profile_storage, migrate_route_model_catalogues,
+    InMemoryCapabilityProfileRepository,
     SqliteCapabilityProfileRepository, CAPABILITY_PROFILE_SCHEMA,
 };
 pub(crate) use resolution::{

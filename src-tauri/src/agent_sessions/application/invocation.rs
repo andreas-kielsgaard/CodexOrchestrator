@@ -461,9 +461,10 @@ impl AgentSessionApplication {
                 launch_extension
             };
             let launch_extension = self.add_workspace_capabilities(launch_extension);
-            let launch_extension = match self.native_profile_launch_authority.as_ref() {
-                Some(authority) => match authority.prepare_configured_launch(
-                    &super::configuration::session_configuration(&session),
+            let configuration = super::configuration::session_configuration(&session);
+            let launch_extension = match self.launch_preparation(&configuration.provider) {
+                Some(preparation) => match preparation.prepare_launch(
+                    &configuration,
                     &session.id,
                     &invocation.id,
                     session.runtime_binding.external_context_id.is_some(),

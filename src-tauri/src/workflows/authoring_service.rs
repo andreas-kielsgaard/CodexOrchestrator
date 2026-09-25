@@ -246,10 +246,7 @@ mod tests {
     }
 
     fn service() -> WorkflowAuthoringService {
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(FixedRuntimeSource(runtime_profile())),
-        ));
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(Arc::new(FixedRuntimeSource(runtime_profile()))));
         profiles
             .create(
                 "capability-default".into(),

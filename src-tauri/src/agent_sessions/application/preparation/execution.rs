@@ -90,8 +90,8 @@ impl AgentSessionApplication {
                 .map(|target| target.execution.clone())
                 .unwrap_or_default();
             if p.source_target.is_none() {
-                if let Some(authority) = &self.native_profile_launch_authority {
-                    if let Some(reference) = authority
+                if let Some(preparation) = self.launch_preparation(&source.provider) {
+                    if let Some(reference) = preparation
                         .bound_configuration_ref(&session.id)
                         .map_err(AgentSessionApplicationError::invalid)?
                     {
@@ -331,9 +331,9 @@ impl AgentSessionApplication {
         let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);
-            if let Some(authority) = &self.native_profile_launch_authority {
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
                 extension = Some(
-                    authority
+                    preparation
                         .prepare_destination_launch(
                             &destination.execution.configuration(),
                             &p.session_id,
@@ -414,8 +414,8 @@ impl AgentSessionApplication {
         p.prepared_binding = Some(binding.clone());
         self.save_progress(&p)?;
         if !destination.execution.is_remote() {
-            if let Some(authority) = &self.native_profile_launch_authority {
-                authority
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
+                preparation
                     .commit_destination(&destination.execution.configuration(), &p.session_id)
                     .map_err(AgentSessionApplicationError::invalid)?;
             }

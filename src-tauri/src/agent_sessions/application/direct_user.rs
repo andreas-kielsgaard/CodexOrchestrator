@@ -203,13 +203,10 @@ impl AgentSessionApplication {
                     )
                 })?
         } else {
-            self.profile_source()?
+            let configuration = pinned.creation_resolution.session_profile().configuration();
+            self.configuration_source(&configuration.provider)?
                 .profile_for_configuration(
-                    &pinned
-                        .creation_resolution
-                        .session_profile()
-                        .configuration()
-                        .configuration_id,
+                    &configuration.configuration_id,
                     history.session.working_directory.as_deref(),
                 )
                 .map_err(|e| SessionConfigurationError::resolution(e.into()))?

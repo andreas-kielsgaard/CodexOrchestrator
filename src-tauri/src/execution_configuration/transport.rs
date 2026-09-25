@@ -25,13 +25,13 @@ pub(crate) struct CapabilityProfileIdInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct NativeProfileInventoryInput {
-    profile_id: String,
+    configuration: orchid_engine::contracts::ProviderConfigurationRef,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct NativeProfileSkillInput {
-    profile_id: String,
+    configuration: orchid_engine::contracts::ProviderConfigurationRef,
     #[serde(default)]
     working_directory: Option<String>,
 }
@@ -44,7 +44,7 @@ pub(crate) async fn load_native_profile_skills(
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
-            .native_skills_for_configuration(&input.profile_id, input.working_directory.as_deref())
+            .native_skills_for_configuration(&input.configuration, input.working_directory.as_deref())
             .map_err(|error| error.to_string())
     })
     .await
@@ -54,7 +54,7 @@ pub(crate) async fn load_native_profile_skills(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ModelCatalogueInput {
-    configuration_ref: String,
+    route: crate::execution_targets::domain::ExecutionRouteRef,
 }
 
 #[tauri::command]
@@ -65,7 +65,7 @@ pub(crate) async fn load_profile_model_catalogue(
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
-            .model_catalogue(&input.configuration_ref)
+            .model_catalogue(&input.route)
             .map_err(|error| error.to_string())
     })
     .await
@@ -110,7 +110,7 @@ pub(crate) fn load_native_profile_capability_inventory(
 ) -> Result<super::NativeCapabilityInventory, String> {
     state
         .service
-        .native_inventory_for_configuration(&input.profile_id)
+        .native_inventory_for_configuration(&input.configuration)
         .map_err(|e| e.to_string())
 }
 

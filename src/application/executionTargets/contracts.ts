@@ -5,12 +5,32 @@ import type {
 export interface ExecutionBindingDto {
   readonly deviceId: string;
   readonly deviceName: string;
-  readonly provider: 'codex';
+  readonly provider: string;
   readonly configurationRef: string;
   readonly connection:
     | { readonly kind: 'local' }
     | { readonly kind: 'ssh'; readonly target: string; readonly hostExecutable: string };
 }
+/** The durable identity of an execution route: a device, an agent provider and its configuration. */
+export interface ExecutionRouteRefDto {
+  readonly deviceId: string;
+  readonly provider: string;
+  readonly configurationRef: string;
+}
+
+export function executionRouteRef(execution: ExecutionRouteRefDto): ExecutionRouteRefDto {
+  return {
+    deviceId: execution.deviceId,
+    provider: execution.provider,
+    configurationRef: execution.configurationRef,
+  };
+}
+
+/** Stable map key for per-route data such as model catalogues. */
+export function executionRouteKey(route: ExecutionRouteRefDto): string {
+  return `${route.deviceId}/${route.provider}/${route.configurationRef}`;
+}
+
 export const localExecutionBinding: ExecutionBindingDto = {
   deviceId: 'local',
   deviceName: 'This laptop',

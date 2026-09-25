@@ -43,10 +43,7 @@ fn service(
     let repository = Arc::new(SqliteAgentSessionRepository::new(conn).unwrap());
     let snapshot = test_selected_runtime_profile();
     let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
-    let profiles = Arc::new(CapabilityProfileService::new(
-        Arc::new(InMemoryCapabilityProfileRepository::default()),
-        source.clone(),
-    ));
+    let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone()));
     profiles
         .create("capabilities".into(), "Default".into(), snapshot.exposure)
         .unwrap();
@@ -196,10 +193,7 @@ fn installed_codex_import_reopens_and_continues_through_orchid() {
         snapshot.locked.sandbox_mode = Some(ExecutionSandboxMode::ReadOnly);
         snapshot.exposure.reasoning_modes = ["low".into()].into_iter().collect();
         let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            source.clone(),
-        ));
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone()));
         profiles
             .create("capabilities".into(), "Default".into(), snapshot.exposure)
             .unwrap();
@@ -219,7 +213,7 @@ fn installed_codex_import_reopens_and_continues_through_orchid() {
             .with_workspaces(
                 SessionWorkspaces::new(root.join("workspaces"), "contract".into()).unwrap(),
             )
-            .with_native_profile_launch_authority(native.clone()),
+            .with_launch_preparation(Arc::new(crate::runtime::providers::codex::launch::CodexLaunchPreparation(native.clone()))),
         );
         AgentSessionImportService {
             application,

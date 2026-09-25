@@ -12,6 +12,7 @@ import type {
   HarnessInferenceRouteOption,
   RuntimeProfileViewModel,
 } from './types';
+import { executionRouteKey } from '../../application/executionTargets/contracts';
 import { CapabilityProfileDialog } from './CapabilityProfileDialog';
 import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import {
@@ -248,7 +249,7 @@ export function CapabilityProfileEditor({
                 models={
                   modelCatalogues
                     ? byKnownOrder(
-                        (modelCatalogues[route.execution.configurationRef]?.models ?? []).map(
+                        (modelCatalogues[executionRouteKey(route.execution)]?.models ?? []).map(
                           (model) => model.id,
                         ),
                         MODEL_ORDER,
@@ -256,7 +257,7 @@ export function CapabilityProfileEditor({
                     : modelOptions
                 }
                 reasoning={reasoningOptions}
-                modelCatalogue={modelCatalogues?.[route.execution.configurationRef]}
+                modelCatalogue={modelCatalogues?.[executionRouteKey(route.execution)]}
                 routeCatalogueEnabled={modelCatalogues !== undefined}
                 mcpGroups={mcpGroups}
                 skillGroups={skillGroups}

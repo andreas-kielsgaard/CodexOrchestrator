@@ -82,23 +82,7 @@ impl NativeProfileService {
         })
     }
 
-    pub(super) fn prepare_managed_agent_session_launch(
-        &self,
-        session_id: &str,
-        invocation_id: &str,
-        resuming: bool,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Result<crate::agent_sessions::ports::RuntimeLaunchExtension, String> {
-        self.prepare_configured_agent_session_launch(
-            "selected",
-            session_id,
-            invocation_id,
-            resuming,
-            extension,
-        )
-    }
-
-    pub(super) fn prepare_configured_agent_session_launch(
+    pub(crate) fn prepare_configured_agent_session_launch(
         &self,
         reference: &str,
         session_id: &str,
@@ -183,7 +167,7 @@ impl NativeProfileService {
 }
 
 impl NativeProfileService {
-    pub(super) fn prepare_destination_native_launch(
+    pub(crate) fn prepare_destination_native_launch(
         &self,
         reference: &str,
         session_id: &str,
@@ -212,5 +196,20 @@ impl NativeProfileService {
             home.home.to_string_lossy().into_owned(),
         ));
         Ok(extension)
+    }
+}
+
+impl NativeProfileService {
+    /// Binds a Session to the home it now runs on after a target change.
+    pub(crate) fn bind_session_home(&self, reference: &str, session_id: &str) -> Result<(), String> {
+        let home = self.resolve_configuration_home(reference)?;
+        self.write("commit Session native destination", |tx| {
+            tx.execute(
+                "INSERT INTO agent_session_native_profile_bindings(session_id,profile_id,filesystem_identity,bound_at) VALUES(?1,?2,?3,?4) ON CONFLICT(session_id) DO UPDATE SET profile_id=excluded.profile_id,filesystem_identity=excluded.filesystem_identity,bound_at=excluded.bound_at",
+                params![session_id, home.profile_id, home.filesystem_identity, Utc::now().to_rfc3339()],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
     }
 }

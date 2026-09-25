@@ -508,6 +508,11 @@ export interface NativeProfileClient {
   loadSkills(profileId: string, workingDirectory?: string): Promise<NativeCodexSkillCatalogue>;
 }
 
+/** A Codex home profile is a Codex provider configuration. */
+function codexConfiguration(profileId: string) {
+  return { provider: 'codex', configurationId: profileId };
+}
+
 export function createNativeProfileClient(invokeCommand: Invoke = invoke): NativeProfileClient {
   let queue = Promise.resolve();
   const read = () => invokeCommand<unknown>('load_native_profile_query').then(decodeNativeProfileQuery);
@@ -541,11 +546,16 @@ export function createNativeProfileClient(invokeCommand: Invoke = invoke): Nativ
     openInExplorer: (profileId) => invokeCommand<void>('open_native_profile_in_explorer', id(profileId)),
     loadHarnessTools: (profileId) => invokeCommand<NativeHarnessToolInventory>(
       'load_native_profile_capability_inventory',
-      id(profileId),
+      { input: { configuration: codexConfiguration(profileId) } },
     ),
     loadSkills: (profileId, workingDirectory) => invokeCommand<NativeCodexSkillCatalogue>(
       'load_native_profile_skills',
-      { input: { profileId, workingDirectory: workingDirectory ?? null } },
+      {
+        input: {
+          configuration: codexConfiguration(profileId),
+          workingDirectory: workingDirectory ?? null,
+        },
+      },
     ),
   };
 }

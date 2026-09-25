@@ -1,6 +1,6 @@
 use crate::{
     agent_sessions::domain::ExternalRuntimeContextId,
-    execution_configuration::CodexConfigurationSource,
+    runtime::providers::codex::configuration::CodexConfigurationSource,
     runtime::providers::continuation::ProviderContinuationPort,
 };
 use orchid_engine::{

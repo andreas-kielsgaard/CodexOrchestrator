@@ -4,6 +4,11 @@ import type { NativeProfileClient } from '../../infrastructure/agentProviders/co
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
 import { localCodexRoutes } from '../../application/agentProviders/codex/localRoutes';
+import {
+  executionRouteKey,
+  executionRouteRef,
+  type ExecutionRouteRefDto,
+} from '../../application/executionTargets/contracts';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
@@ -123,16 +128,18 @@ export function ExecutionConfigurationScreen({
   );
   const selectedRef = useRef(selectedId);
   const loadModelCatalogue = useCallback(
-    async (configurationRef: string) => {
+    async (execution: ExecutionRouteRefDto) => {
       if (!client.loadProfileModelCatalogue) return;
+      const route = executionRouteRef(execution);
+      const key = executionRouteKey(route);
       try {
-        const catalogue = await client.loadProfileModelCatalogue(configurationRef);
-        setModelCatalogues((current) => ({ ...current, [configurationRef]: catalogue }));
+        const catalogue = await client.loadProfileModelCatalogue(route);
+        setModelCatalogues((current) => ({ ...current, [key]: catalogue }));
       } catch (cause) {
         setModelCatalogues((current) => ({
           ...current,
-          [configurationRef]: {
-            configurationRef,
+          [key]: {
+            route,
             observedAt: null,
             models: [],
             observationError: errorMessage(cause),
@@ -148,10 +155,11 @@ export function ExecutionConfigurationScreen({
     for (const route of next.routePolicies) {
       if (
         !draft.routePolicies.some(
-          (previous) => previous.execution.configurationRef === route.execution.configurationRef,
+          (previous) =>
+            executionRouteKey(previous.execution) === executionRouteKey(route.execution),
         )
       )
-        void loadModelCatalogue(route.execution.configurationRef);
+        void loadModelCatalogue(route.execution);
     }
   };
   useDraftCloseWarning(() => workspace.dirty());
@@ -190,12 +198,15 @@ export function ExecutionConfigurationScreen({
       selectedRef.current = selected?.capabilityProfileId ?? null;
       workspace.selectedKey = selectedRef.current;
       setDraft(nextDraft);
-      for (const reference of new Set(
+      const routes = new Map(
         nextProfiles.flatMap((profile) =>
-          (profile.routePolicies ?? []).map((route) => route.execution.configurationRef),
+          (profile.routePolicies ?? []).map(
+            (route) => [executionRouteKey(route.execution), route.execution] as const,
+          ),
         ),
-      )) {
-        void loadModelCatalogue(reference);
+      );
+      for (const execution of routes.values()) {
+        void loadModelCatalogue(execution);
       }
       void client.loadSelectedRuntimeProfile().then(setRuntime, () => setRuntime(EMPTY_RUNTIME));
     } catch (caught) {
@@ -225,8 +236,7 @@ export function ExecutionConfigurationScreen({
     setSelectedId(profile.capabilityProfileId);
     const next = workspace.load(profile.capabilityProfileId, draftFromProfile(profile));
     setDraft(next);
-    for (const route of next.routePolicies)
-      void loadModelCatalogue(route.execution.configurationRef);
+    for (const route of next.routePolicies) void loadModelCatalogue(route.execution);
     setError(null);
     onSelectionChange?.({ profileId: profile.capabilityProfileId, newProfile: false });
   };

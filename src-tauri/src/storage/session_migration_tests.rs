@@ -320,5 +320,5 @@ fn codex_era_profiles_become_provider_neutral_and_pinned_digests_verify() {
     assert_eq!(resealed_digests[0], resealed_digests[1]);
     assert_eq!(current.digest(), resealed_digests[0]);
     assert_eq!(preparation["resolution"]["sessionProfileDigest"], resealed_digests[0]);
-    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 59);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), crate::storage::ACTIVE_SCHEMA_VERSION);
 }

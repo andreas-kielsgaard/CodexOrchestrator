@@ -108,8 +108,8 @@ it('saves a registered route and cached model choice while runtime observation f
   fixture.configuration.loadSelectedRuntimeProfile = async () => {
     throw new Error('Codex runtime unavailable');
   };
-  fixture.configuration.loadProfileModelCatalogue = async () => ({
-    configurationRef: 'team',
+  fixture.configuration.loadProfileModelCatalogue = async (route) => ({
+    route,
     observedAt: '2026-09-21T12:00:00Z',
     models: [
       {

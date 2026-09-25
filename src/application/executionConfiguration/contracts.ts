@@ -49,7 +49,7 @@ export interface RuntimeProfileSnapshotDto {
 }
 
 export interface ProfileModelCatalogueDto {
-  readonly configurationRef: string;
+  readonly route: import('../executionTargets/contracts').ExecutionRouteRefDto;
   readonly observedAt: string | null;
   readonly observationError: string | null;
   readonly models: readonly {
@@ -126,7 +126,9 @@ export interface UpdateCapabilityProfileInput {
 }
 
 export interface ExecutionConfigurationClient {
-  loadProfileModelCatalogue?(configurationRef: string): Promise<ProfileModelCatalogueDto>;
+  loadProfileModelCatalogue?(
+    route: import('../executionTargets/contracts').ExecutionRouteRefDto,
+  ): Promise<ProfileModelCatalogueDto>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;
   loadSelectedRuntimeProfile(): Promise<RuntimeProfileSnapshotDto>;

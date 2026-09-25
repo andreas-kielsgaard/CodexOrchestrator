@@ -42,15 +42,20 @@ pub(crate) trait AgentSessionNotifier: Send + Sync {
 
 use orchid_engine::contracts::ProviderConfigurationRef;
 
-/// Application-owned authority for deriving the one native home used by a managed provider
-/// launch. Callers can supply invocation-specific extensions, but never profile authority.
-pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
-    fn bound_configuration_ref(
+/// Provider-owned preparation of the native environment for one launch, such as the native folder
+/// and executable of the selected configuration. Registered per Agent provider. Callers can supply
+/// invocation-specific extensions, but never the native environment itself.
+pub(crate) trait ProviderLaunchPreparation: Send + Sync {
+    fn prepare_launch(
         &self,
-        _session_id: &AgentSessionId,
-    ) -> Result<Option<String>, String> {
-        Ok(None)
-    }
+        configuration: &ProviderConfigurationRef,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        resuming: bool,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<RuntimeLaunchExtension, String>;
+
+    /// Preparation for the pending instance of a target change. Defaults to an ordinary launch.
     fn prepare_destination_launch(
         &self,
         configuration: &ProviderConfigurationRef,
@@ -59,14 +64,10 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
         resuming: bool,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<RuntimeLaunchExtension, String> {
-        self.prepare_configured_launch(
-            configuration,
-            session_id,
-            invocation_id,
-            resuming,
-            extension,
-        )
+        self.prepare_launch(configuration, session_id, invocation_id, resuming, extension)
     }
+
+    /// Records that the Session now runs on this configuration.
     fn commit_destination(
         &self,
         _configuration: &ProviderConfigurationRef,
@@ -75,23 +76,13 @@ pub(crate) trait NativeProfileLaunchAuthority: Send + Sync {
         Ok(())
     }
 
-    fn prepare_configured_launch(
+    /// A configuration the provider bound to a Session that has no execution target.
+    fn bound_configuration_ref(
         &self,
-        _configuration: &ProviderConfigurationRef,
-        session_id: &AgentSessionId,
-        invocation_id: &AgentInvocationId,
-        resuming: bool,
-        extension: Option<RuntimeLaunchExtension>,
-    ) -> Result<RuntimeLaunchExtension, String> {
-        self.prepare_launch(session_id, invocation_id, resuming, extension)
+        _session_id: &AgentSessionId,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
     }
-    fn prepare_launch(
-        &self,
-        session_id: &AgentSessionId,
-        invocation_id: &AgentInvocationId,
-        resuming: bool,
-        extension: Option<RuntimeLaunchExtension>,
-    ) -> Result<RuntimeLaunchExtension, String>;
 }
 
 /// Session-owned runtime mediation consulted after application invocation and profile launch

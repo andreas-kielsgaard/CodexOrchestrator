@@ -1,3 +1,4 @@
+import type { ProviderConfigurationRefDto } from '../agentProviders/contracts';
 import type { SessionFolderTarget } from './organization';
 
 export interface AgentSessionQuickFeatures {
@@ -24,6 +25,6 @@ export interface LoadAgentSessionQuickFeaturesInput {
   readonly executionTarget?: import('../executionTargets/contracts').SessionExecutionTargetDto;
   readonly sessionId: string | null;
   readonly workingDirectory: string | null;
-  readonly configurationRef?: string;
+  readonly configuration?: ProviderConfigurationRefDto;
   readonly folderTarget?: SessionFolderTarget;
 }

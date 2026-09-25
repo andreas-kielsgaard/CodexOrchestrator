@@ -39,7 +39,7 @@ pub(crate) use configuration::{
 };
 pub(crate) use dependencies::{
     AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification, AgentSessionNotifier,
-    NativeProfileLaunchAuthority, SessionHarnessLaunchAuthority, SessionHarnessVersionResolver,
+    ProviderLaunchPreparation, SessionHarnessLaunchAuthority, SessionHarnessVersionResolver,
     SystemAgentSessionProviders,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
@@ -47,17 +47,16 @@ pub(crate) use observation::{project_invocation_observation, AgentInvocationObse
 #[derive(Clone)]
 pub(crate) struct AgentSessionApplication {
     repository: Arc<dyn AgentSessionRepository>,
+    /// Runtime for unprofiled legacy Sessions when no execution endpoints are composed (tests).
     runtime: Arc<dyn AgentRuntime>,
     notifier: Arc<dyn AgentSessionNotifier>,
     clock: Arc<dyn AgentSessionClock>,
     ids: Arc<dyn AgentSessionIdProvider>,
     runtime_version: Option<String>,
-    native_profile_launch_authority: Option<Arc<dyn NativeProfileLaunchAuthority>>,
     session_harness_version_resolver: Option<Arc<dyn SessionHarnessVersionResolver>>,
     session_harness_launch_authority: Option<Arc<dyn SessionHarnessLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
     workspaces: Option<SessionWorkspaces>,
-    profile_source: Option<Arc<dyn crate::execution_configuration::ProviderConfigurationSource>>,
     product_skills: Arc<crate::execution_configuration::ProductSkillRoots>,
     interaction_lanes: Arc<interactions::InteractionLanes>,
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,
@@ -82,12 +81,10 @@ impl AgentSessionApplication {
             clock,
             ids,
             runtime_version,
-            native_profile_launch_authority: None,
             session_harness_version_resolver: None,
             session_harness_launch_authority: None,
             update_lanes: Arc::new(InvocationUpdateLanes::default()),
             workspaces: None,
-            profile_source: None,
             product_skills: Default::default(),
             interaction_lanes: Arc::new(interactions::InteractionLanes::default()),
             capability_profiles: None,
@@ -95,14 +92,6 @@ impl AgentSessionApplication {
             execution_target_service: None,
             preparation_workers: Arc::new(preparation::PreparationWorkers::default()),
         }
-    }
-
-    pub(crate) fn with_native_profile_launch_authority(
-        mut self,
-        authority: Arc<dyn NativeProfileLaunchAuthority>,
-    ) -> Self {
-        self.native_profile_launch_authority = Some(authority);
-        self
     }
 
     pub(crate) fn with_session_harness_launch_authority(

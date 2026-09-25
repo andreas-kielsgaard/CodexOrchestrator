@@ -93,7 +93,7 @@ it('discovers skills from the selected local configuration before creating a wor
   expect(loadQuickFeatures).toHaveBeenCalledWith({
     sessionId: null,
     workingDirectory: null,
-    configurationRef: 'profile-two',
+    configuration: { provider: 'codex', configurationId: 'profile-two' },
   });
 });
 

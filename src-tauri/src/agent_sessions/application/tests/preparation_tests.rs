@@ -160,15 +160,11 @@ impl PreparationFixture {
             },
         };
         let endpoints = Arc::new(
-            ExecutionEndpoints::new("codex", source.clone(), runtime.clone())
-                .unwrap()
+            ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), runtime.clone()))
                 .with_runtime(&old_execution, old_runtime.clone()),
         );
         let profiles = Arc::new(
-            CapabilityProfileService::new(
-                Arc::new(InMemoryCapabilityProfileRepository::default()),
-                source.clone(),
-            )
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
             .with_endpoints(endpoints.clone()),
         );
         let profile = profiles
