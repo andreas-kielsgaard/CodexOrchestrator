@@ -4,7 +4,7 @@ use crate::{
         domain::AgentInvocationId,
         ports::{RuntimePortError, RuntimePortErrorKind},
     },
-    processes::ProcessSupervisor,
+    processes::{json_lines::JsonLines, ProcessSupervisor},
 };
 use serde_json::{json, Value};
 use std::{
@@ -21,7 +21,7 @@ pub(super) struct Connection {
     supervisor: Arc<ProcessSupervisor>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, RuntimePortError>>>>,
-    buffer: Mutex<Vec<u8>>,
+    lines: Mutex<JsonLines>,
 }
 
 impl Connection {
@@ -34,7 +34,7 @@ impl Connection {
             supervisor,
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
-            buffer: Mutex::new(Vec::new()),
+            lines: Mutex::new(JsonLines::default()),
         }
     }
 
@@ -68,22 +68,14 @@ impl Connection {
     }
 
     pub(super) fn read(&self, bytes: &[u8]) -> Result<Vec<Value>, RuntimePortError> {
-        let mut buffer = self
-            .buffer
+        let values = self
+            .lines
             .lock()
-            .map_err(|_| unavailable("RPC frame lock poisoned"))?;
-        buffer.extend_from_slice(bytes);
-        if buffer.len() > 32 * 1024 * 1024 {
-            return Err(unavailable("App-server frame exceeds 32 MiB"));
-        }
+            .map_err(|_| unavailable("RPC frame lock poisoned"))?
+            .push(bytes)
+            .map_err(|error| unavailable(format!("App-server output: {error}")))?;
         let mut notifications = Vec::new();
-        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
-            let line: Vec<_> = buffer.drain(..=end).collect();
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            let value: Value = serde_json::from_slice(&line)
-                .map_err(|_| unavailable("Malformed app-server JSON-RPC frame"))?;
+        for value in values {
             if value.get("method").is_some() {
                 notifications.push(value);
             } else if let Some(id) = value["id"].as_u64() {

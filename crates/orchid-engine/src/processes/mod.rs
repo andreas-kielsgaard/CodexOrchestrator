@@ -8,6 +8,7 @@
 //! On Windows, both system factories attach suspended children to a kill-on-close Job Object
 //! before execution begins. The supervisor retains ownership until the process and readers settle.
 
+pub mod json_lines;
 mod monitoring;
 mod supervisor;
 mod system;
