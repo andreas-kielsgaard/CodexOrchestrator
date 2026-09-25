@@ -143,6 +143,35 @@ impl ExecutionEndpoints {
                 .map_err(|e| e.to_string()),
         }
     }
+    /// Gives a destination Session instance its own native context, forked from the source's
+    /// context after any cross-device transfer has installed it on the destination.
+    pub(crate) fn fork_continuation(
+        &self,
+        binding: &ExecutionBinding,
+        external_id: &crate::agent_sessions::domain::ExternalRuntimeContextId,
+        working_directory: &str,
+    ) -> Result<crate::agent_sessions::domain::ExternalRuntimeContextId, String> {
+        let binding = self.freeze_binding(binding.clone())?;
+        match &binding.connection {
+            ExecutionConnection::Local => self.continuations.port(&binding.provider)?.fork(
+                &binding.configuration_ref,
+                external_id,
+                working_directory,
+            ),
+            ExecutionConnection::Ssh {
+                target,
+                host_executable,
+            } => SshConnection::connect(target, host_executable)
+                .map_err(|e| e.to_string())?
+                .request(HostCommand::ForkContinuation {
+                    provider: binding.provider.clone(),
+                    configuration_ref: binding.configuration_ref.clone(),
+                    external_context_id: external_id.clone(),
+                    working_directory: working_directory.into(),
+                })
+                .map_err(|e| e.to_string()),
+        }
+    }
     pub(crate) fn published_commit(
         &self,
         binding: &ExecutionBinding,

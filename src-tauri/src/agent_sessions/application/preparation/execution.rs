@@ -18,7 +18,11 @@ impl AgentSessionApplication {
             .preparation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
-        if let Some(transition) = self.await_target_transition(&p.session_id)? {
+        let transition = match &p.source_session_id {
+            Some(source) => self.await_target_transition(source, &p.session_id)?,
+            None => None,
+        };
+        if let Some(transition) = transition {
             let target = transition.resolved_target.ok_or_else(|| {
                 AgentSessionApplicationError::invalid(
                     "The device switch completed without a destination worktree",
@@ -116,6 +120,10 @@ impl AgentSessionApplication {
             .is_some_and(|source| source != &selection.execution)
         {
             required.push(("history", "Transfer conversation history"));
+        }
+        let forks_context = p.source_session_id.is_some() && source.is_some();
+        if forks_context {
+            required.push(("fork", "Copy conversation for this session"));
         }
         required.extend([
             ("conversation", "Prepare conversation"),
@@ -295,6 +303,38 @@ impl AgentSessionApplication {
                 )?;
             }
         }
+        if forks_context
+            && !p
+                .steps
+                .iter()
+                .any(|s| s.id == "fork" && s.status == PreparationStepStatus::Completed)
+        {
+            // A destination instance never writes to the native context its source still owns.
+            let context = p
+                .source_binding
+                .external_context_id
+                .clone()
+                .expect("a forked context has a source context");
+            self.step(
+                &mut p,
+                "fork",
+                "Copy conversation for this session",
+                PreparationStepStatus::Running,
+            )?;
+            let forked = endpoints
+                .fork_continuation(&destination.execution, &context, &destination.path)
+                .map_err(AgentSessionApplicationError::invalid)?;
+            p.prepared_binding = Some(AgentRuntimeBinding {
+                external_context_id: Some(forked),
+                runtime_version: session.runtime_binding.runtime_version.clone(),
+            });
+            self.step(
+                &mut p,
+                "fork",
+                "Copy conversation for this session",
+                PreparationStepStatus::Completed,
+            )?;
+        }
         Self::check_preparation_cancel(cancel)?;
         let runtime = if let Some(service) = &self.execution_target_service {
             service
@@ -423,6 +463,21 @@ impl AgentSessionApplication {
         self.repository
             .commit_prepared_binding(&p, binding, self.clock.now())
             .map_err(AgentSessionApplicationError::repository)?;
+        if let (Some(source), Some(targets)) = (&p.source_session_id, &self.execution_target_service)
+        {
+            if !destination.repository_id.is_empty() {
+                targets
+                    .sisters
+                    .transfer_owner(
+                        &destination.repository_id,
+                        &destination.branch_ref,
+                        source.as_str(),
+                        p.session_id.as_str(),
+                        self.clock.now(),
+                    )
+                    .map_err(AgentSessionApplicationError::conflict)?;
+            }
+        }
         self.step(
             &mut p,
             "conversation",

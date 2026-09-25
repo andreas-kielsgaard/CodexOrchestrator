@@ -55,4 +55,24 @@ impl ProviderContinuationPort for CodexContinuationPort {
         let native = continuation::decode(payload).map_err(|error| error.to_string())?;
         continuation::install(&self.program, &home, &native).map_err(|error| error.to_string())
     }
+
+    fn fork(
+        &self,
+        configuration_ref: &str,
+        external_context_id: &ExternalRuntimeContextId,
+        working_directory: &str,
+    ) -> Result<ExternalRuntimeContextId, String> {
+        let home = self
+            .configurations
+            .configuration_home(configuration_ref)
+            .map_err(|error| error.to_string())?;
+        let forked = continuation::fork(
+            &self.program,
+            &home,
+            external_context_id.as_str(),
+            working_directory,
+        )
+        .map_err(|error| error.to_string())?;
+        ExternalRuntimeContextId::new(forked).map_err(|error| error.to_string())
+    }
 }

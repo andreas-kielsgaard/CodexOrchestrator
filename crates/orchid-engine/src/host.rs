@@ -249,6 +249,27 @@ impl Host {
                 )
                 .map_err(unavailable)
             }
+            HostCommand::ForkContinuation {
+                provider,
+                configuration_ref,
+                external_context_id,
+                working_directory,
+            } => {
+                if provider != "codex" {
+                    return Err(unavailable(format!(
+                        "Agent provider `{provider}` is not registered on this Orchid host"
+                    )));
+                }
+                let config = self.provider_configuration(&provider, &configuration_ref)?;
+                let forked = crate::providers::codex::app_server::continuation::fork(
+                    &config.executable,
+                    &config.home,
+                    external_context_id.as_str(),
+                    &working_directory,
+                )?;
+                serde_json::to_value(ExternalRuntimeContextId::new(forked).map_err(unavailable)?)
+                    .map_err(unavailable)
+            }
             HostCommand::InstallContinuation {
                 provider,
                 configuration_ref,

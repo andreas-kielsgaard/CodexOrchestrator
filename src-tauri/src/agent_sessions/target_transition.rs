@@ -35,6 +35,10 @@ pub(crate) struct SessionTargetTransition {
     pub(crate) queued_prompt: Option<QueuedTransitionPrompt>,
     #[serde(default)]
     pub(crate) resolved_target: Option<SessionExecutionTarget>,
+    /// The destination Session instance created by the first prompt accepted for this move.
+    /// Once set, later prompts in the source Session are ordinary source prompts again.
+    #[serde(default)]
+    pub(crate) destination_session_id: Option<AgentSessionId>,
     #[serde(default)]
     pub(crate) error: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
@@ -359,6 +363,7 @@ mod tests {
             transfer_estimate: None,
             queued_prompt: None,
             resolved_target: None,
+            destination_session_id: None,
             error: None,
             created_at: "2026-09-17T12:00:00Z".parse().unwrap(),
             updated_at: "2026-09-17T12:00:00Z".parse().unwrap(),

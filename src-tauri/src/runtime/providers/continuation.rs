@@ -14,6 +14,14 @@ pub(crate) trait ProviderContinuationPort: Send + Sync {
         configuration_ref: &str,
         continuation: &ProviderContinuationPayload,
     ) -> Result<(), String>;
+
+    /// Copies a stored native context into a new one owned by a destination Session instance.
+    fn fork(
+        &self,
+        configuration_ref: &str,
+        external_context_id: &ExternalRuntimeContextId,
+        working_directory: &str,
+    ) -> Result<ExternalRuntimeContextId, String>;
 }
 
 #[derive(Default)]

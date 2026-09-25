@@ -76,6 +76,43 @@ impl AgentSessionApplication {
                 "A message must contain text",
             ));
         }
+        if let Some(existing) = self
+            .repository
+            .get_invocation(&input.submission_id)
+            .map_err(AgentSessionApplicationError::repository)?
+        {
+            let previous = self
+                .repository
+                .preparation(&existing.id)
+                .map_err(AgentSessionApplicationError::repository)?;
+            // A destination instance owns the invocation, and a device move may have rewritten
+            // its selection; the source Session identifies the same submission.
+            let destination_of = |p: &SessionPreparation| {
+                p.source_session_id.is_some() && p.source_session_id == input.session_id
+            };
+            let matches = existing.submitted_text == input.submitted_text
+                && previous.as_ref().is_some_and(|p| {
+                    (input
+                        .session_id
+                        .as_ref()
+                        .is_none_or(|id| id == &existing.session_id)
+                        || destination_of(p))
+                        && p.model == input.model
+                        && p.reasoning_mode == input.reasoning_mode
+                        && p.sandbox_mode == input.sandbox_mode
+                        && (p.selection == input.execution_selection || destination_of(p))
+                        && p.accepted_working_directory == input.working_directory
+                });
+            if !matches {
+                return Err(AgentSessionApplicationError::conflict(
+                    "Submission identity was already used for different choices",
+                ));
+            }
+            return Ok(SendAgentSessionMessageResult {
+                session_id: existing.session_id,
+                invocation_id: existing.id,
+            });
+        }
         // A device move has no synthetic invocation. When a prompt arrives, retain the normal
         // durable invocation but bind its preparation to the move's requested/resolved target.
         if let Some(session_id) = input.session_id.clone() {
@@ -99,37 +136,6 @@ impl AgentSessionApplication {
                     });
                 }
             }
-        }
-        if let Some(existing) = self
-            .repository
-            .get_invocation(&input.submission_id)
-            .map_err(AgentSessionApplicationError::repository)?
-        {
-            let previous = self
-                .repository
-                .preparation(&existing.id)
-                .map_err(AgentSessionApplicationError::repository)?;
-            let matches = existing.submitted_text == input.submitted_text
-                && input
-                    .session_id
-                    .as_ref()
-                    .is_none_or(|id| id == &existing.session_id)
-                && previous.as_ref().is_some_and(|p| {
-                    p.model == input.model
-                        && p.reasoning_mode == input.reasoning_mode
-                        && p.sandbox_mode == input.sandbox_mode
-                        && p.selection == input.execution_selection
-                        && p.accepted_working_directory == input.working_directory
-                });
-            if !matches {
-                return Err(AgentSessionApplicationError::conflict(
-                    "Submission identity was already used for different choices",
-                ));
-            }
-            return Ok(SendAgentSessionMessageResult {
-                session_id: existing.session_id,
-                invocation_id: existing.id,
-            });
         }
         let cancel = self.preparation_workers.reserve(&input.submission_id)?;
         let result = self.accept_prepared_inner(input.clone());
@@ -248,6 +254,7 @@ impl AgentSessionApplication {
         let preparation = SessionPreparation {
             invocation_id: id.clone(),
             session_id: session.id.clone(),
+            source_session_id: creates_destination.then(|| source_session.id.clone()),
             phase: PreparationPhase::Accepted,
             steps: vec![],
             error: None,
@@ -273,6 +280,9 @@ impl AgentSessionApplication {
         self.repository
             .accept_preparation(new_session, pending, preparation)
             .map_err(AgentSessionApplicationError::repository)?;
+        if creates_destination {
+            self.hand_off_target_transition(&source_session.id, &session.id)?;
+        }
         self.notify_or_record(AgentSessionNotification::PreparationUpdated {
             session_id: session.id.clone(),
             invocation_id: id.clone(),

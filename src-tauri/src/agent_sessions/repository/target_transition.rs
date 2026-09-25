@@ -162,6 +162,7 @@ mod tests {
                 client_message_id: "client-message".into(),
             }),
             resolved_target: None,
+            destination_session_id: None,
             error: None,
             created_at: at(1),
             updated_at: at(1),

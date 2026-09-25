@@ -106,6 +106,36 @@ impl AgentRuntime for BlockingPreparationRuntime {
         panic!("Preparation must not use immediate resume")
     }
 }
+#[derive(Default)]
+struct RecordingContinuation {
+    forks: Mutex<Vec<(String, String)>>,
+}
+impl crate::runtime::providers::continuation::ProviderContinuationPort for RecordingContinuation {
+    fn export(
+        &self,
+        _: &str,
+        _: &ExternalRuntimeContextId,
+    ) -> Result<orchid_engine::contracts::provider::ProviderContinuationPayload, String> {
+        Err("export is not used by same-device destinations".into())
+    }
+    fn install(
+        &self,
+        _: &str,
+        _: &orchid_engine::contracts::provider::ProviderContinuationPayload,
+    ) -> Result<(), String> {
+        Err("install is not used by same-device destinations".into())
+    }
+    fn fork(
+        &self,
+        _: &str,
+        context: &ExternalRuntimeContextId,
+        working_directory: &str,
+    ) -> Result<ExternalRuntimeContextId, String> {
+        let mut forks = self.forks.lock().unwrap();
+        forks.push((context.as_str().into(), working_directory.into()));
+        Ok(ExternalRuntimeContextId::new(format!("forked-{}", forks.len())).unwrap())
+    }
+}
 struct PreparationProfileSource;
 impl SelectedRuntimeProfileSource for PreparationProfileSource {
     fn selected_runtime_profile(
@@ -125,6 +155,7 @@ struct PreparationFixture {
     repository: Arc<SqliteAgentSessionRepository>,
     runtime: Arc<BlockingPreparationRuntime>,
     old_runtime: Arc<FakeRuntime>,
+    continuation: Arc<RecordingContinuation>,
     old_target: SessionExecutionTarget,
     selection: SessionExecutionSelection,
     session: AgentSession,
@@ -155,8 +186,11 @@ impl PreparationFixture {
                 host_executable: "/opt/orchid-host".into(),
             },
         };
+        let continuation = Arc::new(RecordingContinuation::default());
         let endpoints = Arc::new(
             ExecutionEndpoints::new("codex", source.clone(), runtime.clone())
+                .unwrap()
+                .with_continuation("codex", continuation.clone())
                 .unwrap()
                 .with_runtime(&old_execution, old_runtime.clone()),
         );
@@ -244,6 +278,7 @@ impl PreparationFixture {
             repository,
             runtime,
             old_runtime,
+            continuation,
             old_target,
             selection,
             session,
@@ -425,6 +460,190 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
     assert_ne!(ack.session_id, fixture.session.id);
     assert_eq!(fixture.app.load_session(&fixture.session.id).unwrap().session.execution_target, Some(fixture.old_target.clone()));
     assert_eq!(fixture.app.load_session(&ack.session_id).unwrap().session.execution_target, None);
+}
+
+#[test]
+fn repeating_a_submission_from_the_source_returns_its_destination() {
+    let fixture = PreparationFixture::new();
+    let input = fixture.input("repeat");
+    let first = fixture.app.accept_prepared_message(input.clone()).unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    assert_ne!(first.session_id, fixture.session.id);
+    assert_eq!(
+        fixture.preparation(&first.invocation_id).source_session_id,
+        Some(fixture.session.id.clone())
+    );
+    let repeated = fixture.app.accept_prepared_message(input).unwrap();
+    assert_eq!(repeated.session_id, first.session_id);
+    assert_eq!(repeated.invocation_id, first.invocation_id);
+    assert_eq!(fixture.runtime.attempts(), 1);
+}
+
+#[test]
+fn a_destination_on_the_same_store_resumes_a_fork_of_the_source_context() {
+    let fixture = PreparationFixture::new();
+    let SessionWorkspaceSelection::Existing {
+        target: destination,
+    } = fixture.selection.workspace.clone()
+    else {
+        unreachable!("the fixture selects an existing worktree")
+    };
+    // The source uses the destination's device and configuration, but another worktree.
+    let mut source_target = destination.clone();
+    source_target.worktree_id = "source-instance".into();
+    source_target.path = fixture._directory.path().to_string_lossy().into_owned();
+    let source = fixture
+        .app
+        .create_session_with_ownership(
+            CreateAgentSessionCommand {
+                title: Some("Source".into()),
+                working_directory: None,
+                requested_options: Default::default(),
+            },
+            AgentSessionOwnership {
+                execution_target: Some(source_target),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fixture
+        .repository
+        .update_runtime_binding(
+            &source.id,
+            AgentRuntimeBinding {
+                external_context_id: Some(ExternalRuntimeContextId::new("source-context").unwrap()),
+                runtime_version: None,
+            },
+            fixture.app.clock.now(),
+        )
+        .unwrap();
+    let mut input = fixture.input("fork");
+    input.session_id = Some(source.id.clone());
+    let ack = fixture.app.accept_prepared_message(input).unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    assert_ne!(ack.session_id, source.id);
+    assert_eq!(
+        *fixture.continuation.forks.lock().unwrap(),
+        vec![("source-context".to_string(), destination.path.clone())]
+    );
+    fixture.runtime.release(true);
+    fixture.wait(|| fixture.preparation(&ack.invocation_id).delivery_started);
+    let destination_session = fixture.app.load_session(&ack.session_id).unwrap().session;
+    assert_eq!(
+        destination_session
+            .runtime_binding
+            .external_context_id
+            .map(|id| id.as_str().to_owned()),
+        Some("forked-1".into())
+    );
+    let source_session = fixture.app.load_session(&source.id).unwrap().session;
+    assert_eq!(
+        source_session
+            .runtime_binding
+            .external_context_id
+            .map(|id| id.as_str().to_owned()),
+        Some("source-context".into())
+    );
+}
+
+#[test]
+fn a_device_move_hands_its_first_prompt_to_one_destination_only() {
+    use crate::agent_sessions::target_transition::*;
+    let fixture = PreparationFixture::new();
+    let with_repository = |mut target: SessionExecutionTarget| {
+        target.repository_id = "repository-1".into();
+        target.branch_ref = "refs/heads/main".into();
+        target
+    };
+    let source_target = with_repository(fixture.old_target.clone());
+    let SessionWorkspaceSelection::Existing { target } = fixture.selection.workspace.clone()
+    else {
+        unreachable!("the fixture selects an existing worktree")
+    };
+    let destination_target = with_repository(target);
+    let create = |title: &str, target: Option<SessionExecutionTarget>| {
+        fixture
+            .app
+            .create_session_with_ownership(
+                CreateAgentSessionCommand {
+                    title: Some(title.into()),
+                    working_directory: None,
+                    requested_options: Default::default(),
+                },
+                AgentSessionOwnership {
+                    execution_target: target,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let source = create("Source", Some(source_target.clone()));
+    let destination = create("Destination", None);
+    let now = fixture.app.clock.now();
+    fixture
+        .repository
+        .save_target_transition(&SessionTargetTransition {
+            session_id: source.id.clone(),
+            source_target,
+            destination_selection: SessionExecutionSelection {
+                workspace: SessionWorkspaceSelection::Existing {
+                    target: destination_target.clone(),
+                },
+                ..fixture.selection.clone()
+            },
+            sister_group_id: None,
+            phase: TargetTransitionPhase::Ready,
+            tasks: vec![TargetTransitionTask {
+                kind: TargetTransitionTaskKind::ActivateSister,
+                status: TargetTransitionTaskStatus::Completed,
+                detail: None,
+                error: None,
+            }],
+            snapshot: None,
+            transfer_estimate: None,
+            queued_prompt: None,
+            resolved_target: Some(destination_target),
+            destination_session_id: None,
+            error: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .unwrap();
+    let queue = || {
+        fixture
+            .app
+            .queue_target_transition_prompt(&source.id, "Continue".into(), "prompt".into())
+            .unwrap()
+    };
+    assert!(queue().is_some());
+    fixture
+        .app
+        .hand_off_target_transition(&source.id, &destination.id)
+        .unwrap();
+    // Later prompts in the source are ordinary source prompts again.
+    assert!(queue().is_none());
+    assert!(fixture
+        .app
+        .await_target_transition(&source.id, &source.id)
+        .unwrap()
+        .is_none());
+    let awaited = fixture
+        .app
+        .await_target_transition(&source.id, &destination.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(awaited.destination_session_id, Some(destination.id.clone()));
+    // A second destination cannot take over the move.
+    let other = create("Other", None);
+    fixture
+        .app
+        .hand_off_target_transition(&source.id, &other.id)
+        .unwrap();
+    assert!(fixture
+        .app
+        .await_target_transition(&source.id, &other.id)
+        .unwrap()
+        .is_none());
 }
 
 mod persistence;
