@@ -9072,7 +9072,7 @@ mod tests {
         assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "sandbox_workspace_write.network_access"));
         assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "features.network_proxy"));
         assert_eq!(resume_provenance["environmentKeys"].as_array().unwrap().len(), 1);
-        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("ORCHID_MCP_BEARER_"));
         let tools = reporting_entry.events.iter()
             .filter_map(|event| event.normalized.as_ref())
             .filter_map(|event| event.tool_activity.as_ref())

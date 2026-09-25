@@ -4,12 +4,11 @@ use super::{
     AgentSessionNotification,
 };
 use crate::agent_sessions::{
-    domain::{AgentInvocationId, AgentRuntimeEventSource, AgentSessionId},
-    ports::{AgentRuntimeUpdateSink, RuntimeEventDraft, RuntimePortErrorKind, RuntimeUpdate},
+    domain::{AgentInvocationId, AgentSessionId},
+    ports::{AgentRuntimeUpdateSink, RuntimePortErrorKind, RuntimeUpdate},
 };
+use orchid_engine::contracts::{RuntimeControlRecord, RuntimeInteractionResponse};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use orchid_engine::contracts::RuntimeInteractionResponse;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
@@ -104,7 +103,14 @@ impl AgentSessionApplication {
         let target = runtime
             .active_turn(&command.invocation_id)
             .map_err(AgentSessionApplicationError::runtime)?;
-        self.record_interaction(&command.invocation_id, json!({"kind":"session_steering_pending","inputId":command.input_id,"text":command.text,"target":target}))?;
+        self.record_interaction(
+            &command.invocation_id,
+            RuntimeControlRecord::SteeringPending {
+                input_id: command.input_id.clone(),
+                text: command.text.clone(),
+                target: target.clone(),
+            },
+        )?;
         let result = runtime.steer(
             &command.invocation_id,
             &target,
@@ -116,7 +122,14 @@ impl AgentSessionApplication {
             Err(e) if e.kind == RuntimePortErrorKind::Unavailable => "uncertain",
             Err(_) => "rejected",
         };
-        self.record_interaction(&command.invocation_id, json!({"kind":"session_steering_result","id":command.input_id,"state":state,"message":result.as_ref().err().map(|e| &e.message)}))?;
+        self.record_interaction(
+            &command.invocation_id,
+            RuntimeControlRecord::SteeringResult {
+                id: command.input_id.clone(),
+                state: state.into(),
+                message: result.as_ref().err().map(|e| e.message.clone()),
+            },
+        )?;
         if state == "accepted" {
             self.notify_or_record(AgentSessionNotification::SteeringAccepted {
                 session_id: command.session_id.clone(),
@@ -166,7 +179,11 @@ impl AgentSessionApplication {
         // Persist intent before writing, so restart/retry cannot silently duplicate a response.
         self.record_interaction(
             &command.invocation_id,
-            json!({"kind":"runtime_request_response","id":command.request_id,"state":"responding"}),
+            RuntimeControlRecord::RequestResponse {
+                id: command.request_id.clone(),
+                state: "responding".into(),
+                message: None,
+            },
         )?;
         let result = self
             .runtime_for_invocation(&command.invocation_id)?
@@ -180,7 +197,14 @@ impl AgentSessionApplication {
             Err(e) if e.kind == RuntimePortErrorKind::UnsupportedOptions => "pending",
             Err(_) => "uncertain",
         };
-        self.record_interaction(&command.invocation_id, json!({"kind":"runtime_request_response","id":command.request_id,"state":state,"message":result.as_ref().err().map(|e| &e.message)}))?;
+        self.record_interaction(
+            &command.invocation_id,
+            RuntimeControlRecord::RequestResponse {
+                id: command.request_id.clone(),
+                state: state.into(),
+                message: result.as_ref().err().map(|e| e.message.clone()),
+            },
+        )?;
         result.map_err(AgentSessionApplicationError::runtime)
     }
 
@@ -205,7 +229,7 @@ impl AgentSessionApplication {
     fn record_interaction(
         &self,
         id: &AgentInvocationId,
-        payload: Value,
+        record: RuntimeControlRecord,
     ) -> Result<(), AgentSessionApplicationError> {
         PersistedRuntimeUpdateSink::new(
             self.repository.clone(),
@@ -214,14 +238,7 @@ impl AgentSessionApplication {
             self.ids.clone(),
             self.update_lanes.clone(),
         )
-        .emit_update(
-            id,
-            RuntimeUpdate::Event(RuntimeEventDraft {
-                source: AgentRuntimeEventSource::Runtime,
-                raw_payload: payload,
-                normalized: None,
-            }),
-        )
+        .emit_update(id, RuntimeUpdate::Event(record.into_draft()))
         .map_err(AgentSessionApplicationError::runtime)
     }
 }

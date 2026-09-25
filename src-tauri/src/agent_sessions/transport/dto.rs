@@ -180,6 +180,7 @@ pub(crate) struct AgentInvocationDetailsDto {
     pub(crate) invocation: AgentInvocationDto,
     pub(crate) observation: AgentInvocationObservation,
     pub(crate) events: Vec<AgentRuntimeEventDto>,
+    pub(crate) import_provenance: Option<crate::agent_sessions::ports::ImportedTurnProvenance>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -202,6 +203,7 @@ impl AgentSessionDetailsDto {
                     observation: project_invocation_observation(&history),
                     invocation: history.invocation,
                     events: history.events,
+                    import_provenance: history.import_provenance,
                 })
                 .collect(),
         }
@@ -403,6 +405,7 @@ mod tests {
                     updated_at: at,
                 },
                 launch_accepted_at: Some(at),
+                import_provenance: None,
                 events: vec![],
             }],
         });

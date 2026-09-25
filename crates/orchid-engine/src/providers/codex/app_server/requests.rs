@@ -78,7 +78,10 @@ pub(super) fn receive(invocation: &Invocation, message: Value) -> Result<(), Run
     let request = json!({"id":request_id,"kind":kind,"title":params["reason"].as_str().or(params["message"].as_str()).unwrap_or(default_title),"command":params["command"],"cwd":params["cwd"],"url":params["url"],"permissions":params["permissions"],"grantRoot":params["grantRoot"],"choices":choices,"questions":questions,"supported":kind != "unsupported"});
     if kind == "unsupported" {
         invocation
-            .event(json!({"kind":"runtime_request_unsupported","request":request,"method":method}));
+            .control(crate::contracts::RuntimeControlRecord::RequestUnsupported {
+                request,
+                method: method.into(),
+            });
         return invocation.connection.write(json!({"id":message["id"],"error":{"code":-32601,"message":format!("Orchestrator does not support {method}")}}));
     }
     invocation
@@ -95,11 +98,9 @@ pub(super) fn receive(invocation: &Invocation, message: Value) -> Result<(), Run
         );
     invocation.sink.emit_update(
         &invocation.connection.invocation_id,
-        crate::contracts::ports::RuntimeUpdate::Event(crate::contracts::ports::RuntimeEventDraft {
-            source: crate::contracts::domain::AgentRuntimeEventSource::Runtime,
-            raw_payload: json!({"kind":"runtime_request_opened","request":request}),
-            normalized: None,
-        }),
+        crate::contracts::ports::RuntimeUpdate::Event(
+            crate::contracts::RuntimeControlRecord::RequestOpened { request }.into_draft(),
+        ),
     )?;
     Ok(())
 }

@@ -1,8 +1,10 @@
+pub mod control;
 pub mod domain;
 pub mod interactions;
 pub mod provider;
 pub mod runtime;
 pub mod skills;
+pub use control::*;
 pub use domain::*;
 pub use interactions::*;
 pub use provider::*;

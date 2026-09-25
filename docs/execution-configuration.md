@@ -73,6 +73,30 @@ For example, a node may pin a particular model for Workflow messages. A human ca
 
 The native environment reader uses the same Codex executable, app-server protocol and process owner as execution. It reads configuration, requirements, model and skill information for the working context. Capability discovery failure is an unavailable observation, not proof that a capability is unsupported. The old test-only CLI-help adapter's cache lifetimes are not the current discovery contract.
 
+## Provider configurations, native options and skills
+
+The agent-provider migration pass (`feature/claude-support`, 25 September 2026) made these parts independent of Codex. See the [provider integration guide](architecture/agent-provider-integration.md) for the registration points.
+
+**Configuration identity.** A runtime or Session Profile names its provider configuration as a typed `{provider, configurationId}` pair. Product code compares the pair and never parses a provider out of a string. Schema v59 converted stored `native-codex:<id>` references once, and resealed pinned digests.
+
+**Native options.** A Capability Profile route can carry a provider-tagged `providerOptions` envelope. Today it carries the Codex personality. Only the named provider decodes the envelope, and validation rejects an envelope whose provider differs from the route's. A route envelope replaces the configuration's own defaults as a whole; an absent envelope inherits them. The shared route editor renders each provider's settings through `ProviderRouteSettings`.
+
+**Capability groups.** Route groups are neutral:
+
+- `native-mcps`: MCP servers the provider configuration defines natively.
+- `native-skills`: skills the provider configuration discovers natively.
+- `orchid-skills`: Orchid's own skill folder.
+- `otp:<package>:skills` and `otp:<package>:mcps`: an installed OTP package's skills and MCP servers.
+
+**Skills are model independent.**
+
+- *Sources.* Skills come from the provider's native discovery and from Orchid-owned roots (`ProductSkillRoots`), which are offered with every provider configuration.
+- *Where they appear.* Capability Profile groups select skills for the pinned session manifest. The composer's quick actions list the same skills.
+- *Mentions.* `$name` is Orchid's own mention syntax for every skill. Orchid resolves mentions into `invokedSkillIds`. A profiled Session invokes only the skills its manifest pinned.
+- *Delivery.* `read_skill` serves every pinned skill, whatever its source. A provider may also deliver an invoked skill in its native form. Codex attaches the skills its own catalogue discovered as skill input items. Skill content is never copied into a provider's native home.
+
+**Launch intent.** Orchestration and Harness launches state their intent rather than native settings: managed MCP servers (URL, optional bearer, tools, required), unattended approval, a trusted application workspace, and sandbox network access. Codex translates this intent. It sends managed servers as thread configuration, with their bearers passed in the process environment, and sends the other intents as process-level configuration values.
+
 ## Harness configuration and delivery
 
 Two retained mechanisms have different jobs.
@@ -104,10 +128,11 @@ A recorded development view may display editable configuration and simulated Com
 
 | Responsibility                                                   | Current source                                                                                                                                                                                                                                     |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native registration, continuity and readiness                    | [`native_profiles.rs`](../src-tauri/src/native_profiles.rs), [`native_profiles/`](../src-tauri/src/native_profiles/)                                                                                                                               |
-| Native settings UI                                               | [`NativeProfileSettings.tsx`](../src/features/nativeProfiles/NativeProfileSettings.tsx)                                                                                                                                                            |
+| Native registration, continuity and readiness                    | [`runtime/providers/codex/profiles/`](../src-tauri/src/runtime/providers/codex/profiles/)                                                                                                                                                          |
+| Native settings UI                                               | [`NativeProfileSettings.tsx`](../src/features/agentProviders/codex/profiles/NativeProfileSettings.tsx)                                                                                                                                             |
 | Profiles, defaults, resolution, digest, shared catalog           | [`execution_configuration/`](../src-tauri/src/execution_configuration/)                                                                                                                                                                            |
-| Codex environment observation and effective launch configuration | [`app_server/environment.rs`](../src-tauri/src/runtime/codex/app_server/environment.rs), [`app_server/mod.rs`](../src-tauri/src/runtime/codex/app_server/mod.rs), [`configuration.rs`](../src-tauri/src/runtime/codex/app_server/configuration.rs) |
+| Product skill roots and `$name` mentions                         | [`product_skills.rs`](../src-tauri/src/execution_configuration/product_skills.rs), [`skill_mentions.rs`](../src-tauri/src/execution_configuration/skill_mentions.rs)                                                                                |
+| Codex environment observation and effective launch configuration | [`app_server/environment.rs`](../crates/orchid-engine/src/providers/codex/app_server/environment.rs), [`app_server/mod.rs`](../crates/orchid-engine/src/providers/codex/app_server/mod.rs), [`configuration.rs`](../crates/orchid-engine/src/providers/codex/app_server/configuration.rs) |
 | Ordinary profiled first/next message                             | [`agent_sessions/application/configuration.rs`](../src-tauri/src/agent_sessions/application/configuration.rs)                                                                                                                                      |
 | Addressed profile creation and managed send                      | [`agent_sessions/session_event_adapter.rs`](../src-tauri/src/agent_sessions/session_event_adapter.rs)                                                                                                                                              |
 | Product guidance, working copies and accepted revisions          | [`orchestration/conversation_harness.rs`](../src-tauri/src/orchestration/conversation_harness.rs), [`conversation_harness_revision.rs`](../src-tauri/src/orchestration/conversation_harness_revision.rs)                                           |

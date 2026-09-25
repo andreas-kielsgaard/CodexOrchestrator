@@ -2,10 +2,11 @@ use crate::agent_sessions::{
     domain::{
         AgentInvocation, AgentInvocationStatus, AgentRuntimeEvent, AgentRuntimeEventId,
         AgentRuntimeEventSource, ExternalRuntimeContextId, NormalizedRuntimeEventKind,
-        NormalizedToolActivity,
+        NormalizedToolActivity, ToolActivityKind,
     },
     ports::AgentInvocationHistory,
 };
+use orchid_engine::contracts::{ProcessExitStatus, RuntimeControlRecord};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -66,19 +67,13 @@ pub(crate) struct AgentInvocationObservation {
     pub(crate) provider_terminal: Option<ProviderTerminalObservation>,
     pub(crate) process_terminal: Option<ProcessTerminalObservation>,
     pub(crate) mcp_tool_activities: Vec<SemanticMcpToolObservation>,
-    /// Old records can identify MCP activity but lack newer typed fields; raw payload is not
-    /// reparsed as a migration.
-    pub(crate) mcp_tool_activity_partial: bool,
 }
 
 pub(crate) fn project_invocation_observation(
     history: &AgentInvocationHistory,
 ) -> AgentInvocationObservation {
-    if history
-        .events
-        .iter()
-        .any(|e| e.raw_payload["kind"] == "codex_history_import")
-    {
+    // Imported history was never executed by Orchid; it has no execution evidence to observe.
+    if history.import_provenance.is_some() {
         return AgentInvocationObservation {
             launch_accepted_at: None,
             external_context: None,
@@ -86,14 +81,12 @@ pub(crate) fn project_invocation_observation(
             provider_terminal: None,
             process_terminal: None,
             mcp_tool_activities: vec![],
-            mcp_tool_activity_partial: false,
         };
     }
     let mut external_context = None;
     let mut provider_activity = None;
     let mut observed_provider_terminal = None;
     let mut mcp_tool_activities = Vec::new();
-    let mut mcp_tool_activity_partial = false;
     for event in &history.events {
         let Some(normalized) = event.normalized.as_ref() else {
             continue;
@@ -115,20 +108,15 @@ pub(crate) fn project_invocation_observation(
         if observed_provider_terminal.is_none() {
             observed_provider_terminal = provider_terminal(normalized, correlation.clone());
         }
-        if let Some(activity) = normalized.tool_activity.clone() {
+        if let Some(activity) = normalized
+            .tool_activity
+            .clone()
+            .filter(|activity| activity.kind == ToolActivityKind::McpTool)
+        {
             mcp_tool_activities.push(SemanticMcpToolObservation {
                 activity,
                 correlation,
             });
-        } else if normalized.kind == NormalizedRuntimeEventKind::ToolActivity
-            && normalized
-                .details
-                .as_ref()
-                .and_then(|details| details.get("itemType"))
-                .and_then(serde_json::Value::as_str)
-                == Some("mcp_tool_call")
-        {
-            mcp_tool_activity_partial = true;
         }
     }
     AgentInvocationObservation {
@@ -136,38 +124,36 @@ pub(crate) fn project_invocation_observation(
         external_context,
         provider_activity,
         provider_terminal: observed_provider_terminal,
-        process_terminal: if history.events.iter().any(|e| {
-            e.source == AgentRuntimeEventSource::Runtime
-                && e.raw_payload["kind"] == "runtime_transport"
-                && e.raw_payload["transport"] == "codex_app_server"
-        }) {
-            history
-                .events
-                .iter()
-                .rev()
-                .find(|e| {
-                    e.source == AgentRuntimeEventSource::Runtime
-                        && e.raw_payload["kind"] == "runtime_process_exit"
-                })
-                .map(|event| ProcessTerminalObservation {
-                    status: match event.raw_payload["status"].as_str() {
-                        Some("completed") => AgentInvocationStatus::Completed,
-                        Some("canceled") => AgentInvocationStatus::Canceled,
-                        Some("interrupted") => AgentInvocationStatus::Interrupted,
-                        _ => AgentInvocationStatus::Failed,
-                    },
-                    completed_at: event.recorded_at,
-                    exit_code: event.raw_payload["exitCode"]
-                        .as_i64()
-                        .and_then(|v| i32::try_from(v).ok()),
-                    signal: event.raw_payload["signal"].as_str().map(str::to_string),
-                })
-        } else {
-            process_terminal(&history.invocation)
-        },
+        process_terminal: reported_process_exit(history)
+            .or_else(|| process_terminal(&history.invocation)),
         mcp_tool_activities,
-        mcp_tool_activity_partial,
     }
+}
+
+/// The last process exit reported by the adapter that owns the process. Without one, the
+/// invocation's own terminal outcome is the process outcome.
+fn reported_process_exit(history: &AgentInvocationHistory) -> Option<ProcessTerminalObservation> {
+    history.events.iter().rev().find_map(|event| {
+        match RuntimeControlRecord::from_event(event.source, &event.raw_payload)? {
+            RuntimeControlRecord::ProcessExit {
+                status,
+                exit_code,
+                signal,
+                ..
+            } => Some(ProcessTerminalObservation {
+                status: match status {
+                    ProcessExitStatus::Completed => AgentInvocationStatus::Completed,
+                    ProcessExitStatus::Canceled => AgentInvocationStatus::Canceled,
+                    ProcessExitStatus::Interrupted => AgentInvocationStatus::Interrupted,
+                    ProcessExitStatus::Failed => AgentInvocationStatus::Failed,
+                },
+                completed_at: event.recorded_at,
+                exit_code,
+                signal,
+            }),
+            _ => None,
+        }
+    })
 }
 
 fn correlation(event: &AgentRuntimeEvent) -> RuntimeObservationCorrelation {
@@ -314,7 +300,16 @@ mod tests {
     }
 
     #[test]
-    fn projects_typed_and_historical_mcp_evidence_without_raw_reparsing() {
+    fn observes_only_mcp_tool_activity_as_mcp_evidence() {
+        let mut command = mcp_event("command", 4, ToolResultClassification::Succeeded);
+        command
+            .normalized
+            .as_mut()
+            .unwrap()
+            .tool_activity
+            .as_mut()
+            .unwrap()
+            .kind = ToolActivityKind::Command;
         let typed = history(
             "typed",
             AgentInvocationStatus::Completed,
@@ -323,6 +318,7 @@ mod tests {
                 mcp_event("mcp-success", 1, ToolResultClassification::Succeeded),
                 mcp_event("mcp-failed", 2, ToolResultClassification::Failed),
                 mcp_event("mcp-unknown", 3, ToolResultClassification::Unknown),
+                command,
             ],
         );
         let observed = project_invocation_observation(&typed);
@@ -343,23 +339,55 @@ mod tests {
                 .result_classification,
             ToolResultClassification::Unknown
         );
-        assert!(!observed.mcp_tool_activity_partial);
+    }
 
-        let old = history(
-            "old",
+    #[test]
+    fn process_exit_comes_from_the_reported_record_whatever_the_transport() {
+        let mut exit = event("exit", 5, NormalizedRuntimeEventKind::Unknown, None, None);
+        exit.source = AgentRuntimeEventSource::Runtime;
+        exit.normalized = None;
+        exit.raw_payload = json!({"kind":"runtime_process_exit","status":"interrupted","exitCode":null,"signal":"SIGTERM"});
+        let reported = project_invocation_observation(&history(
+            "reported",
             AgentInvocationStatus::Completed,
             None,
-            vec![event(
-                "old-mcp",
-                1,
-                NormalizedRuntimeEventKind::ToolActivity,
-                Some(json!({"itemType":"mcp_tool_call"})),
-                None,
-            )],
+            vec![exit],
+        ));
+        let process = reported.process_terminal.unwrap();
+        assert_eq!(process.status, AgentInvocationStatus::Interrupted);
+        assert_eq!(process.signal.as_deref(), Some("SIGTERM"));
+        assert_eq!(process.completed_at, at(5));
+
+        let unreported = project_invocation_observation(&history(
+            "unreported",
+            AgentInvocationStatus::Completed,
+            None,
+            vec![],
+        ));
+        assert_eq!(
+            unreported.process_terminal.unwrap().status,
+            AgentInvocationStatus::Completed
         );
-        let partial = project_invocation_observation(&old);
-        assert!(partial.mcp_tool_activities.is_empty());
-        assert!(partial.mcp_tool_activity_partial);
+    }
+
+    #[test]
+    fn imported_invocations_carry_no_execution_evidence() {
+        let mut imported = history(
+            "imported",
+            AgentInvocationStatus::Completed,
+            Some(1),
+            vec![processing_event("imported-activity", 1)],
+        );
+        imported.import_provenance = Some(crate::agent_sessions::ports::ImportedTurnProvenance {
+            source_turn_id: "turn".into(),
+            ordinal: 0,
+            source_started_at: None,
+            source_completed_at: None,
+        });
+        let observed = project_invocation_observation(&imported);
+        assert!(observed.launch_accepted_at.is_none());
+        assert!(observed.provider_activity.is_none());
+        assert!(observed.process_terminal.is_none());
     }
 
     fn history(
@@ -389,6 +417,7 @@ mod tests {
             },
             launch_accepted_at: launch_accepted_at.map(at),
             events,
+            import_provenance: None,
         }
     }
     fn event(
@@ -463,6 +492,7 @@ mod tests {
             NormalizedRuntimeEventKind::ToolActivity,
             Some(json!({"itemType":"mcp_tool_call"})),
             Some(NormalizedToolActivity {
+                kind: ToolActivityKind::McpTool,
                 phase: ToolActivityPhase::Completed,
                 item_id: Some(id.into()),
                 server: Some("orchestration".into()),

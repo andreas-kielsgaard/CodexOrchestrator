@@ -1,6 +1,12 @@
 # Agent provider boundary: migration pass
 
-Status: planned 2026-09-25, not started. This pass follows the boundary foundation recorded in [the implementation shape](agent-provider-boundary-implementation-shape.md). At the time of writing that foundation was still uncommitted on `feature/claude-support`. Commit it before starting this pass.
+Status: implemented on `feature/claude-support`, 2026-09-25, on top of the boundary foundation commit `95d0448`:
+
+- Stage A (references, native options, model-independent skills, host): commit `7423986`.
+- Stage B (launch intent): commit `f5703fb`.
+- Stage C (event consumption): the commit that follows `f5703fb`.
+
+See [Implementation notes](#implementation-notes) for where the implementation differs from the plan below and for validation. This pass follows the boundary foundation recorded in [the implementation shape](agent-provider-boundary-implementation-shape.md).
 
 ## Purpose
 
@@ -229,6 +235,32 @@ These are not part of this pass:
 - The single configuration source in `CapabilityProfileService`, and a model catalogue cache keyed by configuration ID alone. Both must become provider-addressed when a second provider registers.
 - Destination-instance paths and the historical binding migration from the base plan.
 - The base plan's live desktop, restart, import, interaction and SSH checks.
+
+## Implementation notes
+
+Differences from the plan above, and the facts behind them:
+
+- **Codex encoding (choice 7).** Managed MCP servers moved to thread configuration for every caller, with bearers in the process environment. A probe against the real `codex-cli 0.154.0` app-server confirmed that the MCP server received `Authorization: Bearer <token>` and that `approval_policy` is honored in thread configuration. Workspace-write resolves to read-only on this Windows machine with either encoding, so the effect of the trust and network keys could not be observed locally. Approval, project trust and sandbox network access therefore keep their existing process-level `-c` values. Only Codex code would change if that is revisited.
+- **Skills.** Product skill roots moved out of the Codex configuration source into `ProductSkillRoots`, and shared quick-feature assembly adds them for every provider. `$name` resolution moved into `execution_configuration::skill_mentions`, and Codex converts `invoked_skill_ids` rather than parsing text.
+  - The manifest guidance wording is now provider-neutral: "A $name mention refers to the skill with that name; read its instructions with read_skill unless they are already attached". Skill files and Harness skill guidance are unchanged.
+  - A profiled Session now invokes only skills its manifest pinned. The old direct-send path already dropped ad hoc native additions for pinned Sessions, while the preparation path kept them; both paths now follow the pinned policy.
+- **Import provenance.** New imports no longer write the `codex_history_import` marker event. The imported-turn table is the provenance, and it is exposed on invocation history and the invocation DTO.
+- **Old records.** Process-exit evidence still reads from existing `runtime_process_exit` records, so older app-server history keeps it. Older non-MCP tool rows are not paired and lose their item-type label. Older MCP tool activity defaults to `kind: mcp_tool`.
+- **Adjacent fix.** The shared session target dialog showed the raw provider ID after the foundation commit. It now uses the existing `AgentProviderDescriptor` through `agentProviderLabel`, which also fixed a failing frontend test.
+
+Validation on 2026-09-25:
+
+| Check | Result |
+| --- | --- |
+| `npm run test:rust:fast` | 760 passed, 1 ignored |
+| `cargo test --manifest-path crates/orchid-engine/Cargo.toml` | 58 passed |
+| `npm test` | 768 passed |
+| `npm run lint` | No errors; 7 pre-existing warnings |
+| `npm run build:frontend` | Passed |
+| `npm run check:rust -- --all-targets --features live-tests` | Passed |
+| `npm run test:codex-app-server` with `codex-cli 0.154.0` | 2 passed |
+
+The live desktop checks and the host redeployment and SSH smoke test were not run.
 
 ## Documentation handoff
 

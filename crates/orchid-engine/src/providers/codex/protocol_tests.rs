@@ -1,5 +1,7 @@
 use super::protocol::{CodexJsonlProtocol, JsonlTerminalEvidence};
-use crate::contracts::{NormalizedRuntimeEventKind, ToolActivityPhase, ToolResultClassification};
+use crate::contracts::{
+    NormalizedRuntimeEventKind, ToolActivityKind, ToolActivityPhase, ToolResultClassification,
+};
 use serde::Deserialize;
 const FIRST_TURN: &str = include_str!("fixtures/codex-cli-0.144.0/first-turn.jsonl");
 const RESUME: &str = include_str!("fixtures/codex-cli-0.144.0/resume.jsonl");
@@ -25,6 +27,9 @@ fn normalizes_mcp_started_and_completed_without_requiring_raw_payload_parsing() 
         })
         .collect::<Vec<_>>();
     assert_eq!(activities.len(), 2);
+    assert!(activities
+        .iter()
+        .all(|activity| activity.kind == ToolActivityKind::McpTool));
     assert_eq!(activities[0].phase, ToolActivityPhase::Started);
     assert_eq!(activities[0].server.as_deref(), Some("orchestration"));
     assert_eq!(
@@ -35,6 +40,36 @@ fn normalizes_mcp_started_and_completed_without_requiring_raw_payload_parsing() 
     assert_eq!(
         activities[1].result_classification,
         ToolResultClassification::Succeeded
+    );
+}
+
+#[test]
+fn every_tool_item_carries_a_neutral_kind_and_lifecycle_identity() {
+    let mut protocol = CodexJsonlProtocol::default();
+    let lines = [
+        r#"{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"cargo test","status":"in_progress"}}"#,
+        r#"{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"cargo test","status":"completed"}}"#,
+        r#"{"type":"item.completed","item":{"id":"change-1","type":"file_change","status":"failed","changes":[]}}"#,
+        r#"{"type":"item.completed","item":{"id":"search-1","type":"web_search","query":"rust"}}"#,
+        r#"{"type":"item.completed","item":{"id":"plan-1","type":"plan_update","summary":"steps"}}"#,
+    ];
+    let activities = lines
+        .iter()
+        .flat_map(|line| protocol.push(format!("{line}
+").as_bytes()))
+        .flat_map(|output| output.events)
+        .filter_map(|event| event.normalized.and_then(|normalized| normalized.tool_activity))
+        .map(|activity| (activity.kind, activity.phase, activity.item_id, activity.tool, activity.result_classification))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        activities,
+        [
+            (ToolActivityKind::Command, ToolActivityPhase::Started, Some("cmd-1".into()), None, ToolResultClassification::Unknown),
+            (ToolActivityKind::Command, ToolActivityPhase::Completed, Some("cmd-1".into()), None, ToolResultClassification::Succeeded),
+            (ToolActivityKind::FileChange, ToolActivityPhase::Completed, Some("change-1".into()), None, ToolResultClassification::Failed),
+            (ToolActivityKind::WebSearch, ToolActivityPhase::Completed, Some("search-1".into()), None, ToolResultClassification::Unknown),
+            (ToolActivityKind::Plan, ToolActivityPhase::Completed, Some("plan-1".into()), None, ToolResultClassification::Unknown),
+        ]
     );
 }
 

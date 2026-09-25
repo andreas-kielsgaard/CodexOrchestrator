@@ -13,7 +13,9 @@ import type {
   AgentSessionDetailsDto,
   IsoDateTimeDto,
   NormalizedToolActivityDto,
+  ToolActivityKindDto,
 } from '../../application/agentSessions';
+import { runtimeDiagnosticText } from './runtimeDiagnostics';
 
 export type TranscriptActivityKind =
   'processing' | 'tool' | 'agent_intermediate' | 'usage' | 'technical';
@@ -32,6 +34,7 @@ export interface TranscriptActivity {
 export type TranscriptActivitySafeDetail =
   | {
       kind: 'tool';
+      activity: ToolActivityKindDto;
       phase: NormalizedToolActivityDto['phase'];
       itemId: string | null;
       server: string | null;
@@ -174,7 +177,7 @@ export class AgentSessionTranscriptProjectionCache {
 
 function orderedInvocationEntries(details: AgentSessionDetailsDto) {
   return details.invocations
-    .map((entry) => ({ entry, imported: importedTranscript(entry.events) }))
+    .map((entry) => ({ entry, imported: importedTranscript(entry) }))
     .sort((left, right) =>
       left.imported && right.imported
         ? left.imported.ordinal - right.imported.ordinal
@@ -331,9 +334,9 @@ function transcript(sessionId: string, invocations: ProjectedInvocation[]): Proj
 }
 
 /**
- * Runtime JSONL emits lifecycle rows for one command or MCP item. Preserve those raw rows, but
- * render the paired start/completion as one logical activity so a completed operation is not
- * misrepresented as two calls.
+ * A provider reports one tool item as a started and a completed activity. Preserve both records,
+ * but render the pair as one logical activity so a completed operation is not misrepresented as
+ * two calls. Pairing uses only the normalized item identity and phase.
  */
 function coalesceLifecycleActivities(activities: TranscriptActivity[]): TranscriptActivity[] {
   const active = new Map<string, number>();
@@ -345,23 +348,22 @@ function coalesceLifecycleActivities(activities: TranscriptActivity[]): Transcri
       projected.push(activity);
       continue;
     }
-    if (lifecycle.eventType === 'item.started') {
+    if (lifecycle.phase === 'started') {
       active.set(lifecycle.key, projected.length);
       projected.push(activity);
       continue;
     }
-    if (lifecycle.eventType === 'item.completed') {
-      const index = active.get(lifecycle.key);
-      if (index !== undefined) {
-        const started = projected[index];
-        projected[index] = {
-          ...started,
-          text: activity.text === toolLabelFromActivity(activity) ? started.text : activity.text,
-          rawPayload: { lifecycleEvents: [started.rawPayload, activity.rawPayload] },
-        };
-        active.delete(lifecycle.key);
-        continue;
-      }
+    const index = active.get(lifecycle.key);
+    if (index !== undefined) {
+      const started = projected[index];
+      projected[index] = {
+        ...started,
+        text: activity.text === toolLabelFromActivity(activity) ? started.text : activity.text,
+        safeDetail: activity.safeDetail,
+        rawPayload: { lifecycleEvents: [started.rawPayload, activity.rawPayload] },
+      };
+      active.delete(lifecycle.key);
+      continue;
     }
     projected.push(activity);
   }
@@ -370,36 +372,43 @@ function coalesceLifecycleActivities(activities: TranscriptActivity[]): Transcri
 
 function lifecycleIdentity(
   activity: TranscriptActivity,
-): { key: string; eventType: 'item.started' | 'item.completed' } | null {
-  if (activity.kind !== 'tool' || !activity.rawPayload || typeof activity.rawPayload !== 'object') {
-    return null;
-  }
-  const raw = activity.rawPayload as Record<string, unknown>;
-  const item = raw.item;
-  if (!item || typeof item !== 'object') return null;
-  const itemId = (item as Record<string, unknown>).id;
-  const itemType = (item as Record<string, unknown>).type;
-  const eventType = raw.type;
-  if (
-    typeof itemId !== 'string' ||
-    typeof itemType !== 'string' ||
-    (eventType !== 'item.started' && eventType !== 'item.completed')
-  ) {
-    return null;
-  }
-  return { key: `${itemType}:${itemId}`, eventType };
+): { key: string; phase: 'started' | 'completed' } | null {
+  const detail = activity.safeDetail;
+  if (activity.kind !== 'tool' || detail?.kind !== 'tool' || !detail.itemId) return null;
+  if (detail.phase !== 'started' && detail.phase !== 'completed') return null;
+  return { key: `${detail.activity}:${detail.itemId}`, phase: detail.phase };
+}
+
+const TOOL_ACTIVITY_LABELS: Readonly<Record<ToolActivityKindDto, string>> = {
+  command: 'command execution',
+  file_change: 'file change',
+  web_search: 'web search',
+  plan: 'plan update',
+  mcp_tool: 'mcp tool call',
+  other: 'Tool activity',
+};
+
+export function toolActivityLabel(kind: ToolActivityKindDto | undefined): string {
+  return kind ? TOOL_ACTIVITY_LABELS[kind] : 'Tool activity';
 }
 
 function toolLabelFromActivity(activity: TranscriptActivity): string {
-  const raw = activity.rawPayload;
-  if (raw && typeof raw === 'object') {
-    const item = (raw as Record<string, unknown>).item;
-    if (item && typeof item === 'object') {
-      const itemType = (item as Record<string, unknown>).type;
-      if (typeof itemType === 'string') return itemType.replaceAll('_', ' ');
-    }
-  }
-  return 'Tool activity';
+  return activity.safeDetail?.kind === 'tool'
+    ? toolActivityLabel(activity.safeDetail.activity)
+    : 'Tool activity';
+}
+
+function toolSafeDetail(activity: NormalizedToolActivityDto): TranscriptActivitySafeDetail {
+  return {
+    kind: 'tool',
+    activity: activity.kind,
+    phase: activity.phase,
+    itemId: activity.itemId,
+    server: activity.server,
+    tool: activity.tool,
+    status: activity.status,
+    resultClassification: activity.resultClassification,
+  };
 }
 
 /**
@@ -527,7 +536,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     return {
       ...base,
       kind: 'technical',
-      text: normalized?.text?.trim() || technicalLabel(event),
+      text: normalized?.text?.trim() || runtimeDiagnosticText(event),
     };
   }
 
@@ -542,8 +551,8 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     return {
       ...base,
       kind: 'tool',
-      text: normalized.text?.trim() || toolLabel(normalized.details),
-      safeDetail: normalized.toolActivity ? { kind: 'tool', ...normalized.toolActivity } : null,
+      text: normalized.text?.trim() || toolActivityLabel(normalized.toolActivity?.kind),
+      safeDetail: normalized.toolActivity ? toolSafeDetail(normalized.toolActivity) : null,
     };
   }
   if (kind === 'agent_message') {
@@ -560,7 +569,7 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     return null;
   }
 
-  return { ...base, kind: 'technical', text: technicalLabel(event) };
+  return { ...base, kind: 'technical', text: runtimeDiagnosticText(event) };
 }
 
 function projectOutcome(
@@ -600,27 +609,4 @@ function hasDetail(value: unknown, key: string, expected: string): boolean {
   return Boolean(
     value && typeof value === 'object' && (value as Record<string, unknown>)[key] === expected,
   );
-}
-
-function toolLabel(details: unknown): string {
-  if (details && typeof details === 'object') {
-    const itemType = (details as Record<string, unknown>).itemType;
-    if (typeof itemType === 'string') {
-      return itemType.replaceAll('_', ' ');
-    }
-  }
-  return 'Tool activity';
-}
-
-function technicalLabel(event: AgentRuntimeEventDto): string {
-  if (typeof event.rawPayload === 'string' && event.rawPayload.trim()) {
-    return event.rawPayload.trim();
-  }
-  if (event.rawPayload && typeof event.rawPayload === 'object') {
-    const decoded = (event.rawPayload as Record<string, unknown>).lossyUtf8;
-    if (typeof decoded === 'string' && decoded.trim()) {
-      return decoded.trim();
-    }
-  }
-  return `${event.source} event (${event.normalized?.kind ?? 'unparsed'})`;
 }

@@ -137,7 +137,6 @@ function completedDetails(): AgentSessionDetailsDto {
           providerTerminal: null,
           processTerminal: { status: 'completed', completedAt: timestamp, exitCode: 0, signal: null },
           mcpToolActivities: [],
-          mcpToolActivityPartial: false,
         },
         events: [],
       },

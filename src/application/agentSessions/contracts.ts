@@ -117,9 +117,18 @@ export interface NormalizedRuntimeEventDto {
 }
 
 export type ToolActivityPhaseDto = 'started' | 'completed' | 'unknown';
+/** What a tool item did, in Orchid's provider-independent vocabulary. */
+export type ToolActivityKindDto =
+  | 'command'
+  | 'file_change'
+  | 'web_search'
+  | 'plan'
+  | 'mcp_tool'
+  | 'other';
 export type ToolResultClassificationDto = 'succeeded' | 'failed' | 'unknown';
 
 export interface NormalizedToolActivityDto {
+  kind: ToolActivityKindDto;
   phase: ToolActivityPhaseDto;
   itemId: string | null;
   server: string | null;
@@ -155,7 +164,6 @@ export interface AgentInvocationObservationDto {
     activity: NormalizedToolActivityDto;
     correlation: RuntimeObservationCorrelationDto;
   }>;
-  mcpToolActivityPartial: boolean;
 }
 
 export interface AgentRuntimeEventDto {
@@ -168,10 +176,20 @@ export interface AgentRuntimeEventDto {
   recordedAt: IsoDateTimeDto;
 }
 
+/** Where an invocation imported from provider history came from. */
+export interface ImportedTurnProvenanceDto {
+  sourceTurnId: string;
+  ordinal: number;
+  sourceStartedAt: number | null;
+  sourceCompletedAt: number | null;
+}
+
 export interface AgentInvocationDetailsDto {
   invocation: AgentInvocationDto;
   observation: AgentInvocationObservationDto;
   events: AgentRuntimeEventDto[];
+  /** Present only for invocations imported from provider history. */
+  importProvenance?: ImportedTurnProvenanceDto | null;
 }
 
 export interface AgentSessionDetailsDto {

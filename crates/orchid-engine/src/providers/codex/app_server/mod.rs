@@ -15,7 +15,7 @@ pub mod skills;
 
 use super::protocol::CodexJsonlProtocol;
 use crate::{
-    contracts::{domain::*, ports::*},
+    contracts::{control::*, domain::*, ports::*},
     processes::*,
 };
 use connection::{unavailable, Connection};
@@ -54,12 +54,17 @@ impl Invocation {
         }
     }
 
+    /// Codex-specific diagnostic evidence; product code never decides on it.
     fn event(&self, payload: Value) {
         self.emit(RuntimeUpdate::Event(RuntimeEventDraft {
             source: AgentRuntimeEventSource::Runtime,
             raw_payload: payload,
             normalized: None,
         }));
+    }
+
+    fn control(&self, record: RuntimeControlRecord) {
+        self.emit(RuntimeUpdate::Event(record.into_draft()));
     }
 
     fn finish(&self, status: AgentInvocationTerminalStatus, error: Option<RuntimePortError>) {
@@ -105,7 +110,7 @@ impl Invocation {
                 .target
                 .lock()
                 .map_err(|_| unavailable("Turn lock poisoned"))? = Some(target.clone());
-            self.event(json!({"kind":"runtime_turn_active","target":target}));
+            self.control(RuntimeControlRecord::TurnActive { target });
         }
         if let Some(mut raw) = notifications::legacy_event(method, params) {
             // Attach native evidence before normalization. The shared normalizer can defer an
@@ -201,12 +206,20 @@ impl ProcessEventSink for Coordinator {
         };
         invocation.connection.disconnected();
         let (classification, exit) = match &outcome {
-            ProcessTerminalOutcome::Exited(exit) => ("completed", Some(exit)),
-            ProcessTerminalOutcome::Failed { exit, .. } => ("failed", exit.as_ref()),
-            ProcessTerminalOutcome::Canceled { exit } => ("canceled", exit.as_ref()),
-            ProcessTerminalOutcome::Interrupted { exit } => ("interrupted", exit.as_ref()),
+            ProcessTerminalOutcome::Exited(exit) => (ProcessExitStatus::Completed, Some(exit)),
+            ProcessTerminalOutcome::Failed { exit, .. } => (ProcessExitStatus::Failed, exit.as_ref()),
+            ProcessTerminalOutcome::Canceled { exit } => (ProcessExitStatus::Canceled, exit.as_ref()),
+            ProcessTerminalOutcome::Interrupted { exit } => {
+                (ProcessExitStatus::Interrupted, exit.as_ref())
+            }
         };
-        invocation.event(json!({"kind":"runtime_process_exit","status":classification,"exitCode":exit.and_then(|e| e.exit_code),"signal":exit.and_then(|e| e.signal.as_deref()),"afterTurnCompletion":invocation.finished.load(Ordering::Acquire),"evidence":format!("{outcome:?}")}));
+        invocation.control(RuntimeControlRecord::ProcessExit {
+            status: classification,
+            exit_code: exit.and_then(|e| e.exit_code),
+            signal: exit.and_then(|e| e.signal.clone()),
+            after_turn_completion: invocation.finished.load(Ordering::Acquire),
+            evidence: Some(format!("{outcome:?}")),
+        });
         let status = match outcome {
             ProcessTerminalOutcome::Interrupted { .. } => {
                 AgentInvocationTerminalStatus::Interrupted
@@ -388,7 +401,16 @@ fn initialize_turn(
             json!({"threadId":external.as_str(),"includeTurns":false}),
         )?;
         let cwd = metadata["thread"]["cwd"].as_str().filter(|cwd| PathBuf::from(cwd).is_absolute() && PathBuf::from(cwd).is_dir()).ok_or_else(|| unavailable("Historical working context could not be recovered. Select an explicit working directory before continuing"))?;
-        invocation.sink.emit_update(&request.invocation_id, RuntimeUpdate::Event(RuntimeEventDraft { source: AgentRuntimeEventSource::Runtime, raw_payload: json!({"kind":"runtime_working_directory_resolved","cwd":cwd,"threadId":external.as_str()}), normalized: None }))?;
+        invocation.sink.emit_update(
+            &request.invocation_id,
+            RuntimeUpdate::Event(
+                RuntimeControlRecord::WorkingDirectoryResolved {
+                    cwd: cwd.into(),
+                    thread_id: external.as_str().into(),
+                }
+                .into_draft(),
+            ),
+        )?;
         request.working_directory = Some(cwd.into());
     }
     let mut params = json!({});

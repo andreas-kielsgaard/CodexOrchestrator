@@ -85,10 +85,13 @@ impl SqliteAgentSessionRepository {
                     let launch_accepted_at =
                         invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
                     let events = list_events_from(&transaction, &invocation.id)?;
+                    let import_provenance =
+                        import::imported_turn_from(&transaction, &invocation.id)?;
                     Ok(AgentInvocationHistory {
                         invocation,
                         launch_accepted_at,
                         events,
+                        import_provenance,
                     })
                 })
                 .collect::<Result<Vec<_>, RepositoryError>>()?;
@@ -140,6 +143,7 @@ impl SqliteAgentSessionRepository {
                                 invocation,
                                 launch_accepted_at: None,
                                 events: list_events_from(&transaction, &id)?,
+                                import_provenance: None,
                             }])
                         } else { 0 };
                         (Some(status), Some(text), count)

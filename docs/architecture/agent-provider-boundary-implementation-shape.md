@@ -17,11 +17,16 @@ Completed in this branch:
 - provider-neutral UI wording on shared execution surfaces and an explicit Codex personality component;
 - architecture and provider-registration documentation.
 
+Completed by [the migration pass](agent-provider-boundary-migration-pass.md) (2026-09-25):
+
+- semantic launch intent in place of orchestration-owned Codex configuration strings;
+- typed configuration references and the provider options envelope in shared profile contracts;
+- normalized transcript and observation consumers, with a raw-payload guard;
+- model-independent skills;
+- the remote `Capabilities` command using the typed reference.
+
 Still required before the full target described below is complete:
 
-- replace remaining orchestration-owned Codex configuration strings with semantic managed-MCP and launch material;
-- move the remaining Codex personality and native-MCP compatibility fields out of shared profile contracts;
-- normalize the remaining transcript/observation consumers that inspect Codex raw event markers;
 - finish destination-instance ownership/navigation handling for every target-transition path and historical migration case;
 - make the remote host construct providers through a provider factory rather than its Codex implementation directly;
 - migrate live coverage off the test-only CLI runtime, then remove that competing path;
@@ -29,7 +34,7 @@ Still required before the full target described below is complete:
 
 These are not Claude-integration tasks. They are the remaining Codex boundary migration and verification work.
 
-The first three items and the remote `Capabilities` reference are planned in [the migration pass](agent-provider-boundary-migration-pass.md). That pass supersedes this document's historical-compatibility choices: stored profiles and references are rewritten once in SQLite, no permanent Codex compatibility reader or legacy decoder is kept, and old event streams are left as recorded without a compatibility projection.
+The migration pass supersedes this document's historical-compatibility choices: stored profiles and references are rewritten once in SQLite, no permanent Codex compatibility reader or legacy decoder is kept, and old event streams are left as recorded without a compatibility projection.
 
 ## Target
 

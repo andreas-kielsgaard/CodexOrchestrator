@@ -2,7 +2,7 @@ use crate::contracts::{
     domain::{
         AgentRuntimeEventSource, AgentRuntimeUsage, ExternalRuntimeContextId,
         NormalizedRuntimeEvent, NormalizedRuntimeEventKind, NormalizedToolActivity,
-        ToolActivityPhase, ToolResultClassification,
+        ToolActivityKind, ToolActivityPhase, ToolResultClassification,
     },
     ports::RuntimeEventDraft,
 };
@@ -260,7 +260,7 @@ impl CodexJsonlProtocol {
                     "mcp_tool_call" => {
                         let text = item_text(item);
                         let details = json!({"itemType": item_type, "eventType": event});
-                        let activity = mcp_tool_activity(item, event);
+                        let activity = tool_activity(ToolActivityKind::McpTool, item, event);
                         events.push(draft(
                             raw,
                             normalized_with_tool(
@@ -284,14 +284,22 @@ impl CodexJsonlProtocol {
                                 details["fileChanges"] = changes;
                             }
                         }
+                        let kind = match item_type.as_str() {
+                            "command_execution" => ToolActivityKind::Command,
+                            "file_change" => ToolActivityKind::FileChange,
+                            "web_search" => ToolActivityKind::WebSearch,
+                            _ => ToolActivityKind::Plan,
+                        };
+                        let activity = tool_activity(kind, item, event);
                         events.push(draft(
                             raw,
-                            normalized(
+                            normalized_with_tool(
                                 NormalizedRuntimeEventKind::ToolActivity,
                                 text,
                                 None,
                                 None,
                                 Some(details),
+                                activity,
                             ),
                         ));
                     }
@@ -459,7 +467,11 @@ fn normalized_with_tool(
     }
 }
 
-fn mcp_tool_activity(item: &Map<String, Value>, event: &str) -> NormalizedToolActivity {
+fn tool_activity(
+    kind: ToolActivityKind,
+    item: &Map<String, Value>,
+    event: &str,
+) -> NormalizedToolActivity {
     let status = text_at(item, &["status", "result", "outcome"]).or_else(|| {
         item.get("result")
             .and_then(Value::as_object)
@@ -477,11 +489,17 @@ fn mcp_tool_activity(item: &Map<String, Value>, event: &str) -> NormalizedToolAc
         Some("failed" | "error" | "errored") => ToolResultClassification::Failed,
         _ => ToolResultClassification::Unknown,
     };
+    let mcp = kind == ToolActivityKind::McpTool;
     NormalizedToolActivity {
+        kind,
         phase,
         item_id: text_at(item, &["id"]),
-        server: text_at(item, &["server", "server_name", "serverName"]),
-        tool: text_at(item, &["tool", "tool_name", "toolName", "name"]),
+        server: mcp
+            .then(|| text_at(item, &["server", "server_name", "serverName"]))
+            .flatten(),
+        tool: mcp
+            .then(|| text_at(item, &["tool", "tool_name", "toolName", "name"]))
+            .flatten(),
         status,
         result_classification,
     }

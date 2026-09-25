@@ -1,4 +1,4 @@
-import type { TranscriptActivity } from './transcriptProjector';
+import { toolActivityLabel, type TranscriptActivity } from './transcriptProjector';
 import { AgentMarkdown } from './AgentMarkdown';
 
 interface ProcessingDisclosureProps {
@@ -84,8 +84,9 @@ function formatSafeDetail(detail: NonNullable<TranscriptActivity['safeDetail']>)
 
 function formatSafeToolDetail(detail: TranscriptActivity['safeDetail']): string {
   if (!detail || detail.kind !== 'tool') return 'Tool activity detail unavailable';
-  const label = [detail.server, detail.tool].filter(Boolean).join(' / ');
-  return [label || 'Tool identity unavailable', detail.phase, detail.resultClassification].join(
+  const label =
+    [detail.server, detail.tool].filter(Boolean).join(' / ') || toolActivityLabel(detail.activity);
+  return [label, detail.phase, detail.resultClassification].join(
     ' · ',
   );
 }

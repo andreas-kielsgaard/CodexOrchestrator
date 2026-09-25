@@ -97,6 +97,7 @@ it('refreshes pending request counts for an unselected session without moving se
       invocationId: 'turn-2',
       event: {
         ...runtimeEvent(1, 'unknown', null),
+        source: 'runtime',
         rawPayload: { kind: 'runtime_request_opened' },
       },
     }),
@@ -110,6 +111,7 @@ it('refreshes pending request counts for an unselected session without moving se
       invocationId: 'turn-2',
       event: {
         ...runtimeEvent(2, 'unknown', null),
+        source: 'runtime',
         rawPayload: { kind: 'runtime_request_response' },
       },
     }),

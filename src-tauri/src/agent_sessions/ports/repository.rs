@@ -20,6 +20,19 @@ pub(crate) struct AgentInvocationHistory {
     /// inferred from invocation lifecycle fields or provider events.
     pub(crate) launch_accepted_at: Option<DateTime<Utc>>,
     pub(crate) events: Vec<AgentRuntimeEvent>,
+    /// Present when the invocation was imported from provider history rather than executed.
+    pub(crate) import_provenance: Option<ImportedTurnProvenance>,
+}
+
+/// Where an imported invocation came from. Imported invocations carry no Orchid execution
+/// evidence; source times are the provider's own.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImportedTurnProvenance {
+    pub(crate) source_turn_id: String,
+    pub(crate) ordinal: u64,
+    pub(crate) source_started_at: Option<i64>,
+    pub(crate) source_completed_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
