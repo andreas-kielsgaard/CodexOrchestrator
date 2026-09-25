@@ -5057,7 +5057,7 @@ pub(crate) fn reconcile_native_profile_mcp_reporting(
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        NativeCodexSelectedRuntimeProfileSource, SandboxMode, SelectedRuntimeProfileSource,
+        CodexConfigurationSource, SandboxMode, ProviderConfigurationSource,
     };
     use std::sync::Barrier;
     use std::thread;
@@ -5363,7 +5363,7 @@ mod tests {
         let profile = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &profile.id);
         let source =
-            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+            CodexConfigurationSource::new(Arc::new(service), Default::default())
                 .with_reader(Arc::new(Environment));
 
         let snapshot = source.selected_runtime_profile().unwrap();
@@ -5416,7 +5416,7 @@ mod tests {
         let second = service.create_dedicated().unwrap();
         let observed = Arc::new(Mutex::new(Vec::new()));
         let source =
-            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+            CodexConfigurationSource::new(Arc::new(service), Default::default())
                 .with_reader(Arc::new(Environment(observed.clone())));
         source
             .native_skills_for_configuration(&first.id, None)
@@ -5456,7 +5456,7 @@ mod tests {
         let profile = selected_profile_ready_except_mcp(&service);
         let reads = Arc::new(Mutex::new(0));
         let source =
-            NativeCodexSelectedRuntimeProfileSource::new(Arc::new(service), Default::default())
+            CodexConfigurationSource::new(Arc::new(service), Default::default())
                 .with_reader(Arc::new(Environment(reads.clone())));
 
         source

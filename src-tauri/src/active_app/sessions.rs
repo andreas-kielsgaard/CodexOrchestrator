@@ -7,7 +7,7 @@ use crate::{
         },
         repository::SqliteAgentSessionRepository,
     },
-    execution_configuration::{CapabilityProfileService, SelectedRuntimeProfileSource},
+    execution_configuration::{CapabilityProfileService, ProviderConfigurationSource},
     harness_engine::{catalog_service::HarnessCatalogService, HarnessEngineService},
     runtime::providers::codex::profiles::NativeProfileService,
 };
@@ -20,7 +20,7 @@ use std::{
 pub(super) struct SessionServices {
     pub(super) application: Arc<AgentSessionApplication>,
     pub(super) imports: Arc<crate::agent_sessions::application::import::AgentSessionImportService>,
-    pub(super) selected_runtime_profile: Arc<dyn SelectedRuntimeProfileSource>,
+    pub(super) selected_runtime_profile: Arc<dyn ProviderConfigurationSource>,
     pub(super) capability_profiles: Arc<CapabilityProfileService>,
     pub(super) execution_targets: Arc<crate::execution_targets::ExecutionTargetService>,
 }

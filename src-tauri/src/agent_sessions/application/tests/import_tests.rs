@@ -42,7 +42,7 @@ fn service(
     conn.execute("INSERT INTO native_codex_profiles VALUES ('profile','home','identity','registered_existing','active','now','now','now')",[]).unwrap();
     let repository = Arc::new(SqliteAgentSessionRepository::new(conn).unwrap());
     let snapshot = test_selected_runtime_profile();
-    let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
+    let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
     let profiles = Arc::new(CapabilityProfileService::new(
         Arc::new(InMemoryCapabilityProfileRepository::default()),
         source.clone(),
@@ -195,7 +195,7 @@ fn installed_codex_import_reopens_and_continues_through_orchid() {
         snapshot.exposure.sandbox_modes = [ExecutionSandboxMode::ReadOnly].into_iter().collect();
         snapshot.locked.sandbox_mode = Some(ExecutionSandboxMode::ReadOnly);
         snapshot.exposure.reasoning_modes = ["low".into()].into_iter().collect();
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
+        let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(InMemoryCapabilityProfileRepository::default()),
             source.clone(),

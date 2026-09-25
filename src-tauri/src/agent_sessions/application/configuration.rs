@@ -118,7 +118,7 @@ use super::{
 use crate::{
     agent_sessions::domain::AgentSessionId,
     execution_configuration::{
-        DirectUserInvocationResolution, NodeProfile, ResolutionError, SelectedRuntimeProfileSource,
+        DirectUserInvocationResolution, NodeProfile, ResolutionError, ProviderConfigurationSource,
         SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
     },
 };
@@ -349,7 +349,7 @@ impl AgentSessionApplication {
 
     pub(crate) fn with_profile_source(
         mut self,
-        source: Arc<dyn SelectedRuntimeProfileSource>,
+        source: Arc<dyn ProviderConfigurationSource>,
     ) -> Self {
         self.profile_source = Some(source);
         self
@@ -366,7 +366,7 @@ impl AgentSessionApplication {
 
     pub(super) fn profile_source(
         &self,
-    ) -> Result<&dyn SelectedRuntimeProfileSource, SessionConfigurationError> {
+    ) -> Result<&dyn ProviderConfigurationSource, SessionConfigurationError> {
         self.profile_source.as_deref().ok_or_else(|| {
             SessionConfigurationError::new(
                 SessionConfigurationErrorKind::MissingPinnedProfile,

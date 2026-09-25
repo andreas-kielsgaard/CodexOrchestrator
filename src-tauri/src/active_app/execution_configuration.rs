@@ -16,7 +16,7 @@ pub(super) fn compose(
     otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<
     (
-        Arc<dyn SelectedRuntimeProfileSource>,
+        Arc<dyn ProviderConfigurationSource>,
         Arc<CapabilityProfileService>,
         Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
         Arc<ProductSkillRoots>,
@@ -30,8 +30,8 @@ pub(super) fn compose(
             .map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect()))
             .collect(),
     ));
-    let source: Arc<dyn SelectedRuntimeProfileSource> = Arc::new(
-        NativeCodexSelectedRuntimeProfileSource::new(profiles, product_tools.clone())
+    let source: Arc<dyn ProviderConfigurationSource> = Arc::new(
+        CodexConfigurationSource::new(profiles, product_tools.clone())
             .with_product_skill_roots(&product_skills),
     );
     let endpoints = Arc::new(

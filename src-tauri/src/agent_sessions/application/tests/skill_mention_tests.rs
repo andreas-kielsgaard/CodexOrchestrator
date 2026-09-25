@@ -7,17 +7,17 @@ struct NativeSkills {
     reads: AtomicU64,
 }
 
-impl SelectedRuntimeProfileSource for NativeSkills {
+impl ProviderConfigurationSource for NativeSkills {
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
     fn native_skills_for_configuration(
         &self,
         _reference: &str,
         _cwd: Option<&str>,
-    ) -> Result<ProviderSkillCatalogue, SelectedRuntimeProfileSourceError> {
+    ) -> Result<ProviderSkillCatalogue, ProviderConfigurationSourceError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         Ok(self.catalogue.clone())
     }

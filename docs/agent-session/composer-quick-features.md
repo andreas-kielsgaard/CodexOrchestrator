@@ -21,7 +21,7 @@ Model and reasoning choices use the existing message-local selection state, shar
 - `useComposerQuickMenu.ts` owns navigation, filtering, keyboard handling, asynchronous discovery, and stale-context rejection. `ComposerQuickMenu.tsx` renders the accessible choice list above the shared composer.
 - `src/application/agentSessions/quickFeatures.ts` is the serializable discovery contract. No provider request method or filesystem parser belongs in the composer.
 - `src-tauri/src/agent_sessions/application/quick_features.rs` resolves the Session's working directory and inherited defaults. Existing Sessions must retain their attached runtime identity; a first-message preview uses the default Capability Profile without creating a Session.
-- `src-tauri/src/execution_configuration/native_codex/quick_features.rs` projects Codex models, model-specific reasoning efforts, and enabled skills. It uses the existing environment reader and product skill roots. Other providers implement `SelectedRuntimeProfileSource::quick_features_at`; unsupported discovery returns an explicit error.
+- `src-tauri/src/execution_configuration/native_codex/quick_features.rs` projects Codex models, model-specific reasoning efforts, and enabled skills. It uses the existing environment reader and product skill roots. Other providers implement `ProviderConfigurationSource::quick_features_at`; unsupported discovery returns an explicit error.
 
 Discovery refreshes when the picker opens and supports retry. Send-time validation remains authoritative. The current Codex adapter inserts native `$name` mentions. Duplicate names from distinct paths are omitted with an explanation because a name-only invocation cannot identify the intended source.
 

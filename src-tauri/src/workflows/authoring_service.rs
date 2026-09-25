@@ -204,16 +204,16 @@ mod tests {
     use super::*;
     use crate::execution_configuration::{
         CapabilitySet, InMemoryCapabilityProfileRepository, NodeProfile, RuntimeProfileSnapshot,
-        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError,
+        RuntimeSelections, SandboxMode, ProviderConfigurationSource,
+        ProviderConfigurationSourceError,
     };
 
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
-    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
+    impl ProviderConfigurationSource for FixedRuntimeSource {
         fn selected_runtime_profile(
             &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }

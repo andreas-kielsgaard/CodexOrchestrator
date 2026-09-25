@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     execution_configuration::{
-        CapabilityProfileService, SelectedRuntimeProfileSource, SessionCreationIntent,
+        CapabilityProfileService, ProviderConfigurationSource, SessionCreationIntent,
         SessionCreationRequest,
     },
     identities::{service::IdentityService, IdentityId},
@@ -39,7 +39,7 @@ impl AgentSessionEventAdapter {
     pub(crate) fn new(
         application: Arc<AgentSessionApplication>,
         repository: Arc<SqliteAgentSessionRepository>,
-        profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        profile_source: Arc<dyn ProviderConfigurationSource>,
         identities: IdentityService,
     ) -> Self {
         Self {

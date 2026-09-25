@@ -38,7 +38,7 @@ It also makes the small remote-host change that typed references force, and one 
 11. **Bump `HOST_PROTOCOL_VERSION` to 2,** because the `Capabilities` response shape changes. Redeploy the host with `deploy-orchid-host.ps1`.
 12. **Guards:** an ESLint `no-restricted-syntax` rule on the frontend, which uses existing tooling, and one Rust source-scan test on the desktop side.
 13. **The Codex native-launch preparation authority receives the typed reference and rejects other providers.** No per-provider preparation registry is added until a second implementation exists.
-14. **Adjacent port cleanup (A4) is included.** `SelectedRuntimeProfileSource` returns `CodexSkillCatalogue`, and shared application code parses `$name` skill mentions. The Claude bridge would have to implement both. The catalogue shape is already neutral, so the change is small. Assumption: included.
+14. **Adjacent port cleanup (A4) is included.** `ProviderConfigurationSource` returns `CodexSkillCatalogue`, and shared application code parses `$name` skill mentions. The Claude bridge would have to implement both. The catalogue shape is already neutral, so the change is small. Assumption: included.
 
 ### Discussed and still open
 

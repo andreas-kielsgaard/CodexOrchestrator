@@ -15,12 +15,12 @@ mod target_tests;
 #[test]
 fn addressed_creation_retry_uses_its_original_native_evidence() {
     struct OneReadSource(AtomicU64);
-    impl SelectedRuntimeProfileSource for OneReadSource {
+    impl ProviderConfigurationSource for OneReadSource {
         fn selected_runtime_profile(
             &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
-                return Err(SelectedRuntimeProfileSourceError::unavailable(
+                return Err(ProviderConfigurationSourceError::unavailable(
                     "native discovery changed",
                 ));
             }
@@ -112,8 +112,8 @@ use crate::{
     agent_sessions::session_event_adapter::AgentSessionEventAdapter,
     execution_configuration::{
         CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
-        SandboxMode as ExecutionSandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError, SessionCreationRequest,
+        SandboxMode as ExecutionSandboxMode, ProviderConfigurationSource,
+        ProviderConfigurationSourceError, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
     identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
@@ -153,7 +153,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         Some("codex-test".into()),
     ));
     let runtime_profile = test_selected_runtime_profile();
-    let profile_source = Arc::new(FixedSelectedRuntimeProfileSource(runtime_profile.clone()));
+    let profile_source = Arc::new(FixedProviderConfigurationSource(runtime_profile.clone()));
     let assigned_definition = identities
         .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
         .expect("Identity definition");
@@ -412,12 +412,12 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
 }
 
 #[derive(Clone)]
-struct FixedSelectedRuntimeProfileSource(RuntimeProfileSnapshot);
+struct FixedProviderConfigurationSource(RuntimeProfileSnapshot);
 
-impl SelectedRuntimeProfileSource for FixedSelectedRuntimeProfileSource {
+impl ProviderConfigurationSource for FixedProviderConfigurationSource {
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(self.0.clone())
     }
 }

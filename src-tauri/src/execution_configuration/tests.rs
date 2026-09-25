@@ -1,7 +1,7 @@
 use super::{
     capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
     node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION},
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
+    ports::{ProviderConfigurationSource, ProviderConfigurationSourceError},
     resolution::{
         DirectUserInvocationRequest, ResolutionError, SessionCreationRequest,
         SessionCreationResolution, SessionProfileResolver,
@@ -14,12 +14,12 @@ use super::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-struct FixedProfileSource(Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError>);
+struct FixedProfileSource(Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>);
 
-impl SelectedRuntimeProfileSource for FixedProfileSource {
+impl ProviderConfigurationSource for FixedProfileSource {
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.clone()
     }
 }
@@ -435,7 +435,7 @@ fn strict_contracts_reject_unknown_fields_and_node_identity() {
 
 #[test]
 fn source_failure_is_a_typed_resolution_error() {
-    let source = FixedProfileSource(Err(SelectedRuntimeProfileSourceError::unavailable(
+    let source = FixedProfileSource(Err(ProviderConfigurationSourceError::unavailable(
         "no ready profile",
     )));
     assert_eq!(

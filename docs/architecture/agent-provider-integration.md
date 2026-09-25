@@ -45,7 +45,7 @@ Unknown providers fail explicitly; there is no Codex fallback.
 
 ### Configuration
 
-Configuration discovery implements `SelectedRuntimeProfileSource`. A registered configuration is identified by `ProviderConfigurationRef { provider, configuration_id }`. The source builds runtime profile snapshots with that reference, and reports provider defaults as `provider_options`.
+Configuration discovery implements `ProviderConfigurationSource`. A registered configuration is identified by `ProviderConfigurationRef { provider, configuration_id }`. The source builds runtime profile snapshots with that reference, and reports provider defaults as `provider_options`.
 
 ### Launch intent
 

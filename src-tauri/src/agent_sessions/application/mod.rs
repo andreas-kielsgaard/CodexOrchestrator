@@ -57,7 +57,7 @@ pub(crate) struct AgentSessionApplication {
     session_harness_launch_authority: Option<Arc<dyn SessionHarnessLaunchAuthority>>,
     update_lanes: Arc<InvocationUpdateLanes>,
     workspaces: Option<SessionWorkspaces>,
-    profile_source: Option<Arc<dyn crate::execution_configuration::SelectedRuntimeProfileSource>>,
+    profile_source: Option<Arc<dyn crate::execution_configuration::ProviderConfigurationSource>>,
     product_skills: Arc<crate::execution_configuration::ProductSkillRoots>,
     interaction_lanes: Arc<interactions::InteractionLanes>,
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,

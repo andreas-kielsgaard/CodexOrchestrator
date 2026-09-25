@@ -30,7 +30,7 @@ fn remote_target() -> SessionExecutionTarget {
 fn remote_target_preserves_linux_path_and_routes_continuation_without_local_launch_authority() {
     let harness = Harness::new(RuntimeBehavior::SpawnFailure);
     let remote = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
-    let source = Arc::new(FixedSelectedRuntimeProfileSource(
+    let source = Arc::new(FixedProviderConfigurationSource(
         test_selected_runtime_profile(),
     ));
     let target = remote_target();
@@ -95,7 +95,7 @@ fn cancellation_uses_the_bound_remote_runtime() {
     let endpoints = Arc::new(
         ExecutionEndpoints::new(
             "codex",
-            Arc::new(FixedSelectedRuntimeProfileSource(
+            Arc::new(FixedProviderConfigurationSource(
                 test_selected_runtime_profile(),
             )),
             harness.runtime.clone(),
@@ -137,14 +137,14 @@ fn cancellation_uses_the_bound_remote_runtime() {
 
 #[derive(Default)]
 struct ConfiguredSource(Mutex<Vec<String>>);
-impl SelectedRuntimeProfileSource for ConfiguredSource {
+impl ProviderConfigurationSource for ConfiguredSource {
     fn quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
     ) -> Result<
         crate::execution_configuration::RuntimeQuickFeatures,
-        SelectedRuntimeProfileSourceError,
+        ProviderConfigurationSourceError,
     > {
         self.0
             .lock()
@@ -162,26 +162,26 @@ impl SelectedRuntimeProfileSource for ConfiguredSource {
     }
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
     fn resolve_configuration_ref(
         &self,
         _: &str,
-    ) -> Result<String, SelectedRuntimeProfileSourceError> {
+    ) -> Result<String, ProviderConfigurationSourceError> {
         Ok("frozen-native-home".into())
     }
     fn profile_for_configuration(
         &self,
         reference: &str,
         _: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.lock().unwrap().push(reference.into());
         self.selected_runtime_profile()
     }
     fn native_inventory(
         &self,
-    ) -> Result<NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+    ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
         Ok(Default::default())
     }
 }

@@ -142,7 +142,7 @@ If those records conflict, preserve the history and surface an unresolved legacy
 
 ## Provider contract and configuration
 
-Use existing ports as the starting point. Rename/adapt `SelectedRuntimeProfileSource` into a configuration-addressed provider source: registered configurations, resolve reference, observe catalogue, inventory, and quick features. Replace its `CodexSkillCatalogue` return type with a neutral skill descriptor. Remove product callers' need for `configuration_home`; providers resolve their native homes themselves. Product auxiliary workspaces should use the existing Orchid app-data workspace owner, with old paths retained for existing sessions.
+Use existing ports as the starting point. Rename/adapt `ProviderConfigurationSource` into a configuration-addressed provider source: registered configurations, resolve reference, observe catalogue, inventory, and quick features. Replace its `CodexSkillCatalogue` return type with a neutral skill descriptor. Remove product callers' need for `configuration_home`; providers resolve their native homes themselves. Product auxiliary workspaces should use the existing Orchid app-data workspace owner, with old paths retained for existing sessions.
 
 The registry composes the runtime and configuration source for the chosen provider. It should have explicit unsupported-provider behavior and no fallback to Codex for an existing session. Desktop configuration registration remains backed by the current Codex profile service; no second generic configuration database is needed. Host configuration maps its registered entries to the same engine factory.
 

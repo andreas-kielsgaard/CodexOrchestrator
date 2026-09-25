@@ -62,16 +62,16 @@ struct QuickSource {
     configuration: orchid_engine::contracts::ProviderConfigurationRef,
     contexts: Mutex<Vec<Option<String>>>,
 }
-impl SelectedRuntimeProfileSource for QuickSource {
+impl ProviderConfigurationSource for QuickSource {
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
     fn quick_features_at(
         &self,
         cwd: Option<&str>,
-    ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.contexts.lock().unwrap().push(cwd.map(String::from));
         Ok(RuntimeQuickFeatures {
             configuration: Some(self.configuration.clone()),
@@ -96,17 +96,17 @@ fn skill_discovery_does_not_require_a_capability_profile() {
 #[test]
 fn new_workspace_discovers_from_its_selected_codex_configuration() {
     struct RecordingSource(Mutex<Vec<String>>);
-    impl SelectedRuntimeProfileSource for RecordingSource {
+    impl ProviderConfigurationSource for RecordingSource {
         fn selected_runtime_profile(
             &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(test_selected_runtime_profile())
         }
         fn quick_features_for_configuration(
             &self,
             reference: &str,
             _: Option<&str>,
-        ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeQuickFeatures, ProviderConfigurationSourceError> {
             self.0.lock().unwrap().push(reference.into());
             Ok(RuntimeQuickFeatures::default())
         }
@@ -290,7 +290,7 @@ impl Fixture {
                 ["handoff_to_agent".into()].into_iter().collect(),
             );
         }
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
+        let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
         let profiles = Arc::new(CapabilityProfileService::new(
             Arc::new(SqliteCapabilityProfileRepository::from_database(
                 database.clone(),

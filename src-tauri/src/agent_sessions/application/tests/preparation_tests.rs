@@ -137,15 +137,15 @@ impl crate::runtime::providers::continuation::ProviderContinuationPort for Recor
     }
 }
 struct PreparationProfileSource;
-impl SelectedRuntimeProfileSource for PreparationProfileSource {
+impl ProviderConfigurationSource for PreparationProfileSource {
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
     fn native_inventory(
         &self,
-    ) -> Result<NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+    ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
         Ok(Default::default())
     }
 }

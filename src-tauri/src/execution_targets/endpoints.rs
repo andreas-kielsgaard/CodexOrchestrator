@@ -1,7 +1,7 @@
 use super::{domain::*, remote_runtime::RemoteRuntime, ssh_connection::SshConnection};
 use crate::{
     agent_sessions::ports::AgentRuntime,
-    execution_configuration::SelectedRuntimeProfileSource,
+    execution_configuration::ProviderConfigurationSource,
     runtime::providers::{
         configuration_registry::ProviderConfigurationRegistry,
         continuation::ProviderContinuationRegistry,
@@ -36,7 +36,7 @@ impl ExecutionEndpoints {
     }
     pub(crate) fn new(
         provider: &str,
-        local_source: Arc<dyn SelectedRuntimeProfileSource>,
+        local_source: Arc<dyn ProviderConfigurationSource>,
         local_runtime: Arc<dyn AgentRuntime>,
     ) -> Result<Self, String> {
         Ok(Self {

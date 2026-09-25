@@ -1,6 +1,6 @@
 use crate::{
     agent_sessions::domain::ExternalRuntimeContextId,
-    execution_configuration::SelectedRuntimeProfileSource,
+    execution_configuration::ProviderConfigurationSource,
     runtime::providers::continuation::ProviderContinuationPort,
 };
 use orchid_engine::{
@@ -11,13 +11,13 @@ use std::sync::Arc;
 
 pub(crate) struct CodexContinuationPort {
     program: String,
-    configurations: Arc<dyn SelectedRuntimeProfileSource>,
+    configurations: Arc<dyn ProviderConfigurationSource>,
 }
 
 impl CodexContinuationPort {
     pub(crate) fn new(
         program: impl Into<String>,
-        configurations: Arc<dyn SelectedRuntimeProfileSource>,
+        configurations: Arc<dyn ProviderConfigurationSource>,
     ) -> Self {
         Self {
             program: program.into(),

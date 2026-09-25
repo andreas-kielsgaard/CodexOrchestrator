@@ -1,7 +1,7 @@
 //! Selected native environment discovery. Defaults remain absent so Codex resolves them at launch.
 use crate::execution_configuration::{
-    RuntimeProfileSnapshot, SandboxMode, SelectedRuntimeProfileSource,
-    SelectedRuntimeProfileSourceError,
+    RuntimeProfileSnapshot, SandboxMode, ProviderConfigurationSource,
+    ProviderConfigurationSourceError,
 };
 use orchid_engine::contracts::ProviderConfigurationRef;
 use orchid_engine::providers::codex::{
@@ -15,7 +15,7 @@ use crate::runtime::providers::codex::{
 use std::sync::{Arc, Mutex};
 mod quick_features;
 
-pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
+pub(crate) struct CodexConfigurationSource {
     service: Arc<NativeProfileService>,
     product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     reader: Arc<dyn CodexEnvironmentSource>,
@@ -23,7 +23,7 @@ pub(crate) struct NativeCodexSelectedRuntimeProfileSource {
         Mutex<std::collections::BTreeMap<String, crate::execution_configuration::RuntimeQuickFeatures>>,
 }
 
-impl NativeCodexSelectedRuntimeProfileSource {
+impl CodexConfigurationSource {
     pub(crate) fn new(
         service: Arc<NativeProfileService>,
         product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -63,11 +63,11 @@ impl NativeCodexSelectedRuntimeProfileSource {
         reference: &str,
         cwd: Option<&str>,
         refresh: bool,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         let selected = self
             .service
             .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(ProviderConfigurationSourceError::unavailable)?;
         let cache_key = format!(
             "{}\0{}",
             selected.profile_id,
@@ -76,7 +76,7 @@ impl NativeCodexSelectedRuntimeProfileSource {
         // Keep the context bucket locked through discovery so concurrent callers coalesce onto
         // the first observation instead of spawning parallel Codex app-server probes.
         let mut cache = self.quick_feature_cache.lock().map_err(|_| {
-            SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
+            ProviderConfigurationSourceError::unavailable("Quick-feature cache is unavailable")
         })?;
         if !refresh {
             if let Some(cached) = cache.get(&cache_key).cloned() {
@@ -92,7 +92,7 @@ impl NativeCodexSelectedRuntimeProfileSource {
                     .reader
                     .discover_skills(selected.home, cwd_path)
                     .map_err(|error| {
-                        SelectedRuntimeProfileSourceError::unavailable(error.to_string())
+                        ProviderConfigurationSourceError::unavailable(error.to_string())
                     })?;
                 let mut fallback = crate::execution_configuration::RuntimeQuickFeatures {
                     configuration: Some(configuration),
@@ -115,115 +115,115 @@ fn codex_configuration(profile_id: &str) -> ProviderConfigurationRef {
     ProviderConfigurationRef::new(CODEX, profile_id)
 }
 
-impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
+impl ProviderConfigurationSource for CodexConfigurationSource {
     fn configuration_ref_for_session(
         &self,
         session_id: &str,
-    ) -> Result<Option<String>, SelectedRuntimeProfileSourceError> {
+    ) -> Result<Option<String>, ProviderConfigurationSourceError> {
         self.service
             .bound_profile_id(session_id)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)
+            .map_err(ProviderConfigurationSourceError::unavailable)
     }
     fn native_skills_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, SelectedRuntimeProfileSourceError>
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, ProviderConfigurationSourceError>
     {
         let selected = self
             .service
             .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(ProviderConfigurationSourceError::unavailable)?;
         self.reader
             .discover_skills(selected.home, cwd.map(Into::into))
-            .map_err(|error| SelectedRuntimeProfileSourceError::unavailable(error.to_string()))
+            .map_err(|error| ProviderConfigurationSourceError::unavailable(error.to_string()))
     }
     fn configuration_home(
         &self,
         reference: &str,
-    ) -> Result<std::path::PathBuf, SelectedRuntimeProfileSourceError> {
+    ) -> Result<std::path::PathBuf, ProviderConfigurationSourceError> {
         self.service
             .resolve_configuration_home(reference)
             .map(|home| home.home)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)
+            .map_err(ProviderConfigurationSourceError::unavailable)
     }
     fn quick_features_at(
         &self,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.quick_features_for_configuration("selected", cwd)
     }
     fn quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.read_quick_features(reference, cwd, false)
     }
     fn refresh_quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.read_quick_features(reference, cwd, true)
     }
     fn resolve_configuration_ref(
         &self,
         reference: &str,
-    ) -> Result<String, SelectedRuntimeProfileSourceError> {
+    ) -> Result<String, ProviderConfigurationSourceError> {
         self.service
             .resolve_configuration_home(reference)
             .map(|home| home.profile_id)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)
+            .map_err(ProviderConfigurationSourceError::unavailable)
     }
     fn inventory_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, ProviderConfigurationSourceError> {
         let selected = self
             .service
             .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(ProviderConfigurationSourceError::unavailable)?;
         self.reader
             .inventory(selected.home, cwd.map(std::path::PathBuf::from))
-            .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))
+            .map_err(|e| ProviderConfigurationSourceError::unavailable(e.to_string()))
     }
     fn native_inventory(
         &self,
-    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, ProviderConfigurationSourceError> {
         let selected = self
             .service
             .resolve_session_home()
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(ProviderConfigurationSourceError::unavailable)?;
         self.reader
             .inventory(selected.home, None)
-            .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))
+            .map_err(|e| ProviderConfigurationSourceError::unavailable(e.to_string()))
     }
     fn selected_runtime_profile(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.selected_runtime_profile_at(None)
     }
     fn selected_runtime_profile_at(
         &self,
         cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.profile_for_configuration("selected", cwd)
     }
     fn profile_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         let selected = self
             .service
             .resolve_configuration_home(reference)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?;
+            .map_err(ProviderConfigurationSourceError::unavailable)?;
         let native = self
             .reader
             .read(selected.home, cwd.map(std::path::PathBuf::from))
-            .map_err(|e| SelectedRuntimeProfileSourceError::unavailable(e.to_string()))?;
+            .map_err(|e| ProviderConfigurationSourceError::unavailable(e.to_string()))?;
         let quick = quick_features::project(codex_configuration(&selected.profile_id), &native);
         let cache_key = format!(
             "{}\0{}",
@@ -233,7 +233,7 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
         self.quick_feature_cache
             .lock()
             .map_err(|_| {
-                SelectedRuntimeProfileSourceError::unavailable("Quick-feature cache is unavailable")
+                ProviderConfigurationSourceError::unavailable("Quick-feature cache is unavailable")
             })?
             .insert(cache_key, quick);
         let mut profile = runtime_profile::runtime_profile(
@@ -244,7 +244,7 @@ impl SelectedRuntimeProfileSource for NativeCodexSelectedRuntimeProfileSource {
         profile.provider_options = self
             .service
             .profile_personality(&selected.profile_id)
-            .map_err(SelectedRuntimeProfileSourceError::unavailable)?
+            .map_err(ProviderConfigurationSourceError::unavailable)?
             .map(|personality| {
                 CodexNativeOptions {
                     personality: Some(personality),

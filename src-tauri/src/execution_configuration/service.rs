@@ -3,7 +3,7 @@ use super::{
         CapabilityProfile, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
     },
     ports::{
-        CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
+        CapabilityProfileRepository, CapabilityProfileRepositoryError, ProviderConfigurationSource,
     },
     runtime_profile::{validate_identifier, CapabilitySet, RuntimeProfileSnapshot},
 };
@@ -13,7 +13,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct CapabilityProfileService {
     repository: Arc<dyn CapabilityProfileRepository>,
-    runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+    runtime_profile_source: Arc<dyn ProviderConfigurationSource>,
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
 }
 
@@ -97,7 +97,7 @@ impl CapabilityProfileService {
     }
     pub(crate) fn new(
         repository: Arc<dyn CapabilityProfileRepository>,
-        runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
+        runtime_profile_source: Arc<dyn ProviderConfigurationSource>,
     ) -> Self {
         Self {
             repository,
@@ -482,7 +482,7 @@ impl From<CapabilityProfileRepositoryError> for CapabilityProfileServiceError {
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        ports::SelectedRuntimeProfileSourceError,
+        ports::ProviderConfigurationSourceError,
         repository::{InMemoryCapabilityProfileRepository, SqliteCapabilityProfileRepository},
         runtime_profile::{RuntimeSelections, SandboxMode, RUNTIME_PROFILE_CONTRACT_VERSION},
         ModelAllowance, ProfileRoutePolicy,
@@ -491,10 +491,10 @@ mod tests {
 
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
-    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
+    impl ProviderConfigurationSource for FixedRuntimeSource {
         fn selected_runtime_profile(
             &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }
@@ -748,11 +748,11 @@ mod tests {
     #[test]
     fn failed_model_refresh_preserves_the_last_complete_route_catalogue() {
         struct FlakyModels(std::sync::atomic::AtomicBool);
-        impl SelectedRuntimeProfileSource for FlakyModels {
+        impl ProviderConfigurationSource for FlakyModels {
             fn selected_runtime_profile(
                 &self,
-            ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-                Err(SelectedRuntimeProfileSourceError::unavailable(
+            ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+                Err(ProviderConfigurationSourceError::unavailable(
                     "runtime offline",
                 ))
             }
@@ -762,10 +762,10 @@ mod tests {
                 _: Option<&str>,
             ) -> Result<
                 crate::execution_configuration::RuntimeQuickFeatures,
-                SelectedRuntimeProfileSourceError,
+                ProviderConfigurationSourceError,
             > {
                 if self.0.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(SelectedRuntimeProfileSourceError::unavailable(
+                    return Err(ProviderConfigurationSourceError::unavailable(
                         "runtime offline",
                     ));
                 }
