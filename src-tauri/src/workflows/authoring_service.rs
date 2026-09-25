@@ -211,9 +211,11 @@ mod tests {
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
     impl ProviderConfigurationSource for FixedRuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }

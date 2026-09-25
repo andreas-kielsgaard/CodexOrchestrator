@@ -99,7 +99,9 @@ impl AgentSessionApplication {
             let reference = target
                 .map(|target| target.execution.configuration_ref.clone())
                 .or_else(|| configuration_ref.map(str::to_owned))
-                .unwrap_or_else(|| "selected".into());
+                .unwrap_or_else(|| {
+                    crate::execution_targets::domain::ExecutionBinding::default().configuration_ref
+                });
             let allowed_groups = capability
                 .as_ref()
                 .and_then(|profile| {

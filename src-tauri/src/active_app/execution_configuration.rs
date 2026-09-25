@@ -30,22 +30,23 @@ pub(super) fn compose(
             .map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect()))
             .collect(),
     ));
-    let source: Arc<dyn ProviderConfigurationSource> = Arc::new(
+    let codex = Arc::new(
         CodexConfigurationSource::new(profiles, product_tools.clone())
             .with_product_skill_roots(&product_skills),
     );
+    let source: Arc<dyn ProviderConfigurationSource> = codex.clone();
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(
             "codex",
             source.clone(),
             local_runtime,
         )?
+        .with_local_sessions_directory(workspaces.sessions_directory())
         .with_continuation(
             "codex",
             Arc::new(
                 crate::runtime::providers::codex::continuation::CodexContinuationPort::new(
-                    "codex",
-                    source.clone(),
+                    "codex", codex,
                 ),
             ),
         )?,

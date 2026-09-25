@@ -236,12 +236,11 @@ impl ExecutionEndpoints {
     ) -> Result<String, String> {
         match &binding.connection {
             ExecutionConnection::Local => {
-                let home = self
-                    .configurations
-                    .source(&binding.provider)?
-                    .configuration_home(&binding.configuration_ref)
-                    .map_err(|e| e.to_string())?;
-                orchid_engine::workspaces::auxiliary_workspace(&home.join("orchid"), session_id)
+                let directory = self
+                    .local_sessions_directory
+                    .as_deref()
+                    .ok_or("Local auxiliary workspaces are unavailable")?;
+                orchid_engine::workspaces::auxiliary_workspace(directory, session_id)
                     .map_err(|e| e.to_string())
             }
             ExecutionConnection::Ssh {

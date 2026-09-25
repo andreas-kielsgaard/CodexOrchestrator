@@ -5366,7 +5366,7 @@ mod tests {
             CodexConfigurationSource::new(Arc::new(service), Default::default())
                 .with_reader(Arc::new(Environment));
 
-        let snapshot = source.selected_runtime_profile().unwrap();
+        let snapshot = source.profile_for_configuration("selected", None).unwrap();
         assert_eq!(
             snapshot.configuration,
             orchid_engine::contracts::ProviderConfigurationRef::new("codex", profile.id.clone())

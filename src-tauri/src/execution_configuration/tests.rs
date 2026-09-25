@@ -17,8 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 struct FixedProfileSource(Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>);
 
 impl ProviderConfigurationSource for FixedProfileSource {
-    fn selected_runtime_profile(
+    fn profile_for_configuration(
         &self,
+        _reference: &str,
+        _cwd: Option<&str>,
     ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.clone()
     }
@@ -122,7 +124,7 @@ fn creation_request() -> SessionCreationRequest {
 #[test]
 fn creation_resolves_an_immutable_session_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let profile = resolution.session_profile();
 
     assert_eq!(profile.configuration(), &orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"));
@@ -195,7 +197,7 @@ fn capability_profile_cannot_widen_the_runtime() {
         .insert("unavailable".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::CapabilityProfileWidensRuntime(capability))
             if capability == "model `unavailable`"
     ));
@@ -214,7 +216,7 @@ fn node_profile_cannot_widen_its_capability_profile() {
         .insert("admin".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::NodeProfileWidensCapabilityProfile(capability))
             if capability == "MCP tool `repository/admin`"
     ));
@@ -230,7 +232,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
         .sandbox_modes
         .clear();
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, excluding),
+        SessionProfileResolver::resolve_creation(&source, None, excluding),
         Err(ResolutionError::LockedCapabilityExcluded(capability))
             if capability.contains("sandbox mode")
     ));
@@ -254,7 +256,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
         .insert(SandboxMode::DangerFullAccess);
     changing.node_profile.pinned_defaults.sandbox_mode = Some(SandboxMode::DangerFullAccess);
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, changing),
+        SessionProfileResolver::resolve_creation(&source, None, changing),
         Err(ResolutionError::SelectionConflictsWithLocked(_))
     ));
 }
@@ -266,7 +268,7 @@ fn unavailable_pinned_default_fails_without_fallback() {
     request.node_profile.pinned_defaults.model = Some("unavailable".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::PinnedSelectionUnavailable(capability))
             if capability == "model `unavailable`"
     ));
@@ -281,12 +283,12 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
     let mut request = creation_request();
     request.node_profile.allowed_capabilities.models = set(&["codex-a"]);
     request.node_profile.allowed_capabilities.reasoning_modes = set(&["high"]);
-    let creation = SessionProfileResolver::resolve_creation(&source, request).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, request).unwrap();
     let original_digest = creation.digest().to_owned();
     let original_defaults = creation.session_profile().pinned_defaults().clone();
 
     let invocation = SessionProfileResolver::validate_direct_user_invocation(
-        &source,
+        &source, None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -317,11 +319,11 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
 #[test]
 fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let before = creation.clone();
 
     let result = SessionProfileResolver::validate_direct_user_invocation(
-        &source,
+        &source, None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -342,14 +344,14 @@ fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
 #[test]
 fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
     changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
         SessionProfileResolver::validate_direct_user_invocation(
-            &changed_source,
+            &changed_source, None,
             &creation,
             DirectUserInvocationRequest {
                 contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -365,13 +367,13 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
     changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
-        SessionProfileResolver::validate_pinned_session(&changed_source, &creation),
+        SessionProfileResolver::validate_pinned_session(&changed_source, None, &creation),
         Err(ResolutionError::RuntimeProfileChanged { .. })
     ));
 }
@@ -379,7 +381,7 @@ fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn digest_is_stable_for_equivalent_unordered_inputs() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let first = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let first = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut reordered_runtime = runtime_profile();
     reordered_runtime.exposure = reverse_insertion_order(&reordered_runtime.exposure);
     let reordered_source = FixedProfileSource(Ok(reordered_runtime));
@@ -389,7 +391,7 @@ fn digest_is_stable_for_equivalent_unordered_inputs() {
     reordered_request.node_profile.allowed_capabilities =
         reverse_insertion_order(&reordered_request.node_profile.allowed_capabilities);
     let second =
-        SessionProfileResolver::resolve_creation(&reordered_source, reordered_request).unwrap();
+        SessionProfileResolver::resolve_creation(&reordered_source, None, reordered_request).unwrap();
 
     assert_eq!(first.digest(), second.digest());
 }
@@ -412,7 +414,7 @@ fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
 #[test]
 fn digest_verification_rejects_a_contract_version_change() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut value = serde_json::to_value(resolution).unwrap();
     value["contractVersion"] = serde_json::json!(2);
     let changed: SessionCreationResolution = serde_json::from_value(value).unwrap();
@@ -439,7 +441,7 @@ fn source_failure_is_a_typed_resolution_error() {
         "no ready profile",
     )));
     assert_eq!(
-        SessionProfileResolver::resolve_creation(&source, creation_request()),
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()),
         Err(ResolutionError::SourceUnavailable(
             "no ready profile".into()
         ))

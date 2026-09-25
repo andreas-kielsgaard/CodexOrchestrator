@@ -16,9 +16,11 @@ mod target_tests;
 fn addressed_creation_retry_uses_its_original_native_evidence() {
     struct OneReadSource(AtomicU64);
     impl ProviderConfigurationSource for OneReadSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
                 return Err(ProviderConfigurationSourceError::unavailable(
                     "native discovery changed",
@@ -415,8 +417,10 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
 struct FixedProviderConfigurationSource(RuntimeProfileSnapshot);
 
 impl ProviderConfigurationSource for FixedProviderConfigurationSource {
-    fn selected_runtime_profile(
+    fn profile_for_configuration(
         &self,
+        _reference: &str,
+        _cwd: Option<&str>,
     ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(self.0.clone())
     }

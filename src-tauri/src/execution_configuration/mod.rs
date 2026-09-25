@@ -32,9 +32,8 @@ pub(crate) use creation_intent::SessionCreationIntent;
 pub(crate) use crate::runtime::providers::codex::configuration::CodexConfigurationSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
-    CapabilityProfileRepository, CapabilityProfileRepositoryError,
-    PinnedConfigurationProfileSource, RuntimeSkillRoot, ProviderConfigurationSource,
-    ProviderConfigurationSourceError, WorkingContextProfileSource,
+    CapabilityProfileRepository, CapabilityProfileRepositoryError, ProviderConfigurationSource,
+    ProviderConfigurationSourceError, RuntimeSkillRoot,
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,

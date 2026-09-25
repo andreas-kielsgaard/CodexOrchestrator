@@ -135,16 +135,14 @@ impl CapabilityProfileService {
             .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
     }
 
-    /// Returns the one runtime profile currently available to Execution Configuration.
+    /// Returns the runtime profile of the default local execution binding.
     pub(crate) fn runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, CapabilityProfileServiceError> {
-        let runtime_profile = self
-            .runtime_profile_source
-            .selected_runtime_profile()
-            .map_err(|error| {
-                CapabilityProfileServiceError::RuntimeUnavailable(error.to_string())
-            })?;
+        let runtime_profile = self.runtime_for_binding(
+            &crate::execution_targets::domain::ExecutionBinding::default(),
+            None,
+        )?;
         runtime_profile
             .validate()
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
@@ -492,9 +490,11 @@ mod tests {
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
     impl ProviderConfigurationSource for FixedRuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }
@@ -749,9 +749,11 @@ mod tests {
     fn failed_model_refresh_preserves_the_last_complete_route_catalogue() {
         struct FlakyModels(std::sync::atomic::AtomicBool);
         impl ProviderConfigurationSource for FlakyModels {
-            fn selected_runtime_profile(
-                &self,
-            ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
                 Err(ProviderConfigurationSourceError::unavailable(
                     "runtime offline",
                 ))

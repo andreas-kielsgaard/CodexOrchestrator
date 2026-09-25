@@ -82,7 +82,7 @@ fn skill_manifest_context(skills: &[crate::agent_sessions::ports::RuntimeSkillIn
 
 /// The provider configuration a Session executes with: its execution target, otherwise the
 /// configuration its profile pinned. Unbound legacy Sessions predate provider identity and ran
-/// only on the selected Codex configuration.
+/// only on the default execution binding.
 pub(super) fn session_configuration(
     session: &crate::agent_sessions::domain::AgentSession,
 ) -> ProviderConfigurationRef {
@@ -96,9 +96,7 @@ pub(super) fn session_configuration(
                 .as_ref()
                 .map(|profile| profile.session_profile().configuration().clone())
         })
-        .unwrap_or_else(|| {
-            ProviderConfigurationRef::new(orchid_engine::providers::codex::options::PROVIDER, "selected")
-        })
+        .unwrap_or_else(|| crate::execution_targets::domain::ExecutionBinding::default().configuration())
 }
 
 pub(super) fn default_node_capabilities(

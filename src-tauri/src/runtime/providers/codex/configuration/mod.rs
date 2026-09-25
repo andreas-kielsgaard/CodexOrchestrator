@@ -109,6 +109,16 @@ impl CodexConfigurationSource {
         Ok(features)
     }
 
+    /// The Codex home a configuration resolves to. Only Codex continuation uses it.
+    pub(crate) fn configuration_home(
+        &self,
+        reference: &str,
+    ) -> Result<std::path::PathBuf, ProviderConfigurationSourceError> {
+        self.service
+            .resolve_configuration_home(reference)
+            .map(|home| home.home)
+            .map_err(ProviderConfigurationSourceError::unavailable)
+    }
 }
 
 fn codex_configuration(profile_id: &str) -> ProviderConfigurationRef {
@@ -137,21 +147,6 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
         self.reader
             .discover_skills(selected.home, cwd.map(Into::into))
             .map_err(|error| ProviderConfigurationSourceError::unavailable(error.to_string()))
-    }
-    fn configuration_home(
-        &self,
-        reference: &str,
-    ) -> Result<std::path::PathBuf, ProviderConfigurationSourceError> {
-        self.service
-            .resolve_configuration_home(reference)
-            .map(|home| home.home)
-            .map_err(ProviderConfigurationSourceError::unavailable)
-    }
-    fn quick_features_at(
-        &self,
-        cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
-        self.quick_features_for_configuration("selected", cwd)
     }
     fn quick_features_for_configuration(
         &self,
@@ -188,28 +183,6 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
         self.reader
             .inventory(selected.home, cwd.map(std::path::PathBuf::from))
             .map_err(|e| ProviderConfigurationSourceError::unavailable(e.to_string()))
-    }
-    fn native_inventory(
-        &self,
-    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, ProviderConfigurationSourceError> {
-        let selected = self
-            .service
-            .resolve_session_home()
-            .map_err(ProviderConfigurationSourceError::unavailable)?;
-        self.reader
-            .inventory(selected.home, None)
-            .map_err(|e| ProviderConfigurationSourceError::unavailable(e.to_string()))
-    }
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
-        self.selected_runtime_profile_at(None)
-    }
-    fn selected_runtime_profile_at(
-        &self,
-        cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
-        self.profile_for_configuration("selected", cwd)
     }
     fn profile_for_configuration(
         &self,

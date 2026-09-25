@@ -204,7 +204,14 @@ impl AgentSessionApplication {
                 })?
         } else {
             self.profile_source()?
-                .selected_runtime_profile_at(history.session.working_directory.as_deref())
+                .profile_for_configuration(
+                    &pinned
+                        .creation_resolution
+                        .session_profile()
+                        .configuration()
+                        .configuration_id,
+                    history.session.working_directory.as_deref(),
+                )
                 .map_err(|e| SessionConfigurationError::resolution(e.into()))?
         };
         let invocation_resolution = SessionProfileResolver::resolve_direct_user_snapshot(

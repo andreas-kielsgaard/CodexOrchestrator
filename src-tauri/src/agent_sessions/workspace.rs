@@ -12,6 +12,10 @@ impl SessionWorkspaces {
     pub(crate) fn skills_root(&self) -> String {
         self.root.join("skills").to_string_lossy().into_owned()
     }
+    /// Base folder for auxiliary Session workspaces that are not repository worktrees.
+    pub(crate) fn sessions_directory(&self) -> PathBuf {
+        self.root.clone()
+    }
     pub(crate) fn system(owner: String) -> Result<Self, String> {
         Self::new(
             crate::product_home::OrchestrationHomePaths::system()?.root,

@@ -25,12 +25,9 @@ impl AgentSessionApplication {
         {
             return Ok(existing);
         }
-        let source = crate::execution_configuration::WorkingContextProfileSource {
-            source: self
-                .profile_source()
-                .map_err(|e| SessionDirectoryError::new(e.to_string()))?,
-            cwd: working_directory.as_deref(),
-        };
+        let source = self
+            .profile_source()
+            .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         creation.session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &creation.capability_profile,
@@ -38,7 +35,11 @@ impl AgentSessionApplication {
                 working_directory.as_deref(),
             )
             .map_err(SessionDirectoryError::new)?;
-        let resolution = SessionProfileResolver::resolve_creation(&source, creation.clone())
+        let resolution = SessionProfileResolver::resolve_creation(
+            source,
+            working_directory.as_deref(),
+            creation.clone(),
+        )
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         let session = self.prepare_session_with_id(
@@ -160,22 +161,15 @@ impl AgentSessionApplication {
                 "Session Event delivery requires an immutable pinned Session Profile",
             )
         })?;
-        let configuration_ref = creation
-            .session_profile()
-            .configuration()
-            .configuration_id
-            .as_str();
-        let source = crate::execution_configuration::PinnedConfigurationProfileSource {
-            source: self
-                .profile_source()
-                .map_err(|e| SessionInvocationError::new(e.to_string()))?,
-            configuration_ref,
-            cwd: history.session.working_directory.as_deref(),
-        };
+        let source = self
+            .profile_source()
+            .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        let cwd = history.session.working_directory.as_deref();
         let selections = match direct_user_options {
             Some(options) => {
                 SessionProfileResolver::validate_direct_user_invocation(
-                    &source,
+                    source,
+                    cwd,
                     creation,
                     DirectUserInvocationRequest {
                         contract_version: 1,
@@ -188,7 +182,7 @@ impl AgentSessionApplication {
                 .selections
             }
             None => {
-                SessionProfileResolver::validate_pinned_session(&source, creation)
+                SessionProfileResolver::validate_pinned_session(source, cwd, creation)
                     .map_err(|error| SessionInvocationError::new(error.to_string()))?;
                 creation.session_profile().pinned_defaults().clone()
             }

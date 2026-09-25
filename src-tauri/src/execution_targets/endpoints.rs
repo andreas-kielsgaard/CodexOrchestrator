@@ -19,6 +19,8 @@ pub(crate) struct ExecutionEndpoints {
     pub(super) continuations: ProviderContinuationRegistry,
     local_runtimes: ProviderRuntimeRegistry,
     remote_runtimes: Mutex<HashMap<String, Arc<dyn AgentRuntime>>>,
+    /// Orchid-owned folder under which local auxiliary Session workspaces are created.
+    pub(super) local_sessions_directory: Option<std::path::PathBuf>,
 }
 
 impl ExecutionEndpoints {
@@ -44,7 +46,12 @@ impl ExecutionEndpoints {
             continuations: ProviderContinuationRegistry::default(),
             local_runtimes: ProviderRuntimeRegistry::one(provider, local_runtime)?,
             remote_runtimes: Default::default(),
+            local_sessions_directory: None,
         })
+    }
+    pub(crate) fn with_local_sessions_directory(mut self, directory: std::path::PathBuf) -> Self {
+        self.local_sessions_directory = Some(directory);
+        self
     }
     pub(crate) fn with_continuation(
         mut self,

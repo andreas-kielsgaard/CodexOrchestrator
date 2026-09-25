@@ -160,11 +160,6 @@ impl ProviderConfigurationSource for ConfiguredSource {
             ..Default::default()
         })
     }
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
-        Ok(test_selected_runtime_profile())
-    }
     fn resolve_configuration_ref(
         &self,
         _: &str,
@@ -177,10 +172,12 @@ impl ProviderConfigurationSource for ConfiguredSource {
         _: Option<&str>,
     ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.lock().unwrap().push(reference.into());
-        self.selected_runtime_profile()
+        Ok(test_selected_runtime_profile())
     }
-    fn native_inventory(
+    fn inventory_for_configuration(
         &self,
+        _reference: &str,
+        _cwd: Option<&str>,
     ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
         Ok(Default::default())
     }
@@ -319,7 +316,7 @@ fn workflow_creation_rejects_remote_profile_without_local_discovery() {
     let mut creation = test_session_creation_request();
     creation.capability_profile.execution = remote_target().execution;
     let result = crate::execution_configuration::SessionProfileResolver::resolve_creation(
-        &ConfiguredSource::default(),
+        &ConfiguredSource::default(), None,
         creation,
     );
     assert!(result

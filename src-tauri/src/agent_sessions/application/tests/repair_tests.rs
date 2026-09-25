@@ -63,13 +63,16 @@ struct QuickSource {
     contexts: Mutex<Vec<Option<String>>>,
 }
 impl ProviderConfigurationSource for QuickSource {
-    fn selected_runtime_profile(
+    fn profile_for_configuration(
         &self,
+        _reference: &str,
+        _cwd: Option<&str>,
     ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
-    fn quick_features_at(
+    fn quick_features_for_configuration(
         &self,
+        _reference: &str,
         cwd: Option<&str>,
     ) -> Result<RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.contexts.lock().unwrap().push(cwd.map(String::from));
@@ -97,9 +100,11 @@ fn skill_discovery_does_not_require_a_capability_profile() {
 fn new_workspace_discovers_from_its_selected_codex_configuration() {
     struct RecordingSource(Mutex<Vec<String>>);
     impl ProviderConfigurationSource for RecordingSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(test_selected_runtime_profile())
         }
         fn quick_features_for_configuration(
