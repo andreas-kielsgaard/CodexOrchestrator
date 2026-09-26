@@ -23,8 +23,9 @@ export interface RuntimeSelectionsDto {
 /** A model and the inclusive reasoning range the profile permits on one route. */
 export interface ModelAllowanceDto {
   readonly modelId: string;
-  readonly minimumReasoning: string;
-  readonly maximumReasoning: string;
+  /** Absent when the model reports no reasoning levels. */
+  readonly minimumReasoning?: string;
+  readonly maximumReasoning?: string;
 }
 
 /** One permitted Device -> Harness -> Inference Source route in a Capability Profile. */

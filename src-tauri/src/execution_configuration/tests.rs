@@ -154,8 +154,8 @@ fn route_groups_shape_session_exposure_without_enforcing_model_allowances() {
         execution: Default::default(),
         model_allowances: vec![super::ModelAllowance {
             model_id: "future-only".into(),
-            minimum_reasoning: "low".into(),
-            maximum_reasoning: "high".into(),
+            minimum_reasoning: Some("low".into()),
+            maximum_reasoning: Some("high".into()),
         }],
         mcp_groups: set(&["otp:repository:mcps"]),
         skill_groups: set(&["orchid-skills"]),

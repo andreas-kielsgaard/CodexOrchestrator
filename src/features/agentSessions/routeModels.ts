@@ -33,15 +33,15 @@ export function otherRouteModels(
     )
     .flatMap((route) =>
       route.modelAllowances.map((allowance) => {
-        const reasoningModes = reasoningRange(
-          allowance.minimumReasoning,
-          allowance.maximumReasoning,
-        );
+        const reasoningModes =
+          allowance.minimumReasoning && allowance.maximumReasoning
+            ? reasoningRange(allowance.minimumReasoning, allowance.maximumReasoning)
+            : [];
         return {
           id: allowance.modelId,
           label: `${allowance.modelId} · ${agentProviderLabel(route.execution.provider)}`,
           description: '',
-          defaultReasoningMode: route.defaults.reasoningMode ?? reasoningModes.at(-1) ?? null,
+          defaultReasoningMode: route.defaults.reasoningMode ?? null,
           reasoningModes: reasoningModes.map((id) => ({ id, description: '' })),
         };
       }),

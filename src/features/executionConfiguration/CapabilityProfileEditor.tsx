@@ -47,6 +47,7 @@ function rangeValues(
   allowance: ModelAllowanceDto,
   reasoning: readonly string[],
 ): readonly string[] {
+  if (!allowance.minimumReasoning || !allowance.maximumReasoning) return [];
   const first = reasoning.indexOf(allowance.minimumReasoning);
   const last = reasoning.indexOf(allowance.maximumReasoning);
   return first < 0 || last < first ? [] : reasoning.slice(first, last + 1);

@@ -117,8 +117,8 @@ mod tests {
                 execution: Default::default(),
                 model_allowances: vec![ModelAllowance {
                     model_id: "model".into(),
-                    minimum_reasoning: "low".into(),
-                    maximum_reasoning: "high".into(),
+                    minimum_reasoning: Some("low".into()),
+                    maximum_reasoning: Some("high".into()),
                 }],
                 mcp_groups: Default::default(),
                 skill_groups: ["orchid-skills".into()].into_iter().collect(),

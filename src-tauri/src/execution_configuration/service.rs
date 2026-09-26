@@ -575,8 +575,8 @@ mod tests {
             },
             model_allowances: vec![ModelAllowance {
                 model_id: "codex-a".into(),
-                minimum_reasoning: "medium".into(),
-                maximum_reasoning: "high".into(),
+                minimum_reasoning: Some("medium".into()),
+                maximum_reasoning: Some("high".into()),
             }],
             mcp_groups: set(&["native-mcps"]),
             skill_groups: set(&["native-skills"]),

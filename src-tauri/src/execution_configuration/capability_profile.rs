@@ -67,38 +67,39 @@ impl ProfileRoutePolicy {
     }
 }
 
-/// The contiguous reasoning range enabled for one model on one execution route.
+/// The contiguous reasoning range enabled for one model on one execution route. A model that
+/// reports no reasoning levels has no range.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ModelAllowance {
     pub(crate) model_id: String,
-    pub(crate) minimum_reasoning: String,
-    pub(crate) maximum_reasoning: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) minimum_reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) maximum_reasoning: Option<String>,
 }
 
 impl ModelAllowance {
     fn validate(&self) -> Result<(), String> {
         validate_identifier("Capability Profile model", "modelId", &self.model_id)?;
-        validate_identifier(
-            "Capability Profile model",
-            "minimumReasoning",
-            &self.minimum_reasoning,
-        )?;
-        validate_identifier(
-            "Capability Profile model",
-            "maximumReasoning",
-            &self.maximum_reasoning,
-        )?;
+        let (minimum, maximum) = match (&self.minimum_reasoning, &self.maximum_reasoning) {
+            (None, None) => return Ok(()),
+            (Some(minimum), Some(maximum)) => (minimum, maximum),
+            _ => {
+                return Err(format!(
+                    "Capability Profile model `{}` needs both ends of its reasoning range",
+                    self.model_id
+                ))
+            }
+        };
+        validate_identifier("Capability Profile model", "minimumReasoning", minimum)?;
+        validate_identifier("Capability Profile model", "maximumReasoning", maximum)?;
         const ORDER: &[&str] = &[
             "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
         ];
         if let (Some(minimum), Some(maximum)) = (
-            ORDER
-                .iter()
-                .position(|value| *value == self.minimum_reasoning),
-            ORDER
-                .iter()
-                .position(|value| *value == self.maximum_reasoning),
+            ORDER.iter().position(|value| value == minimum),
+            ORDER.iter().position(|value| value == maximum),
         ) {
             if minimum > maximum {
                 return Err(format!(
@@ -281,8 +282,8 @@ mod route_tests {
                 .iter()
                 .map(|model| ModelAllowance {
                     model_id: (*model).into(),
-                    minimum_reasoning: "low".into(),
-                    maximum_reasoning: "high".into(),
+                    minimum_reasoning: Some("low".into()),
+                    maximum_reasoning: Some("high".into()),
                 })
                 .collect(),
             mcp_groups: Default::default(),
@@ -335,5 +336,19 @@ mod route_tests {
             route("server", "server", "codex", &["gpt-5"]),
         ]);
         other_device.validate().unwrap();
+    }
+
+    #[test]
+    fn a_model_without_reasoning_levels_has_no_range() {
+        let allowance: ModelAllowance = serde_json::from_value(serde_json::json!({"modelId":"haiku"})).unwrap();
+        allowance.validate().unwrap();
+        assert_eq!(serde_json::to_value(&allowance).unwrap(), serde_json::json!({"modelId":"haiku"}));
+        let stored: ModelAllowance = serde_json::from_value(
+            serde_json::json!({"modelId":"opus","minimumReasoning":"low","maximumReasoning":"high"}),
+        )
+        .unwrap();
+        assert_eq!(stored.minimum_reasoning.as_deref(), Some("low"));
+        let half = ModelAllowance { maximum_reasoning: None, ..stored };
+        assert!(half.validate().unwrap_err().contains("both ends"));
     }
 }

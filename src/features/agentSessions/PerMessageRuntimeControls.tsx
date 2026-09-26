@@ -36,11 +36,7 @@ export function PerMessageRuntimeControls({
 }: PerMessageRuntimeControlsProps) {
   const effectiveModel =
     value.model ?? defaultModel ?? models.find((option) => !option.disabled)?.value ?? '';
-  const effectiveReasoning =
-    value.reasoningMode ??
-    defaultReasoning ??
-    reasoningModes.find((option) => !option.disabled)?.value ??
-    '';
+  const effectiveReasoning = value.reasoningMode ?? defaultReasoning ?? '';
   return (
     <fieldset className="per-message-runtime-controls" disabled={disabled}>
       <legend>Options for this message</legend>
@@ -67,11 +63,15 @@ export function PerMessageRuntimeControls({
             onChange={(event) =>
               onChange({
                 ...value,
-                reasoningMode: event.target.value,
+                reasoningMode: event.target.value || null,
               })
             }
           >
-            {!effectiveReasoning && <option value="">No reasoning available</option>}
+            {!effectiveReasoning && (
+              <option value="">
+                {reasoningModes.length ? 'Default' : 'No reasoning available'}
+              </option>
+            )}
             {reasoningModes.map((mode) => (
               <option key={mode.value} value={mode.value} disabled={mode.disabled}>
                 {mode.label}

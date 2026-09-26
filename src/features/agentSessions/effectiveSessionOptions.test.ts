@@ -39,3 +39,18 @@ it('moves an incompatible reasoning choice to the selected model default', () =>
     { model: 'luna', reasoningMode: 'medium' },
   );
 });
+
+it('leaves reasoning unset when nothing names a default', () => {
+  const undecided: AgentSessionQuickFeatures = {
+    ...capabilities,
+    defaults: { model: null, reasoningMode: null },
+    models: [{ ...capabilities.models[0], defaultReasoningMode: null }],
+  };
+  expect(
+    effectiveSessionOptions(undecided, { model: null, reasoningMode: null }).reasoningMode,
+  ).toBe(null);
+  expect(selectionForModel(undecided, { model: null, reasoningMode: null }, 'astra')).toEqual({
+    model: 'astra',
+    reasoningMode: null,
+  });
+});
