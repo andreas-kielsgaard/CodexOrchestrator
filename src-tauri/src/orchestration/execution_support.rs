@@ -1302,7 +1302,7 @@ mod tests {
             },
             ports::{AgentRuntime, RuntimeInvocationRequest},
         },
-        runtime::codex::CodexCliRuntime,
+        runtime::providers::codex::CodexCliRuntime,
     };
     #[cfg(feature = "live-tests")]
     use std::time::{Duration, Instant};

@@ -6,7 +6,6 @@ mod execution_targets;
 mod git_process;
 mod harness_engine;
 mod identities;
-mod native_profiles;
 mod otp_api;
 mod otp_host;
 mod otp_packages;
@@ -20,6 +19,8 @@ mod product_decisions;
 mod repository_catalog;
 mod repository_context;
 mod repository_discovery;
+#[cfg(test)]
+mod provider_boundary_tests;
 mod runtime;
 mod session_events;
 mod session_navigation;

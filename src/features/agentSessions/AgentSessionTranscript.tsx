@@ -7,12 +7,12 @@ import {
 } from './transcriptProjector';
 import { AgentMarkdown } from './AgentMarkdown';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
-import type { AgentIdentity } from '../../application/agentSessions';
+import type { AgentIdentity, RuntimeInteractionResponseDto } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
-import { AgentSessionRuntimeGuidance } from './AgentSessionRuntimeGuidance';
+import { RuntimeFailureGuidance } from '../agentProviders/RuntimeFailureGuidance';
 
 interface AgentSessionTranscriptProps {
-  onRespondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  onRespondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
   transcript: ProjectedTranscript | null;
   content?: readonly ProjectedTranscriptContent[];
   loading: boolean;
@@ -130,7 +130,7 @@ export function AgentSessionTranscript({
                       <p className={`invocation-outcome ${invocation.status}`} role="status">
                         <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
                       </p>
-                      <AgentSessionRuntimeGuidance failure={invocation.runtimeFailure} />
+                      <RuntimeFailureGuidance failure={invocation.runtimeFailure} />
                     </>
                   )}
                 {invocation.showOutcome &&

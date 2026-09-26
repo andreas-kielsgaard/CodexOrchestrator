@@ -1,7 +1,8 @@
-//! The selected native source and the saved Capability Profile catalogue share one identity.
+//! Provider registration and the Capability Profile catalogue. Product skill roots are composed here
+//! once and offered with every provider configuration.
 use crate::{
     agent_sessions::application::SessionWorkspaces, execution_configuration::*,
-    native_profiles::NativeProfileService,
+    runtime::providers::{codex::profiles::NativeProfileService, registrations::ProviderRegistrations},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -9,32 +10,42 @@ use std::sync::Arc;
 pub(super) fn compose(
     database: Arc<crate::persistence::ActiveDatabase>,
     profiles: Arc<NativeProfileService>,
+    claude_setups: Arc<crate::runtime::providers::claude::setups::ClaudeSetups>,
     workspaces: &SessionWorkspaces,
-    local_runtime: Arc<dyn crate::agent_sessions::ports::AgentRuntime>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
     otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<
     (
-        Arc<dyn SelectedRuntimeProfileSource>,
         Arc<CapabilityProfileService>,
         Arc<crate::execution_targets::endpoints::ExecutionEndpoints>,
+        Arc<ProductSkillRoots>,
     ),
     String,
 > {
-    let source: Arc<dyn SelectedRuntimeProfileSource> = Arc::new(
-        NativeCodexSelectedRuntimeProfileSource::new(profiles, product_tools.clone())
-            .with_skill_roots(vec![workspaces.skills_root()])
-            .with_otp_skill_roots(otp_skill_roots),
-    );
+    let product_skills = Arc::new(ProductSkillRoots::new(
+        vec![workspaces.skills_root().into()],
+        otp_skill_roots
+            .into_iter()
+            .map(|(package, paths)| (package, paths.into_iter().map(Into::into).collect()))
+            .collect(),
+    ));
+    let mut providers = ProviderRegistrations::default();
+    crate::runtime::providers::codex::register(
+        &mut providers,
+        profiles,
+        product_tools.clone(),
+        &product_skills,
+    )?;
+    crate::runtime::providers::claude::register(&mut providers, claude_setups, product_tools)?;
     let endpoints = Arc::new(
-        crate::execution_targets::endpoints::ExecutionEndpoints::new(source.clone(), local_runtime),
+        crate::execution_targets::endpoints::ExecutionEndpoints::new(providers)
+            .with_local_sessions_directory(workspaces.sessions_directory()),
     );
     let service = Arc::new(
-        CapabilityProfileService::new(
-            Arc::new(SqliteCapabilityProfileRepository::from_database(database)),
-            source.clone(),
-        )
+        CapabilityProfileService::new(Arc::new(SqliteCapabilityProfileRepository::from_database(
+            database,
+        )))
         .with_endpoints(endpoints.clone()),
     );
-    Ok((source, service, endpoints))
+    Ok((service, endpoints, product_skills))
 }

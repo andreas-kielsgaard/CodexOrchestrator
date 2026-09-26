@@ -160,16 +160,13 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
 
         match update {
             RuntimeUpdate::Event(draft) => {
-                let durable_control_fact = draft.source
-                    == crate::agent_sessions::domain::AgentRuntimeEventSource::Runtime
-                    && matches!(
-                        draft.raw_payload["kind"].as_str(),
-                        Some(
-                            "session_steering_result"
-                                | "runtime_request_response"
-                                | "runtime_process_exit"
-                        )
-                    );
+                let control = orchid_engine::contracts::RuntimeControlRecord::from_event(
+                    draft.source,
+                    &draft.raw_payload,
+                );
+                let durable_control_fact = control
+                    .as_ref()
+                    .is_some_and(|record| record.is_durable_after_terminal());
                 if invocation.status.is_terminal() && !durable_control_fact {
                     drop(state);
                     self.update_lanes.remove(invocation_id, &lane);
@@ -203,12 +200,11 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
                     .map_err(repository_delivery_error("append runtime event"))?;
                 state.next_sequence = Some(sequence.saturating_add(1));
 
-                if event.source == crate::agent_sessions::domain::AgentRuntimeEventSource::Runtime
-                    && event.raw_payload["kind"] == "runtime_working_directory_resolved"
+                if let Some(orchid_engine::contracts::RuntimeControlRecord::WorkingDirectoryResolved {
+                    cwd: path,
+                    ..
+                }) = &control
                 {
-                    let path = event.raw_payload["cwd"].as_str().ok_or_else(|| {
-                        delivery_error("Resolved working directory is missing", None)
-                    })?;
                     self.repository
                         .resolve_working_directory(
                             &invocation.session_id,

@@ -56,6 +56,7 @@ impl AgentRuntime for RemoteRuntime {
         let result = request_host(
             &*connection,
             HostCommand::PrepareInvocation {
+                provider: self.binding.provider.clone(),
                 configuration_ref: self.binding.configuration_ref.clone(),
                 request,
                 external_context_id,
@@ -85,6 +86,7 @@ impl AgentRuntime for RemoteRuntime {
         request_host(
             &*self.connection_for_invocation()?,
             HostCommand::Preflight {
+                provider: self.binding.provider.clone(),
                 configuration_ref: self.binding.configuration_ref.clone(),
                 mode,
                 options: options.clone(),
@@ -110,7 +112,7 @@ impl AgentRuntime for RemoteRuntime {
         &self,
         invocation_id: &AgentInvocationId,
         request_id: &str,
-        response: serde_json::Value,
+        response: orchid_engine::contracts::RuntimeInteractionResponse,
     ) -> Result<(), RuntimePortError> {
         request_host(
             &*self.current_connection(),
@@ -206,6 +208,7 @@ impl RemoteRuntime {
         let result = request_host(
             &*connection,
             HostCommand::Invoke {
+                provider: self.binding.provider.clone(),
                 configuration_ref: self.binding.configuration_ref.clone(),
                 request,
                 external_context_id,

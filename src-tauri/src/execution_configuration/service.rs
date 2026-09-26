@@ -3,77 +3,103 @@ use super::{
         CapabilityProfile, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
     },
     ports::{
-        CapabilityProfileRepository, CapabilityProfileRepositoryError, SelectedRuntimeProfileSource,
+        CapabilityProfileRepository, CapabilityProfileRepositoryError, ProviderConfigurationSource,
     },
     runtime_profile::{validate_identifier, CapabilitySet, RuntimeProfileSnapshot},
 };
+use crate::execution_targets::domain::ExecutionRouteRef;
+use orchid_engine::contracts::ProviderConfigurationRef;
 use std::{error::Error, fmt, sync::Arc};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct CapabilityProfileService {
     repository: Arc<dyn CapabilityProfileRepository>,
-    runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
 }
 
 impl CapabilityProfileService {
-    pub(crate) fn codex_skills_for_configuration(
+    fn configuration_source(
         &self,
-        reference: &str,
+        provider: &str,
+    ) -> Result<Arc<dyn ProviderConfigurationSource>, CapabilityProfileServiceError> {
+        self.endpoints
+            .as_ref()
+            .ok_or("Execution endpoints are not configured".to_string())
+            .and_then(|endpoints| endpoints.configuration_source(provider))
+            .map_err(CapabilityProfileServiceError::RuntimeUnavailable)
+    }
+    pub(crate) fn native_skills_for_configuration(
+        &self,
+        configuration: &ProviderConfigurationRef,
         cwd: Option<&str>,
-    ) -> Result<
-        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
-        CapabilityProfileServiceError,
-    > {
-        self.runtime_profile_source
-            .discover_skills_for_configuration(reference, cwd)
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, CapabilityProfileServiceError>
+    {
+        self.configuration_source(&configuration.provider)?
+            .native_skills_for_configuration(&configuration.configuration_id, cwd)
             .map_err(|error| CapabilityProfileServiceError::RuntimeUnavailable(error.to_string()))
     }
+    /// Observes a route's models, keeping the last complete observation for offline editing.
     pub(crate) fn model_catalogue(
         &self,
-        reference: &str,
+        route: &ExecutionRouteRef,
     ) -> Result<super::ModelCatalogueView, CapabilityProfileServiceError> {
-        validate_identifier("Model catalogue", "configurationRef", reference)
+        validate_identifier("Model catalogue", "configurationRef", &route.configuration_ref)
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
-        let observation = self
-            .runtime_profile_source
-            .refresh_quick_features_for_configuration(reference, None);
+        let observation = if route.device_id == "local" {
+            self.endpoints
+                .as_ref()
+                .ok_or("Execution endpoints are not configured".to_string())
+                .and_then(|endpoints| endpoints.configuration_source(&route.provider))
+                .and_then(|source| {
+                    source
+                        .refresh_quick_features_for_configuration(&route.configuration_ref, None)
+                        .map_err(|error| error.to_string())
+                })
+        } else {
+            Err("Model discovery is unavailable for remote devices.".to_string())
+        };
         let (stored, observation_error) = match observation {
             Ok(features) if !features.models.is_empty() => {
                 let stored = super::StoredModelCatalogue {
                     observed_at: chrono::Utc::now().to_rfc3339(),
                     models: features.models,
                 };
-                self.repository.save_model_catalogue(reference, &stored)?;
+                self.repository.save_model_catalogue(route, &stored)?;
                 (Some(stored), None)
             }
             Ok(features) => (
-                self.repository.model_catalogue(reference)?,
+                self.repository.model_catalogue(route)?,
                 Some(if features.limitations.is_empty() {
                     "The selected runtime did not report any models.".into()
                 } else {
                     features.limitations.join(" ")
                 }),
             ),
-            Err(error) => (
-                self.repository.model_catalogue(reference)?,
-                Some(error.to_string()),
-            ),
+            Err(error) => (self.repository.model_catalogue(route)?, Some(error)),
         };
         Ok(super::ModelCatalogueView {
-            configuration_ref: reference.into(),
+            route: route.clone(),
             observed_at: stored.as_ref().map(|value| value.observed_at.clone()),
             models: stored.map(|value| value.models).unwrap_or_default(),
             observation_error,
         })
     }
+    pub(crate) fn provider_setups(
+        &self,
+    ) -> Result<Vec<super::ProviderSetup>, CapabilityProfileServiceError> {
+        self.endpoints
+            .as_ref()
+            .ok_or("Execution endpoints are not configured".to_string())
+            .and_then(|endpoints| endpoints.provider_setups())
+            .map_err(CapabilityProfileServiceError::RuntimeUnavailable)
+    }
     pub(crate) fn native_inventory_for_configuration(
         &self,
-        reference: &str,
+        configuration: &ProviderConfigurationRef,
     ) -> Result<super::NativeCapabilityInventory, CapabilityProfileServiceError> {
-        self.runtime_profile_source
-            .inventory_for_configuration(reference, None)
+        self.configuration_source(&configuration.provider)?
+            .inventory_for_configuration(&configuration.configuration_id, None)
             .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
     }
     pub(crate) fn default_profile_id(
@@ -97,15 +123,25 @@ impl CapabilityProfileService {
             )
         })
     }
-    pub(crate) fn new(
-        repository: Arc<dyn CapabilityProfileRepository>,
-        runtime_profile_source: Arc<dyn SelectedRuntimeProfileSource>,
-    ) -> Self {
+    pub(crate) fn new(repository: Arc<dyn CapabilityProfileRepository>) -> Self {
         Self {
             repository,
-            runtime_profile_source,
             endpoints: None,
         }
+    }
+
+    /// Test composition: `source` serves the `codex` provider through local endpoints.
+    #[cfg(test)]
+    pub(crate) fn with_configuration_source(
+        self,
+        source: Arc<dyn ProviderConfigurationSource>,
+    ) -> Self {
+        let mut providers =
+            crate::runtime::providers::registrations::ProviderRegistrations::default();
+        providers.configurations.replace("codex", source);
+        self.with_endpoints(Arc::new(
+            crate::execution_targets::endpoints::ExecutionEndpoints::new(providers),
+        ))
     }
 
     pub(crate) fn with_endpoints(
@@ -121,32 +157,22 @@ impl CapabilityProfileService {
         binding: &crate::execution_targets::domain::ExecutionBinding,
         cwd: Option<&str>,
     ) -> Result<RuntimeProfileSnapshot, CapabilityProfileServiceError> {
-        if let Some(endpoints) = &self.endpoints {
-            return endpoints
-                .describe_runtime(binding, cwd)
-                .map(|runtime| runtime.runtime_profile)
-                .map_err(CapabilityProfileServiceError::RuntimeUnavailable);
-        }
-        if binding.is_remote() {
-            return Err(CapabilityProfileServiceError::RuntimeUnavailable(
-                "Remote execution endpoints are not configured".into(),
-            ));
-        }
-        self.runtime_profile_source
-            .profile_for_configuration(&binding.configuration_ref, cwd)
-            .map_err(|e| CapabilityProfileServiceError::RuntimeUnavailable(e.to_string()))
+        self.endpoints
+            .as_ref()
+            .ok_or("Execution endpoints are not configured".to_string())
+            .and_then(|endpoints| endpoints.describe_runtime(binding, cwd))
+            .map(|runtime| runtime.runtime_profile)
+            .map_err(CapabilityProfileServiceError::RuntimeUnavailable)
     }
 
-    /// Returns the one runtime profile currently available to Execution Configuration.
+    /// Returns the runtime profile of the default local execution binding.
     pub(crate) fn runtime_profile(
         &self,
     ) -> Result<RuntimeProfileSnapshot, CapabilityProfileServiceError> {
-        let runtime_profile = self
-            .runtime_profile_source
-            .selected_runtime_profile()
-            .map_err(|error| {
-                CapabilityProfileServiceError::RuntimeUnavailable(error.to_string())
-            })?;
+        let runtime_profile = self.runtime_for_binding(
+            &crate::execution_targets::domain::ExecutionBinding::default(),
+            None,
+        )?;
         runtime_profile
             .validate()
             .map_err(CapabilityProfileServiceError::InvalidInput)?;
@@ -484,7 +510,7 @@ impl From<CapabilityProfileRepositoryError> for CapabilityProfileServiceError {
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        ports::SelectedRuntimeProfileSourceError,
+        ports::ProviderConfigurationSourceError,
         repository::{InMemoryCapabilityProfileRepository, SqliteCapabilityProfileRepository},
         runtime_profile::{RuntimeSelections, SandboxMode, RUNTIME_PROFILE_CONTRACT_VERSION},
         ModelAllowance, ProfileRoutePolicy,
@@ -493,10 +519,12 @@ mod tests {
 
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
-    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    impl ProviderConfigurationSource for FixedRuntimeSource {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }
@@ -508,7 +536,7 @@ mod tests {
     fn runtime() -> RuntimeProfileSnapshot {
         RuntimeProfileSnapshot {
             contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
-            profile_ref: "native-codex:selected".into(),
+            configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
             exposure: CapabilitySet {
                 models: set(&["codex-a", "codex-b"]),
                 reasoning_modes: set(&["medium", "high"]),
@@ -520,7 +548,7 @@ mod tests {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 
@@ -535,10 +563,7 @@ mod tests {
     }
 
     fn service() -> CapabilityProfileService {
-        CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(FixedRuntimeSource(runtime())),
-        )
+        CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(Arc::new(FixedRuntimeSource(runtime())))
     }
 
     fn route(id: &str, configuration_ref: &str) -> ProfileRoutePolicy {
@@ -550,17 +575,17 @@ mod tests {
             },
             model_allowances: vec![ModelAllowance {
                 model_id: "codex-a".into(),
-                minimum_reasoning: "medium".into(),
-                maximum_reasoning: "high".into(),
+                minimum_reasoning: Some("medium".into()),
+                maximum_reasoning: Some("high".into()),
             }],
-            mcp_groups: set(&["codex-profile-mcps"]),
-            skill_groups: set(&["codex-profile-skills"]),
+            mcp_groups: set(&["native-mcps"]),
+            skill_groups: set(&["native-skills"]),
             defaults: RuntimeSelections {
                 model: Some("codex-a".into()),
                 reasoning_mode: Some("high".into()),
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 
@@ -569,12 +594,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("capability-profile-flow.sqlite");
         let repository = Arc::new(SqliteCapabilityProfileRepository::open(&database).unwrap());
-        let service = CapabilityProfileService::new(
-            repository.clone(),
-            Arc::new(FixedRuntimeSource(runtime())),
-        );
+        let service = CapabilityProfileService::new(repository.clone()).with_configuration_source(Arc::new(FixedRuntimeSource(runtime())));
         let local = route("local", "selected");
-        let alternate = route("alternate", "other-codex-home");
+        // One route per provider on a device: the alternate route uses another provider.
+        let mut alternate = route("alternate", "other-codex-home");
+        alternate.execution.provider = "claude".into();
+        alternate.model_allowances.clear();
 
         let created = service
             .create_generated_with_routes(
@@ -750,11 +775,13 @@ mod tests {
     #[test]
     fn failed_model_refresh_preserves_the_last_complete_route_catalogue() {
         struct FlakyModels(std::sync::atomic::AtomicBool);
-        impl SelectedRuntimeProfileSource for FlakyModels {
-            fn selected_runtime_profile(
-                &self,
-            ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-                Err(SelectedRuntimeProfileSourceError::unavailable(
+        impl ProviderConfigurationSource for FlakyModels {
+            fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+                Err(ProviderConfigurationSourceError::unavailable(
                     "runtime offline",
                 ))
             }
@@ -764,10 +791,10 @@ mod tests {
                 _: Option<&str>,
             ) -> Result<
                 crate::execution_configuration::RuntimeQuickFeatures,
-                SelectedRuntimeProfileSourceError,
+                ProviderConfigurationSourceError,
             > {
                 if self.0.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(SelectedRuntimeProfileSourceError::unavailable(
+                    return Err(ProviderConfigurationSourceError::unavailable(
                         "runtime offline",
                     ));
                 }
@@ -784,19 +811,21 @@ mod tests {
             }
         }
         let source = Arc::new(FlakyModels(std::sync::atomic::AtomicBool::new(true)));
-        let service = CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            source.clone(),
-        );
-        let empty = service.model_catalogue("home-one").unwrap();
+        let service = CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone());
+        let route = crate::execution_targets::domain::ExecutionRouteRef {
+            device_id: "local".into(),
+            provider: "codex".into(),
+            configuration_ref: "home-one".into(),
+        };
+        let empty = service.model_catalogue(&route).unwrap();
         assert!(empty.observed_at.is_none());
         assert!(empty.models.is_empty());
         source.0.store(false, std::sync::atomic::Ordering::SeqCst);
-        let observed = service.model_catalogue("home-one").unwrap();
+        let observed = service.model_catalogue(&route).unwrap();
         assert_eq!(observed.models[0].id, "known-model");
         let observed_at = observed.observed_at;
         source.0.store(true, std::sync::atomic::Ordering::SeqCst);
-        let stale = service.model_catalogue("home-one").unwrap();
+        let stale = service.model_catalogue(&route).unwrap();
         assert_eq!(stale.observed_at, observed_at);
         assert_eq!(stale.models[0].id, "known-model");
         assert_eq!(stale.observation_error.as_deref(), Some("runtime offline"));

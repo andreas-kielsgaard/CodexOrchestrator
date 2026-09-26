@@ -1,6 +1,6 @@
 //! SSH owns bytes and request correlation; the remote runtime owns session semantics.
 use crate::agent_sessions::{domain::*, ports::*};
-use orchid_engine::protocol::{HostCommand, HostFrame, HostRequest};
+use orchid_engine::protocol::{HostCommand, HostDescription, HostFrame, HostRequest, HOST_PROTOCOL_VERSION};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{
@@ -157,13 +157,22 @@ impl SshConnection {
             }
             let _ = delivery_tx.send(Delivery::Disconnected(message));
         });
-        Ok(Self {
+        let connection = Self {
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(child),
             pending,
             sinks,
             closed,
-        })
+        };
+        let description: HostDescription = connection.request(HostCommand::Describe)?;
+        if description.contract_version != HOST_PROTOCOL_VERSION {
+            let _ = connection.shutdown();
+            return Err(unavailable(format!(
+                "Remote Orchid host protocol {} is incompatible with desktop protocol {}",
+                description.contract_version, HOST_PROTOCOL_VERSION
+            )));
+        }
+        Ok(connection)
     }
 
     pub(crate) fn is_closed(&self) -> Result<bool, RuntimePortError> {

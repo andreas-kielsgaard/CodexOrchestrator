@@ -1,9 +1,13 @@
 import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import type { OtpCatalogueReader, OtpPackageDto } from '../../application/otp';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DraftWorkspace } from '../../components/draftWorkspace';
-import { localCodexRoutes } from '../../application/executionConfiguration';
+import { providerSetupRoutes } from '../../application/agentProviders';
+import {
+  executionRouteKey,
+  executionRouteRef,
+  type ExecutionRouteRefDto,
+} from '../../application/executionTargets/contracts';
 import { useDraftCloseWarning } from '../../components/useDraftCloseWarning';
 import type {
   CapabilityProfileDto,
@@ -25,7 +29,6 @@ export interface ExecutionConfigurationScreenProps {
   readonly workspace?: DraftWorkspace<CapabilityProfileDraft>;
   readonly editorMemory?: CapabilityProfileEditorMemory;
   /** Native profiles are projected into non-secret local harness/source routes. */
-  readonly nativeProfileClient?: NativeProfileClient;
   readonly selection?: { readonly profileId: string | null; readonly newProfile: boolean };
   readonly onSelectionChange?: (selection: {
     readonly profileId: string | null;
@@ -35,7 +38,7 @@ export interface ExecutionConfigurationScreenProps {
 
 const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
   contractVersion: 1,
-  profileRef: 'unavailable',
+  configuration: { provider: 'unavailable', configurationId: 'unavailable' },
   exposure: {
     models: [],
     reasoningModes: [],
@@ -44,7 +47,6 @@ const EMPTY_RUNTIME: RuntimeProfileSnapshotDto = {
     skills: [],
   },
   locked: { model: null, reasoningMode: null, sandboxMode: null },
-  codexPersonality: null,
 };
 
 function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft {
@@ -52,7 +54,6 @@ function draftFromProfile(profile: CapabilityProfileDto): CapabilityProfileDraft
     ? {
         routeId: `${profile.capabilityProfileId}:legacy`,
         execution: profile.execution,
-        codexPersonality: null,
         modelAllowances: profile.allowedCapabilities.models.map((modelId) => ({
           modelId,
           minimumReasoning: profile.allowedCapabilities.reasoningModes[0] ?? 'none',
@@ -103,7 +104,6 @@ export function ExecutionConfigurationScreen({
   readOtpCatalogue,
   workspace: providedWorkspace,
   editorMemory: providedEditorMemory,
-  nativeProfileClient,
   selection,
   onSelectionChange,
 }: ExecutionConfigurationScreenProps) {
@@ -125,16 +125,18 @@ export function ExecutionConfigurationScreen({
   );
   const selectedRef = useRef(selectedId);
   const loadModelCatalogue = useCallback(
-    async (configurationRef: string) => {
+    async (execution: ExecutionRouteRefDto) => {
       if (!client.loadProfileModelCatalogue) return;
+      const route = executionRouteRef(execution);
+      const key = executionRouteKey(route);
       try {
-        const catalogue = await client.loadProfileModelCatalogue(configurationRef);
-        setModelCatalogues((current) => ({ ...current, [configurationRef]: catalogue }));
+        const catalogue = await client.loadProfileModelCatalogue(route);
+        setModelCatalogues((current) => ({ ...current, [key]: catalogue }));
       } catch (cause) {
         setModelCatalogues((current) => ({
           ...current,
-          [configurationRef]: {
-            configurationRef,
+          [key]: {
+            route,
             observedAt: null,
             models: [],
             observationError: errorMessage(cause),
@@ -150,10 +152,11 @@ export function ExecutionConfigurationScreen({
     for (const route of next.routePolicies) {
       if (
         !draft.routePolicies.some(
-          (previous) => previous.execution.configurationRef === route.execution.configurationRef,
+          (previous) =>
+            executionRouteKey(previous.execution) === executionRouteKey(route.execution),
         )
       )
-        void loadModelCatalogue(route.execution.configurationRef);
+        void loadModelCatalogue(route.execution);
     }
   };
   useDraftCloseWarning(() => workspace.dirty());
@@ -165,16 +168,16 @@ export function ExecutionConfigurationScreen({
     setLoading(true);
     setError(null);
     try {
-      const [nextProfiles, nextDefault, nextOtpPackages, nativeProfiles] = await Promise.all([
+      const [nextProfiles, nextDefault, nextOtpPackages, setups] = await Promise.all([
         client.listCapabilityProfiles(),
         client.loadDefaultCapabilityProfile?.().catch(() => null) ?? Promise.resolve(null),
         // The catalogue is local design-time metadata. A read failure must not
         // prevent a capability profile from being viewed or edited. The selected
         // native runtime remains an available local route below.
         readOtpCatalogue?.().catch(() => []) ?? Promise.resolve([]),
-        nativeProfileClient?.load().catch(() => null) ?? Promise.resolve(null),
+        client.listProviderSetups?.().catch(() => []) ?? Promise.resolve([]),
       ]);
-      const nextRoutes = localCodexRoutes(nativeProfiles?.profiles ?? []);
+      const nextRoutes = providerSetupRoutes(setups);
       const hasNewDraft = selectedRef.current === null && workspace.read('$new') !== undefined;
       const selected = hasNewDraft
         ? undefined
@@ -192,12 +195,15 @@ export function ExecutionConfigurationScreen({
       selectedRef.current = selected?.capabilityProfileId ?? null;
       workspace.selectedKey = selectedRef.current;
       setDraft(nextDraft);
-      for (const reference of new Set(
+      const routes = new Map(
         nextProfiles.flatMap((profile) =>
-          (profile.routePolicies ?? []).map((route) => route.execution.configurationRef),
+          (profile.routePolicies ?? []).map(
+            (route) => [executionRouteKey(route.execution), route.execution] as const,
+          ),
         ),
-      )) {
-        void loadModelCatalogue(reference);
+      );
+      for (const execution of routes.values()) {
+        void loadModelCatalogue(execution);
       }
       void client.loadSelectedRuntimeProfile().then(setRuntime, () => setRuntime(EMPTY_RUNTIME));
     } catch (caught) {
@@ -205,7 +211,7 @@ export function ExecutionConfigurationScreen({
     } finally {
       setLoading(false);
     }
-  }, [client, workspace, readOtpCatalogue, nativeProfileClient, loadModelCatalogue]);
+  }, [client, workspace, readOtpCatalogue, loadModelCatalogue]);
 
   useEffect(() => {
     void load();
@@ -227,8 +233,7 @@ export function ExecutionConfigurationScreen({
     setSelectedId(profile.capabilityProfileId);
     const next = workspace.load(profile.capabilityProfileId, draftFromProfile(profile));
     setDraft(next);
-    for (const route of next.routePolicies)
-      void loadModelCatalogue(route.execution.configurationRef);
+    for (const route of next.routePolicies) void loadModelCatalogue(route.execution);
     setError(null);
     onSelectionChange?.({ profileId: profile.capabilityProfileId, newProfile: false });
   };

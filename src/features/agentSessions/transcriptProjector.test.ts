@@ -40,20 +40,22 @@ describe('projectAgentSessionTranscript', () => {
     expect(projected.invocations[0].finalResponse).toBeNull();
   });
 
-  it('projects paired MCP lifecycle events as one logical activity while retaining both raw events', () => {
-    const started = event(1, 'tool_activity', null, {
-      itemType: 'mcp_tool_call',
-      eventType: 'item.started',
+  it('projects paired tool lifecycle events as one logical activity while retaining both raw events', () => {
+    const activity = (phase: 'started' | 'completed') => ({
+      kind: 'mcp_tool' as const,
+      phase,
+      itemId: 'item-5',
+      server: null,
+      tool: null,
+      status: null,
+      resultClassification: 'unknown' as const,
     });
-    started.rawPayload = { type: 'item.started', item: { id: 'item-5', type: 'mcp_tool_call' } };
-    const completed = event(2, 'tool_activity', null, {
-      itemType: 'mcp_tool_call',
-      eventType: 'item.completed',
-    });
-    completed.rawPayload = {
-      type: 'item.completed',
-      item: { id: 'item-5', type: 'mcp_tool_call' },
-    };
+    const started = event(1, 'tool_activity', null);
+    started.normalized!.toolActivity = activity('started');
+    started.rawPayload = { provider: 'started evidence' };
+    const completed = event(2, 'tool_activity', null);
+    completed.normalized!.toolActivity = activity('completed');
+    completed.rawPayload = { provider: 'completed evidence' };
 
     const invocation = projectAgentSessionTranscript(details('completed', [started, completed]))
       .invocations[0];
@@ -316,7 +318,6 @@ function invocation(
               signal: null,
             },
       mcpToolActivities: [],
-      mcpToolActivityPartial: false,
     },
     events,
   };

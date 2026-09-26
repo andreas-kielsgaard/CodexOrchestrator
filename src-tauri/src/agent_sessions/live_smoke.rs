@@ -18,7 +18,7 @@ use crate::{
         ports::{AgentSessionHistory, AgentSessionRepository},
         repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
     },
-    runtime::codex::{CodexCliCapabilities, CodexCliCapabilityProbe, CodexCliRuntime},
+    runtime::providers::codex::{CodexCliCapabilities, CodexCliCapabilityProbe, CodexCliRuntime},
     runtime::processes::ProcessLaunchSpec,
 };
 use rusqlite::Connection;

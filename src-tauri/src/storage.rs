@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 58;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 60;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -48,7 +48,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             )
             .map_err(|error| format!("Unable to evolve dependency-wave schema: {error}"))?;
         transaction
-            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to evolve native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::execution_devices::SCHEMA)
@@ -67,6 +67,13 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         initialize_replacement_workflow_schema(&transaction)?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
+        if current_version < 59 {
+            crate::runtime::providers::codex::legacy_migration::migrate(&transaction)
+                .map_err(|error| format!("Unable to migrate provider-neutral profiles: {error}"))?;
+        }
+        if current_version < 60 {
+            crate::execution_configuration::migrate_route_model_catalogues(&transaction)?;
+        }
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|e| e.to_string())?;
@@ -177,7 +184,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             )
             .map_err(|error| format!("Unable to migrate dependency-wave schema: {error}"))?;
         transaction
-            .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+            .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
             .map_err(|error| format!("Unable to migrate native profile schema: {error}"))?;
         transaction
             .execute_batch(crate::execution_devices::SCHEMA)
@@ -187,21 +194,21 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
         if current_version <= 21 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V22_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile readiness schema: {error}")
                 })?;
         }
         if current_version <= 22 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V23_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile attention schema: {error}")
                 })?;
         }
         if current_version <= 23 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V24_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native profile producer-attempt schema: {error}")
                 })?;
@@ -220,21 +227,21 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
             }
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V25_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native execution-mode authority schema: {error}")
                 })?;
         }
         if current_version <= 25 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V26_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native full-access canary schema: {error}")
                 })?;
         }
         if current_version <= 26 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V27_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V27_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native login-attempt schema: {error}")
                 })?;
@@ -250,7 +257,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if legacy_setup_attempts {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V28_MIGRATION)
+                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V28_MIGRATION)
                     .map_err(|error| {
                         format!("Unable to migrate native setup-attempt evidence schema: {error}")
                     })?;
@@ -258,35 +265,35 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         if current_version <= 28 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V29_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V29_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy schema: {error}")
                 })?;
         }
         if current_version <= 29 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V30_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V30_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy invariants: {error}")
                 })?;
         }
         if current_version <= 30 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V31_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V31_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption evidence: {error}")
                 })?;
         }
         if current_version <= 31 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V32_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V32_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption confirmations: {error}")
                 })?;
         }
         if current_version <= 32 {
             transaction
-                .execute_batch(crate::native_profiles::NATIVE_PROFILE_V33_MIGRATION)
+                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V33_MIGRATION)
                 .map_err(|error| {
                     format!("Unable to migrate native canary receipt classification: {error}")
                 })?;
@@ -302,7 +309,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if !versioned_danger_authorization {
                 transaction
-                    .execute_batch(crate::native_profiles::NATIVE_PROFILE_V34_MIGRATION)
+                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_MIGRATION)
                     .map_err(|error| {
                         format!("Unable to migrate native danger authorization evidence: {error}")
                     })?;
@@ -318,7 +325,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             if legacy_full_access_canary {
                 transaction
                     .execute_batch(
-                        crate::native_profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
+                        crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_FULL_ACCESS_CANARY_MIGRATION,
                     )
                     .map_err(|error| {
                         format!("Unable to migrate native full-access canary evidence: {error}")
@@ -328,7 +335,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         if current_version <= 34 {
             transaction
                 .execute_batch(
-                    crate::native_profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V35_MCP_DISPATCH_CLAIM_MIGRATION,
                 )
                 .map_err(|error| {
                     format!("Unable to migrate native MCP reporting dispatch claims: {error}")
@@ -373,6 +380,8 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     )
                 })?;
         }
+        crate::runtime::providers::codex::legacy_migration::migrate(&transaction)
+            .map_err(|error| format!("Unable to migrate provider-neutral profiles: {error}"))?;
         transaction
             .pragma_update(None, "user_version", ACTIVE_SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record active schema version: {error}"))?;
@@ -440,7 +449,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         )
         .map_err(|error| format!("Unable to initialize dependency-wave schema: {error}"))?;
     transaction
-        .execute_batch(crate::native_profiles::NATIVE_PROFILE_SCHEMA)
+        .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_SCHEMA)
         .map_err(|error| format!("Unable to initialize native profile schema: {error}"))?;
     transaction
         .execute_batch(crate::execution_devices::SCHEMA)
@@ -473,6 +482,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
         .execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
+        .execute_batch(crate::agent_sessions::repository::NATIVE_CONVERSATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
         .execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
@@ -486,6 +498,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(crate::execution_devices::SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(crate::runtime::providers::claude::setups::SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::repository_catalog::device_locations::DEVICE_LOCATION_SCHEMA)
@@ -558,11 +573,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_model_catalogues','agent_session_address_clock','agent_session_addresses','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_parked_conversations','agent_session_initial_prompt_prefixes','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts','claude_setups')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 10)
+        .map(|table_count| table_count == 13)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let otp_schema_is_present = connection
         .query_row(
@@ -677,16 +692,41 @@ mod tests {
         let connection = Connection::open_in_memory().expect("memory database");
         initialize_active_database(&connection).expect("initialize database");
         connection
-            .execute_batch("DROP TABLE execution_model_catalogues; PRAGMA user_version=54;")
+            .execute_batch("DROP TABLE execution_route_model_catalogues; PRAGMA user_version=54;")
             .expect("simulate predecessor database");
 
         initialize_active_database(&connection).expect("upgrade database");
 
-        assert!(table_exists(&connection, "execution_model_catalogues"));
+        assert!(table_exists(&connection, "execution_route_model_catalogues"));
         assert_eq!(
             pragma_i64(&connection, "user_version"),
             ACTIVE_SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn moves_configuration_keyed_model_catalogues_to_the_local_codex_route() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        initialize_active_database(&connection).expect("initialize database");
+        connection
+            .execute_batch(
+                "CREATE TABLE execution_model_catalogues (configuration_ref TEXT PRIMARY KEY, catalogue_json TEXT NOT NULL);
+                 INSERT INTO execution_model_catalogues VALUES ('profile-one','{\"observedAt\":\"t\",\"models\":[]}');
+                 PRAGMA user_version=59;",
+            )
+            .expect("simulate v59 catalogue");
+
+        initialize_active_database(&connection).expect("upgrade database");
+
+        assert!(!table_exists(&connection, "execution_model_catalogues"));
+        let migrated: (String, String, String) = connection
+            .query_row(
+                "SELECT device_id,provider,configuration_ref FROM execution_route_model_catalogues",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("migrated catalogue");
+        assert_eq!(migrated, ("local".into(), "codex".into(), "profile-one".into()));
     }
 
     fn seed_file_review_predecessor(
@@ -753,17 +793,20 @@ mod tests {
                 "agent_session_file_changes",
                 "agent_session_imported_turns",
                 "agent_session_imports",
+                "agent_session_initial_prompt_prefixes",
                 "agent_session_invocation_diagnostics",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
                 "agent_session_native_profile_bindings",
                 "agent_session_native_profile_launch_provenance",
                 "agent_session_organization",
+                "agent_session_parked_conversations",
                 "agent_session_preparations",
                 "agent_session_runtime_events",
                 "agent_session_target_transitions",
                 "agent_sessions",
                 "capability_profiles",
+                "claude_setups",
                 "effect_provenance",
                 "epic_bootstrap_attempt_completion_commands",
                 "epic_bootstrap_attempt_completion_facts",
@@ -790,7 +833,7 @@ mod tests {
                 "execution_default_capability_profile",
                 "execution_device_activity_leases",
                 "execution_devices",
-                "execution_model_catalogues",
+                "execution_route_model_catalogues",
                 "execution_support_attempt_authorizations",
                 "execution_support_grants",
                 "file_review_changed_files",

@@ -23,7 +23,7 @@ export function repairSessionClients(initiallyCreated = true) {
       digest: 'fixture-digest',
       sessionProfile: {
         contractVersion: 1,
-        runtimeProfileRef: repairRuntime.profileRef,
+        configuration: repairRuntime.configuration,
         attachedRuntimeCapabilities: repairRuntime.exposure,
         attachedRuntimeLocked: repairRuntime.locked,
         capabilityProfileId: repairProfile.capabilityProfileId,
@@ -62,7 +62,7 @@ export function repairSessionClients(initiallyCreated = true) {
   };
   const profiles: AgentSessionProfileClient = {
     loadQuickFeatures: async () => ({
-      profileRef: repairRuntime.profileRef,
+      configuration: repairRuntime.configuration,
       defaults: profile.creationResolution.sessionProfile.pinnedDefaults,
       models: repairRuntime.exposure.models.map((id) => ({
         id,

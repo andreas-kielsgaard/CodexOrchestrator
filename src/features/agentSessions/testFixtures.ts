@@ -89,7 +89,6 @@ export function observation(
           }
         : null,
     mcpToolActivities: [],
-    mcpToolActivityPartial: false,
   };
 }
 

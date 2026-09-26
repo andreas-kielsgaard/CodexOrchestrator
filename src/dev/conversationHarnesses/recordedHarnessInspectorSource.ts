@@ -989,7 +989,7 @@ function createRecordedHarnessInspectorSession(): AgentSessionDetailsDto {
           createdAt: recordedAt,
           updatedAt: recordedAt,
         },
-        observation: { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: { status: 'completed', completedAt: recordedAt, exitCode: 0, signal: null }, mcpToolActivities: [], mcpToolActivityPartial: false },
+        observation: { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: { status: 'completed', completedAt: recordedAt, exitCode: 0, signal: null }, mcpToolActivities: [] },
         events: [response],
       },
     ],

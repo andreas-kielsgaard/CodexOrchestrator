@@ -1,14 +1,18 @@
 import { useState } from 'react';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
-import type { NativeProfileClient } from '../../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
 import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
-import { NativeProfileSettings } from '../nativeProfiles/NativeProfileSettings';
+import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
+import type { TechnicalSettingsSection } from '../../application/productNavigation';
+import { ClaudeSetupSettings } from '../agentProviders/claude/ClaudeSetupSettings';
+import { NativeProfileSettings } from '../agentProviders/codex/profiles/NativeProfileSettings';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
+  claudeClient,
   executionClient,
   deviceClient,
   readOtpCatalogue,
@@ -19,20 +23,21 @@ export function TechnicalSettingsScreen({
   onSelectedCodexProfileChange,
 }: {
   readonly nativeClient: NativeProfileClient;
+  readonly claudeClient?: ClaudeSetupClient;
   readonly executionClient?: ExecutionConfigurationClient;
   readonly deviceClient?: ExecutionTargetClient;
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly otpInstallations?: OtpInstallationClient;
-  readonly section?: 'devices' | 'inference' | 'native' | 'otp';
-  readonly onSectionChange?: (section: 'devices' | 'inference' | 'native' | 'otp') => void;
+  readonly section?: TechnicalSettingsSection;
+  readonly onSectionChange?: (section: TechnicalSettingsSection) => void;
   readonly selectedCodexProfileId?: string | null;
   readonly onSelectedCodexProfileChange?: (profileId: string | null) => void;
 }) {
-  const [localSection, setLocalSection] = useState<'devices' | 'inference' | 'native' | 'otp'>(
+  const [localSection, setLocalSection] = useState<TechnicalSettingsSection>(
     executionClient ? 'devices' : 'native',
   );
   const section = controlledSection ?? localSection;
-  const setSection = (next: 'devices' | 'inference' | 'native' | 'otp') => {
+  const setSection = (next: TechnicalSettingsSection) => {
     setLocalSection(next);
     onSectionChange?.(next);
   };
@@ -66,6 +71,15 @@ export function TechnicalSettingsScreen({
           >
             Codex profiles
           </button>
+          {claudeClient && (
+            <button
+              type="button"
+              aria-pressed={section === 'claude'}
+              onClick={() => setSection('claude')}
+            >
+              Claude setups
+            </button>
+          )}
           {readOtpCatalogue && (
             <button
               type="button"
@@ -80,12 +94,17 @@ export function TechnicalSettingsScreen({
       <div className="technical-settings__content">
         {section === 'devices' && executionClient ? (
           <DeviceSetupOverview
-            nativeClient={nativeClient}
+            executionClient={executionClient}
             deviceClient={deviceClient}
-            onOpenCodexHarness={() => setSection('native')}
+            providers={claudeClient ? ['codex', 'claude'] : ['codex']}
+            onConfigureProvider={(provider) =>
+              setSection(provider === 'claude' ? 'claude' : 'native')
+            }
           />
         ) : section === 'inference' && executionClient ? (
-          <InferenceSourceOverview nativeClient={nativeClient} />
+          <InferenceSourceOverview executionClient={executionClient} />
+        ) : section === 'claude' && claudeClient ? (
+          <ClaudeSetupSettings client={claudeClient} />
         ) : section === 'otp' && readOtpCatalogue ? (
           <OtpConfigurationPanel
             readCatalogue={readOtpCatalogue}

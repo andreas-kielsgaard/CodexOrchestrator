@@ -56,10 +56,24 @@ export function sessionQuickActions(
     {
       id: 'reasoning',
       label: 'Reasoning',
-      description: effectiveReasoning ?? 'Choose a reasoning level for your next message',
+      description: effectiveReasoning ?? 'Default',
       disabledReason:
         disabledReason ?? (!model ? 'Choose a model to see its reasoning levels' : undefined),
       children: [
+        ...(model?.reasoningModes.length
+          ? [
+              {
+                id: 'default',
+                label: 'Default',
+                description: 'Let the provider choose',
+                selected: !effectiveReasoning,
+                run: () => {
+                  setSelection({ ...selection, reasoningMode: null });
+                  return { replacement: '', notice: 'Next message reasoning: provider default' };
+                },
+              } satisfies ComposerQuickAction,
+            ]
+          : []),
         ...(model?.reasoningModes ?? []).map((mode): ComposerQuickAction => ({
           id: mode.id,
           label: mode.id,

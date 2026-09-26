@@ -25,20 +25,21 @@ impl AgentSessionApplication {
         {
             return Ok(existing);
         }
-        let source = crate::execution_configuration::WorkingContextProfileSource {
-            source: self
-                .profile_source()
-                .map_err(|e| SessionDirectoryError::new(e.to_string()))?,
-            cwd: working_directory.as_deref(),
-        };
+        let source = self
+            .configuration_source(&creation.capability_profile.execution.provider)
+            .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         creation.session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &creation.capability_profile,
-                &creation.capability_profile.execution.configuration_ref,
+                &creation.capability_profile.execution,
                 working_directory.as_deref(),
             )
             .map_err(SessionDirectoryError::new)?;
-        let resolution = SessionProfileResolver::resolve_creation(&source, creation.clone())
+        let resolution = SessionProfileResolver::resolve_creation(
+            source.as_ref(),
+            working_directory.as_deref(),
+            creation.clone(),
+        )
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         let session = self.prepare_session_with_id(
@@ -111,10 +112,10 @@ impl AgentSessionApplication {
         let profile = pinned.session_profile();
         let original_runtime = crate::execution_configuration::RuntimeProfileSnapshot {
             contract_version: 1,
-            profile_ref: profile.runtime_profile_ref().into(),
+            configuration: profile.configuration().clone(),
             exposure: profile.attached_runtime_capabilities().clone(),
             locked: profile.attached_runtime_locked().clone(),
-            codex_personality: profile.codex_personality(),
+            provider_options: profile.provider_options().cloned(),
         };
         let mut creation = creation.clone();
         creation.session_skill_inputs = profile.session_skill_inputs().to_vec();
@@ -160,21 +161,16 @@ impl AgentSessionApplication {
                 "Session Event delivery requires an immutable pinned Session Profile",
             )
         })?;
-        let runtime_profile_ref = creation.session_profile().runtime_profile_ref();
-        let configuration_ref = runtime_profile_ref
-            .strip_prefix("native-codex:")
-            .unwrap_or(runtime_profile_ref);
-        let source = crate::execution_configuration::PinnedConfigurationProfileSource {
-            source: self
-                .profile_source()
-                .map_err(|e| SessionInvocationError::new(e.to_string()))?,
-            configuration_ref,
-            cwd: history.session.working_directory.as_deref(),
-        };
+        let source = self
+            .configuration_source(&creation.session_profile().configuration().provider)
+            .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        let source = source.as_ref();
+        let cwd = history.session.working_directory.as_deref();
         let selections = match direct_user_options {
             Some(options) => {
                 SessionProfileResolver::validate_direct_user_invocation(
-                    &source,
+                    source,
+                    cwd,
                     creation,
                     DirectUserInvocationRequest {
                         contract_version: 1,
@@ -187,7 +183,7 @@ impl AgentSessionApplication {
                 .selections
             }
             None => {
-                SessionProfileResolver::validate_pinned_session(&source, creation)
+                SessionProfileResolver::validate_pinned_session(source, cwd, creation)
                     .map_err(|error| SessionInvocationError::new(error.to_string()))?;
                 creation.session_profile().pinned_defaults().clone()
             }

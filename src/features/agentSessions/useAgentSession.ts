@@ -16,6 +16,7 @@ import type {
   AgentSessionUpdateDto,
   AgentSessionProfileClient,
   PinnedAgentSessionProfileDto,
+  RuntimeInteractionResponseDto,
 } from '../../application/agentSessions';
 import { samePreparedConfiguration } from './sessionPreparationState';
 import {
@@ -63,7 +64,7 @@ export interface AgentSessionWorkspaceController {
   /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
   sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
-  respondToRequest?(invocationId: string, requestId: string, response: unknown): Promise<void>;
+  respondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
   steeringAvailable?: boolean;
 
   reload(): Promise<void>;
@@ -554,7 +555,7 @@ export function useAgentSession(
   }, [canceling, client, details, loadSelected, preparation, options.execution?.client]);
 
   const respondToRequest = useCallback(
-    async (invocationId: string, requestId: string, response: unknown) => {
+    async (invocationId: string, requestId: string, response: RuntimeInteractionResponseDto) => {
       const sessionId = selectedIdRef.current;
       if (!sessionId || !client.respondToRuntimeRequest) return;
       try {
@@ -661,7 +662,10 @@ export function useAgentSession(
           sessionId: null,
           workingDirectory:
             desired.workspace.kind === 'existing' ? desired.workspace.target.path : null,
-          configurationRef: desired.execution.configurationRef,
+          configuration: {
+            provider: desired.execution.provider,
+            configurationId: desired.execution.configurationRef,
+          },
           ...(desired.workspace.kind === 'existing'
             ? { executionTarget: desired.workspace.target }
             : {}),

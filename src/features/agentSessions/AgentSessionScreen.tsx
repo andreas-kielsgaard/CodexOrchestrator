@@ -1,4 +1,5 @@
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
+import { otherRouteModels, withOtherRouteModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
@@ -292,12 +293,12 @@ export function StandaloneAgentSessionScreen({
   const resolvedProfile =
     session.currentProfile?.creationResolution.sessionProfile ??
     view.profile?.creationResolution.sessionProfile;
-  const capabilities =
+  const routeCapabilities =
     session.quickCatalogue ??
     selectedTargetQuickFeatures(targetDraft.runtime, targetDraft.profile) ??
     (resolvedProfile
       ? {
-          profileRef: resolvedProfile.runtimeProfileRef,
+          configuration: resolvedProfile.configuration,
           defaults: {
             model: resolvedProfile.pinnedDefaults.model,
             reasoningMode: resolvedProfile.pinnedDefaults.reasoningMode,
@@ -315,6 +316,13 @@ export function StandaloneAgentSessionScreen({
           limitations: [],
         }
       : undefined);
+  const capabilities = withOtherRouteModels(
+    routeCapabilities,
+    otherRouteModels(
+      targetDraft.profile,
+      targetDraft.selection?.execution ?? currentTarget?.execution,
+    ),
+  );
   const models = capabilities?.models.map((model) => model.id) ?? [];
   const hasRuntimeFacts = Boolean(capabilities);
   const selectionError = targetDraft.branchChoice?.requiresWorktree
@@ -328,7 +336,7 @@ export function StandaloneAgentSessionScreen({
             view.selection.model &&
             !targetDraft.loading &&
             !models.includes(view.selection.model)
-          ? `Model ${view.selection.model} is unavailable on the selected Codex route.`
+          ? `Model ${view.selection.model} is unavailable on the selected provider route.`
           : hasRuntimeFacts &&
               view.selection.reasoningMode &&
               !targetDraft.loading &&

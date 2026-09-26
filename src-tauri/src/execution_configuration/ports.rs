@@ -1,7 +1,8 @@
 use super::{capability_profile::CapabilityProfile, runtime_profile::RuntimeProfileSnapshot};
 use std::{error::Error, fmt};
 
-/// A master skill folder that a runtime source makes eligible for an explicit session manifest.
+/// A product-owned skill folder whose skills a route's capability group makes eligible for the
+/// session manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeSkillRoot {
     pub(crate) group_id: String,
@@ -51,11 +52,11 @@ impl Error for CapabilityProfileRepositoryError {}
 pub(crate) trait CapabilityProfileRepository: Send + Sync {
     fn model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &crate::execution_targets::domain::ExecutionRouteRef,
     ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError>;
     fn save_model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &crate::execution_targets::domain::ExecutionRouteRef,
         catalogue: &super::StoredModelCatalogue,
     ) -> Result<(), CapabilityProfileRepositoryError>;
     fn default_profile(
@@ -85,11 +86,11 @@ pub(crate) trait CapabilityProfileRepository: Send + Sync {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SelectedRuntimeProfileSourceError {
+pub(crate) struct ProviderConfigurationSourceError {
     message: String,
 }
 
-impl SelectedRuntimeProfileSourceError {
+impl ProviderConfigurationSourceError {
     pub(crate) fn unavailable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -97,142 +98,75 @@ impl SelectedRuntimeProfileSourceError {
     }
 }
 
-impl fmt::Display for SelectedRuntimeProfileSourceError {
+impl fmt::Display for ProviderConfigurationSourceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
     }
 }
 
-impl Error for SelectedRuntimeProfileSourceError {}
+impl Error for ProviderConfigurationSourceError {}
 
-pub(crate) trait SelectedRuntimeProfileSource: Send + Sync {
+/// One agent provider's registered configurations. Every operation is addressed by a
+/// configuration ID within that provider; the provider registry selects the implementation.
+pub(crate) trait ProviderConfigurationSource: Send + Sync {
+    /// The configuration a provider bound to a Session outside Orchid's pinned profile, if any.
     fn configuration_ref_for_session(
         &self,
         _session_id: &str,
-    ) -> Result<Option<String>, SelectedRuntimeProfileSourceError> {
+    ) -> Result<Option<String>, ProviderConfigurationSourceError> {
         Ok(None)
     }
-    fn discover_skills_for_configuration(
+    /// Resolves a provider alias, such as its current default, to a concrete configuration ID.
+    fn resolve_configuration_ref(
+        &self,
+        reference: &str,
+    ) -> Result<String, ProviderConfigurationSourceError> {
+        Ok(reference.into())
+    }
+    fn profile_for_configuration(
+        &self,
+        reference: &str,
+        cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>;
+    /// Skills the provider configuration discovers natively. Product skill roots are not
+    /// provider concerns; see `ProductSkillRoots`.
+    fn native_skills_for_configuration(
         &self,
         _reference: &str,
         _cwd: Option<&str>,
-    ) -> Result<
-        orchid_engine::codex::app_server::skills::CodexSkillCatalogue,
-        SelectedRuntimeProfileSourceError,
-    > {
-        Err(SelectedRuntimeProfileSourceError::unavailable(
-            "Codex skill discovery is unavailable",
-        ))
-    }
-    fn skill_roots_for_configuration(
-        &self,
-        _reference: &str,
-    ) -> Result<Vec<RuntimeSkillRoot>, SelectedRuntimeProfileSourceError> {
-        Ok(Vec::new())
-    }
-    fn configuration_home(
-        &self,
-        _reference: &str,
-    ) -> Result<std::path::PathBuf, SelectedRuntimeProfileSourceError> {
-        Err(SelectedRuntimeProfileSourceError::unavailable(
-            "Native configuration home is unavailable",
+    ) -> Result<orchid_engine::contracts::ProviderSkillCatalogue, ProviderConfigurationSourceError>
+    {
+        Err(ProviderConfigurationSourceError::unavailable(
+            "Native skill discovery is unavailable",
         ))
     }
     fn quick_features_for_configuration(
         &self,
-        reference: &str,
-        cwd: Option<&str>,
-    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
-        if reference != "selected" {
-            return Err(SelectedRuntimeProfileSourceError::unavailable(
-                "This provider does not expose quick features for named configurations.",
-            ));
-        }
-        self.quick_features_at(cwd)
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<super::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
+        Err(ProviderConfigurationSourceError::unavailable(
+            "This provider does not expose quick features.",
+        ))
     }
     fn refresh_quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<super::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.quick_features_for_configuration(reference, cwd)
-    }
-    fn quick_features_at(
-        &self,
-        _cwd: Option<&str>,
-    ) -> Result<super::RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
-        Err(SelectedRuntimeProfileSourceError::unavailable(
-            "This provider does not expose quick features.",
-        ))
-    }
-    fn resolve_configuration_ref(
-        &self,
-        reference: &str,
-    ) -> Result<String, SelectedRuntimeProfileSourceError> {
-        Ok(reference.into())
-    }
-    fn profile_for_configuration(
-        &self,
-        _reference: &str,
-        cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.selected_runtime_profile_at(cwd)
     }
     fn inventory_for_configuration(
         &self,
         _reference: &str,
         _cwd: Option<&str>,
-    ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
-        self.native_inventory()
-    }
-    fn native_inventory(
-        &self,
-    ) -> Result<super::NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
-        Err(SelectedRuntimeProfileSourceError::unavailable(
+    ) -> Result<super::NativeCapabilityInventory, ProviderConfigurationSourceError> {
+        Err(ProviderConfigurationSourceError::unavailable(
             "Native inventory discovery is unavailable",
         ))
     }
-    fn selected_runtime_profile_at(
-        &self,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.selected_runtime_profile()
-    }
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError>;
-}
-
-pub(crate) struct WorkingContextProfileSource<'a> {
-    pub(crate) source: &'a dyn SelectedRuntimeProfileSource,
-    pub(crate) cwd: Option<&'a str>,
-}
-impl SelectedRuntimeProfileSource for WorkingContextProfileSource<'_> {
-    fn profile_for_configuration(
-        &self,
-        reference: &str,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.source.profile_for_configuration(reference, self.cwd)
-    }
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.source.selected_runtime_profile_at(self.cwd)
-    }
-}
-
-pub(crate) struct PinnedConfigurationProfileSource<'a> {
-    pub(crate) source: &'a dyn SelectedRuntimeProfileSource,
-    pub(crate) configuration_ref: &'a str,
-    pub(crate) cwd: Option<&'a str>,
-}
-
-impl SelectedRuntimeProfileSource for PinnedConfigurationProfileSource<'_> {
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        self.source
-            .profile_for_configuration(self.configuration_ref, self.cwd)
+    /// The provider's setups on this device.
+    fn setups(&self) -> Result<Vec<super::ProviderSetup>, ProviderConfigurationSourceError> {
+        Ok(Vec::new())
     }
 }

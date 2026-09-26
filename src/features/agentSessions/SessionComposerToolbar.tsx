@@ -128,11 +128,19 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
           aria-label="Reasoning"
           value={effective.reasoningMode ?? ''}
           onChange={(event) =>
-            props.onOptions({ ...props.options, reasoningMode: event.target.value })
+            props.onOptions({ ...props.options, reasoningMode: event.target.value || null })
           }
-          disabled={!effective.reasoningMode}
+          disabled={!effective.model?.reasoningModes.length}
         >
-          {!effective.reasoningMode && <option value="">Loading reasoning…</option>}
+          {!effective.reasoningMode && (
+            <option value="">
+              {!effective.model
+                ? 'Loading reasoning…'
+                : effective.model.reasoningModes.length
+                  ? 'Default'
+                  : 'No reasoning levels'}
+            </option>
+          )}
           {effective.model?.reasoningModes.map((mode) => (
             <option key={mode.id} value={mode.id}>
               {mode.id}

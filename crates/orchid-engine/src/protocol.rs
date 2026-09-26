@@ -6,6 +6,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const HOST_PROTOCOL_VERSION: u32 = 2;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostRequest {
     pub id: String,
@@ -49,14 +51,17 @@ pub enum HostCommand {
         session_id: String,
     },
     ExportContinuation {
+        provider: String,
         configuration_ref: String,
         external_context_id: ExternalRuntimeContextId,
     },
     InstallContinuation {
+        provider: String,
         configuration_ref: String,
-        continuation: crate::codex::app_server::continuation::CodexContinuation,
+        continuation: crate::contracts::provider::ProviderContinuationPayload,
     },
     PrepareInvocation {
+        provider: String,
         configuration_ref: String,
         request: RuntimeInvocationRequest,
         external_context_id: Option<ExternalRuntimeContextId>,
@@ -69,15 +74,18 @@ pub enum HostCommand {
         branch_ref: Option<String>,
     },
     Capabilities {
+        provider: String,
         configuration_ref: String,
         working_directory: Option<String>,
     },
     Preflight {
+        provider: String,
         configuration_ref: String,
         mode: RuntimeInvocationMode,
         options: AgentRuntimeOptions,
     },
     Invoke {
+        provider: String,
         configuration_ref: String,
         request: RuntimeInvocationRequest,
         external_context_id: Option<ExternalRuntimeContextId>,
@@ -85,7 +93,7 @@ pub enum HostCommand {
     Respond {
         invocation_id: AgentInvocationId,
         request_id: String,
-        response: Value,
+        response: RuntimeInteractionResponse,
     },
     Cancel {
         invocation_id: AgentInvocationId,
@@ -122,6 +130,7 @@ pub enum HostFrame {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostDescription {
+    pub contract_version: u32,
     pub device_id: String,
     pub device_name: String,
     pub configurations: Vec<HostConfigurationDescription>,

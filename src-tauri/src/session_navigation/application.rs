@@ -252,7 +252,7 @@ impl SessionNavigationService {
         working_directory: Option<&str>,
         folder_target: Option<&SessionFolderTarget>,
         execution_target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
-        configuration_ref: Option<&str>,
+        configuration: Option<&orchid_engine::contracts::ProviderConfigurationRef>,
     ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, String> {
         let folder_directory = if session_id.is_none() && execution_target.is_none() {
             folder_target
@@ -265,7 +265,7 @@ impl SessionNavigationService {
             session_id,
             folder_directory.as_deref().or(working_directory),
             execution_target,
-            configuration_ref,
+            configuration,
         )
     }
     pub(crate) fn start_session(

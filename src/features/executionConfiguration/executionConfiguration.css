@@ -287,6 +287,11 @@
   gap: 12px;
 }
 
+.model-allowance__none {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
 .capability-route h3,
 .capability-route h4,
 .capability-route p,

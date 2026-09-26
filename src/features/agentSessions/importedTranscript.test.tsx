@@ -36,10 +36,16 @@ it('renders imported user, assistant, steering and activity in source order, wit
             importedContent: item,
             ...(sequence === 5 ? { role: 'final' } : { role: 'intermediate' }),
           }
-        : { kind: 'codex_history_import', ordinal: 0, sourceStartedAt: null },
+        : null,
     },
   }));
   const details = sessionDetails('completed', events);
+  details.invocations[0].importProvenance = {
+    sourceTurnId: 'turn-1',
+    ordinal: 0,
+    sourceStartedAt: null,
+    sourceCompletedAt: null,
+  };
   const transcript = projectAgentSessionTranscript(details);
   const exported = formatAgentSessionContext(details, transcript);
   expect(exported.indexOf('Working response')).toBeLessThan(exported.indexOf('Steering input'));

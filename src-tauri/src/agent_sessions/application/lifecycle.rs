@@ -149,14 +149,15 @@ impl AgentSessionApplication {
 
     pub(crate) fn shutdown_runtime(&self) -> Result<(), AgentSessionApplicationError> {
         self.preparation_workers.cancel_all();
-        if let Some(endpoints) = &self.endpoints {
-            endpoints
+        match &self.endpoints {
+            Some(endpoints) => endpoints
                 .shutdown()
-                .map_err(AgentSessionApplicationError::invalid)?;
+                .map_err(AgentSessionApplicationError::invalid),
+            None => self
+                .runtime
+                .shutdown()
+                .map_err(AgentSessionApplicationError::runtime),
         }
-        self.runtime
-            .shutdown()
-            .map_err(AgentSessionApplicationError::runtime)
     }
 
     pub(super) fn repair_missing_runtime_binding(

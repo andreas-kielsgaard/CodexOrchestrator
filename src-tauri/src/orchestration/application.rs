@@ -15,9 +15,11 @@ use crate::{
             AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
             AgentInvocationStatus, AgentRuntimeOptions, AgentSessionId,
         },
-        ports::RuntimeLaunchExtension,
     },
-    orchestration::mcp::{self, CodexMcpInjection, ManagedPlanBuilderInvocation},
+    orchestration::{
+        managed_mcp::ManagedMcpGrant,
+        mcp::{self, ManagedPlanBuilderInvocation},
+    },
 };
 use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
@@ -47,7 +49,7 @@ impl super::confirmation::ButtonInitiationContextScheduler for OrchestrationAppl
 }
 
 pub(crate) trait ManagedPlanBuilderInvocationHandle: Send {
-    fn injection(&self) -> &CodexMcpInjection;
+    fn grant(&self) -> &ManagedMcpGrant;
     fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
         None
     }
@@ -67,8 +69,8 @@ pub(crate) trait ManagedPlanBuilderInvocationFactory: Send + Sync {
 struct ProductionManagedInvocationFactory;
 struct ProductionManagedInvocation(ManagedPlanBuilderInvocation);
 impl ManagedPlanBuilderInvocationHandle for ProductionManagedInvocation {
-    fn injection(&self) -> &CodexMcpInjection {
-        &self.0.injection
+    fn grant(&self) -> &ManagedMcpGrant {
+        &self.0.grant
     }
     fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
         Some(self.0.upstream_descriptor())
@@ -96,8 +98,8 @@ impl crate::harness_engine::ManagedMcpUpstreamOwner for PlanBuilderManagedUpstre
 }
 
 impl ManagedPlanBuilderInvocationHandle for RegisteredManagedInvocation {
-    fn injection(&self) -> &CodexMcpInjection {
-        self.inner.injection()
+    fn grant(&self) -> &ManagedMcpGrant {
+        self.inner.grant()
     }
 
     fn upstream_descriptor(&self) -> Option<crate::harness_engine::ManagedMcpUpstreamDescriptor> {
@@ -490,19 +492,8 @@ impl ManagedPlanBuilderService {
                 },
                 _ => managed,
             };
-        let mut config_overrides = harness.runtime_config_overrides();
-        config_overrides.extend(managed.injection().config_overrides.clone());
-        let extension = RuntimeLaunchExtension {
-            native_mcp_enabled: None,
-            codex_personality: None,
-            managed_mcp_servers: Vec::new(),
-            skill_inputs: Vec::new(),
-            ignore_user_rules: false,
-            reasoning_mode: None,
-            config_overrides,
-            environment: vec![managed.injection().environment.clone()],
-            initial_prompt_prefix: None,
-        };
+        let mut extension = harness.launch_extension();
+        managed.grant().clone().apply(&mut extension);
         let invocation_id = self.sessions.allocate_application_invocation_id();
         let claim_id = format!("plan-builder-context-claim-{}", uuid::Uuid::new_v4());
         let pending_context = match self
@@ -519,7 +510,6 @@ impl ManagedPlanBuilderService {
                 return Err(error.to_string());
             }
         };
-        let mut extension = extension;
         extension.initial_prompt_prefix = pending_context
             .as_ref()
             .map(|delivery| crate::agent_sessions::ports::InitialPromptPrefix {
@@ -850,6 +840,7 @@ impl OrchestrationApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_sessions::ports::RuntimeLaunchExtension;
     use crate::agent_sessions::{
         application::{
             AgentSessionNotification, AgentSessionNotifier, SystemAgentSessionProviders,
@@ -887,15 +878,15 @@ mod tests {
 
     #[derive(Default)]
     struct Factory {
-        injections: Mutex<Vec<CodexMcpInjection>>,
+        injections: Mutex<Vec<ManagedMcpGrant>>,
         stops: Arc<Mutex<usize>>,
     }
     struct Handle {
-        injection: CodexMcpInjection,
+        injection: ManagedMcpGrant,
         stops: Arc<Mutex<usize>>,
     }
     impl ManagedPlanBuilderInvocationHandle for Handle {
-        fn injection(&self) -> &CodexMcpInjection {
+        fn grant(&self) -> &ManagedMcpGrant {
             &self.injection
         }
         fn bind_agent_invocation(&self, _: AgentInvocationId) {}
@@ -913,7 +904,7 @@ mod tests {
             required: bool,
         ) -> Result<Box<dyn ManagedPlanBuilderInvocationHandle>, String> {
             let n = self.injections.lock().unwrap().len();
-            let injection = CodexMcpInjection::new(
+            let injection = ManagedMcpGrant::plan_builder(
                 &format!("http://127.0.0.1:{}/mcp", 7000 + n),
                 format!("bearer-{n}"),
                 enabled_tools,
@@ -944,7 +935,7 @@ mod tests {
         let managed: Box<dyn ManagedPlanBuilderInvocationHandle> =
             Box::new(RegisteredManagedInvocation {
                 inner: Box::new(Handle {
-                    injection: CodexMcpInjection::new(
+                    injection: ManagedMcpGrant::plan_builder(
                         "http://127.0.0.1:41001/mcp",
                         "secret".into(),
                         &[],
@@ -1082,7 +1073,7 @@ mod tests {
         _directory: tempfile::TempDir,
         database_path: PathBuf,
         service: Arc<ManagedPlanBuilderService>,
-        runtime: Arc<crate::runtime::codex::CodexCliRuntime>,
+        runtime: Arc<crate::runtime::providers::codex::CodexCliRuntime>,
         repository: Arc<SqliteOrchestrationRepository>,
         terminal: Arc<(Mutex<Option<AgentInvocation>>, std::sync::Condvar)>,
     }
@@ -1095,7 +1086,7 @@ mod tests {
             drop(crate::storage::open_active_database(&database_path).unwrap());
             let registry = Arc::new(ManagedPlanBuilderRegistry::default());
             let terminal = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
-            let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+            let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
                 "codex", None,
             ));
             let providers = Arc::new(SystemAgentSessionProviders);
@@ -1340,10 +1331,7 @@ mod tests {
     fn context_extension(
         delivery: &super::super::repository::PendingPlanBuilderContextDelivery,
     ) -> RuntimeLaunchExtension {
-        RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
-            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
-            config_overrides: Vec::new(),
-            environment: Vec::new(),
+        RuntimeLaunchExtension {
             initial_prompt_prefix: Some(crate::agent_sessions::ports::InitialPromptPrefix {
                 source: "epic_plan_builder_button_initiation".into(),
                 version: 1,
@@ -1352,6 +1340,7 @@ mod tests {
                     delivery.initiation_id, delivery.epic_id
                 ),
             }),
+            ..RuntimeLaunchExtension::default()
         }
     }
 
@@ -2104,15 +2093,13 @@ mod tests {
                 && request.options.model.is_none()
         }));
         assert!(requests.iter().all(|request| {
-            let args = &request.launch_extension.as_ref().unwrap().config_overrides;
-            args.iter().any(|arg| arg == "approval_policy=\"never\"")
-                && args.iter().any(|arg| arg.ends_with(".required=true"))
-                && args
-                    .iter()
-                    .any(|arg| arg.contains("request_epic_initiation"))
-                && args
-                    .iter()
-                    .any(|arg| arg.contains("submit_epic_plan_proposal"))
+            let extension = request.launch_extension.as_ref().unwrap();
+            let server = &extension.managed_mcp_servers[0];
+            let tools = server.enabled_tools.as_deref().unwrap_or_default();
+            extension.approval == crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended
+                && server.required
+                && tools.iter().any(|tool| tool == "request_epic_initiation")
+                && tools.iter().any(|tool| tool == "submit_epic_plan_proposal")
         }));
         assert_ne!(requests[0].launch_extension, requests[1].launch_extension);
         let discovery_root = std::path::PathBuf::from(
@@ -2224,17 +2211,9 @@ mod tests {
         let extension = request
             .launch_extension
             .expect("production child extension");
-        let endpoint = extension
-            .config_overrides
-            .iter()
-            .find_map(|value| {
-                value
-                    .strip_prefix("mcp_servers.")
-                    .and_then(|_| value.split_once(".url=\""))
-                    .map(|(_, url)| url.trim_end_matches('"').to_string())
-            })
-            .expect("ephemeral MCP endpoint");
-        let bearer = extension.environment[0].1.clone();
+        let server = &extension.managed_mcp_servers[0];
+        let endpoint = server.url.clone();
+        let bearer = server.bearer_token.clone().expect("ephemeral MCP bearer");
 
         let client = reqwest::Client::new();
         let initialized = mcp_post(&client, &endpoint, &bearer, None, mcp_rpc(1, "initialize", serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"convergence","version":"1"}}))).await;
@@ -2418,7 +2397,7 @@ mod tests {
 
         let registry = Arc::new(ManagedPlanBuilderRegistry::default());
         let terminal = Arc::new((Mutex::new(None), std::sync::Condvar::new()));
-        let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+        let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
             "codex", None,
         ));
         let providers = Arc::new(SystemAgentSessionProviders);

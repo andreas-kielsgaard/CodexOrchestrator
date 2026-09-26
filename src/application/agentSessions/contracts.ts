@@ -117,9 +117,18 @@ export interface NormalizedRuntimeEventDto {
 }
 
 export type ToolActivityPhaseDto = 'started' | 'completed' | 'unknown';
+/** What a tool item did, in Orchid's provider-independent vocabulary. */
+export type ToolActivityKindDto =
+  | 'command'
+  | 'file_change'
+  | 'web_search'
+  | 'plan'
+  | 'mcp_tool'
+  | 'other';
 export type ToolResultClassificationDto = 'succeeded' | 'failed' | 'unknown';
 
 export interface NormalizedToolActivityDto {
+  kind: ToolActivityKindDto;
   phase: ToolActivityPhaseDto;
   itemId: string | null;
   server: string | null;
@@ -155,7 +164,6 @@ export interface AgentInvocationObservationDto {
     activity: NormalizedToolActivityDto;
     correlation: RuntimeObservationCorrelationDto;
   }>;
-  mcpToolActivityPartial: boolean;
 }
 
 export interface AgentRuntimeEventDto {
@@ -168,10 +176,20 @@ export interface AgentRuntimeEventDto {
   recordedAt: IsoDateTimeDto;
 }
 
+/** Where an invocation imported from provider history came from. */
+export interface ImportedTurnProvenanceDto {
+  sourceTurnId: string;
+  ordinal: number;
+  sourceStartedAt: number | null;
+  sourceCompletedAt: number | null;
+}
+
 export interface AgentInvocationDetailsDto {
   invocation: AgentInvocationDto;
   observation: AgentInvocationObservationDto;
   events: AgentRuntimeEventDto[];
+  /** Present only for invocations imported from provider history. */
+  importProvenance?: ImportedTurnProvenanceDto | null;
 }
 
 export interface AgentSessionDetailsDto {
@@ -255,6 +273,10 @@ export type AgentSessionUpdateDto =
 
 export type AgentSessionUpdateListener = (update: AgentSessionUpdateDto) => void;
 
+export type RuntimeInteractionResponseDto =
+  | { readonly kind: 'choose'; readonly choiceId: string }
+  | { readonly kind: 'answer'; readonly answers: Readonly<Record<string, readonly string[]>> };
+
 export interface AgentSessionClient {
   readonly historySource?: import('./liveHistory').AgentSessionHistorySource;
   resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;
@@ -268,7 +290,7 @@ export interface AgentSessionClient {
     sessionId: string;
     invocationId: string;
     requestId: string;
-    response: unknown;
+    response: RuntimeInteractionResponseDto;
   }): Promise<void>;
 
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
@@ -328,16 +350,20 @@ export interface SessionInteractionDto {
     supported?: boolean;
     kind?: string;
     choices?: Array<{
+      id: string;
       label: string;
       description?: string;
       scope?: string | null;
-      response: unknown;
     }>;
+    /** Any subset of the features a provider offers: options, several selections, a typed
+     * answer alongside or instead of the options, and secret input. */
     questions?: Array<{
       id: string;
+      header?: string;
       question: string;
       isSecret?: boolean;
       isOther?: boolean;
+      multiSelect?: boolean;
       options?: Array<{ label: string; description: string }>;
     }>;
   };

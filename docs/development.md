@@ -103,6 +103,34 @@ The retained previews read fixed Session histories; Session creation, sending an
 
 The [offline packet](../offline-review/README.md), [regression probes](regression-review/README.md) and [walkthrough captures](ux/session-event-model-walkthrough/README.md) describe their original checkpoints. Old absolute worktree paths and screenshots are not a current launch recipe.
 
+## Linux cloud sessions
+
+The project is developed and validated on Windows. Claude Code cloud sessions run it in a Linux container, where some setup differs and a fixed set of Rust tests fails for environmental reasons. Treat a failure as a regression only if it is outside the list below, or if it also fails on Windows.
+
+Setup:
+
+- Tauri needs the WebKitGTK system packages: `apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config`.
+- `tauri::generate_context!()` requires `src-tauri/icons/icon.png` on Linux, and only `icon.ico` is committed. Create any small PNG there and add it to `.git/info/exclude`; do not commit it.
+- `npm ci --include=dev`, `npm test`, `npm run build:frontend` and the `crates/orchid-engine` tests run normally.
+
+Known failures in `cargo test --profile test-fast --lib` on Linux (observed 2026-09-25 at `9ab4706` and later, 24 to 26 of about 755):
+
+| Tests | Cause |
+| --- | --- |
+| `execution_devices::tests::{idle_shutdown_runs_once_after_the_last_orchid_activity, failed_idle_shutdown_is_released_for_a_later_retry, keep_awake_and_activity_lease_prevent_idle_shutdown}` | The fixtures use Windows paths such as `C:\Orchid\stop-device.exe`, which are not absolute on Linux ("Device lifecycle program must be an absolute path"). |
+| `runtime::providers::codex::profiles::tests::windows_login_environment_is_allowlisted_and_keeps_the_product_selected_home` | The allowlist is compiled only under `#[cfg(windows)]`. |
+| `orchestration::accepted_integration::tests::*` (10 tests) and `orchestration::accepted_integration::accepted_integration_proof_tests::*` (6 tests) | The Git fixture's integration commit is rejected with `integration_identity_metadata_mismatch`, and dependent assertions then fail. Cause not yet identified. It is not the container's commit signing (`GIT_CONFIG_GLOBAL` pointing to a plain config still fails) and not the time zone (`TZ=Europe/Copenhagen` still fails). |
+| `orchestration::sprint_runner_transition::accepted_integration_gateway_tests::accepted_integration_full_gateway_revalidates_retained_lineage_without_attempt_worktree`, `orchestration::bootstrap_transition::tests::terminal_authority_fixture_converges_product_materialization_and_real_git_gateway`, `orchestration::repository::tests::git_capture_authorization_is_private_replay_safe_and_reauthorized` | Same Git-fixture family as above. |
+| `runtime::providers::codex::profiles::tests::reporting_dispatch_calls_the_exact_mcp_tool_then_settles_the_real_receipt` | "The MCP reporting exchange completed without a correlated receipt". Fails on every Linux run seen so far. |
+
+These fail on some Linux runs and pass on others:
+
+- `runtime::providers::codex::profiles::tests::concurrent_reporting_dispatches_adopt_one_pending_request`
+- `runtime::providers::codex::profiles::tests::two_services_claim_one_reporting_exchange`
+- `orchestration::bootstrap_transition::tests::no_progress_handback_delivers_one_epic_receiver_without_higher_effects`
+
+To check whether a change caused a failure, run the same filter on the parent commit in a separate worktree with its own `CARGO_TARGET_DIR`, and compare the two lists of failing tests.
+
 ## Ownership and provenance
 
 The manifest, `vite.config.ts`, `src-tauri/tauri.conf.json`, the launcher and script implementations own command behavior. The documentation does not add CI/workflow enforcement or change build policy. `review-tools/app-inspector/` owns observation and development interaction details.

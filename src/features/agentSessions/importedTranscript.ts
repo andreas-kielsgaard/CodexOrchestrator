@@ -1,20 +1,18 @@
-import type { AgentRuntimeEventDto } from '../../application/agentSessions';
+import type { AgentInvocationDetailsDto } from '../../application/agentSessions';
 export interface ImportedTranscript {
   ordinal: number;
   sourceStartedAt: number | null;
   items: { eventId: string; kind: 'user' | 'assistant' | 'activity'; text: string }[];
 }
 export function importedTranscript(
-  events: readonly AgentRuntimeEventDto[],
+  entry: Pick<AgentInvocationDetailsDto, 'events' | 'importProvenance'>,
 ): ImportedTranscript | undefined {
-  const details = events
-    .map((e) => e.normalized?.details)
-    .find((d) => isRecord(d) && d.kind === 'codex_history_import');
-  if (!isRecord(details) || typeof details.ordinal !== 'number') return undefined;
+  const provenance = entry.importProvenance;
+  if (!provenance) return undefined;
   return {
-    ordinal: details.ordinal,
-    sourceStartedAt: typeof details.sourceStartedAt === 'number' ? details.sourceStartedAt : null,
-    items: [...events]
+    ordinal: provenance.ordinal,
+    sourceStartedAt: provenance.sourceStartedAt,
+    items: [...entry.events]
       .sort((a, b) => a.sequence - b.sequence)
       .flatMap((e) => {
         const data = e.normalized?.details;

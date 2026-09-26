@@ -528,7 +528,7 @@ impl WorkUnitExecutionHarnessPackage {
     pub(crate) fn runtime_launch_configuration(
         &self,
     ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
-        package_runtime_launch_configuration(&self.harness, &self.reference.working_directory)
+        package_runtime_launch_configuration(&self.harness)
     }
 
     pub(crate) fn working_directory(&self) -> &str {
@@ -627,50 +627,23 @@ impl WorkUnitExecutionHarnessPackage {
 
 fn package_runtime_launch_configuration(
     harness: &ConversationHarnessProfile,
-    working_directory: &str,
 ) -> WorkUnitExecutionRuntimeLaunchConfiguration {
-    let mut config_overrides = harness.runtime_config_overrides();
-    // A worktree-runtime instance gives Codex a private CODEX_HOME without a trust record for
-    // this just-created isolated worktree. Codex 0.144 then treats it as untrusted; with approval
-    // set to never that reduces a requested WorkspaceWrite invocation to read-only. The application
-    // has already authenticated this exact isolated worktree through the execution-support grant,
-    // so pass one ephemeral, exact-project trust override only to its writable Implementer package.
-    // It neither persists trust nor widens the workspace boundary.
+    let mut extension = harness.launch_extension();
+    extension.initial_prompt_prefix = Some(harness.initial_prompt_prefix());
+    // The writable Implementer package runs in an isolated worktree whose private native home has
+    // no trust record for it. The application has already authenticated this exact worktree
+    // through the execution-support grant, so it states that authorization; it neither persists
+    // trust nor widens the workspace boundary. The package ignores user rules and suppresses the
+    // native MCP configuration; its only reporting MCP arrives separately on its continuation.
     if is_exact_implementer_profile(harness) {
-        // The package ignores execpolicy rules and clears inherited MCP configuration. A bound
-        // worktree with local Codex discovery was already denied above. The application passes
-        // the only allowed reporting MCP configuration separately on its exact continuation.
-        config_overrides.push("mcp_servers={}".into());
-        config_overrides.push(workspace_trust_configuration(working_directory));
+        extension.ignore_user_rules = true;
+        extension.native_mcp_enabled = Some(false);
+        extension.trusted_workspace = true;
     }
     WorkUnitExecutionRuntimeLaunchConfiguration {
         requested_options: harness.runtime_options(),
-        extension: RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
-            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: is_exact_implementer_profile(harness), reasoning_mode: None,
-            config_overrides,
-            environment: vec![],
-            initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
-        },
+        extension,
     }
-}
-
-/// Encodes the single-quoted TOML key segment persisted by Codex for Windows projects. This is
-/// derived only from the already-authorized package reference, never from agent input.  Values
-/// are intentionally not retained in launch provenance.
-fn workspace_trust_configuration(working_directory: &str) -> String {
-    // Codex persists Windows project-trust keys in canonical lower-case form. The execution
-    // support reference remains case-preserving for filesystem authority; only this CLI config
-    // key receives the Windows-insensitive normalization.
-    let normalized = working_directory.to_ascii_lowercase();
-    let mut encoded = String::with_capacity(normalized.len());
-    for character in normalized.chars() {
-        match character {
-            '\'' => encoded.push_str("''"),
-            '\n' | '\r' | '\t' => encoded.push(' '),
-            value => encoded.push(value),
-        }
-    }
-    format!("projects.'{encoded}'.trust_level=\"trusted\"")
 }
 
 #[cfg(test)]
@@ -709,16 +682,18 @@ mod tests {
     fn runtime_launch_configuration_force_carries_read_only_harness_options() {
         let profile =
             conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
-        let configuration = package_runtime_launch_configuration(&profile, "C:/read-only");
+        let configuration = package_runtime_launch_configuration(&profile);
         assert_eq!(
-            configuration.extension.config_overrides,
-            ["approval_policy=\"never\""]
+            configuration.extension.approval,
+            crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended
         );
         assert_eq!(
             configuration.requested_options.sandbox,
             Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
         );
         assert!(configuration.extension.environment.is_empty());
+        assert!(configuration.extension.managed_mcp_servers.is_empty());
+        assert!(!configuration.extension.trusted_workspace);
         assert!(configuration
             .extension
             .initial_prompt_prefix
@@ -728,36 +703,28 @@ mod tests {
     }
 
     #[test]
-    fn workspace_write_package_carries_only_its_exact_ephemeral_project_trust_override() {
+    fn only_the_exact_writable_implementer_package_states_workspace_trust() {
         let implementer =
             conversation_harness::profile(ConversationHarnessRole::WorkUnitImplementer).unwrap();
         let handler = conversation_harness::profile(ConversationHarnessRole::WorkUnitHandler).unwrap();
-        let working_directory = r"C:\isolated\execution-workspace";
-        let writable = package_runtime_launch_configuration(&implementer, working_directory);
-        let read_only = package_runtime_launch_configuration(&handler, working_directory);
+        let writable = package_runtime_launch_configuration(&implementer);
+        let read_only = package_runtime_launch_configuration(&handler);
         let mut foreign_workspace_write = implementer.clone();
         foreign_workspace_write.key = "future_workspace_write_role".into();
-        let foreign = package_runtime_launch_configuration(&foreign_workspace_write, working_directory);
+        let foreign = package_runtime_launch_configuration(&foreign_workspace_write);
         let mut malformed_workspace_write = implementer.clone();
         malformed_workspace_write.mcp.enabled_tools = vec!["unexpected".into()];
-        let malformed = package_runtime_launch_configuration(&malformed_workspace_write, working_directory);
+        let malformed = package_runtime_launch_configuration(&malformed_workspace_write);
 
-        assert!(writable.extension.config_overrides.iter().any(|argument| {
-            argument
-                    == r#"projects.'c:\isolated\execution-workspace'.trust_level="trusted""#
-        }));
-        assert!(!read_only.extension.config_overrides.iter().any(|argument| {
-            argument.contains("trust_level") || argument.contains("execution-workspace")
-        }));
-        assert!(read_only.extension.environment.is_empty());
-        for configuration in [&foreign, &malformed] {
-            assert!(!configuration.extension.config_overrides.iter().any(|argument| {
-                    argument.contains("trust_level")
-                    || argument == "--ignore-rules"
-                    || argument == "mcp_servers={}"
-            }));
-        }
+        assert!(writable.extension.trusted_workspace);
         assert!(writable.extension.ignore_user_rules);
-        assert!(writable.extension.config_overrides.iter().any(|value| value == "mcp_servers={}"));
+        assert_eq!(writable.extension.native_mcp_enabled, Some(false));
+        assert!(!writable.extension.sandbox_network_access);
+        for configuration in [&read_only, &foreign, &malformed] {
+            assert!(!configuration.extension.trusted_workspace);
+            assert!(!configuration.extension.ignore_user_rules);
+            assert_eq!(configuration.extension.native_mcp_enabled, None);
+            assert!(configuration.extension.environment.is_empty());
+        }
     }
 }

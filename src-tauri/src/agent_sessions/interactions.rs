@@ -1,5 +1,6 @@
 //! Durable interaction read model derived from the Session event log.
-use super::domain::{AgentInvocationId, AgentRuntimeEventSource};
+use super::domain::AgentInvocationId;
+use orchid_engine::contracts::RuntimeControlRecord;
 use serde::Serialize;
 use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -38,57 +39,54 @@ fn project_invocation_interactions(
     let mut interactions: Vec<SessionInteraction> = Vec::new();
     for invocation in invocations {
         for event in &invocation.events {
-            if event.source != AgentRuntimeEventSource::Runtime {
+            let Some(record) = RuntimeControlRecord::from_event(event.source, &event.raw_payload)
+            else {
+                continue;
+            };
+            let opened = match &record {
+                RuntimeControlRecord::SteeringPending { input_id, .. } => Some((
+                    input_id.clone(),
+                    serde_json::to_value(&record).expect("control records serialize"),
+                    "steering",
+                    "pending",
+                )),
+                RuntimeControlRecord::RequestOpened { request } => Some((
+                    request.id.clone(),
+                    serde_json::to_value(request).expect("requests serialize"),
+                    "request",
+                    "pending",
+                )),
+                RuntimeControlRecord::RequestUnsupported { request, .. } => Some((
+                    request.id.clone(),
+                    serde_json::to_value(request).expect("requests serialize"),
+                    "request",
+                    "unsupported",
+                )),
+                _ => None,
+            };
+            if let Some((id, content, kind, state)) = opened {
+                interactions.push(SessionInteraction {
+                    id,
+                    invocation_id: invocation.invocation.id.clone(),
+                    sequence: event.sequence,
+                    kind: kind.into(),
+                    state: state.into(),
+                    content,
+                    result: None,
+                });
                 continue;
             }
-            let payload = &event.raw_payload;
-            let kind = payload["kind"].as_str().unwrap_or("");
-            match kind {
-                "session_steering_pending"
-                | "runtime_request_opened"
-                | "runtime_request_unsupported" => {
-                    let (id, content, interaction_kind, state) =
-                        if kind == "session_steering_pending" {
-                            (
-                                payload["inputId"].as_str(),
-                                payload.clone(),
-                                "steering",
-                                "pending",
-                            )
-                        } else {
-                            (
-                                payload["request"]["id"].as_str(),
-                                payload["request"].clone(),
-                                "request",
-                                if kind == "runtime_request_unsupported" {
-                                    "unsupported"
-                                } else {
-                                    "pending"
-                                },
-                            )
-                        };
-                    if let Some(id) = id {
-                        interactions.push(SessionInteraction {
-                            id: id.into(),
-                            invocation_id: invocation.invocation.id.clone(),
-                            sequence: event.sequence,
-                            kind: interaction_kind.into(),
-                            state: state.into(),
-                            content,
-                            result: None,
-                        });
-                    }
+            if let RuntimeControlRecord::SteeringResult { id, state, message }
+            | RuntimeControlRecord::RequestResponse { id, state, message } = record
+            {
+                if let Some(interaction) = interactions
+                    .iter_mut()
+                    .rev()
+                    .find(|i| i.invocation_id == invocation.invocation.id && i.id == id)
+                {
+                    interaction.state = state;
+                    interaction.result = message;
                 }
-                "session_steering_result" | "runtime_request_response" => {
-                    if let Some(interaction) = interactions.iter_mut().rev().find(|i| {
-                        i.invocation_id == invocation.invocation.id
-                            && Some(i.id.as_str()) == payload["id"].as_str()
-                    }) {
-                        interaction.state = payload["state"].as_str().unwrap_or("uncertain").into();
-                        interaction.result = payload["message"].as_str().map(str::to_string);
-                    }
-                }
-                _ => {}
             }
         }
         if invocation.invocation.status.is_terminal() {

@@ -30,6 +30,7 @@ describe('AgentSessionTurnInspector', () => {
     const step = runtimeEvent(1, 'tool_activity', 'provider secret query');
     step.rawPayload = { private: 'raw secret result' };
     step.normalized!.toolActivity = {
+      kind: 'mcp_tool',
       phase: 'completed',
       itemId: 'item-1',
       server: 'workspace',

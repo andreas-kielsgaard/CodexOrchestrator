@@ -1,25 +1,63 @@
 use super::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
-    CancelAgentInvocationCommand, CreateAgentSessionCommand, NativeProfileLaunchAuthority,
+    CancelAgentInvocationCommand, CreateAgentSessionCommand, ProviderLaunchPreparation,
     SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
     SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 mod import_tests;
+
+/// Test composition: register fakes as the `codex` provider, served by this application's runtime.
+impl AgentSessionApplication {
+    pub(crate) fn with_profile_source(self, source: Arc<dyn ProviderConfigurationSource>) -> Self {
+        self.with_codex_parts(|providers| providers.configurations.replace("codex", source))
+    }
+
+    pub(crate) fn with_launch_preparation(
+        self,
+        preparation: Arc<dyn ProviderLaunchPreparation>,
+    ) -> Self {
+        self.with_codex_parts(|providers| providers.launches.replace("codex", preparation))
+    }
+
+    fn with_codex_parts(
+        mut self,
+        register: impl FnOnce(&mut crate::runtime::providers::registrations::ProviderRegistrations),
+    ) -> Self {
+        let mut providers = self
+            .endpoints
+            .as_ref()
+            .map(|endpoints| endpoints.providers().clone())
+            .unwrap_or_default();
+        if providers.runtimes.find("codex").is_none() {
+            providers.runtimes.replace("codex", self.runtime.clone());
+        }
+        register(&mut providers);
+        let endpoints = match &self.endpoints {
+            Some(endpoints) => endpoints.with_providers(providers),
+            None => crate::execution_targets::endpoints::ExecutionEndpoints::new(providers),
+        };
+        self.endpoints = Some(Arc::new(endpoints));
+        self
+    }
+}
 mod preparation_tests;
 mod repair_tests;
+mod skill_mention_tests;
 mod target_tests;
 
 #[test]
 fn addressed_creation_retry_uses_its_original_native_evidence() {
     struct OneReadSource(AtomicU64);
-    impl SelectedRuntimeProfileSource for OneReadSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    impl ProviderConfigurationSource for OneReadSource {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
-                return Err(SelectedRuntimeProfileSourceError::unavailable(
+                return Err(ProviderConfigurationSourceError::unavailable(
                     "native discovery changed",
                 ));
             }
@@ -111,8 +149,8 @@ use crate::{
     agent_sessions::session_event_adapter::AgentSessionEventAdapter,
     execution_configuration::{
         CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
-        SandboxMode as ExecutionSandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError, SessionCreationRequest,
+        SandboxMode as ExecutionSandboxMode, ProviderConfigurationSource,
+        ProviderConfigurationSourceError, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
     identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
@@ -152,14 +190,18 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         Some("codex-test".into()),
     ));
     let runtime_profile = test_selected_runtime_profile();
-    let profile_source = Arc::new(FixedSelectedRuntimeProfileSource(runtime_profile.clone()));
+    let profile_source = Arc::new(FixedProviderConfigurationSource(runtime_profile.clone()));
     let assigned_definition = identities
         .create("Avery".into(), "#39745a".into(), IdentityShape::Circle)
         .expect("Identity definition");
     let adapter = Arc::new(AgentSessionEventAdapter::new(
-        application.clone(),
+        Arc::new(
+            application
+                .as_ref()
+                .clone()
+                .with_profile_source(profile_source.clone()),
+        ),
         repository,
-        profile_source.clone(),
         identities,
     ));
     let event_store =
@@ -411,12 +453,14 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
 }
 
 #[derive(Clone)]
-struct FixedSelectedRuntimeProfileSource(RuntimeProfileSnapshot);
+struct FixedProviderConfigurationSource(RuntimeProfileSnapshot);
 
-impl SelectedRuntimeProfileSource for FixedSelectedRuntimeProfileSource {
-    fn selected_runtime_profile(
+impl ProviderConfigurationSource for FixedProviderConfigurationSource {
+    fn profile_for_configuration(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(self.0.clone())
     }
 }
@@ -424,7 +468,7 @@ impl SelectedRuntimeProfileSource for FixedSelectedRuntimeProfileSource {
 fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {
     RuntimeProfileSnapshot {
         contract_version: 1,
-        profile_ref: "native-codex:selected".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
         exposure: CapabilitySet {
             models: ["node-default".to_string(), "user-only".to_string()]
                 .into_iter()
@@ -440,7 +484,7 @@ fn test_selected_runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(ExecutionSandboxMode::WorkspaceWrite),
         },
-        codex_personality: None,
+        provider_options: None,
     }
 }
 
@@ -794,9 +838,7 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         .all(|request| request
             .launch_extension
             .as_ref()
-            .is_some_and(|extension| extension
-                .config_overrides
-                .contains(&"mcp_servers={}".to_string()))));
+            .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
 }
 
 #[test]
@@ -819,7 +861,7 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
         providers,
         Some("codex-test".into()),
     )
-    .with_native_profile_launch_authority(authority.clone());
+    .with_launch_preparation(authority.clone());
     let session = application
         .create_session(CreateAgentSessionCommand {
             title: None,
@@ -832,15 +874,8 @@ fn managed_profile_authority_prepares_fresh_and_resume_launches_without_replacin
         .send_message_with_launch_extension(
             message(&session.id, "fresh"),
             Some(RuntimeLaunchExtension {
-                managed_mcp_servers: Vec::new(),
-                skill_inputs: Vec::new(),
-                native_mcp_enabled: None,
-                codex_personality: None,
-                ignore_user_rules: false,
-                reasoning_mode: None,
-                config_overrides: vec![],
                 environment: vec![("ROLE_CONFIG".into(), "present".into())],
-                initial_prompt_prefix: None,
+                ..RuntimeLaunchExtension::default()
             }),
         )
         .expect("fresh launch");
@@ -899,7 +934,7 @@ fn managed_profile_authority_failure_is_durable_and_prevents_provider_preflight_
         providers,
         None,
     )
-    .with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+    .with_launch_preparation(Arc::new(RejectingProfileAuthority));
     let session = application
         .create_session(CreateAgentSessionCommand {
             title: None,
@@ -1885,7 +1920,7 @@ fn harness_resolution_application(
         Some("codex-test".into()),
     )
     .with_session_harness_version_resolver(resolver)
-    .with_native_profile_launch_authority(native_authority.clone())
+    .with_launch_preparation(native_authority.clone())
     .with_session_harness_launch_authority(harness_authority.clone());
     (
         application,
@@ -1969,9 +2004,10 @@ impl SessionHarnessVersionResolver for RecordingHarnessVersionResolver {
     }
 }
 
-impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
+impl ProviderLaunchPreparation for RecordingProfileAuthority {
     fn prepare_launch(
         &self,
+        _: &orchid_engine::contracts::ProviderConfigurationRef,
         session_id: &AgentSessionId,
         _: &AgentInvocationId,
         resuming: bool,
@@ -1999,9 +2035,10 @@ impl NativeProfileLaunchAuthority for RecordingProfileAuthority {
 
 struct RejectingProfileAuthority;
 
-impl NativeProfileLaunchAuthority for RejectingProfileAuthority {
+impl ProviderLaunchPreparation for RejectingProfileAuthority {
     fn prepare_launch(
         &self,
+        _: &orchid_engine::contracts::ProviderConfigurationRef,
         _: &AgentSessionId,
         _: &AgentInvocationId,
         _: bool,
@@ -2025,9 +2062,7 @@ impl SessionHarnessLaunchAuthority for RecordingSessionHarnessAuthority {
     ) -> Result<Option<RuntimeLaunchExtension>, String> {
         self.invocations.lock().unwrap().push(invocation_id.clone());
         let mut extension = extension.unwrap_or_default();
-        extension
-            .config_overrides
-            .extend(["-c".to_string(), "mcp_servers={}".to_string()]);
+        extension.native_mcp_enabled = Some(false);
         Ok(Some(extension))
     }
 }

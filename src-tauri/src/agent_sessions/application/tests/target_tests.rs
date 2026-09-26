@@ -30,12 +30,12 @@ fn remote_target() -> SessionExecutionTarget {
 fn remote_target_preserves_linux_path_and_routes_continuation_without_local_launch_authority() {
     let harness = Harness::new(RuntimeBehavior::SpawnFailure);
     let remote = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
-    let source = Arc::new(FixedSelectedRuntimeProfileSource(
+    let source = Arc::new(FixedProviderConfigurationSource(
         test_selected_runtime_profile(),
     ));
     let target = remote_target();
     let endpoints = Arc::new(
-        ExecutionEndpoints::new(source, harness.runtime.clone())
+        ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source, harness.runtime.clone()))
             .with_runtime(&target.execution, remote.clone()),
     );
     let folder = tempfile::tempdir().unwrap();
@@ -46,7 +46,7 @@ fn remote_target_preserves_linux_path_and_routes_continuation_without_local_laun
             super::super::SessionWorkspaces::new(folder.path().to_path_buf(), "test".into())
                 .unwrap(),
         )
-        .with_native_profile_launch_authority(Arc::new(RejectingProfileAuthority));
+        .with_launch_preparation(Arc::new(RejectingProfileAuthority));
     let session = app
         .create_session_with_ownership(
             CreateAgentSessionCommand {
@@ -92,12 +92,9 @@ fn cancellation_uses_the_bound_remote_runtime() {
     let remote = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
     let target = remote_target();
     let endpoints = Arc::new(
-        ExecutionEndpoints::new(
-            Arc::new(FixedSelectedRuntimeProfileSource(
+        ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", Arc::new(FixedProviderConfigurationSource(
                 test_selected_runtime_profile(),
-            )),
-            harness.runtime.clone(),
-        )
+            )), harness.runtime.clone()))
         .with_runtime(&target.execution, remote.clone()),
     );
     let app = harness.application.with_execution_endpoints(endpoints);
@@ -134,21 +131,21 @@ fn cancellation_uses_the_bound_remote_runtime() {
 
 #[derive(Default)]
 struct ConfiguredSource(Mutex<Vec<String>>);
-impl SelectedRuntimeProfileSource for ConfiguredSource {
+impl ProviderConfigurationSource for ConfiguredSource {
     fn quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
     ) -> Result<
         crate::execution_configuration::RuntimeQuickFeatures,
-        SelectedRuntimeProfileSourceError,
+        ProviderConfigurationSourceError,
     > {
         self.0
             .lock()
             .unwrap()
             .push(format!("quick:{reference}:{}", cwd.unwrap_or_default()));
         Ok(crate::execution_configuration::RuntimeQuickFeatures {
-            profile_ref: test_selected_runtime_profile().profile_ref,
+            configuration: Some(test_selected_runtime_profile().configuration),
             defaults: RuntimeSelections {
                 model: Some("runtime-default".into()),
                 reasoning_mode: Some("runtime-effort".into()),
@@ -157,28 +154,25 @@ impl SelectedRuntimeProfileSource for ConfiguredSource {
             ..Default::default()
         })
     }
-    fn selected_runtime_profile(
-        &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
-        Ok(test_selected_runtime_profile())
-    }
     fn resolve_configuration_ref(
         &self,
         _: &str,
-    ) -> Result<String, SelectedRuntimeProfileSourceError> {
+    ) -> Result<String, ProviderConfigurationSourceError> {
         Ok("frozen-native-home".into())
     }
     fn profile_for_configuration(
         &self,
         reference: &str,
         _: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.lock().unwrap().push(reference.into());
-        self.selected_runtime_profile()
+        Ok(test_selected_runtime_profile())
     }
-    fn native_inventory(
+    fn inventory_for_configuration(
         &self,
-    ) -> Result<NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
         Ok(Default::default())
     }
 }
@@ -188,15 +182,9 @@ fn profiled_first_send_freezes_target_and_followup_uses_its_endpoint() {
     let harness = Harness::new(RuntimeBehavior::SpawnFailure);
     let selected_runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let source = Arc::new(ConfiguredSource::default());
-    let endpoints = Arc::new(ExecutionEndpoints::new(
-        source.clone(),
-        selected_runtime.clone(),
-    ));
+    let endpoints = Arc::new(ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), selected_runtime.clone())));
     let profiles = Arc::new(
-        CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            source.clone(),
-        )
+        CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
         .with_endpoints(endpoints.clone()),
     );
     let saved = profiles
@@ -315,7 +303,7 @@ fn workflow_creation_rejects_remote_profile_without_local_discovery() {
     let mut creation = test_session_creation_request();
     creation.capability_profile.execution = remote_target().execution;
     let result = crate::execution_configuration::SessionProfileResolver::resolve_creation(
-        &ConfiguredSource::default(),
+        &ConfiguredSource::default(), None,
         creation,
     );
     assert!(result

@@ -4,7 +4,6 @@ interface CapabilityModelPickerDialogProps {
   readonly models: readonly string[];
   readonly observed: readonly string[];
   readonly selected: readonly string[];
-  readonly reasoningByModel: Readonly<Record<string, readonly string[]>>;
   onAdd(model: string): void;
   onRemove(model: string): void;
   onClose(): void;
@@ -14,7 +13,6 @@ export function CapabilityModelPickerDialog({
   models,
   observed,
   selected,
-  reasoningByModel,
   onAdd,
   onRemove,
   onClose,
@@ -38,11 +36,7 @@ export function CapabilityModelPickerDialog({
                 Remove
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => onAdd(model)}
-                disabled={!reasoningByModel[model]?.length}
-              >
+              <button type="button" onClick={() => onAdd(model)}>
                 Add
               </button>
             )}

@@ -117,9 +117,25 @@ pub enum ToolResultClassification {
     Failed,
     Unknown,
 }
+/// What a tool item did, independent of the provider's own item vocabulary.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolActivityKind {
+    Command,
+    FileChange,
+    WebSearch,
+    Plan,
+    /// Records written before this field existed default here: MCP tool calls were then the
+    /// only items that carried tool activity.
+    #[default]
+    McpTool,
+    Other,
+}
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedToolActivity {
+    #[serde(default)]
+    pub kind: ToolActivityKind,
     pub phase: ToolActivityPhase,
     pub item_id: Option<String>,
     pub server: Option<String>,
@@ -134,6 +150,13 @@ pub struct AgentRuntimeUsage {
     pub cached_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
 }
+/// Roles of an agent message, recorded as `details.role`. The final message of a turn is the
+/// agent's reply; intermediate messages are commentary while it works.
+pub mod agent_message_role {
+    pub const FINAL: &str = "final";
+    pub const INTERMEDIATE: &str = "intermediate";
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedRuntimeEvent {
@@ -147,6 +170,15 @@ pub struct NormalizedRuntimeEvent {
     #[serde(default)]
     pub tool_activity: Option<NormalizedToolActivity>,
 }
+impl NormalizedRuntimeEvent {
+    /// The role of an agent message; see [`agent_message_role`].
+    pub fn agent_message_role(&self) -> Option<&str> {
+        (self.kind == NormalizedRuntimeEventKind::AgentMessage)
+            .then(|| self.details.as_ref()?.get("role")?.as_str())
+            .flatten()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractViolation {
     EmptyIdentifier {

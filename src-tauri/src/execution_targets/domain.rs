@@ -1,3 +1,4 @@
+use orchid_engine::contracts::ProviderConfigurationRef;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -21,6 +22,12 @@ pub(crate) struct ExecutionRouteRef {
     pub(crate) device_id: String,
     pub(crate) provider: String,
     pub(crate) configuration_ref: String,
+}
+
+impl ExecutionRouteRef {
+    pub(crate) fn configuration(&self) -> ProviderConfigurationRef {
+        ProviderConfigurationRef::new(&self.provider, &self.configuration_ref)
+    }
 }
 
 /// Concrete, immutable execution snapshot used by Sessions and runtime operations.
@@ -49,6 +56,10 @@ impl Default for ExecutionBinding {
 }
 
 impl ExecutionBinding {
+    /// The provider configuration this binding executes with.
+    pub(crate) fn configuration(&self) -> ProviderConfigurationRef {
+        ProviderConfigurationRef::new(&self.provider, &self.configuration_ref)
+    }
     pub(crate) fn route_ref(&self) -> ExecutionRouteRef {
         ExecutionRouteRef {
             device_id: self.device_id.clone(),
@@ -68,8 +79,8 @@ impl ExecutionBinding {
                 "Execution binding requires a device, name, and configuration reference".into(),
             );
         }
-        if self.provider != "codex" {
-            return Err("Remote session execution currently supports Codex only".into());
+        if self.provider.trim().is_empty() {
+            return Err("Execution binding requires an agent provider".into());
         }
         if let ExecutionConnection::Ssh {
             target,

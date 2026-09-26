@@ -1,5 +1,6 @@
 //! Resolve the destination, establish native readiness, then release the accepted turn.
 use super::*;
+use crate::agent_sessions::application::history_handoff::{handoff_prefix, Handoff};
 use crate::agent_sessions::application::update_sink::{
     DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink,
 };
@@ -33,7 +34,8 @@ impl AgentSessionApplication {
             p.source_target = Some(transition.source_target);
             self.save_progress(&p)?;
         }
-        let session = self.load_session(&p.session_id)?.session;
+        let history = self.load_session(&p.session_id)?;
+        let session = history.session.clone();
         let endpoints = self.endpoints.as_ref().ok_or_else(|| {
             AgentSessionApplicationError::invalid("Execution endpoints unavailable")
         })?;
@@ -80,6 +82,18 @@ impl AgentSessionApplication {
         } else {
             "Resolve working folder"
         };
+        // The provider follows from the device and model: a model offered by another route of the
+        // profile on this device moves the Session to that route.
+        if let Some(model) = p.model.as_deref() {
+            let capability = profiles
+                .read(&selection.capability_profile_id)
+                .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+            if let Some(route) =
+                capability.route_for_model(&selection.execution.device_id, model)
+            {
+                selection.execution = route.execution.clone();
+            }
+        }
         selection.execution = endpoints
             .freeze_binding(selection.execution.clone())
             .map_err(AgentSessionApplicationError::invalid)?;
@@ -90,8 +104,8 @@ impl AgentSessionApplication {
                 .map(|target| target.execution.clone())
                 .unwrap_or_default();
             if p.source_target.is_none() {
-                if let Some(authority) = &self.native_profile_launch_authority {
-                    if let Some(reference) = authority
+                if let Some(preparation) = self.launch_preparation(&source.provider) {
+                    if let Some(reference) = preparation
                         .bound_configuration_ref(&session.id)
                         .map_err(AgentSessionApplicationError::invalid)?
                     {
@@ -107,14 +121,14 @@ impl AgentSessionApplication {
         } else {
             None
         };
+        let conversation =
+            self.plan_conversation(&history, &p, source, &selection.execution, endpoints)?;
+        p.parked_source = conversation.parked_source.clone();
         let mut required = vec![
             ("workspace", workspace_label),
             ("configuration", "Resolve execution settings"),
         ];
-        if source
-            .as_ref()
-            .is_some_and(|source| source != &selection.execution)
-        {
+        if conversation.needs_transfer(&selection.execution) {
             required.push(("history", "Transfer conversation history"));
         }
         required.extend([
@@ -205,12 +219,23 @@ impl AgentSessionApplication {
         let capability = profiles
             .read(&selection.capability_profile_id)
             .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
-        if capability.revision != selection.capability_profile_revision
-            || endpoints
-                .freeze_binding(capability.execution.clone())
+        let profile_routes = if capability.route_policies.is_empty() {
+            vec![capability.execution.clone()]
+        } else {
+            capability
+                .route_policies
+                .iter()
+                .map(|route| route.execution.clone())
+                .collect()
+        };
+        let mut in_profile = false;
+        for execution in profile_routes {
+            in_profile |= endpoints
+                .freeze_binding(execution)
                 .map_err(AgentSessionApplicationError::invalid)?
-                != destination.execution
-        {
+                == destination.execution;
+        }
+        if capability.revision != selection.capability_profile_revision || !in_profile {
             return Err(AgentSessionApplicationError::conflict(
                 "Capability Profile changed during setup",
             ));
@@ -227,7 +252,7 @@ impl AgentSessionApplication {
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,
-                &destination.execution.configuration_ref,
+                &destination.execution,
                 Some(&destination.path),
             )
             .map_err(AgentSessionApplicationError::invalid)?;
@@ -268,10 +293,7 @@ impl AgentSessionApplication {
             "Resolve execution settings",
             PreparationStepStatus::Completed,
         )?;
-        if let Some(context) = p.source_binding.external_context_id.clone() {
-            let source = source
-                .as_ref()
-                .expect("existing context has a source binding");
+        if let Some((source, context)) = conversation.continued.as_ref() {
             if source != &destination.execution
                 && !p
                     .steps
@@ -285,7 +307,7 @@ impl AgentSessionApplication {
                     PreparationStepStatus::Running,
                 )?;
                 endpoints
-                    .transfer_continuation(source, &destination.execution, &context)
+                    .transfer_continuation(source, &destination.execution, context)
                     .map_err(AgentSessionApplicationError::invalid)?;
                 self.step(
                     &mut p,
@@ -310,7 +332,7 @@ impl AgentSessionApplication {
             .prepared_binding
             .as_ref()
             .and_then(|b| b.external_context_id.clone())
-            .or(p.source_binding.external_context_id.clone());
+            .or(conversation.continued.as_ref().map(|(_, id)| id.clone()));
         let mode = if resume_context.is_some() {
             RuntimeInvocationMode::Resume
         } else {
@@ -331,11 +353,11 @@ impl AgentSessionApplication {
         let mut extension = Some(extension);
         if !destination.execution.is_remote() {
             extension = self.add_workspace_capabilities(extension);
-            if let Some(authority) = &self.native_profile_launch_authority {
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
                 extension = Some(
-                    authority
+                    preparation
                         .prepare_destination_launch(
-                            &destination.execution.configuration_ref,
+                            &destination.execution.configuration(),
                             &p.session_id,
                             &p.invocation_id,
                             resume_context.is_some(),
@@ -352,20 +374,36 @@ impl AgentSessionApplication {
             .ok_or_else(|| AgentSessionApplicationError::not_found("Invocation not found"))?;
         if !destination.execution.is_remote() {
             if let Some(extension) = extension.as_mut() {
-                for skill in self.direct_user_native_skill_inputs(
-                    &destination.execution.configuration_ref,
+                self.apply_skill_mentions(
+                    &destination.execution.configuration(),
                     Some(&destination.path),
                     &invocation.submitted_text,
-                ) {
-                    if !extension
-                        .skill_inputs
-                        .iter()
-                        .any(|existing| existing.path == skill.path)
-                    {
-                        extension.skill_inputs.push(skill);
-                    }
-                }
+                    true,
+                    extension,
+                );
             }
+        }
+        if let Some(extension) = extension.as_mut() {
+            let caller = extension.initial_prompt_prefix.take();
+            if let Some(prefix) = &caller {
+                self.repository
+                    .record_initial_prompt_prefix(&p.session_id, prefix)
+                    .map_err(AgentSessionApplicationError::repository)?;
+            }
+            let initial = match conversation.handoff {
+                Handoff::Full => self
+                    .repository
+                    .initial_prompt_prefix(&p.session_id)
+                    .map_err(AgentSessionApplicationError::repository)?,
+                _ => None,
+            };
+            extension.initial_prompt_prefix = handoff_prefix(
+                &history,
+                &p.invocation_id,
+                &conversation.handoff,
+                initial.as_ref(),
+                caller,
+            );
         }
         let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
             Arc::new(PersistedRuntimeUpdateSink::new(
@@ -420,9 +458,9 @@ impl AgentSessionApplication {
         p.prepared_binding = Some(binding.clone());
         self.save_progress(&p)?;
         if !destination.execution.is_remote() {
-            if let Some(authority) = &self.native_profile_launch_authority {
-                authority
-                    .commit_destination(&destination.execution.configuration_ref, &p.session_id)
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
+                preparation
+                    .commit_destination(&destination.execution.configuration(), &p.session_id)
                     .map_err(AgentSessionApplicationError::invalid)?;
             }
         }

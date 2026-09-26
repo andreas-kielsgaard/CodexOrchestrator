@@ -204,16 +204,18 @@ mod tests {
     use super::*;
     use crate::execution_configuration::{
         CapabilitySet, InMemoryCapabilityProfileRepository, NodeProfile, RuntimeProfileSnapshot,
-        RuntimeSelections, SandboxMode, SelectedRuntimeProfileSource,
-        SelectedRuntimeProfileSourceError,
+        RuntimeSelections, SandboxMode, ProviderConfigurationSource,
+        ProviderConfigurationSourceError,
     };
 
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
-    impl SelectedRuntimeProfileSource for FixedRuntimeSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    impl ProviderConfigurationSource for FixedRuntimeSource {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }
@@ -224,13 +226,13 @@ mod tests {
     fn runtime_profile() -> RuntimeProfileSnapshot {
         RuntimeProfileSnapshot {
             contract_version: 1,
-            profile_ref: "orchestration:configured-runtime/v1".into(),
+            configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "configured-runtime"),
             exposure: capabilities(),
             locked: RuntimeSelections {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
                 ..RuntimeSelections::default()
             },
-            codex_personality: None,
+            provider_options: None,
         }
     }
 
@@ -244,10 +246,7 @@ mod tests {
     }
 
     fn service() -> WorkflowAuthoringService {
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            Arc::new(FixedRuntimeSource(runtime_profile())),
-        ));
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(Arc::new(FixedRuntimeSource(runtime_profile()))));
         profiles
             .create(
                 "capability-default".into(),

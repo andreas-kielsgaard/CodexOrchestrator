@@ -8,6 +8,7 @@ import type {
 import { CapabilityModelPickerDialog } from './CapabilityModelPickerDialog';
 import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import type { HarnessInferenceRouteOption } from './types';
+import { ProviderRouteSettings } from '../agentProviders/ProviderRouteSettings';
 
 export const REASONING_ORDER = [
   'none',
@@ -179,7 +180,9 @@ function RouteCapabilities({
     return byKnownOrder(
       [
         ...(routeCatalogueEnabled ? (observed ?? []) : reasoning),
-        ...(allowance ? [allowance.minimumReasoning, allowance.maximumReasoning] : []),
+        ...[allowance?.minimumReasoning, allowance?.maximumReasoning].filter(
+          (value): value is string => Boolean(value),
+        ),
       ],
       REASONING_ORDER,
     );
@@ -216,44 +219,19 @@ function RouteCapabilities({
     if (route.modelAllowances.some((entry) => entry.modelId === modelId)) return;
     const remembered = editorMemory.recall(profileKey, route.routeId, modelId);
     const modelReasoning = reasoningFor(modelId, remembered);
-    const lowest = remembered?.minimumReasoning ?? modelReasoning[0];
-    const highest = remembered?.maximumReasoning ?? modelReasoning.at(-1) ?? lowest;
-    if (!lowest || !highest) return;
-    onChange({
-      ...route,
-      modelAllowances: [
-        ...route.modelAllowances,
-        remembered ?? { modelId, minimumReasoning: lowest, maximumReasoning: highest },
-      ],
-    });
+    const lowest = modelReasoning[0];
+    const highest = modelReasoning.at(-1);
+    // A model that reports no reasoning levels is added without a range.
+    const added: ModelAllowanceDto =
+      remembered ??
+      (lowest && highest
+        ? { modelId, minimumReasoning: lowest, maximumReasoning: highest }
+        : { modelId });
+    onChange({ ...route, modelAllowances: [...route.modelAllowances, added] });
   };
   return (
     <div className="capability-route__configuration">
-      <section aria-labelledby={`${route.routeId}-personality`}>
-        <div className="capability-route__section-heading">
-          <div>
-            <h4 id={`${route.routeId}-personality`}>Codex personality</h4>
-            <p>Override the selected Codex profile default for sessions launched on this route.</p>
-          </div>
-          <label>
-            <span className="sr-only">Codex personality</span>
-            <select
-              value={route.codexPersonality ?? 'inherit'}
-              onChange={(event) => onChange({
-                ...route,
-                codexPersonality: event.currentTarget.value === 'inherit'
-                  ? null
-                  : event.currentTarget.value as 'none' | 'friendly' | 'pragmatic',
-              })}
-            >
-              <option value="inherit">Use Codex profile default</option>
-              <option value="none">None</option>
-              <option value="friendly">Friendly</option>
-              <option value="pragmatic">Pragmatic</option>
-            </select>
-          </label>
-        </div>
-      </section>
+      <ProviderRouteSettings route={route} onChange={onChange} />
       <section aria-labelledby={`${route.routeId}-models`}>
         <div className="capability-route__section-heading">
           <div>
@@ -291,58 +269,61 @@ function RouteCapabilities({
         ).map((modelId) => {
           const allowance = route.modelAllowances.find((entry) => entry.modelId === modelId)!;
           const modelReasoning = reasoningFor(modelId, allowance);
-          const minimumIndex = Math.max(0, modelReasoning.indexOf(allowance.minimumReasoning));
-          const maximumIndex = Math.max(
-            minimumIndex,
-            modelReasoning.indexOf(allowance.maximumReasoning),
-          );
+          const minimum = allowance.minimumReasoning ?? modelReasoning[0] ?? '';
+          const maximum = allowance.maximumReasoning ?? modelReasoning.at(-1) ?? '';
+          const minimumIndex = Math.max(0, modelReasoning.indexOf(minimum));
+          const maximumIndex = Math.max(minimumIndex, modelReasoning.indexOf(maximum));
           return (
             <div className="model-allowance" key={modelId}>
               <strong>{modelId}</strong>
-              <label>
-                <span>Lowest reasoning</span>
-                <select
-                  aria-label={`${modelId} lowest reasoning`}
-                  value={allowance.minimumReasoning}
-                  onChange={(event) => {
-                    const nextMinimum = event.currentTarget.value;
-                    const nextIndex = modelReasoning.indexOf(nextMinimum);
-                    updateAllowance(modelId, {
-                      minimumReasoning: nextMinimum,
-                      maximumReasoning:
-                        nextIndex > maximumIndex ? nextMinimum : allowance.maximumReasoning,
-                    });
-                  }}
-                >
-                  {modelReasoning.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Highest reasoning</span>
-                <select
-                  aria-label={`${modelId} highest reasoning`}
-                  value={allowance.maximumReasoning}
-                  onChange={(event) => {
-                    const nextMaximum = event.currentTarget.value;
-                    const nextIndex = modelReasoning.indexOf(nextMaximum);
-                    updateAllowance(modelId, {
-                      minimumReasoning:
-                        nextIndex < minimumIndex ? nextMaximum : allowance.minimumReasoning,
-                      maximumReasoning: nextMaximum,
-                    });
-                  }}
-                >
-                  {modelReasoning.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {modelReasoning.length === 0 ? (
+                <span className="model-allowance__none">No reasoning levels</span>
+              ) : (
+                <>
+                  <label>
+                    <span>Lowest reasoning</span>
+                    <select
+                      aria-label={`${modelId} lowest reasoning`}
+                      value={minimum}
+                      onChange={(event) => {
+                        const nextMinimum = event.currentTarget.value;
+                        const nextIndex = modelReasoning.indexOf(nextMinimum);
+                        updateAllowance(modelId, {
+                          minimumReasoning: nextMinimum,
+                          maximumReasoning: nextIndex > maximumIndex ? nextMinimum : maximum,
+                        });
+                      }}
+                    >
+                      {modelReasoning.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Highest reasoning</span>
+                    <select
+                      aria-label={`${modelId} highest reasoning`}
+                      value={maximum}
+                      onChange={(event) => {
+                        const nextMaximum = event.currentTarget.value;
+                        const nextIndex = modelReasoning.indexOf(nextMaximum);
+                        updateAllowance(modelId, {
+                          minimumReasoning: nextIndex < minimumIndex ? nextMaximum : minimum,
+                          maximumReasoning: nextMaximum,
+                        });
+                      }}
+                    >
+                      {modelReasoning.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
               <button
                 type="button"
                 className="model-allowance__remove"
@@ -378,9 +359,6 @@ function RouteCapabilities({
           models={modelChoices}
           observed={models}
           selected={route.modelAllowances.map((entry) => entry.modelId)}
-          reasoningByModel={Object.fromEntries(
-            modelChoices.map((model) => [model, reasoningFor(model)]),
-          )}
           onAdd={addModel}
           onRemove={removeModel}
           onClose={() => setAddingModel(false)}

@@ -7,34 +7,38 @@ mod model_catalogue;
 pub(crate) use inventory::{NativeCapabilityEntry, NativeCapabilityInventory};
 pub(crate) use model_catalogue::{ModelCatalogueView, StoredModelCatalogue};
 mod creation_intent;
-mod native_codex;
 mod quick_features;
 pub(crate) use quick_features::{QuickModel, QuickReasoningMode, QuickSkill, RuntimeQuickFeatures};
 mod node_profile;
 mod ports;
+mod product_skills;
+pub(crate) use product_skills::ProductSkillRoots;
+pub(crate) mod skill_mentions;
 mod repository;
 mod resolution;
 mod runtime_profile;
 mod service;
 mod session_profile;
+mod setups;
+pub(crate) use setups::{ProviderSetup, ProviderSetupState};
 mod session_skills;
 mod skill_reader;
 pub(crate) use skill_reader::SessionSkillReaderProvisioner;
 pub(crate) mod transport;
 
 pub(crate) use capability_profile::{
-    CapabilityProfile, ModelAllowance, ProfileRoutePolicy, CAPABILITY_PROFILE_CONTRACT_VERSION,
+    otp_skill_group, CapabilityProfile, ModelAllowance, ProfileRoutePolicy,
+    CAPABILITY_PROFILE_CONTRACT_VERSION, NATIVE_MCP_GROUP, NATIVE_SKILL_GROUP, ORCHID_SKILL_GROUP,
 };
 pub(crate) use creation_intent::SessionCreationIntent;
-pub(crate) use native_codex::NativeCodexSelectedRuntimeProfileSource;
 pub(crate) use node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION};
 pub(crate) use ports::{
-    CapabilityProfileRepository, CapabilityProfileRepositoryError,
-    PinnedConfigurationProfileSource, RuntimeSkillRoot, SelectedRuntimeProfileSource,
-    SelectedRuntimeProfileSourceError, WorkingContextProfileSource,
+    CapabilityProfileRepository, CapabilityProfileRepositoryError, ProviderConfigurationSource,
+    ProviderConfigurationSourceError, RuntimeSkillRoot,
 };
 pub(crate) use repository::{
-    initialize_capability_profile_storage, InMemoryCapabilityProfileRepository,
+    initialize_capability_profile_storage, migrate_route_model_catalogues,
+    InMemoryCapabilityProfileRepository,
     SqliteCapabilityProfileRepository, CAPABILITY_PROFILE_SCHEMA,
 };
 pub(crate) use resolution::{
@@ -44,6 +48,7 @@ pub(crate) use resolution::{
 };
 pub(crate) use runtime_profile::{
     CapabilitySet, RuntimeProfileSnapshot, RuntimeSelections, SandboxMode,
+    RUNTIME_PROFILE_CONTRACT_VERSION,
 };
 pub(crate) use service::{CapabilityProfileService, CapabilityProfileServiceError};
 pub(crate) use session_profile::SessionProfile;

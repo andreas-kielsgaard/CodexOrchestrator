@@ -1,6 +1,9 @@
+import type {
+  ProviderConfigurationRefDto,
+  ProviderNativeOptionsDto,
+} from '../agentProviders/contracts';
 import type { ExecutionBindingDto } from '../executionTargets/contracts';
 export type SandboxModeDto = 'read_only' | 'workspace_write' | 'danger_full_access';
-export type CodexPersonalityDto = 'none' | 'friendly' | 'pragmatic';
 
 /** Capabilities exposed or permitted at one execution-configuration boundary. */
 export interface CapabilitySetDto {
@@ -20,15 +23,17 @@ export interface RuntimeSelectionsDto {
 /** A model and the inclusive reasoning range the profile permits on one route. */
 export interface ModelAllowanceDto {
   readonly modelId: string;
-  readonly minimumReasoning: string;
-  readonly maximumReasoning: string;
+  /** Absent when the model reports no reasoning levels. */
+  readonly minimumReasoning?: string;
+  readonly maximumReasoning?: string;
 }
 
 /** One permitted Device -> Harness -> Inference Source route in a Capability Profile. */
 export interface ProfileRoutePolicyDto {
   readonly routeId: string;
   readonly execution: ExecutionBindingDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  /** Overrides the provider configuration's own native defaults; absent inherits them. */
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
   readonly modelAllowances: readonly ModelAllowanceDto[];
   readonly mcpGroups: readonly string[];
   readonly skillGroups: readonly string[];
@@ -38,14 +43,14 @@ export interface ProfileRoutePolicyDto {
 /** Read-only facts observed from the profile's configured device runtime. */
 export interface RuntimeProfileSnapshotDto {
   readonly contractVersion: 1;
-  readonly profileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly exposure: CapabilitySetDto;
   readonly locked: RuntimeSelectionsDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
 }
 
 export interface ProfileModelCatalogueDto {
-  readonly configurationRef: string;
+  readonly route: import('../executionTargets/contracts').ExecutionRouteRefDto;
   readonly observedAt: string | null;
   readonly observationError: string | null;
   readonly models: readonly {
@@ -80,14 +85,14 @@ export interface NodeProfileDto {
 /** Immutable configuration resolved and pinned when a Session is created. */
 export interface SessionProfileDto {
   readonly contractVersion: 1;
-  readonly runtimeProfileRef: string;
+  readonly configuration: ProviderConfigurationRefDto;
   readonly attachedRuntimeCapabilities: CapabilitySetDto;
   readonly attachedRuntimeLocked: RuntimeSelectionsDto;
   readonly capabilityProfileId: string;
   readonly capabilityProfileRevision: number;
   readonly nodeCapabilities: CapabilitySetDto;
   readonly pinnedDefaults: RuntimeSelectionsDto;
-  readonly codexPersonality?: CodexPersonalityDto | null;
+  readonly providerOptions?: ProviderNativeOptionsDto | null;
 }
 
 export interface SessionCreationResolutionDto {
@@ -122,7 +127,11 @@ export interface UpdateCapabilityProfileInput {
 }
 
 export interface ExecutionConfigurationClient {
-  loadProfileModelCatalogue?(configurationRef: string): Promise<ProfileModelCatalogueDto>;
+  loadProfileModelCatalogue?(
+    route: import('../executionTargets/contracts').ExecutionRouteRefDto,
+  ): Promise<ProfileModelCatalogueDto>;
+  /** Every provider's setups on each device, offered as Capability Profile routes. */
+  listProviderSetups?(): Promise<readonly import('../agentProviders/contracts').ProviderSetupDto[]>;
   loadDefaultCapabilityProfile?(): Promise<string | null>;
   setDefaultCapabilityProfile?(capabilityProfileId: string): Promise<void>;
   loadSelectedRuntimeProfile(): Promise<RuntimeProfileSnapshotDto>;

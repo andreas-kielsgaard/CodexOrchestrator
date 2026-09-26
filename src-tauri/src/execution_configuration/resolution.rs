@@ -1,7 +1,7 @@
 use super::{
     capability_profile::CapabilityProfile,
     node_profile::NodeProfile,
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
+    ports::{ProviderConfigurationSource, ProviderConfigurationSourceError},
     runtime_profile::{
         validate_identifier, validate_selection_availability, CapabilitySet,
         RuntimeProfileSnapshot, RuntimeSelections,
@@ -46,6 +46,21 @@ impl SessionCreationResolution {
 
     pub(crate) fn digest(&self) -> &str {
         &self.digest
+    }
+
+    /// Seals an already-resolved Session Profile with a fresh digest. Used by the one-time
+    /// provider-boundary storage migration, which rewrites stored profiles into the current shape.
+    pub(crate) fn reseal(session_profile: SessionProfile) -> Result<Self, ResolutionError> {
+        session_profile
+            .validate()
+            .map_err(ResolutionError::InvalidInput)?;
+        let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
+        let digest = session_profile_digest(contract_version, &session_profile)?;
+        Ok(Self {
+            contract_version,
+            session_profile,
+            digest,
+        })
     }
 
     pub(crate) fn verify_digest(&self) -> Result<(), ResolutionError> {
@@ -147,8 +162,8 @@ impl fmt::Display for ResolutionError {
 
 impl Error for ResolutionError {}
 
-impl From<SelectedRuntimeProfileSourceError> for ResolutionError {
-    fn from(value: SelectedRuntimeProfileSourceError) -> Self {
+impl From<ProviderConfigurationSourceError> for ResolutionError {
+    fn from(value: ProviderConfigurationSourceError) -> Self {
         Self::SourceUnavailable(value.to_string())
     }
 }
@@ -157,7 +172,8 @@ pub(crate) struct SessionProfileResolver;
 
 impl SessionProfileResolver {
     pub(crate) fn resolve_creation(
-        source: &dyn SelectedRuntimeProfileSource,
+        source: &dyn ProviderConfigurationSource,
+        cwd: Option<&str>,
         request: SessionCreationRequest,
     ) -> Result<SessionCreationResolution, ResolutionError> {
         validate_creation_request(&request)?;
@@ -166,7 +182,7 @@ impl SessionProfileResolver {
         }
         let runtime_profile = source.profile_for_configuration(
             &request.capability_profile.execution.configuration_ref,
-            None,
+            cwd,
         )?;
         Self::resolve_snapshot(runtime_profile, request)
     }
@@ -179,7 +195,9 @@ impl SessionProfileResolver {
         runtime_profile
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
-        let route = request.capability_profile.default_route();
+        let route = request
+            .capability_profile
+            .route_for_configuration(&runtime_profile.configuration);
         if route.is_none() {
             validate_narrowing(
                 &runtime_profile,
@@ -265,7 +283,7 @@ impl SessionProfileResolver {
                     node_capabilities
                         .mcp_tools
                         .insert(server.to_string(), selected);
-                } else if group != "codex-profile-mcps" {
+                } else if group != super::capability_profile::NATIVE_MCP_GROUP {
                     return Err(ResolutionError::InvalidInput(format!(
                         "Unsupported MCP group `{group}`"
                     )));
@@ -293,12 +311,15 @@ impl SessionProfileResolver {
             ),
             &node_capabilities,
         )?;
-        let native_mcp_enabled = route.map(|route| route.mcp_groups.contains("codex-profile-mcps"));
-        let codex_personality = route
-            .and_then(|route| route.codex_personality)
-            .or(runtime_profile.codex_personality);
+        let native_mcp_enabled =
+            route.map(|route| route.mcp_groups.contains(super::capability_profile::NATIVE_MCP_GROUP));
+        // A route envelope overrides the configuration's defaults as a whole. Providers encode
+        // "inherit" as an absent envelope, never as an empty one.
+        let provider_options = route
+            .and_then(|route| route.provider_options.clone())
+            .or(runtime_profile.provider_options);
         let session_profile = SessionProfile::resolved(
-            runtime_profile.profile_ref,
+            runtime_profile.configuration,
             runtime_profile.exposure,
             runtime_profile.locked,
             request.capability_profile.capability_profile_id,
@@ -308,7 +329,7 @@ impl SessionProfileResolver {
             session_skill_inputs,
             pinned_defaults,
             native_mcp_enabled,
-            codex_personality,
+            provider_options,
         );
         let contract_version = SESSION_CREATION_RESOLUTION_CONTRACT_VERSION;
         let digest = session_profile_digest(contract_version, &session_profile)?;
@@ -319,12 +340,29 @@ impl SessionProfileResolver {
         })
     }
 
+    /// `source` is the pinned configuration's provider source.
     pub(crate) fn validate_direct_user_invocation(
-        source: &dyn SelectedRuntimeProfileSource,
+        source: &dyn ProviderConfigurationSource,
+        cwd: Option<&str>,
         creation: &SessionCreationResolution,
         request: DirectUserInvocationRequest,
     ) -> Result<DirectUserInvocationResolution, ResolutionError> {
-        Self::resolve_direct_user_snapshot(source.selected_runtime_profile()?, creation, request)
+        Self::resolve_direct_user_snapshot(
+            Self::pinned_runtime_profile(source, cwd, creation)?,
+            creation,
+            request,
+        )
+    }
+
+    fn pinned_runtime_profile(
+        source: &dyn ProviderConfigurationSource,
+        cwd: Option<&str>,
+        creation: &SessionCreationResolution,
+    ) -> Result<RuntimeProfileSnapshot, ResolutionError> {
+        Ok(source.profile_for_configuration(
+            &creation.session_profile().configuration().configuration_id,
+            cwd,
+        )?)
     }
 
     pub(crate) fn resolve_direct_user_snapshot(
@@ -358,10 +396,11 @@ impl SessionProfileResolver {
     }
 
     pub(crate) fn validate_pinned_session(
-        source: &dyn SelectedRuntimeProfileSource,
+        source: &dyn ProviderConfigurationSource,
+        cwd: Option<&str>,
         creation: &SessionCreationResolution,
     ) -> Result<(), ResolutionError> {
-        let runtime_profile = source.selected_runtime_profile()?;
+        let runtime_profile = Self::pinned_runtime_profile(source, cwd, creation)?;
         Self::validate_profile_identity(&runtime_profile, creation)
     }
 
@@ -374,10 +413,10 @@ impl SessionProfileResolver {
             .validate()
             .map_err(ResolutionError::InvalidInput)?;
         let session_profile = creation.session_profile();
-        if runtime_profile.profile_ref != session_profile.runtime_profile_ref() {
+        if &runtime_profile.configuration != session_profile.configuration() {
             return Err(ResolutionError::RuntimeProfileChanged {
-                expected: session_profile.runtime_profile_ref().to_owned(),
-                actual: runtime_profile.profile_ref.clone(),
+                expected: session_profile.configuration().to_string(),
+                actual: runtime_profile.configuration.to_string(),
             });
         }
         Ok(())

@@ -11,6 +11,7 @@ use std::{
 };
 
 use crate::persistence::{ActiveDatabase, ManagedOperationError};
+use crate::execution_targets::domain::ExecutionRouteRef;
 
 pub(crate) const CAPABILITY_PROFILE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS execution_capability_profiles (
@@ -26,9 +27,12 @@ CREATE TABLE IF NOT EXISTS execution_default_capability_profile (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     capability_profile_id TEXT NOT NULL REFERENCES execution_capability_profiles(capability_profile_id) ON DELETE RESTRICT
 );
-CREATE TABLE IF NOT EXISTS execution_model_catalogues (
-    configuration_ref TEXT PRIMARY KEY,
-    catalogue_json TEXT NOT NULL CHECK (json_valid(catalogue_json))
+CREATE TABLE IF NOT EXISTS execution_route_model_catalogues (
+    device_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    configuration_ref TEXT NOT NULL,
+    catalogue_json TEXT NOT NULL CHECK (json_valid(catalogue_json)),
+    PRIMARY KEY (device_id, provider, configuration_ref)
 );
 "#;
 
@@ -39,10 +43,11 @@ pub(crate) struct InMemoryCapabilityProfileRepository {
     model_catalogues: Mutex<BTreeMap<String, super::StoredModelCatalogue>>,
 }
 
+
 impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
     fn model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &ExecutionRouteRef,
     ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
         Ok(self
             .model_catalogues
@@ -50,12 +55,12 @@ impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
             .map_err(|_| {
                 CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into())
             })?
-            .get(configuration_ref)
+            .get(&Self::route_key(route))
             .cloned())
     }
     fn save_model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &ExecutionRouteRef,
         catalogue: &super::StoredModelCatalogue,
     ) -> Result<(), CapabilityProfileRepositoryError> {
         self.model_catalogues
@@ -63,7 +68,7 @@ impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
             .map_err(|_| {
                 CapabilityProfileRepositoryError::Storage("Model catalogue lock unavailable".into())
             })?
-            .insert(configuration_ref.into(), catalogue.clone());
+            .insert(Self::route_key(route), catalogue.clone());
         Ok(())
     }
     fn default_profile(
@@ -165,6 +170,10 @@ impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
 }
 
 impl InMemoryCapabilityProfileRepository {
+    fn route_key(route: &ExecutionRouteRef) -> String {
+        format!("{}\0{}\0{}", route.device_id, route.provider, route.configuration_ref)
+    }
+
     fn lock(
         &self,
     ) -> Result<MutexGuard<'_, BTreeMap<String, CapabilityProfile>>, CapabilityProfileRepositoryError>
@@ -220,22 +229,22 @@ impl SqliteCapabilityProfileRepository {
 impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
     fn model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &ExecutionRouteRef,
     ) -> Result<Option<super::StoredModelCatalogue>, CapabilityProfileRepositoryError> {
         self.read("read model catalogue", |connection| {
-            let json: Option<String> = connection.query_row("SELECT catalogue_json FROM execution_model_catalogues WHERE configuration_ref=?1", [configuration_ref], |row| row.get(0)).optional().map_err(storage_error("read model catalogue"))?;
+            let json: Option<String> = connection.query_row("SELECT catalogue_json FROM execution_route_model_catalogues WHERE device_id=?1 AND provider=?2 AND configuration_ref=?3", params![route.device_id, route.provider, route.configuration_ref], |row| row.get(0)).optional().map_err(storage_error("read model catalogue"))?;
             json.map(|json| serde_json::from_str(&json).map_err(|error| CapabilityProfileRepositoryError::Storage(format!("Invalid cached model catalogue: {error}")))).transpose()
         })
     }
     fn save_model_catalogue(
         &self,
-        configuration_ref: &str,
+        route: &ExecutionRouteRef,
         catalogue: &super::StoredModelCatalogue,
     ) -> Result<(), CapabilityProfileRepositoryError> {
         let json = serde_json::to_string(catalogue)
             .map_err(|error| CapabilityProfileRepositoryError::Storage(error.to_string()))?;
         self.write("save model catalogue", |transaction| {
-            transaction.execute("INSERT INTO execution_model_catalogues(configuration_ref,catalogue_json) VALUES(?1,?2) ON CONFLICT(configuration_ref) DO UPDATE SET catalogue_json=excluded.catalogue_json", params![configuration_ref,json]).map_err(storage_error("save model catalogue"))?;
+            transaction.execute("INSERT INTO execution_route_model_catalogues(device_id,provider,configuration_ref,catalogue_json) VALUES(?1,?2,?3,?4) ON CONFLICT(device_id,provider,configuration_ref) DO UPDATE SET catalogue_json=excluded.catalogue_json", params![route.device_id,route.provider,route.configuration_ref,json]).map_err(storage_error("save model catalogue"))?;
             Ok(())
         })
     }
@@ -390,6 +399,28 @@ impl CapabilityProfileRepository for SqliteCapabilityProfileRepository {
             ))),
         })
     }
+}
+
+/// Schema v60: model catalogues were keyed by configuration ID alone, which only Codex's local
+/// configurations used. They move to the local device and the Codex provider.
+pub(crate) fn migrate_route_model_catalogues(connection: &Connection) -> Result<(), String> {
+    let legacy: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_model_catalogues')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if legacy {
+        connection
+            .execute_batch(
+                "INSERT OR IGNORE INTO execution_route_model_catalogues(device_id,provider,configuration_ref,catalogue_json)
+                 SELECT 'local','codex',configuration_ref,catalogue_json FROM execution_model_catalogues;
+                 DROP TABLE execution_model_catalogues;",
+            )
+            .map_err(|error| format!("Unable to migrate model catalogues: {error}"))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn initialize_capability_profile_storage(connection: &Connection) -> Result<(), String> {

@@ -410,7 +410,7 @@ function session(id: string, title: string, response: string): AgentSessionDetai
           createdAt: time,
           updatedAt: time,
         },
-        observation: { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: { status: 'completed', completedAt: time, exitCode: 0, signal: null }, mcpToolActivities: [], mcpToolActivityPartial: false },
+        observation: { launchAcceptedAt: null, externalContext: null, providerActivity: null, providerTerminal: null, processTerminal: { status: 'completed', completedAt: time, exitCode: 0, signal: null }, mcpToolActivities: [] },
         events: [event],
       },
     ],

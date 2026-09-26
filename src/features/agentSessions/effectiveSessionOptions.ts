@@ -1,6 +1,10 @@
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 
+/**
+ * A reasoning level is chosen by the user, the profile or the model's reported default. Without
+ * one it stays unset and the provider applies its own default.
+ */
 export interface EffectiveSessionOptions {
   readonly model: AgentSessionQuickFeatures['models'][number] | null;
   readonly reasoningMode: string | null;
@@ -19,9 +23,7 @@ export function effectiveSessionOptions(
   const reasoningMode =
     supportedReasoning(model, selection.reasoningMode) ??
     supportedReasoning(model, capabilities.defaults.reasoningMode) ??
-    supportedReasoning(model, model?.defaultReasoningMode ?? null) ??
-    model?.reasoningModes[0]?.id ??
-    null;
+    supportedReasoning(model, model?.defaultReasoningMode ?? null);
   return { model, reasoningMode };
 }
 
@@ -34,9 +36,7 @@ export function selectionForModel(
   const model = capabilities.models.find((item) => item.id === modelId);
   const reasoningMode =
     supportedReasoning(model ?? null, current.reasoningMode) ??
-    supportedReasoning(model ?? null, model?.defaultReasoningMode ?? null) ??
-    model?.reasoningModes[0]?.id ??
-    null;
+    supportedReasoning(model ?? null, model?.defaultReasoningMode ?? null);
   return { model: modelId, reasoningMode };
 }
 

@@ -13,7 +13,7 @@ import type {
 
 export const repairRuntime: RuntimeProfileSnapshotDto = {
   contractVersion: 1,
-  profileRef: 'fixture/runtime',
+  configuration: { provider: 'codex', configurationId: 'fixture-runtime' },
   exposure: {
     models: ['model-a', 'model-b'],
     reasoningModes: ['high', 'medium'],

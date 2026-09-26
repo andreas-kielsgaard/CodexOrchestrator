@@ -49,10 +49,13 @@ pub(crate) fn run() {
                     repository_catalog.clone(),
                 ),
             );
-            let native_profiles = Arc::new(crate::native_profiles::NativeProfileService::new(
+            let native_profiles = Arc::new(crate::runtime::providers::codex::profiles::NativeProfileService::new(
                 database.clone(),
                 app_data_dir.clone(),
             ));
+            let claude_setups = Arc::new(
+                crate::runtime::providers::claude::setups::ClaudeSetups::system(database.clone()),
+            );
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::from_database(
                     database.clone(),
@@ -121,8 +124,8 @@ pub(crate) fn run() {
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
                 });
-            let sessions::SessionServices { application, imports, selected_runtime_profile, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
+            let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
+                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
             )?;
             execution_targets.synchronize_devices()?;
             let execution_devices = execution_targets.devices.clone();
@@ -136,7 +139,6 @@ pub(crate) fn run() {
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
                     application.clone(),
                     repository.clone(),
-                    selected_runtime_profile.clone(),
                     identities.clone(),
                 ).with_capability_profiles(capability_profiles.clone()),
             );
@@ -232,8 +234,11 @@ pub(crate) fn run() {
             app.manage(crate::identities::transport::IdentityTauriState::new(
                 identities,
             ));
-            app.manage(crate::native_profiles::NativeProfileTauriState::new(
+            app.manage(crate::runtime::providers::codex::profiles::NativeProfileTauriState::new(
                 native_profiles,
+            ));
+            app.manage(crate::runtime::providers::claude::setups::ClaudeSetupTauriState(
+                claude_setups,
             ));
             let orchestration = Arc::new(
                 crate::orchestration::application::OrchestrationApplication::new(
@@ -382,6 +387,9 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::update_agent_session_identity,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
+            crate::execution_configuration::transport::list_provider_setups,
+            crate::runtime::providers::claude::setups::add_claude_setup,
+            crate::runtime::providers::claude::setups::remove_claude_setup,
             crate::execution_configuration::transport::load_profile_model_catalogue,
             crate::execution_configuration::transport::list_capability_profiles,
             crate::execution_targets::transport::list_session_execution_targets,
@@ -439,15 +447,15 @@ pub(crate) fn run() {
             crate::repository_catalog::transport::register_repository_directory,
             crate::repository_catalog::transport::register_codex_repository,
             crate::repository_catalog::transport::list_registered_repository_worktree_targets,
-            crate::native_profiles::load_native_profile_query,
-            crate::native_profiles::discover_native_codex_homes,
-            crate::native_profiles::register_native_profile,
-            crate::native_profiles::create_dedicated_native_profile,
-            crate::native_profiles::select_native_profile,
-            crate::native_profiles::set_native_profile_personality,
-            crate::native_profiles::request_native_profile_login,
-            crate::native_profiles::refresh_native_profile_readiness,
-            crate::native_profiles::open_native_profile_in_explorer,
+            crate::runtime::providers::codex::profiles::load_native_profile_query,
+            crate::runtime::providers::codex::profiles::discover_native_codex_homes,
+            crate::runtime::providers::codex::profiles::register_native_profile,
+            crate::runtime::providers::codex::profiles::create_dedicated_native_profile,
+            crate::runtime::providers::codex::profiles::select_native_profile,
+            crate::runtime::providers::codex::profiles::set_native_profile_personality,
+            crate::runtime::providers::codex::profiles::request_native_profile_login,
+            crate::runtime::providers::codex::profiles::refresh_native_profile_readiness,
+            crate::runtime::providers::codex::profiles::open_native_profile_in_explorer,
             crate::execution_configuration::transport::load_native_profile_capability_inventory,
             crate::execution_configuration::transport::load_native_profile_skills,
             crate::product_decisions::accept_product_decision_version,

@@ -22,7 +22,7 @@ const emptyCapabilities: CapabilitySetViewModel = {
 };
 
 const runtime: RuntimeProfileViewModel = {
-  profileRef: 'native-codex/global',
+  configuration: { provider: 'codex', configurationId: 'global' },
   sourceLabel: 'Selected Codex profile',
   exposure: {
     models: ['gpt-5.6', 'gpt-5.4'],
@@ -72,7 +72,13 @@ const runtime: RuntimeProfileViewModel = {
   lockedSelections: { model: null, reasoningMode: null, sandboxMode: 'workspace_write' },
 };
 
-function ControlledCapabilityEditor({ onSave }: { onSave(profile: CapabilityProfileDraft): void }) {
+function ControlledCapabilityEditor({
+  onSave,
+  runtimeProfile = runtime,
+}: {
+  onSave(profile: CapabilityProfileDraft): void;
+  runtimeProfile?: RuntimeProfileViewModel;
+}) {
   const [profile, setProfile] = useState<CapabilityProfileDraft>({
     capabilityProfileId: '',
     name: '',
@@ -84,7 +90,7 @@ function ControlledCapabilityEditor({ onSave }: { onSave(profile: CapabilityProf
   return (
     <CapabilityProfileEditor
       profile={profile}
-      runtime={runtime}
+      runtime={runtimeProfile}
       routes={[
         {
           id: 'local-codex:review',
@@ -148,6 +154,46 @@ describe('Execution Configuration editors', () => {
         ]),
       }),
     );
+  });
+
+  it('adds a model that reports no reasoning levels without a range', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <ControlledCapabilityEditor
+        onSave={onSave}
+        runtimeProfile={{
+          ...runtime,
+          exposure: { ...runtime.exposure, reasoningModes: [] },
+          catalogs: {
+            ...runtime.catalogs,
+            reasoningModes: { ...runtime.catalogs.reasoningModes, options: [] },
+          },
+        }}
+      />,
+    );
+
+    await user.type(screen.getByRole('textbox', { name: 'Capability profile name' }), 'Quick');
+    await user.click(screen.getByRole('button', { name: 'Add execution route' }));
+    await user.click(screen.getByRole('button', { name: 'Add route' }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'This device Configured harness OpenAI via Codex CLI',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Add model' }));
+    const add = within(screen.getByText('gpt-5.6').closest('li') as HTMLElement).getByRole(
+      'button',
+      { name: 'Add' },
+    );
+    expect(add).toBeEnabled();
+    await user.click(add);
+    await user.click(screen.getByRole('button', { name: 'Close Add model' }));
+    expect(screen.getByText('No reasoning levels')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Create profile' }));
+
+    const saved = onSave.mock.calls[0][0] as CapabilityProfileDraft;
+    expect(saved.routePolicies[0].modelAllowances).toEqual([{ modelId: 'gpt-5.6' }]);
   });
 
   it('keeps the model picker open and restores a removed reasoning range in this instance', async () => {
@@ -270,7 +316,7 @@ describe('Execution Configuration editors', () => {
   it('presents a pinned Session Profile without editable or initial-prompt controls', async () => {
     const user = userEvent.setup();
     const profile: SessionProfileViewModel = {
-      runtimeProfileRef: runtime.profileRef,
+      configuration: runtime.configuration,
       capabilityProfileId: 'reviewer',
       capabilityProfileRevision: 2,
       attachedRuntimeCapabilities: runtime.exposure,

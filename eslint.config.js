@@ -40,5 +40,33 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  {
+    // Provider raw payloads are diagnostic evidence. Shared UI decides on normalized events and
+    // Orchid's own control records, and may pass raw evidence along but never inspect it.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: [
+      'src/**/*.test.{ts,tsx}',
+      'src/dev/**',
+      'src/**/agentProviders/**',
+      'src/application/agentSessions/runtimeControlRecords.ts',
+      'src/features/agentSessions/runtimeDiagnostics.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...[
+          "MemberExpression[object.type='MemberExpression'][object.property.name='rawPayload']",
+          "TSAsExpression > MemberExpression.expression[property.name='rawPayload']",
+          "VariableDeclarator > MemberExpression.init[property.name='rawPayload']",
+          "UnaryExpression[operator='typeof'] > MemberExpression[property.name='rawPayload']",
+          "BinaryExpression > MemberExpression[property.name='rawPayload']",
+        ].map((selector) => ({
+          selector,
+          message:
+            'Read provider facts from normalized events or runtimeControlRecordKind, not rawPayload.',
+        })),
+      ],
+    },
+  },
   prettier,
 );

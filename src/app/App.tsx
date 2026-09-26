@@ -15,6 +15,7 @@ import type { ExecutionTargetClient } from '../application/executionTargets/cont
 import type { RepositoryBranchSource } from '../application/branches';
 
 import { TechnicalSettingsScreen } from '../features/technicalSettings/TechnicalSettingsScreen';
+import { CodexHomeGuidanceProvider } from '../features/agentProviders/codex/CodexHomeGuidance';
 
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
 
@@ -70,10 +71,7 @@ import {
   type OrchestrationNavigationChangeIntent,
 } from '../features/orchestrations';
 
-import {
-  AgentSessionRuntimeGuidanceProvider,
-  type EmbeddedAgentSessionComposition,
-} from '../features/agentSessions';
+import { type EmbeddedAgentSessionComposition } from '../features/agentSessions';
 
 import {
   useCallback,
@@ -113,9 +111,10 @@ import type {
 
 import { FileReviewScreen } from '../features/fileReview';
 
-import type { NativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
+import type { NativeProfileClient } from '../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
+import type { ClaudeSetupClient } from '../infrastructure/agentProviders/claude/claudeSetupClient';
 
-import type { NativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
+import type { NativeProfileApplicationConsumer } from '../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 
 import { ProductDecisionPublishPlaceholder } from '../features/productDecisions';
 
@@ -247,6 +246,7 @@ export interface AppProps {
   readonly contextualFileReviewClient?: ContextualFileReviewClient;
 
   readonly nativeProfileClient?: NativeProfileClient;
+  readonly claudeSetupClient?: ClaudeSetupClient;
 
   readonly nativeProfileApplicationConsumer?: NativeProfileApplicationConsumer;
 
@@ -363,6 +363,8 @@ export function App({
   contextualFileReviewClient,
 
   nativeProfileClient,
+
+  claudeSetupClient,
 
   nativeProfileApplicationConsumer,
 
@@ -1607,8 +1609,6 @@ export function App({
 
           readOtpCatalogue={otpCatalogueReader}
 
-          nativeProfileClient={nativeProfileClient}
-
           workspace={capabilityDrafts}
           editorMemory={capabilityEditorMemory}
           selection={
@@ -1792,6 +1792,7 @@ export function App({
       ) : surface === 'native-settings' && nativeProfileClient ? (
         <TechnicalSettingsScreen
           nativeClient={nativeProfileClient}
+          claudeClient={claudeSetupClient}
 
           readOtpCatalogue={otpCatalogueReader}
 
@@ -1840,7 +1841,7 @@ export function App({
   );
 
   return (
-    <AgentSessionRuntimeGuidanceProvider
+    <CodexHomeGuidanceProvider
       consumer={nativeProfileApplicationConsumer}
 
       onOpenTechnicalSettings={
@@ -1857,7 +1858,7 @@ export function App({
       }
     >
       {appShell}
-    </AgentSessionRuntimeGuidanceProvider>
+    </CodexHomeGuidanceProvider>
   );
 }
 

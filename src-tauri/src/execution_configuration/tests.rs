@@ -1,7 +1,7 @@
 use super::{
     capability_profile::{CapabilityProfile, CAPABILITY_PROFILE_CONTRACT_VERSION},
     node_profile::{NodeProfile, NODE_PROFILE_CONTRACT_VERSION},
-    ports::{SelectedRuntimeProfileSource, SelectedRuntimeProfileSourceError},
+    ports::{ProviderConfigurationSource, ProviderConfigurationSourceError},
     resolution::{
         DirectUserInvocationRequest, ResolutionError, SessionCreationRequest,
         SessionCreationResolution, SessionProfileResolver,
@@ -14,12 +14,14 @@ use super::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-struct FixedProfileSource(Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError>);
+struct FixedProfileSource(Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>);
 
-impl SelectedRuntimeProfileSource for FixedProfileSource {
-    fn selected_runtime_profile(
+impl ProviderConfigurationSource for FixedProfileSource {
+    fn profile_for_configuration(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         self.0.clone()
     }
 }
@@ -54,7 +56,7 @@ fn capabilities(
 fn runtime_profile() -> RuntimeProfileSnapshot {
     RuntimeProfileSnapshot {
         contract_version: RUNTIME_PROFILE_CONTRACT_VERSION,
-        profile_ref: "native-codex:selected".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"),
         exposure: capabilities(
             &["codex-a", "codex-b"],
             &["medium", "high"],
@@ -67,7 +69,7 @@ fn runtime_profile() -> RuntimeProfileSnapshot {
             reasoning_mode: None,
             sandbox_mode: Some(SandboxMode::WorkspaceWrite),
         },
-        codex_personality: None,
+        provider_options: None,
     }
 }
 
@@ -122,10 +124,10 @@ fn creation_request() -> SessionCreationRequest {
 #[test]
 fn creation_resolves_an_immutable_session_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let profile = resolution.session_profile();
 
-    assert_eq!(profile.runtime_profile_ref(), "native-codex:selected");
+    assert_eq!(profile.configuration(), &orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"));
     assert_eq!(
         profile.attached_runtime_capabilities(),
         &runtime_profile().exposure
@@ -152,13 +154,13 @@ fn route_groups_shape_session_exposure_without_enforcing_model_allowances() {
         execution: Default::default(),
         model_allowances: vec![super::ModelAllowance {
             model_id: "future-only".into(),
-            minimum_reasoning: "low".into(),
-            maximum_reasoning: "high".into(),
+            minimum_reasoning: Some("low".into()),
+            maximum_reasoning: Some("high".into()),
         }],
         mcp_groups: set(&["otp:repository:mcps"]),
         skill_groups: set(&["orchid-skills"]),
         defaults: RuntimeSelections::default(),
-        codex_personality: None,
+        provider_options: None,
     }];
     request.capability_profile.default_route_id = Some("local".into());
     request.capability_profile.allowed_capabilities = CapabilitySet::default();
@@ -195,7 +197,7 @@ fn capability_profile_cannot_widen_the_runtime() {
         .insert("unavailable".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::CapabilityProfileWidensRuntime(capability))
             if capability == "model `unavailable`"
     ));
@@ -214,7 +216,7 @@ fn node_profile_cannot_widen_its_capability_profile() {
         .insert("admin".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::NodeProfileWidensCapabilityProfile(capability))
             if capability == "MCP tool `repository/admin`"
     ));
@@ -230,7 +232,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
         .sandbox_modes
         .clear();
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, excluding),
+        SessionProfileResolver::resolve_creation(&source, None, excluding),
         Err(ResolutionError::LockedCapabilityExcluded(capability))
             if capability.contains("sandbox mode")
     ));
@@ -254,7 +256,7 @@ fn runtime_locked_control_cannot_be_removed_or_changed() {
         .insert(SandboxMode::DangerFullAccess);
     changing.node_profile.pinned_defaults.sandbox_mode = Some(SandboxMode::DangerFullAccess);
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, changing),
+        SessionProfileResolver::resolve_creation(&source, None, changing),
         Err(ResolutionError::SelectionConflictsWithLocked(_))
     ));
 }
@@ -266,7 +268,7 @@ fn unavailable_pinned_default_fails_without_fallback() {
     request.node_profile.pinned_defaults.model = Some("unavailable".into());
 
     assert!(matches!(
-        SessionProfileResolver::resolve_creation(&source, request),
+        SessionProfileResolver::resolve_creation(&source, None, request),
         Err(ResolutionError::PinnedSelectionUnavailable(capability))
             if capability == "model `unavailable`"
     ));
@@ -281,12 +283,12 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
     let mut request = creation_request();
     request.node_profile.allowed_capabilities.models = set(&["codex-a"]);
     request.node_profile.allowed_capabilities.reasoning_modes = set(&["high"]);
-    let creation = SessionProfileResolver::resolve_creation(&source, request).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, request).unwrap();
     let original_digest = creation.digest().to_owned();
     let original_defaults = creation.session_profile().pinned_defaults().clone();
 
     let invocation = SessionProfileResolver::validate_direct_user_invocation(
-        &source,
+        &source, None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -317,11 +319,11 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
 #[test]
 fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let before = creation.clone();
 
     let result = SessionProfileResolver::validate_direct_user_invocation(
-        &source,
+        &source, None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -342,14 +344,14 @@ fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
 #[test]
 fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.profile_ref = "native-codex:other".into();
+    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
         SessionProfileResolver::validate_direct_user_invocation(
-            &changed_source,
+            &changed_source, None,
             &creation,
             DirectUserInvocationRequest {
                 contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -365,13 +367,13 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.profile_ref = "native-codex:other".into();
+    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
-        SessionProfileResolver::validate_pinned_session(&changed_source, &creation),
+        SessionProfileResolver::validate_pinned_session(&changed_source, None, &creation),
         Err(ResolutionError::RuntimeProfileChanged { .. })
     ));
 }
@@ -379,7 +381,7 @@ fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn digest_is_stable_for_equivalent_unordered_inputs() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let first = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let first = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut reordered_runtime = runtime_profile();
     reordered_runtime.exposure = reverse_insertion_order(&reordered_runtime.exposure);
     let reordered_source = FixedProfileSource(Ok(reordered_runtime));
@@ -389,7 +391,7 @@ fn digest_is_stable_for_equivalent_unordered_inputs() {
     reordered_request.node_profile.allowed_capabilities =
         reverse_insertion_order(&reordered_request.node_profile.allowed_capabilities);
     let second =
-        SessionProfileResolver::resolve_creation(&reordered_source, reordered_request).unwrap();
+        SessionProfileResolver::resolve_creation(&reordered_source, None, reordered_request).unwrap();
 
     assert_eq!(first.digest(), second.digest());
 }
@@ -412,7 +414,7 @@ fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
 #[test]
 fn digest_verification_rejects_a_contract_version_change() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, creation_request()).unwrap();
+    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut value = serde_json::to_value(resolution).unwrap();
     value["contractVersion"] = serde_json::json!(2);
     let changed: SessionCreationResolution = serde_json::from_value(value).unwrap();
@@ -435,11 +437,11 @@ fn strict_contracts_reject_unknown_fields_and_node_identity() {
 
 #[test]
 fn source_failure_is_a_typed_resolution_error() {
-    let source = FixedProfileSource(Err(SelectedRuntimeProfileSourceError::unavailable(
+    let source = FixedProfileSource(Err(ProviderConfigurationSourceError::unavailable(
         "no ready profile",
     )));
     assert_eq!(
-        SessionProfileResolver::resolve_creation(&source, creation_request()),
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()),
         Err(ResolutionError::SourceUnavailable(
             "no ready profile".into()
         ))
@@ -522,4 +524,67 @@ fn sqlite_profiles_store_route_references_and_resolve_device_owned_connections()
         },
         profile
     );
+}
+
+fn native_options(provider: &str, personality: &str) -> orchid_engine::contracts::ProviderNativeOptions {
+    orchid_engine::contracts::ProviderNativeOptions {
+        provider: provider.into(),
+        settings: serde_json::json!({ "personality": personality }),
+    }
+}
+
+fn routed_request(route_options: Option<orchid_engine::contracts::ProviderNativeOptions>) -> SessionCreationRequest {
+    let mut request = creation_request();
+    request.capability_profile.route_policies = vec![super::ProfileRoutePolicy {
+        route_id: "local".into(),
+        execution: Default::default(),
+        model_allowances: Vec::new(),
+        mcp_groups: set(&[super::NATIVE_MCP_GROUP]),
+        skill_groups: BTreeSet::new(),
+        defaults: RuntimeSelections::default(),
+        provider_options: route_options,
+    }];
+    request.capability_profile.default_route_id = Some("local".into());
+    request.capability_profile.allowed_capabilities = CapabilitySet::default();
+    request.node_profile.allowed_capabilities = CapabilitySet::default();
+    request
+}
+
+#[test]
+fn route_native_options_override_configuration_defaults_and_absence_inherits_them() {
+    let mut runtime = runtime_profile();
+    runtime.provider_options = Some(native_options("codex", "friendly"));
+
+    let inherited =
+        SessionProfileResolver::resolve_snapshot(runtime.clone(), routed_request(None)).unwrap();
+    assert_eq!(
+        inherited.session_profile().provider_options(),
+        Some(&native_options("codex", "friendly"))
+    );
+    assert_eq!(inherited.session_profile().native_mcp_enabled(), Some(true));
+
+    let overridden = SessionProfileResolver::resolve_snapshot(
+        runtime,
+        routed_request(Some(native_options("codex", "pragmatic"))),
+    )
+    .unwrap();
+    assert_eq!(
+        overridden.session_profile().provider_options(),
+        Some(&native_options("codex", "pragmatic"))
+    );
+    overridden.verify_digest().unwrap();
+}
+
+#[test]
+fn native_options_cannot_travel_with_another_provider() {
+    let request = routed_request(Some(native_options("test-provider", "friendly")));
+    assert!(request
+        .capability_profile
+        .validate()
+        .unwrap_err()
+        .contains("test-provider"));
+
+    let mut runtime = runtime_profile();
+    runtime.provider_options = Some(native_options("test-provider", "friendly"));
+    assert!(runtime.validate().unwrap_err().contains("test-provider"));
 }

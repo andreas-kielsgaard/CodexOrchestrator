@@ -20,6 +20,9 @@ pub(crate) struct SessionPreparation {
     pub(crate) source_binding: AgentRuntimeBinding,
     #[serde(default)]
     pub(crate) prepared_binding: Option<AgentRuntimeBinding>,
+    /// The current provider's conversation, parked when this preparation changes provider.
+    #[serde(default)]
+    pub(crate) parked_source: Option<super::domain::ParkedNativeConversation>,
     pub(crate) resolved_target: Option<SessionExecutionTarget>,
     pub(crate) resolved_working_directory: Option<String>,
     #[serde(default)]

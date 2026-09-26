@@ -59,22 +59,25 @@ struct Fixture {
 
 use crate::execution_configuration::RuntimeQuickFeatures;
 struct QuickSource {
-    profile_ref: String,
+    configuration: orchid_engine::contracts::ProviderConfigurationRef,
     contexts: Mutex<Vec<Option<String>>>,
 }
-impl SelectedRuntimeProfileSource for QuickSource {
-    fn selected_runtime_profile(
+impl ProviderConfigurationSource for QuickSource {
+    fn profile_for_configuration(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
-    fn quick_features_at(
+    fn quick_features_for_configuration(
         &self,
+        _reference: &str,
         cwd: Option<&str>,
-    ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+    ) -> Result<RuntimeQuickFeatures, ProviderConfigurationSourceError> {
         self.contexts.lock().unwrap().push(cwd.map(String::from));
         Ok(RuntimeQuickFeatures {
-            profile_ref: self.profile_ref.clone(),
+            configuration: Some(self.configuration.clone()),
             ..Default::default()
         })
     }
@@ -84,7 +87,7 @@ impl SelectedRuntimeProfileSource for QuickSource {
 fn skill_discovery_does_not_require_a_capability_profile() {
     let fixture = Fixture::new();
     let source = Arc::new(QuickSource {
-        profile_ref: test_selected_runtime_profile().profile_ref,
+        configuration: test_selected_runtime_profile().configuration,
         contexts: Mutex::new(Vec::new()),
     });
     let mut application = fixture.direct.clone().with_profile_source(source.clone());
@@ -96,17 +99,19 @@ fn skill_discovery_does_not_require_a_capability_profile() {
 #[test]
 fn new_workspace_discovers_from_its_selected_codex_configuration() {
     struct RecordingSource(Mutex<Vec<String>>);
-    impl SelectedRuntimeProfileSource for RecordingSource {
-        fn selected_runtime_profile(
-            &self,
-        ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+    impl ProviderConfigurationSource for RecordingSource {
+        fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(test_selected_runtime_profile())
         }
         fn quick_features_for_configuration(
             &self,
             reference: &str,
             _: Option<&str>,
-        ) -> Result<RuntimeQuickFeatures, SelectedRuntimeProfileSourceError> {
+        ) -> Result<RuntimeQuickFeatures, ProviderConfigurationSourceError> {
             self.0.lock().unwrap().push(reference.into());
             Ok(RuntimeQuickFeatures::default())
         }
@@ -116,7 +121,7 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
     let mut application = fixture.direct.clone().with_profile_source(source.clone());
     application.capability_profiles = None;
     application
-        .load_quick_features_for_configuration(None, None, None, Some("profile-two"))
+        .load_quick_features_for_configuration(None, None, None, Some(&orchid_engine::contracts::ProviderConfigurationRef::new("codex", "profile-two")))
         .unwrap();
     assert_eq!(*source.0.lock().unwrap(), ["profile-two"]);
 }
@@ -125,7 +130,7 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
 fn quick_features_use_session_context_and_reject_a_different_provider_profile() {
     let fixture = Fixture::new();
     let source = Arc::new(QuickSource {
-        profile_ref: test_selected_runtime_profile().profile_ref,
+        configuration: test_selected_runtime_profile().configuration,
         contexts: Mutex::new(Vec::new()),
     });
     let application = fixture.direct.clone().with_profile_source(source.clone());
@@ -161,7 +166,7 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
         .invocations
         .is_empty());
     let changed = application.with_profile_source(Arc::new(QuickSource {
-        profile_ref: "different-profile".into(),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "different-profile"),
         contexts: Mutex::new(Vec::new()),
     }));
     assert!(changed
@@ -290,13 +295,10 @@ impl Fixture {
                 ["handoff_to_agent".into()].into_iter().collect(),
             );
         }
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(SqliteCapabilityProfileRepository::from_database(
+        let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(SqliteCapabilityProfileRepository::from_database(
                 database.clone(),
-            )),
-            source.clone(),
-        ));
+            ))).with_configuration_source(source.clone()));
         let definition = test_session_creation_request().capability_profile;
         profiles
             .create(
@@ -316,12 +318,7 @@ impl Fixture {
                 .with_capability_profiles(profiles.clone()),
         );
         let adapter = Arc::new(
-            AgentSessionEventAdapter::new(
-                sessions.clone(),
-                repository.clone(),
-                source.clone(),
-                identities,
-            )
+            AgentSessionEventAdapter::new(sessions.clone(), repository.clone(), identities)
             .with_capability_profiles(profiles.clone()),
         );
         let events = Arc::new(SessionEventApplication::new(

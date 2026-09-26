@@ -93,49 +93,52 @@ impl ExecutionEndpoints {
         destination: &ExecutionBinding,
         external_id: &crate::agent_sessions::domain::ExternalRuntimeContextId,
     ) -> Result<(), String> {
-        use orchid_engine::codex::app_server::continuation;
         let source = self.freeze_binding(source.clone())?;
         let destination = self.freeze_binding(destination.clone())?;
+        if source.provider != destination.provider {
+            return Err(format!(
+                "Native continuation cannot cross Agent providers (`{}` to `{}`)",
+                source.provider, destination.provider
+            ));
+        }
         if source.device_id == destination.device_id
             && source.configuration_ref == destination.configuration_ref
             && source.connection == destination.connection
         {
             return Ok(());
         }
-        let payload: continuation::CodexContinuation = match &source.connection {
-            ExecutionConnection::Local => {
-                let home = self
-                    .local_source
-                    .configuration_home(&source.configuration_ref)
-                    .map_err(|e| e.to_string())?;
-                continuation::export("codex", &home, external_id.as_str())
-                    .map_err(|e| e.to_string())?
-            }
+        let payload: orchid_engine::contracts::provider::ProviderContinuationPayload =
+            match &source.connection {
+            ExecutionConnection::Local => self
+                .providers
+                .continuations
+                .get(&source.provider)?
+                .export(&source.configuration_ref, external_id)?,
             ExecutionConnection::Ssh {
                 target,
                 host_executable,
             } => SshConnection::connect(target, host_executable)
                 .map_err(|e| e.to_string())?
                 .request(HostCommand::ExportContinuation {
+                    provider: source.provider.clone(),
                     configuration_ref: source.configuration_ref.clone(),
                     external_context_id: external_id.clone(),
                 })
                 .map_err(|e| e.to_string())?,
         };
         match &destination.connection {
-            ExecutionConnection::Local => {
-                let home = self
-                    .local_source
-                    .configuration_home(&destination.configuration_ref)
-                    .map_err(|e| e.to_string())?;
-                continuation::install("codex", &home, &payload).map_err(|e| e.to_string())
-            }
+            ExecutionConnection::Local => self
+                .providers
+                .continuations
+                .get(&destination.provider)?
+                .install(&destination.configuration_ref, &payload),
             ExecutionConnection::Ssh {
                 target,
                 host_executable,
             } => SshConnection::connect(target, host_executable)
                 .map_err(|e| e.to_string())?
                 .request(HostCommand::InstallContinuation {
+                    provider: destination.provider.clone(),
                     configuration_ref: destination.configuration_ref.clone(),
                     continuation: payload,
                 })
@@ -206,11 +209,11 @@ impl ExecutionEndpoints {
     ) -> Result<String, String> {
         match &binding.connection {
             ExecutionConnection::Local => {
-                let home = self
-                    .local_source
-                    .configuration_home(&binding.configuration_ref)
-                    .map_err(|e| e.to_string())?;
-                orchid_engine::workspaces::auxiliary_workspace(&home.join("orchid"), session_id)
+                let directory = self
+                    .local_sessions_directory
+                    .as_deref()
+                    .ok_or("Local auxiliary workspaces are unavailable")?;
+                orchid_engine::workspaces::auxiliary_workspace(directory, session_id)
                     .map_err(|e| e.to_string())
             }
             ExecutionConnection::Ssh {

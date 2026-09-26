@@ -31,8 +31,9 @@ import { tauriOtpCatalogueReader, tauriOtpInstallationClient } from '../infrastr
 import { tauriWorkflowInstanceClient } from '../infrastructure/workflowInstances/tauriWorkflowInstanceClient';
 import { tauriDraftCloseGuard } from '../infrastructure/tauriDraftCloseGuard';
 import { tauriSessionEventQueryClient } from '../infrastructure/sessionEvents/tauriSessionEventQueryClient';
-import { tauriNativeProfileClient } from '../infrastructure/nativeProfiles/nativeProfileClient';
-import { createNativeProfileApplicationConsumer } from '../infrastructure/nativeProfiles/nativeProfileConsumer';
+import { tauriNativeProfileClient } from '../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
+import { tauriClaudeSetupClient } from '../infrastructure/agentProviders/claude/claudeSetupClient';
+import { createNativeProfileApplicationConsumer } from '../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 import {
   tauriProductDecisionClient,
   tauriProductDecisionCorrectionClient,
@@ -74,6 +75,7 @@ export function createProductApplicationComposition(): AppProps {
     ),
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
+    claudeSetupClient: tauriClaudeSetupClient,
     nativeProfileApplicationConsumer:
       createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,

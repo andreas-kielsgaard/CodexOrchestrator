@@ -1,3 +1,5 @@
+mod native_conversations;
+pub(crate) use native_conversations::SCHEMA as NATIVE_CONVERSATION_SCHEMA;
 mod preparation;
 pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
 mod target_transition;
@@ -85,10 +87,13 @@ impl SqliteAgentSessionRepository {
                     let launch_accepted_at =
                         invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
                     let events = list_events_from(&transaction, &invocation.id)?;
+                    let import_provenance =
+                        import::imported_turn_from(&transaction, &invocation.id)?;
                     Ok(AgentInvocationHistory {
                         invocation,
                         launch_accepted_at,
                         events,
+                        import_provenance,
                     })
                 })
                 .collect::<Result<Vec<_>, RepositoryError>>()?;
@@ -140,6 +145,7 @@ impl SqliteAgentSessionRepository {
                                 invocation,
                                 launch_accepted_at: None,
                                 events: list_events_from(&transaction, &id)?,
+                                import_provenance: None,
                             }])
                         } else { 0 };
                         (Some(status), Some(text), count)
@@ -219,6 +225,27 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         preparation: &super::preparation::SessionPreparation,
     ) -> Result<(), RepositoryError> {
         self.save_preparation_record(preparation)
+    }
+    fn parked_native_conversation(
+        &self,
+        session_id: &AgentSessionId,
+        provider: &str,
+    ) -> Result<Option<crate::agent_sessions::domain::ParkedNativeConversation>, RepositoryError>
+    {
+        self.read_parked_conversation(session_id, provider)
+    }
+    fn record_initial_prompt_prefix(
+        &self,
+        session_id: &AgentSessionId,
+        prefix: &crate::agent_sessions::ports::InitialPromptPrefix,
+    ) -> Result<(), RepositoryError> {
+        self.insert_initial_prompt_prefix(session_id, prefix)
+    }
+    fn initial_prompt_prefix(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<crate::agent_sessions::ports::InitialPromptPrefix>, RepositoryError> {
+        self.read_initial_prompt_prefix(session_id)
     }
     fn commit_prepared_binding(
         &self,
@@ -663,6 +690,9 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
     }
     connection
         .execute_batch(PREPARATION_SCHEMA)
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(NATIVE_CONVERSATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
         .execute_batch(TARGET_TRANSITION_SCHEMA)

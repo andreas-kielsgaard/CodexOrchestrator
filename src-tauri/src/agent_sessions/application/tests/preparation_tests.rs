@@ -107,15 +107,19 @@ impl AgentRuntime for BlockingPreparationRuntime {
     }
 }
 struct PreparationProfileSource;
-impl SelectedRuntimeProfileSource for PreparationProfileSource {
-    fn selected_runtime_profile(
+impl ProviderConfigurationSource for PreparationProfileSource {
+    fn profile_for_configuration(
         &self,
-    ) -> Result<RuntimeProfileSnapshot, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
         Ok(test_selected_runtime_profile())
     }
-    fn native_inventory(
+    fn inventory_for_configuration(
         &self,
-    ) -> Result<NativeCapabilityInventory, SelectedRuntimeProfileSourceError> {
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
         Ok(Default::default())
     }
 }
@@ -156,14 +160,11 @@ impl PreparationFixture {
             },
         };
         let endpoints = Arc::new(
-            ExecutionEndpoints::new(source.clone(), runtime.clone())
+            ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), runtime.clone()))
                 .with_runtime(&old_execution, old_runtime.clone()),
         );
         let profiles = Arc::new(
-            CapabilityProfileService::new(
-                Arc::new(InMemoryCapabilityProfileRepository::default()),
-                source.clone(),
-            )
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
             .with_endpoints(endpoints.clone()),
         );
         let profile = profiles

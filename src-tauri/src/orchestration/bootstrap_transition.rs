@@ -3,7 +3,7 @@
 use super::{
     conversation_harness::{self, ConversationHarnessRole},
     domain::PlanBuilderProposal,
-    mcp::CodexMcpInjection,
+    managed_mcp::ManagedMcpGrant,
 };
 use crate::agent_sessions::{
     application::{
@@ -12,7 +12,6 @@ use crate::agent_sessions::{
         SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
     },
     domain::{AgentInvocationId, AgentInvocationStatus, AgentSessionId},
-    ports::RuntimeLaunchExtension,
 };
 use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use bytes::Bytes;
@@ -1104,7 +1103,7 @@ impl SqliteBootstrapTransitionRepository {
 }
 
 pub(crate) trait BootstrapInvocationHandle: Send {
-    fn injection(&self) -> &CodexMcpInjection;
+    fn grant(&self) -> &ManagedMcpGrant;
     fn stop(self: Box<Self>);
 }
 
@@ -1407,14 +1406,9 @@ impl PostConfirmationTransitionService {
                             bootstrap_harness.mcp.required,
                         )
                         .map_err(TransitionError::Unavailable)?;
-                    let mut config_overrides = bootstrap_harness.runtime_config_overrides();
-                    config_overrides.extend(managed.injection().config_overrides.clone());
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
-                        managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
-                        config_overrides,
-                        environment: vec![managed.injection().environment.clone()],
-                        initial_prompt_prefix: Some(bootstrap_harness.initial_prompt_prefix()),
-                    };
+                    let mut extension = bootstrap_harness.launch_extension();
+                    extension.initial_prompt_prefix = Some(bootstrap_harness.initial_prompt_prefix());
+                    managed.grant().clone().apply(&mut extension);
                     let send = self
                         .sessions
                         .send_idempotent_application_message_with_launch_observation(
@@ -1568,14 +1562,9 @@ impl PostConfirmationTransitionService {
                     }
                     self.repository
                         .record_stage(&record.initiation_id, "runner_harness_applied_at")?;
-                    let mut config_overrides = harness.runtime_config_overrides();
-                    config_overrides.extend(injection.config_overrides);
-                    let extension = RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
-                        managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
-                        config_overrides,
-                        environment: vec![injection.environment],
-                        initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
-                    };
+                    let mut extension = harness.launch_extension();
+                    extension.initial_prompt_prefix = Some(harness.initial_prompt_prefix());
+                    injection.apply(&mut extension);
                     let launch = self
                         .sessions
                         .launch_prepared_application_invocation_with_launch_observation(
@@ -1668,8 +1657,9 @@ impl PostConfirmationTransitionService {
                         harness.mcp.required,
                     )
                     .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
-                let mut config_overrides = harness.runtime_config_overrides();
-                config_overrides.extend(injection.config_overrides);
+                let mut extension = harness.launch_extension();
+                extension.initial_prompt_prefix = Some(harness.initial_prompt_prefix());
+                injection.apply(&mut extension);
                 let launch = self
                     .sessions
                     .send_idempotent_application_message_with_launch_observation(
@@ -1692,12 +1682,7 @@ impl PostConfirmationTransitionService {
                                 requested_options: Some(harness.runtime_options()),
                             },
                         },
-                        Some(RuntimeLaunchExtension { native_mcp_enabled: None, codex_personality: None,
-                            managed_mcp_servers: Vec::new(), skill_inputs: Vec::new(), ignore_user_rules: false, reasoning_mode: None,
-                            config_overrides,
-                            environment: vec![injection.environment],
-                            initial_prompt_prefix: Some(harness.initial_prompt_prefix()),
-                        }),
+                        Some(extension),
                     )
                     .map_err(|error| TransitionError::Unavailable(error.to_string()))?;
                 self.repository.record_runner_recovery_stage(
@@ -1938,11 +1923,11 @@ impl ManagedBootstrapMcpServer {
 
 struct ManagedBootstrapInvocation {
     server: ManagedBootstrapMcpServer,
-    injection: CodexMcpInjection,
+    injection: ManagedMcpGrant,
 }
 
 impl BootstrapInvocationHandle for ManagedBootstrapInvocation {
-    fn injection(&self) -> &CodexMcpInjection {
+    fn grant(&self) -> &ManagedMcpGrant {
         &self.injection
     }
 
@@ -1960,7 +1945,7 @@ fn start_managed_bootstrap_invocation(
 ) -> io::Result<ManagedBootstrapInvocation> {
     let bearer = uuid::Uuid::new_v4().simple().to_string();
     let server = start_bootstrap_server(service, invocation_id, bearer.clone(), origins)?;
-    let injection = CodexMcpInjection::new_named(
+    let injection = ManagedMcpGrant::new(
         "epic_bootstrap",
         &server.url(),
         bearer,
@@ -2024,7 +2009,7 @@ fn start_bootstrap_server(
                             let allowed_host = allowed_host.clone();
                             let allowed_origins = allowed_origins.clone();
                             async move {
-                                if let Some(status) = super::mcp::transport_denial(
+                                if let Some(status) = super::managed_mcp::transport_denial(
                                     &expected,
                                     &allowed_host,
                                     &allowed_origins,
@@ -2091,7 +2076,7 @@ mod tests {
                 WorkUnitExecutionHarnessService, WorkUnitHarnessRole,
             },
         },
-        runtime::codex::CodexCliRuntime,
+        runtime::providers::codex::CodexCliRuntime,
     };
     #[cfg(feature = "live-tests")]
     use crate::agent_sessions::domain::{AgentInvocation, ToolActivityPhase};
@@ -2799,12 +2784,12 @@ mod tests {
     }
 
     struct DummyHandle {
-        injection: CodexMcpInjection,
+        injection: ManagedMcpGrant,
         stopped: Arc<AtomicUsize>,
     }
 
     impl BootstrapInvocationHandle for DummyHandle {
-        fn injection(&self) -> &CodexMcpInjection {
+        fn grant(&self) -> &ManagedMcpGrant {
             &self.injection
         }
 
@@ -2829,7 +2814,7 @@ mod tests {
         ) -> Result<Box<dyn BootstrapInvocationHandle>, String> {
             self.starts.fetch_add(1, Ordering::SeqCst);
             Ok(Box::new(DummyHandle {
-                injection: CodexMcpInjection::new_named(
+                injection: ManagedMcpGrant::new(
                     "recorded_bootstrap",
                     "http://127.0.0.1:1/mcp",
                     "recorded-secret".into(),
@@ -3160,15 +3145,10 @@ mod tests {
         assert!(bootstrap_request
             .submitted_text
             .contains(&initial.approved_plan_path));
-        assert_eq!(
-            bootstrap_request
-                .launch_extension
-                .as_ref()
-                .unwrap()
-                .environment
-                .len(),
-            1
-        );
+        let bootstrap_extension = bootstrap_request.launch_extension.as_ref().unwrap();
+        assert_eq!(bootstrap_extension.managed_mcp_servers.len(), 1);
+        assert!(bootstrap_extension.managed_mcp_servers[0].bearer_token.is_some());
+        assert!(bootstrap_extension.environment.is_empty());
 
         let completed = fixture
             .service
@@ -3219,11 +3199,11 @@ mod tests {
             .submitted_text
             .contains("Use request_next_sprint_runner exactly once"));
         let runner_extension = runner_request.launch_extension.as_ref().unwrap();
-        assert_eq!(runner_extension.environment.len(), 1);
-        assert!(runner_extension
-            .config_overrides
-            .iter()
-            .any(|value| value.contains("request_next_sprint_runner")));
+        assert_eq!(runner_extension.managed_mcp_servers.len(), 1);
+        assert_eq!(
+            runner_extension.managed_mcp_servers[0].enabled_tools.as_deref(),
+            Some(["request_next_sprint_runner".to_string()].as_slice())
+        );
 
         fixture.service.reconcile_startup().unwrap();
         fixture.service.reconcile_startup().unwrap();
@@ -4030,13 +4010,10 @@ mod tests {
         assert!(request
             .submitted_text
             .contains("Sprint Runner for one application-authorized Sprint"));
-        assert!(request
-            .launch_extension
-            .as_ref()
-            .unwrap()
-            .config_overrides
-            .iter()
-            .any(|argument| argument == "approval_policy=\"never\""));
+        assert_eq!(
+            request.launch_extension.as_ref().unwrap().approval,
+            crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended
+        );
 
         bootstrap.reconcile_startup().unwrap();
         assert_eq!(sprint_runners.reconcile_startup().unwrap(), 1);
@@ -4901,7 +4878,7 @@ mod tests {
             })
             .unwrap();
 
-        let runtime = Arc::new(crate::runtime::codex::CodexCliRuntime::system(
+        let runtime = Arc::new(crate::runtime::providers::codex::CodexCliRuntime::system(
             "codex", None,
         ));
         let notifier = Arc::new(LiveTransitionNotifier::default());
@@ -5776,10 +5753,10 @@ mod tests {
         assert!(launch.submitted_text.contains("create Work Units, Handler or Implementer Sessions"));
         assert!(launch.submitted_text.contains("settle the Sprint, or advance to a later planning point"));
         let extension = launch.launch_extension.as_ref().unwrap();
-        assert_eq!(&extension.config_overrides[..1], &["approval_policy=\"never\""]);
-        assert!(extension.config_overrides.iter().any(|value| value.contains("mcp_servers.work_slice_planner_")));
-        assert_eq!(extension.environment.len(), 1);
-        assert!(extension.environment[0].0.starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        assert_eq!(extension.approval, crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended);
+        assert!(extension.managed_mcp_servers[0].name.starts_with("work_slice_planner_"));
+        assert!(extension.managed_mcp_servers[0].bearer_token.is_some());
+        assert!(extension.environment.is_empty());
 
         let connection = Connection::open(&fixture.database_path).unwrap();
         assert_eq!(connection.query_row::<i64, _, _>("SELECT COUNT(*) FROM work_slice_planning_requests", [], |row| row.get(0)).unwrap(), 1);
@@ -6434,8 +6411,8 @@ mod tests {
         );
         fixture.runtime.stage_candidate_change(&expected_implementer_invocation);
         let injection = handler_runner.prepared_handler_action_injection(&continuation.3).unwrap();
-        let endpoint = injection.config_overrides.iter().find_map(|argument| argument.strip_prefix("mcp_servers.").and_then(|value| value.split_once(".url=\"")).map(|(_, value)| value.trim_end_matches('"').to_owned())).unwrap();
-        let bearer = injection.environment.1.clone();
+        let endpoint = injection.server().url.clone();
+        let bearer = injection.server().bearer_token.clone().unwrap();
         tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().unwrap().block_on(async {
             let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap();
             let initialize = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}).to_string();
@@ -6533,25 +6510,18 @@ mod tests {
         assert!(implementer_launch.submitted_text.contains(&specification));
         for handler_launch in [original_handler_launch, action_handler_launch] {
             let extension = handler_launch.launch_extension.as_ref().unwrap();
-            assert_eq!(
-                &extension.config_overrides[..1],
-                &["approval_policy=\"never\""]
-            );
+            assert_eq!(extension.approval, crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended);
             assert_eq!(
                 extension.initial_prompt_prefix.as_ref().unwrap().source,
                 "work_unit_handler"
             );
         }
         let implementer_extension = implementer_launch.launch_extension.as_ref().unwrap();
-        assert_eq!(
-            &implementer_extension.config_overrides[..1],
-            &["approval_policy=\"never\""]
-        );
+        assert_eq!(implementer_extension.approval, crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended);
         assert!(implementer_extension.ignore_user_rules);
-        assert!(implementer_extension.config_overrides.iter().any(|value| value == "mcp_servers={}"));
-        assert!(implementer_extension.config_overrides.iter().any(|argument| {
-            argument.starts_with("projects.'") && argument.ends_with(".trust_level=\"trusted\"")
-        }));
+        assert_eq!(implementer_extension.native_mcp_enabled, Some(false));
+        assert!(implementer_extension.trusted_workspace);
+        assert!(implementer_extension.managed_mcp_servers.is_empty());
         assert!(implementer_extension.environment.is_empty());
         assert_eq!(
             implementer_extension.initial_prompt_prefix.as_ref().unwrap().source,
@@ -8718,7 +8688,7 @@ mod tests {
         let fixture = Fixture::unstarted();
         let home = PrivateCodexHome::new(fixture._directory.path()).expect("private Codex home");
         let scope = ScopedCodexHome::set(home.path());
-        let executable = crate::runtime::codex::resolve_program("codex".into())
+        let executable = crate::runtime::providers::codex::resolve_program("codex".into())
             .expect("resolve installed native Codex executable");
         let output = Command::new(&executable)
             .args(["doctor", "--json"])
@@ -9101,7 +9071,7 @@ mod tests {
         assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "sandbox_workspace_write.network_access"));
         assert!(resume_provenance["configurationKeys"].as_array().unwrap().iter().any(|key| key == "features.network_proxy"));
         assert_eq!(resume_provenance["environmentKeys"].as_array().unwrap().len(), 1);
-        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("CODEX_ORCHESTRATOR_MCP_"));
+        assert!(resume_provenance["environmentKeys"][0].as_str().unwrap_or_default().starts_with("ORCHID_MCP_BEARER_"));
         let tools = reporting_entry.events.iter()
             .filter_map(|event| event.normalized.as_ref())
             .filter_map(|event| event.tool_activity.as_ref())
@@ -9649,7 +9619,7 @@ mod tests {
         assert!(review_facts.5.is_some() && review_facts.6.is_some() && review_facts.7.is_some() && review_facts.8.is_some() && review_facts.9.is_some());
         let pinned = accepted.handler.load_pinned_handler_revision(&review_facts.2, &review_facts.3, &review_facts.4).unwrap();
         assert_eq!(pinned.profile.runtime_options().sandbox, Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly));
-        assert!(pinned.profile.runtime_config_overrides().iter().any(|value| value == "approval_policy=\"never\""));
+        assert_eq!(pinned.profile.launch_extension().approval, crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended);
         assert_eq!(pinned.profile.mcp.enabled_tools, ["read_handler_review_evidence", "accept_implementation_outcome", "return_implementation_outcome"]);
         let evidence: serde_json::Value = serde_json::from_str(&accepted.transition.handler_review_evidence_for_test(&review).unwrap()).unwrap();
         assert_eq!(evidence["summary"], "Implemented the reporting boundary.");

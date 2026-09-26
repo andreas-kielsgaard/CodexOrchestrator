@@ -3,8 +3,8 @@ use crate::agent_sessions::ports::RuntimeSkillInput;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// Pin selected Codex-discovered skills and Orchid-owned roots for one session.
-/// No source folder is copied, linked, or added to CODEX_HOME.
+/// Pin the route's selected skills, from the provider's native catalogue and Orchid-owned roots,
+/// for one session. No source folder is copied, linked, or added to a provider's native home.
 pub(crate) fn compile_session_skill_inputs(
     route: &ProfileRoutePolicy,
     features: &RuntimeQuickFeatures,
@@ -25,8 +25,8 @@ pub(crate) fn compile_session_skill_inputs(
         let Ok(path) = path.canonicalize() else {
             continue;
         };
-        let codex_discovered =
-            skill.group_id == "codex-profile-skills" && groups.contains("codex-profile-skills");
+        let natively_discovered = skill.group_id == super::NATIVE_SKILL_GROUP
+            && groups.contains(super::NATIVE_SKILL_GROUP);
         let owned_root = roots.iter().any(|root| {
             root.group_id == skill.group_id
                 && groups.contains(&root.group_id)
@@ -35,7 +35,7 @@ pub(crate) fn compile_session_skill_inputs(
                     .canonicalize()
                     .is_ok_and(|root| path.starts_with(root))
         });
-        if !codex_discovered && !owned_root {
+        if !natively_discovered && !owned_root {
             continue;
         }
         result.push(RuntimeSkillInput {
@@ -84,7 +84,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 pub(crate) fn pin_discovered_skill(
-    skill: &orchid_engine::codex::app_server::skills::CodexSkill,
+    skill: &orchid_engine::contracts::ProviderSkill,
 ) -> Result<RuntimeSkillInput, String> {
     let path = Path::new(&skill.path)
         .canonicalize()
@@ -117,13 +117,13 @@ mod tests {
                 execution: Default::default(),
                 model_allowances: vec![ModelAllowance {
                     model_id: "model".into(),
-                    minimum_reasoning: "low".into(),
-                    maximum_reasoning: "high".into(),
+                    minimum_reasoning: Some("low".into()),
+                    maximum_reasoning: Some("high".into()),
                 }],
                 mcp_groups: Default::default(),
                 skill_groups: ["orchid-skills".into()].into_iter().collect(),
                 defaults: RuntimeSelections::default(),
-                codex_personality: None,
+                provider_options: None,
             }],
             default_route_id: Some("route".into()),
             contract_version: 1,
@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_discovered_skill_outside_home_is_selected_by_group() {
+    fn natively_discovered_skill_outside_home_is_selected_by_group() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory
             .path()
@@ -185,7 +185,7 @@ mod tests {
                 name: "review".into(),
                 description: "Review".into(),
                 invocation_text: "$review".into(),
-                group_id: "codex-profile-skills".into(),
+                group_id: "native-skills".into(),
             }],
             ..Default::default()
         };
@@ -194,7 +194,7 @@ mod tests {
         assert!(compile_session_skill_inputs(route, &features, &[])
             .unwrap()
             .is_empty());
-        route.skill_groups.insert("codex-profile-skills".into());
+        route.skill_groups.insert("native-skills".into());
         let inputs = compile_session_skill_inputs(route, &features, &[]).unwrap();
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].name, "review");

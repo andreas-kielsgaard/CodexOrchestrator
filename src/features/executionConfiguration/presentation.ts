@@ -88,7 +88,7 @@ export function runtimeProfileViewModel(
   });
 
   return {
-    profileRef: runtime.profileRef,
+    configuration: runtime.configuration,
     sourceLabel,
     exposure: runtime.exposure,
     catalogs: {
@@ -99,7 +99,7 @@ export function runtimeProfileViewModel(
     },
     lockedSelections: runtime.locked,
     notes: [
-      'Capabilities come from the Codex configuration on this profile’s device. Session creation also reads the selected worktree’s configuration.',
+      'Capabilities come from the provider configuration on this profile’s device. Session creation also reads the selected worktree’s configuration.',
     ],
   };
 }
@@ -109,7 +109,7 @@ export function sessionProfileViewModel(
 ): SessionProfileViewModel {
   const profile = resolution.sessionProfile;
   return {
-    runtimeProfileRef: profile.runtimeProfileRef,
+    configuration: profile.configuration,
     capabilityProfileId: profile.capabilityProfileId,
     capabilityProfileRevision: profile.capabilityProfileRevision,
     attachedRuntimeCapabilities: profile.attachedRuntimeCapabilities,

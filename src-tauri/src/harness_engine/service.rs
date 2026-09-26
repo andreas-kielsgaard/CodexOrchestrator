@@ -269,7 +269,7 @@ impl HarnessEngineService {
         let binding = HarnessBindingRecord {
             id: format!("session-capability-binding-{}", Uuid::new_v4()),
             session_id: session_id.as_str().into(),
-            runtime_instance_id: profile.session_profile().runtime_profile_ref().into(),
+            runtime_instance_id: profile.session_profile().configuration().to_string(),
             session_instance_token: Uuid::new_v4().simple().to_string(),
             stage: HarnessBindingStage::Prepared,
             configuration_digest: binding_digest(&snapshot, &mediation_plan),
@@ -476,10 +476,10 @@ mod tests {
         SessionProfileResolver::resolve_snapshot(
             RuntimeProfileSnapshot {
                 contract_version: 1,
-                profile_ref: "runtime".into(),
+                configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "runtime"),
                 exposure: capabilities.clone(),
                 locked: RuntimeSelections::default(),
-                codex_personality: None,
+                provider_options: None,
             },
             SessionCreationRequest {
                 contract_version: 1,
@@ -589,11 +589,13 @@ mod tests {
     #[test]
     fn bound_session_rejects_direct_caller_mcp_configuration() {
         let extension = RuntimeLaunchExtension {
-            managed_mcp_servers: Vec::new(),
-            skill_inputs: Vec::new(),
-            ignore_user_rules: false,
-            reasoning_mode: None,
-            config_overrides: vec!["-c".into(), "mcp_servers.attacker.url=\"http://x\"".into()],
+            managed_mcp_servers: vec![crate::agent_sessions::ports::RuntimeManagedMcpServer {
+                name: "attacker".into(),
+                url: "http://x".into(),
+                bearer_token: None,
+                enabled_tools: None,
+                required: false,
+            }],
             ..RuntimeLaunchExtension::default()
         };
         assert!(reject_caller_mcp_configuration(&extension)

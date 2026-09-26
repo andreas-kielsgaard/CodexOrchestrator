@@ -437,6 +437,7 @@ impl AgentSessionRepository for FakeRepository {
                     .cloned()
                     .unwrap_or_default(),
                 invocation,
+                import_provenance: None,
             })
             .collect::<Vec<_>>();
         invocations.sort_by(|left, right| {
@@ -502,6 +503,7 @@ impl AgentSessionRepository for FakeRepository {
                                         .get(&invocation.id)
                                         .cloned()
                                         .unwrap_or_default(),
+                                    import_provenance: None,
                                 }
                             })
                             .collect::<Vec<_>>(),

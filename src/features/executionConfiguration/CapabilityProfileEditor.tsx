@@ -12,6 +12,7 @@ import type {
   HarnessInferenceRouteOption,
   RuntimeProfileViewModel,
 } from './types';
+import { executionRouteKey } from '../../application/executionTargets/contracts';
 import { CapabilityProfileDialog } from './CapabilityProfileDialog';
 import { CapabilityProfileEditorMemory } from './CapabilityProfileEditorMemory';
 import {
@@ -46,6 +47,7 @@ function rangeValues(
   allowance: ModelAllowanceDto,
   reasoning: readonly string[],
 ): readonly string[] {
+  if (!allowance.minimumReasoning || !allowance.maximumReasoning) return [];
   const first = reasoning.indexOf(allowance.minimumReasoning);
   const last = reasoning.indexOf(allowance.maximumReasoning);
   return first < 0 || last < first ? [] : reasoning.slice(first, last + 1);
@@ -87,16 +89,16 @@ function groupChoices(runtime: RuntimeProfileViewModel, kind: 'mcp' | 'skill') {
     kind === 'mcp'
       ? [
           {
-            id: 'codex-profile-mcps',
-            label: 'Codex profile MCP tools',
-            detail: 'MCP servers configured by this Codex profile.',
+            id: 'native-mcps',
+            label: 'Provider configuration MCP tools',
+            detail: 'MCP servers exposed by the selected provider configuration.',
           },
         ]
       : [
           {
-            id: 'codex-profile-skills',
-            label: 'Skills discovered by Codex',
-            detail: 'Skills registered by the selected Codex profile.',
+            id: 'native-skills',
+            label: 'Provider-discovered skills',
+            detail: 'Skills registered by the selected provider configuration.',
           },
           {
             id: 'orchid-skills',
@@ -167,7 +169,6 @@ export function CapabilityProfileEditor({
     const policy: ProfileRoutePolicyDto = {
       routeId: `route-${Date.now()}-${profile.routePolicies.length + 1}`,
       execution: route.execution,
-      codexPersonality: null,
       modelAllowances: [],
       mcpGroups: [],
       skillGroups: [],
@@ -249,7 +250,7 @@ export function CapabilityProfileEditor({
                 models={
                   modelCatalogues
                     ? byKnownOrder(
-                        (modelCatalogues[route.execution.configurationRef]?.models ?? []).map(
+                        (modelCatalogues[executionRouteKey(route.execution)]?.models ?? []).map(
                           (model) => model.id,
                         ),
                         MODEL_ORDER,
@@ -257,7 +258,7 @@ export function CapabilityProfileEditor({
                     : modelOptions
                 }
                 reasoning={reasoningOptions}
-                modelCatalogue={modelCatalogues?.[route.execution.configurationRef]}
+                modelCatalogue={modelCatalogues?.[executionRouteKey(route.execution)]}
                 routeCatalogueEnabled={modelCatalogues !== undefined}
                 mcpGroups={mcpGroups}
                 skillGroups={skillGroups}

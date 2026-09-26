@@ -54,7 +54,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         .create("Feature build".into(), base.recipe, target)
         .unwrap();
     let source = Arc::new(QuickSource {
-        profile_ref: test_selected_runtime_profile().profile_ref,
+        configuration: test_selected_runtime_profile().configuration,
         contexts: Mutex::new(Vec::new()),
     });
     let sessions = Arc::new(

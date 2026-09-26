@@ -67,7 +67,7 @@ impl AgentSessionImportStore for SqliteAgentSessionRepository {
             let session = &receipt.session;
             validate_session(session).map_err(contract_error)?;
             insert_session(tx, session)?;
-            crate::native_profiles::session_binding::insert_import_binding(tx, session.id.as_str(), &receipt.home, &timestamp(session.created_at))
+            crate::runtime::providers::codex::profiles::session_binding::insert_import_binding(tx, session.id.as_str(), &receipt.home, &timestamp(session.created_at))
                 .map_err(|e| RepositoryError::new(RepositoryErrorKind::Conflict, e))?;
             for (ordinal, turn) in fork.turns.iter().enumerate() {
                 let id = AgentInvocationId::new(format!("{}-import-{ordinal:08}", session.id.as_str())).map_err(contract_error)?;
@@ -84,16 +84,6 @@ impl AgentSessionImportStore for SqliteAgentSessionRepository {
                 tx.execute("INSERT INTO agent_session_imported_turns VALUES (?1,?2,?3,?4,?5,?6)",
                     params![id.as_str(),session.id.as_str(),turn.id,ordinal as i64,turn.started_at,turn.completed_at])
                     .map_err(sql_write("import turn provenance"))?;
-                let metadata = json!({"kind":"codex_history_import","sourceThreadId":receipt.source_thread_id,
-                    "sourceTurnId":turn.id,"ordinal":ordinal,"sourceStartedAt":turn.started_at,
-                    "sourceCompletedAt":turn.completed_at});
-                insert_event(tx, &AgentRuntimeEvent {
-                    id: AgentRuntimeEventId::new(format!("{}-metadata", id.as_str())).map_err(contract_error)?,
-                    invocation_id:id.clone(),sequence:0,source:AgentRuntimeEventSource::Runtime,
-                    raw_payload:metadata.clone(), normalized:Some(NormalizedRuntimeEvent {
-                        kind:NormalizedRuntimeEventKind::Unknown,text:None,external_context_id:None,
-                        usage:None,details:Some(metadata),tool_activity:None }),recorded_at:session.created_at,
-                })?;
                 for (index, item) in turn.items.iter().enumerate() {
                     let mut normalized = item.normalized.clone().unwrap_or(NormalizedRuntimeEvent {
                         kind:NormalizedRuntimeEventKind::Unknown,text:Some(item.text.clone()),external_context_id:None,
@@ -197,7 +187,10 @@ mod tests {
             history.invocations[0].invocation.submitted_text,
             "Remember context"
         );
-        assert_eq!(history.invocations[0].events.len(), 2);
+        assert_eq!(history.invocations[0].events.len(), 1);
+        let provenance = history.invocations[0].import_provenance.as_ref().unwrap();
+        assert_eq!(provenance.source_turn_id, "source-turn");
+        assert_eq!(provenance.ordinal, 0);
         assert!(history.invocations[0].launch_accepted_at.is_none());
         assert!(
             crate::agent_sessions::application::project_invocation_observation(
@@ -241,4 +234,25 @@ mod tests {
         assert!(repo.get_session(&receipt.session.id).unwrap().is_none());
         assert!(!repo.receipt("request").unwrap().unwrap().completed);
     }
+}
+
+pub(super) fn imported_turn_from(
+    connection: &rusqlite::Connection,
+    invocation_id: &AgentInvocationId,
+) -> Result<Option<crate::agent_sessions::ports::ImportedTurnProvenance>, RepositoryError> {
+    connection
+        .query_row(
+            "SELECT source_turn_id,ordinal,source_started_at,source_completed_at FROM agent_session_imported_turns WHERE invocation_id=?1",
+            [invocation_id.as_str()],
+            |row| {
+                Ok(crate::agent_sessions::ports::ImportedTurnProvenance {
+                    source_turn_id: row.get(0)?,
+                    ordinal: row.get(1)?,
+                    source_started_at: row.get(2)?,
+                    source_completed_at: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(sql_unavailable("load imported turn provenance"))
 }

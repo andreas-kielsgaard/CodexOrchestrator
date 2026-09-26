@@ -1,17 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use crate::contracts::provider::{ProviderConfigurationRef, ProviderNativeOptions};
 
 pub const RUNTIME_PROFILE_CONTRACT_VERSION: u32 = 1;
-
-/// A Codex app-server personality override. Absence means the selected Codex home resolves its
-/// own configured default.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexPersonality {
-    None,
-    Friendly,
-    Pragmatic,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,11 +99,12 @@ impl RuntimeSelections {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeProfileSnapshot {
     pub contract_version: u32,
-    pub profile_ref: String,
+    pub configuration: ProviderConfigurationRef,
     pub exposure: CapabilitySet,
     pub locked: RuntimeSelections,
-    #[serde(default)]
-    pub codex_personality: Option<CodexPersonality>,
+    /// Provider defaults reported by the configuration source, decoded only by that provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<ProviderNativeOptions>,
 }
 
 impl RuntimeProfileSnapshot {
@@ -123,7 +115,8 @@ impl RuntimeProfileSnapshot {
                 self.contract_version
             ));
         }
-        validate_identifier("runtime profile", "profileRef", &self.profile_ref)?;
+        self.configuration.validate()?;
+        validate_provider_options(&self.configuration, self.provider_options.as_ref())?;
         self.exposure.validate("runtime profile exposure")?;
         self.locked.validate("runtime profile locked selections")?;
         validate_selection_availability(&self.locked, &self.exposure)
@@ -151,6 +144,20 @@ pub fn validate_selection_availability(
         }
     }
     Ok(())
+}
+
+/// Native options may only travel with the provider that can decode them.
+pub fn validate_provider_options(
+    configuration: &ProviderConfigurationRef,
+    options: Option<&ProviderNativeOptions>,
+) -> Result<(), String> {
+    match options {
+        Some(options) if options.provider != configuration.provider => Err(format!(
+            "Native options for agent provider `{}` cannot be used with `{}`",
+            options.provider, configuration.provider
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub fn validate_identifier(owner: &str, field: &str, value: &str) -> Result<(), String> {

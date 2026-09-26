@@ -5,8 +5,10 @@ use crate::agent_sessions::{
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use crate::execution_configuration::{
-    compile_session_skill_inputs, CapabilityProfile, RuntimeSelections, SandboxMode,
+    compile_session_skill_inputs, skill_mentions, CapabilityProfile, RuntimeSelections,
+    SandboxMode,
 };
+use orchid_engine::contracts::ProviderConfigurationRef;
 
 pub(crate) fn runtime_options(selections: &RuntimeSelections) -> AgentRuntimeOptions {
     AgentRuntimeOptions {
@@ -40,19 +42,16 @@ pub(super) fn pinned_exposure_extension(
 ) -> Result<RuntimeLaunchExtension, String> {
     let pinned = profile.session_profile();
     extension.native_mcp_enabled = pinned.native_mcp_enabled();
-    extension.codex_personality = pinned.codex_personality();
+    extension.provider_options = pinned.provider_options().cloned();
     let skills = crate::execution_configuration::validate_session_skill_inputs(
         pinned.session_skill_inputs(),
     )?;
     if !skills.is_empty() {
-        let manifest = skills
-            .iter()
-            .map(|skill| format!("- {}: {}", skill.name, skill.description,))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let context = format!("Skills available to this session (not invoked automatically). Codex-discovered skills use $name; Orchid and OTP skills use read_skill:\n{manifest}");
+        let context = skill_manifest_context(&skills);
         match extension.initial_prompt_prefix.as_mut() {
-            Some(prefix) => prefix.content = format!("{}\n\n{}", prefix.content, context),
+            Some(prefix) => prefix.content = format!("{}
+
+{}", prefix.content, context),
             None => {
                 extension.initial_prompt_prefix = Some(InitialPromptPrefix {
                     source: "session_skill_manifest".into(),
@@ -64,6 +63,40 @@ pub(super) fn pinned_exposure_extension(
     }
     extension.skill_inputs = skills;
     Ok(extension)
+}
+
+/// Provider-independent manifest guidance. `read_skill` serves every pinned skill whatever its
+/// source; a provider may additionally attach an invoked skill in its native form.
+fn skill_manifest_context(skills: &[crate::agent_sessions::ports::RuntimeSkillInput]) -> String {
+    let manifest = skills
+        .iter()
+        .map(|skill| format!("- {}: {}", skill.name, skill.description))
+        .collect::<Vec<_>>()
+        .join("
+");
+    format!(
+        "Skills available to this session (not invoked automatically). A $name mention refers to the skill with that name; read its instructions with read_skill unless they are already attached:
+{manifest}"
+    )
+}
+
+/// The provider configuration a Session executes with: its execution target, otherwise the
+/// configuration its profile pinned. Unbound legacy Sessions predate provider identity and ran
+/// only on the default execution binding.
+pub(super) fn session_configuration(
+    session: &crate::agent_sessions::domain::AgentSession,
+) -> ProviderConfigurationRef {
+    session
+        .execution_target
+        .as_ref()
+        .map(|target| target.execution.configuration())
+        .or_else(|| {
+            session
+                .session_profile
+                .as_ref()
+                .map(|profile| profile.session_profile().configuration().clone())
+        })
+        .unwrap_or_else(|| crate::execution_targets::domain::ExecutionBinding::default().configuration())
 }
 
 pub(super) fn default_node_capabilities(
@@ -83,7 +116,7 @@ use super::{
 use crate::{
     agent_sessions::domain::AgentSessionId,
     execution_configuration::{
-        DirectUserInvocationResolution, NodeProfile, ResolutionError, SelectedRuntimeProfileSource,
+        DirectUserInvocationResolution, NodeProfile, ResolutionError, ProviderConfigurationSource,
         SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
     },
 };
@@ -142,51 +175,86 @@ impl fmt::Display for SessionConfigurationError {
 impl Error for SessionConfigurationError {}
 
 impl AgentSessionApplication {
-    pub(super) fn direct_user_native_skill_inputs(
+    /// Resolves Orchid `$name` mentions to skills in `extension.skill_inputs` and records them as
+    /// explicitly invoked; the provider delivers each in its native form. A Session with a pinned
+    /// profile invokes only its pinned manifest. An unprofiled Session may also invoke a skill
+    /// from the provider's native catalogue, which is pinned for this invocation.
+    pub(super) fn apply_skill_mentions(
         &self,
-        configuration_ref: &str,
+        configuration: &ProviderConfigurationRef,
         cwd: Option<&str>,
         submitted_text: &str,
-    ) -> Vec<crate::agent_sessions::ports::RuntimeSkillInput> {
+        pinned_profile: bool,
+        extension: &mut RuntimeLaunchExtension,
+    ) {
         if !submitted_text.contains('$') {
-            return Vec::new();
+            return;
         }
-        let Ok(source) = self.profile_source() else {
-            return Vec::new();
-        };
-        let Ok(catalogue) = source.discover_skills_for_configuration(configuration_ref, cwd) else {
-            return Vec::new();
-        };
-        crate::runtime::codex::app_server::skills::mentioned(submitted_text, &catalogue)
-            .into_iter()
-            .filter_map(|skill| crate::execution_configuration::pin_discovered_skill(skill).ok())
-            .collect()
+        let mut invoked = extension
+            .skill_inputs
+            .iter()
+            .filter(|input| skill_mentions::mentions(submitted_text, &input.name))
+            .map(|input| input.id.clone())
+            .collect::<Vec<_>>();
+        let catalogue = (!pinned_profile).then(|| self.configuration_source(&configuration.provider).ok()).flatten().and_then(|source| {
+            source
+                .native_skills_for_configuration(&configuration.configuration_id, cwd)
+                .ok()
+        });
+        for skill in catalogue.iter().flat_map(|catalogue| {
+            catalogue.skills.iter().filter(|skill| {
+                skill.enabled
+                    && catalogue
+                        .skills
+                        .iter()
+                        .filter(|other| other.enabled && other.name == skill.name)
+                        .count()
+                        == 1
+                    && skill_mentions::mentions(submitted_text, &skill.name)
+            })
+        }) {
+            if extension
+                .skill_inputs
+                .iter()
+                .any(|input| input.name == skill.name)
+            {
+                continue;
+            }
+            if let Ok(input) = crate::execution_configuration::pin_discovered_skill(skill) {
+                invoked.push(input.id.clone());
+                extension.skill_inputs.push(input);
+            }
+        }
+        extension.invoked_skill_ids = invoked;
     }
 
+    /// A device has at most one route per provider, so the execution's device and provider
+    /// identify its route even when the route names a configuration alias.
     pub(super) fn compile_capability_skill_inputs(
         &self,
         capability: &CapabilityProfile,
-        configuration_ref: &str,
+        execution: &crate::execution_targets::domain::ExecutionBinding,
         cwd: Option<&str>,
     ) -> Result<Vec<crate::agent_sessions::ports::RuntimeSkillInput>, String> {
-        let Some(route) = capability
-            .route_policies
-            .iter()
-            .find(|route| route.execution.configuration_ref == configuration_ref)
-        else {
+        let configuration_ref = execution.configuration_ref.as_str();
+        let Some(route) = capability.route_policies.iter().find(|route| {
+            route.execution.device_id == execution.device_id
+                && route.execution.provider == execution.provider
+        }) else {
             return Ok(Vec::new());
         };
         if route.skill_groups.is_empty() {
             return Ok(Vec::new());
         }
-        let source = self.profile_source().map_err(|error| error.to_string())?;
+        let source = self
+            .configuration_source(&route.execution.provider)
+            .map_err(|error| error.to_string())?;
         let features = source
             .quick_features_for_configuration(configuration_ref, cwd)
             .map_err(|error| error.to_string())?;
-        let roots = source
-            .skill_roots_for_configuration(configuration_ref)
-            .map_err(|error| error.to_string())?;
-        compile_session_skill_inputs(route, &features, &roots)
+        let mut features = features;
+        self.product_skills.append_quick_skills(&mut features);
+        compile_session_skill_inputs(route, &features, self.product_skills.roots())
     }
 
     pub(crate) fn create_default_session(
@@ -246,7 +314,7 @@ impl AgentSessionApplication {
         let session_skill_inputs = self
             .compile_capability_skill_inputs(
                 &capability,
-                &capability.execution.configuration_ref,
+                &capability.execution,
                 working_directory,
             )
             .map_err(|error| {
@@ -281,23 +349,40 @@ impl AgentSessionApplication {
         self
     }
 
-    pub(crate) fn with_profile_source(
+    /// Orchid-owned skill roots offered with every provider configuration.
+    pub(crate) fn with_product_skills(
         mut self,
-        source: Arc<dyn SelectedRuntimeProfileSource>,
+        roots: Arc<crate::execution_configuration::ProductSkillRoots>,
     ) -> Self {
-        self.profile_source = Some(source);
+        self.product_skills = roots;
         self
     }
 
-    pub(super) fn profile_source(
+    /// The configuration source of the provider a route or Session runs on.
+    pub(super) fn configuration_source(
         &self,
-    ) -> Result<&dyn SelectedRuntimeProfileSource, SessionConfigurationError> {
-        self.profile_source.as_deref().ok_or_else(|| {
-            SessionConfigurationError::new(
-                SessionConfigurationErrorKind::MissingPinnedProfile,
-                "No runtime profile source is configured",
-            )
-        })
+        provider: &str,
+    ) -> Result<Arc<dyn ProviderConfigurationSource>, SessionConfigurationError> {
+        self.endpoints
+            .as_ref()
+            .ok_or("No execution endpoints are configured".to_string())
+            .and_then(|endpoints| endpoints.configuration_source(provider))
+            .map_err(|message| {
+                SessionConfigurationError::new(
+                    SessionConfigurationErrorKind::MissingPinnedProfile,
+                    message,
+                )
+            })
+    }
+
+    /// The native launch preparation of a provider, if it has one.
+    pub(super) fn launch_preparation(
+        &self,
+        provider: &str,
+    ) -> Option<Arc<dyn super::ProviderLaunchPreparation>> {
+        self.endpoints
+            .as_ref()
+            .and_then(|endpoints| endpoints.launch_preparation(provider))
     }
 
     pub(crate) fn load_pinned_session_profile(

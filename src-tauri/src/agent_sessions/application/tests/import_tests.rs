@@ -42,11 +42,8 @@ fn service(
     conn.execute("INSERT INTO native_codex_profiles VALUES ('profile','home','identity','registered_existing','active','now','now','now')",[]).unwrap();
     let repository = Arc::new(SqliteAgentSessionRepository::new(conn).unwrap());
     let snapshot = test_selected_runtime_profile();
-    let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
-    let profiles = Arc::new(CapabilityProfileService::new(
-        Arc::new(InMemoryCapabilityProfileRepository::default()),
-        source.clone(),
-    ));
+    let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
+    let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone()));
     profiles
         .create("capabilities".into(), "Default".into(), snapshot.exposure)
         .unwrap();
@@ -165,8 +162,8 @@ fn uncertain_fork_is_not_repeated_and_changed_home_does_not_fork() {
 #[test]
 #[ignore = "Run through the isolated Node app-server contract fixture"]
 fn installed_codex_import_reopens_and_continues_through_orchid() {
-    use crate::native_profiles::NativeProfileService;
-    use crate::runtime::codex::app_server::{history::CodexHistoryReader, CodexAppServerRuntime};
+    use crate::runtime::providers::codex::profiles::NativeProfileService;
+    use crate::runtime::providers::codex::app_server::{history::CodexHistoryReader, CodexAppServerRuntime};
     let home = std::env::var("ORCHID_IMPORT_CONTRACT_HOME").unwrap();
     let root = std::path::PathBuf::from(std::env::var("ORCHID_IMPORT_CONTRACT_ROOT").unwrap());
     let program = std::env::var("CODEX_APP_SERVER_CONTRACT_PROGRAM").unwrap();
@@ -195,11 +192,8 @@ fn installed_codex_import_reopens_and_continues_through_orchid() {
         snapshot.exposure.sandbox_modes = [ExecutionSandboxMode::ReadOnly].into_iter().collect();
         snapshot.locked.sandbox_mode = Some(ExecutionSandboxMode::ReadOnly);
         snapshot.exposure.reasoning_modes = ["low".into()].into_iter().collect();
-        let source = Arc::new(FixedSelectedRuntimeProfileSource(snapshot.clone()));
-        let profiles = Arc::new(CapabilityProfileService::new(
-            Arc::new(InMemoryCapabilityProfileRepository::default()),
-            source.clone(),
-        ));
+        let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
+        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone()));
         profiles
             .create("capabilities".into(), "Default".into(), snapshot.exposure)
             .unwrap();
@@ -219,7 +213,7 @@ fn installed_codex_import_reopens_and_continues_through_orchid() {
             .with_workspaces(
                 SessionWorkspaces::new(root.join("workspaces"), "contract".into()).unwrap(),
             )
-            .with_native_profile_launch_authority(native.clone()),
+            .with_launch_preparation(Arc::new(crate::runtime::providers::codex::launch::CodexLaunchPreparation(native.clone()))),
         );
         AgentSessionImportService {
             application,

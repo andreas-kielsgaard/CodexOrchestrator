@@ -2,7 +2,7 @@ import type { AgentSessionQuickFeatures } from '../../application/agentSessions/
 import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOptions';
 
 const capabilities: AgentSessionQuickFeatures = {
-  profileRef: 'codex',
+  configuration: { provider: 'codex', configurationId: 'selected' },
   defaults: { model: 'astra', reasoningMode: 'high' },
   models: [
     {
@@ -38,4 +38,19 @@ it('moves an incompatible reasoning choice to the selected model default', () =>
   expect(selectionForModel(capabilities, { model: 'astra', reasoningMode: 'low' }, 'luna')).toEqual(
     { model: 'luna', reasoningMode: 'medium' },
   );
+});
+
+it('leaves reasoning unset when nothing names a default', () => {
+  const undecided: AgentSessionQuickFeatures = {
+    ...capabilities,
+    defaults: { model: null, reasoningMode: null },
+    models: [{ ...capabilities.models[0], defaultReasoningMode: null }],
+  };
+  expect(
+    effectiveSessionOptions(undecided, { model: null, reasoningMode: null }).reasoningMode,
+  ).toBe(null);
+  expect(selectionForModel(undecided, { model: null, reasoningMode: null }, 'astra')).toEqual({
+    model: 'astra',
+    reasoningMode: null,
+  });
 });

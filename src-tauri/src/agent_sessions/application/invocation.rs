@@ -461,21 +461,10 @@ impl AgentSessionApplication {
                 launch_extension
             };
             let launch_extension = self.add_workspace_capabilities(launch_extension);
-            let launch_extension = match self.native_profile_launch_authority.as_ref() {
-                Some(authority) => match authority.prepare_configured_launch(
-                    session
-                        .execution_target
-                        .as_ref()
-                        .map(|target| target.execution.configuration_ref.as_str())
-                        .or_else(|| {
-                            session.session_profile.as_ref().and_then(|profile| {
-                                profile
-                                    .session_profile()
-                                    .runtime_profile_ref()
-                                    .strip_prefix("native-codex:")
-                            })
-                        })
-                        .unwrap_or("selected"),
+            let configuration = super::configuration::session_configuration(&session);
+            let launch_extension = match self.launch_preparation(&configuration.provider) {
+                Some(preparation) => match preparation.prepare_launch(
+                    &configuration,
                     &session.id,
                     &invocation.id,
                     session.runtime_binding.external_context_id.is_some(),
@@ -516,6 +505,21 @@ impl AgentSessionApplication {
 
             launch_extension
         };
+        if let Some(prefix) = launch_extension
+            .as_ref()
+            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
+        {
+            if let Err(error) = self.repository.record_initial_prompt_prefix(&session.id, prefix) {
+                self.finish_preflight_failure(
+                    &invocation,
+                    RuntimePortError::new(RuntimePortErrorKind::Unavailable, error.to_string()),
+                )?;
+                return Ok(SendAgentSessionMessageLaunchResult {
+                    acknowledgement,
+                    launch_accepted: false,
+                });
+            }
+        }
 
         let mode = if session.runtime_binding.external_context_id.is_some() {
             RuntimeInvocationMode::Resume

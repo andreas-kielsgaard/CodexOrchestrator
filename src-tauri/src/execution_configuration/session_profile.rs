@@ -1,8 +1,9 @@
 use super::runtime_profile::{
-    validate_identifier, validate_selection_availability, CapabilitySet, CodexPersonality,
-    RuntimeSelections,
+    validate_identifier, validate_provider_options, validate_selection_availability,
+    CapabilitySet, RuntimeSelections,
 };
 use crate::agent_sessions::ports::RuntimeSkillInput;
+use orchid_engine::contracts::{ProviderConfigurationRef, ProviderNativeOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -12,7 +13,7 @@ pub(crate) const SESSION_PROFILE_CONTRACT_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SessionProfile {
     contract_version: u32,
-    runtime_profile_ref: String,
+    configuration: ProviderConfigurationRef,
     attached_runtime_capabilities: CapabilitySet,
     attached_runtime_locked: RuntimeSelections,
     capability_profile_id: String,
@@ -26,13 +27,13 @@ pub(crate) struct SessionProfile {
     pinned_defaults: RuntimeSelections,
     #[serde(default)]
     native_mcp_enabled: Option<bool>,
-    #[serde(default)]
-    codex_personality: Option<CodexPersonality>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_options: Option<ProviderNativeOptions>,
 }
 
 impl SessionProfile {
     pub(super) fn resolved(
-        runtime_profile_ref: String,
+        configuration: ProviderConfigurationRef,
         attached_runtime_capabilities: CapabilitySet,
         attached_runtime_locked: RuntimeSelections,
         capability_profile_id: String,
@@ -42,11 +43,11 @@ impl SessionProfile {
         session_skill_inputs: Vec<RuntimeSkillInput>,
         pinned_defaults: RuntimeSelections,
         native_mcp_enabled: Option<bool>,
-        codex_personality: Option<CodexPersonality>,
+        provider_options: Option<ProviderNativeOptions>,
     ) -> Self {
         Self {
             contract_version: SESSION_PROFILE_CONTRACT_VERSION,
-            runtime_profile_ref,
+            configuration,
             attached_runtime_capabilities,
             attached_runtime_locked,
             capability_profile_id,
@@ -56,12 +57,13 @@ impl SessionProfile {
             session_skill_inputs,
             pinned_defaults,
             native_mcp_enabled,
-            codex_personality,
+            provider_options,
         }
     }
 
-    pub(crate) fn runtime_profile_ref(&self) -> &str {
-        &self.runtime_profile_ref
+    /// The provider configuration whose runtime profile this Session pinned.
+    pub(crate) fn configuration(&self) -> &ProviderConfigurationRef {
+        &self.configuration
     }
 
     pub(crate) fn attached_runtime_capabilities(&self) -> &CapabilitySet {
@@ -100,8 +102,8 @@ impl SessionProfile {
         self.native_mcp_enabled
     }
 
-    pub(crate) fn codex_personality(&self) -> Option<CodexPersonality> {
-        self.codex_personality
+    pub(crate) fn provider_options(&self) -> Option<&ProviderNativeOptions> {
+        self.provider_options.as_ref()
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {
@@ -111,11 +113,8 @@ impl SessionProfile {
                 self.contract_version
             ));
         }
-        validate_identifier(
-            "Session Profile",
-            "runtimeProfileRef",
-            &self.runtime_profile_ref,
-        )?;
+        self.configuration.validate()?;
+        validate_provider_options(&self.configuration, self.provider_options.as_ref())?;
         validate_identifier(
             "Session Profile",
             "capabilityProfileId",

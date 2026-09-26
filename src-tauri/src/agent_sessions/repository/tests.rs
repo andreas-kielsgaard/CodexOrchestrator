@@ -824,3 +824,79 @@ fn organization_creation_is_atomic_and_default_pin_does_not_change_placement() {
         SessionPlacement::Default
     );
 }
+
+#[test]
+fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = ON; {AGENT_SESSION_SCHEMA} {}",
+            super::native_conversations::SCHEMA
+        ))
+        .expect("initialize schema");
+    let repository = SqliteAgentSessionRepository::new(connection).expect("repository");
+    let session = repository
+        .create_session(test_session("switching", at(0)))
+        .unwrap();
+    let parked = crate::agent_sessions::domain::ParkedNativeConversation {
+        provider: "codex".into(),
+        external_context_id: ExternalRuntimeContextId::new("codex-thread").unwrap(),
+        runtime_version: None,
+        location: crate::execution_targets::domain::ExecutionBinding::default(),
+        last_invocation_id: Some(AgentInvocationId::new("turn-one").unwrap()),
+    };
+    repository
+        .write("park", |tx| {
+            super::native_conversations::swap_parked_conversations(
+                tx,
+                &session.id,
+                Some(&parked),
+                "claude",
+                at(1),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        repository.parked_native_conversation(&session.id, "codex").unwrap(),
+        Some(parked)
+    );
+    repository
+        .write("return", |tx| {
+            super::native_conversations::swap_parked_conversations(tx, &session.id, None, "codex", at(2))
+        })
+        .unwrap();
+    assert!(repository
+        .parked_native_conversation(&session.id, "codex")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn keeps_the_first_initial_prompt_prefix() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = ON; {AGENT_SESSION_SCHEMA} {}",
+            super::native_conversations::SCHEMA
+        ))
+        .expect("initialize schema");
+    let repository = SqliteAgentSessionRepository::new(connection).expect("repository");
+    let session = repository
+        .create_session(test_session("prefixed", at(0)))
+        .unwrap();
+    let prefix = |content: &str| crate::agent_sessions::ports::InitialPromptPrefix {
+        source: "harness".into(),
+        version: 1,
+        content: content.into(),
+    };
+    repository
+        .record_initial_prompt_prefix(&session.id, &prefix("first"))
+        .unwrap();
+    repository
+        .record_initial_prompt_prefix(&session.id, &prefix("second"))
+        .unwrap();
+    assert_eq!(
+        repository.initial_prompt_prefix(&session.id).unwrap(),
+        Some(prefix("first"))
+    );
+}
