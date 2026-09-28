@@ -1570,12 +1570,12 @@ mod tests {
             .find(|request| request.invocation_id == delivered.invocation_id)
             .unwrap();
         for request in [failed_request, delivered_request] {
-            assert!(request.submitted_text.contains(
-                "provenance=\"product_initial_prompt_prefix\" source=\"epic_plan_builder_button_initiation\" version=\"1\""
-            ));
             assert!(request
-                .submitted_text
-                .contains("do not infer Bootstrap material acceptance"));
+                .content
+                .contains_context_source("epic_plan_builder_button_initiation"));
+            assert!(request
+                .content
+                .contains_text("do not infer Bootstrap material acceptance"));
         }
         drop(requests);
         let history = service.sessions.load_session(&first.session_id).unwrap();
@@ -1649,10 +1649,12 @@ mod tests {
             .iter()
             .find(|request| request.invocation_id == target)
             .unwrap()
-            .submitted_text
+            .content
             .clone();
-        assert!(runtime_request.contains("epic_plan_builder_button_initiation"));
-        assert!(runtime_request.contains("Build the epic plan based on what we have discussed"));
+        assert!(runtime_request.contains_context_source("epic_plan_builder_button_initiation"));
+        assert!(
+            runtime_request.contains_text("Build the epic plan based on what we have discussed")
+        );
 
         runtime.active.lock().unwrap().clear();
         drop(service);
@@ -1701,8 +1703,8 @@ mod tests {
             .iter()
             .find(|request| request.invocation_id == next.invocation_id)
             .unwrap()
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
         let _ = fs::remove_file(path);
     }
 
@@ -1768,15 +1770,15 @@ mod tests {
             .find(|request| request.invocation_id == target)
             .unwrap();
         assert!(recovered
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
         let next_request = requests
             .iter()
             .find(|request| request.invocation_id == next.invocation_id)
             .unwrap();
         assert!(!next_request
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
         drop(requests);
         let facts: (String, String) = Connection::open(&path)
             .unwrap()
@@ -1869,8 +1871,8 @@ mod tests {
             .find(|request| request.invocation_id == retry.invocation_id)
             .unwrap();
         assert!(retry_request
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
         let _ = fs::remove_file(path);
     }
 
@@ -1906,8 +1908,8 @@ mod tests {
             .iter()
             .find(|request| request.invocation_id.as_str() == target)
             .unwrap()
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
 
         runtime.active.lock().unwrap().clear();
         drop(service);
@@ -1933,8 +1935,8 @@ mod tests {
             .iter()
             .find(|request| request.invocation_id == next.invocation_id)
             .unwrap()
-            .submitted_text
-            .contains("epic_plan_builder_button_initiation"));
+            .content
+            .contains_context_source("epic_plan_builder_button_initiation"));
         drop(requests);
         let count: i64 = Connection::open(&path)
             .unwrap()
@@ -2108,13 +2110,25 @@ mod tests {
         assert!(requests
             .iter()
             .all(|request| { request.working_directory.as_deref() == discovery_root.to_str() }));
-        assert!(requests[0]
-            .submitted_text
-            .starts_with("<application_context provenance=\"product_initial_prompt_prefix\" source=\"epic_plan_builder\" version=\"4\">")
-            && requests[0].submitted_text.contains("canonical repository source: product/skills/epic-plan-builder/SKILL.md")
-            && requests[0].submitted_text.contains("Request initiation only through request_epic_initiation")
-            && requests[0].submitted_text.ends_with("<user_query>\nDiscuss goals, ambiguity, and risks.\n</user_query>"));
-        assert_eq!(requests[1].submitted_text, "Build and structure the plan.");
+        assert!(
+            requests[0]
+                .content
+                .contains_context_source("epic_plan_builder")
+                && requests[0].content.contains_text(
+                    "canonical repository source: product/skills/epic-plan-builder/SKILL.md"
+                )
+                && requests[0]
+                    .content
+                    .contains_text("Request initiation only through request_epic_initiation")
+        );
+        assert_eq!(
+            requests[0].content.primary_query,
+            "Discuss goals, ambiguity, and risks."
+        );
+        assert_eq!(
+            requests[1].content.primary_query,
+            "Build and structure the plan."
+        );
         drop(requests);
         let persisted = sessions.load_session(&first.session_id).unwrap();
         assert_eq!(
@@ -2147,7 +2161,8 @@ mod tests {
                 .unwrap()
                 .last()
                 .unwrap()
-                .submitted_text,
+                .content
+                .primary_query,
             "ordinary"
         );
         assert_eq!(

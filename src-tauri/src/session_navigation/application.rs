@@ -223,7 +223,10 @@ impl SessionNavigationService {
             .pin_session(&id, pinned, chrono::Utc::now())
             .map_err(|e| e.to_string())
     }
-    pub(crate) fn working_directory_for_folder(&self, target: &SessionFolderTarget) -> Result<String, String> {
+    pub(crate) fn working_directory_for_folder(
+        &self,
+        target: &SessionFolderTarget,
+    ) -> Result<String, String> {
         let repository = self.repository_for_folder(target)?;
         Ok(self
             .catalog

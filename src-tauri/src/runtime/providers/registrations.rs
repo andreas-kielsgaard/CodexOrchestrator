@@ -1,93 +1,90 @@
-//! Per-provider implementations registered at composition. Each provider module supplies its parts
-//! through one `register` function; shared code looks them up by the provider of the route it holds.
+//! One discoverable registration bundle per Agent provider.
 use crate::{
     agent_sessions::{application::ProviderLaunchPreparation, ports::AgentRuntime},
     execution_configuration::ProviderConfigurationSource,
-    runtime::providers::continuation::ProviderContinuationPort,
 };
 use std::{collections::HashMap, sync::Arc};
 
-/// One implementation of a provider responsibility per Agent provider. Lookups never fall back to
-/// another provider.
-pub(crate) struct ProviderMap<T: ?Sized> {
-    entries: HashMap<String, Arc<T>>,
-    /// Completes "Agent provider `x` …" when the provider has no entry.
-    missing: &'static str,
+#[derive(Clone)]
+pub(crate) struct ProviderRegistration {
+    configuration: Arc<dyn ProviderConfigurationSource>,
+    runtime: Arc<dyn AgentRuntime>,
+    launch: Option<Arc<dyn ProviderLaunchPreparation>>,
 }
 
-impl<T: ?Sized> Clone for ProviderMap<T> {
-    fn clone(&self) -> Self {
+impl ProviderRegistration {
+    pub(crate) fn new(
+        configuration: Arc<dyn ProviderConfigurationSource>,
+        runtime: Arc<dyn AgentRuntime>,
+        launch: Option<Arc<dyn ProviderLaunchPreparation>>,
+    ) -> Self {
         Self {
-            entries: self.entries.clone(),
-            missing: self.missing,
+            configuration,
+            runtime,
+            launch,
         }
     }
 }
 
-impl<T: ?Sized> ProviderMap<T> {
-    fn new(missing: &'static str) -> Self {
-        Self {
-            entries: HashMap::new(),
-            missing,
-        }
-    }
+#[derive(Clone, Default)]
+pub(crate) struct ProviderRegistrations {
+    entries: HashMap<String, ProviderRegistration>,
+}
 
-    pub(crate) fn register(&mut self, provider: &str, entry: Arc<T>) -> Result<(), String> {
+impl ProviderRegistrations {
+    pub(crate) fn register(
+        &mut self,
+        provider: &str,
+        registration: ProviderRegistration,
+    ) -> Result<(), String> {
         if provider.trim().is_empty() {
             return Err("Agent provider identity cannot be empty".into());
         }
-        if self.entries.insert(provider.into(), entry).is_some() {
+        if self.entries.insert(provider.into(), registration).is_some() {
             return Err(format!("Agent provider `{provider}` is registered twice"));
         }
         Ok(())
     }
 
-    /// Test composition may swap a provider's part after composing it.
-    #[cfg(test)]
-    pub(crate) fn replace(&mut self, provider: &str, entry: Arc<T>) {
-        self.entries.insert(provider.into(), entry);
-    }
-
-    pub(crate) fn get(&self, provider: &str) -> Result<Arc<T>, String> {
+    pub(crate) fn configuration(
+        &self,
+        provider: &str,
+    ) -> Result<Arc<dyn ProviderConfigurationSource>, String> {
         self.entries
             .get(provider)
-            .cloned()
-            .ok_or_else(|| format!("Agent provider `{provider}` {}", self.missing))
+            .map(|registration| registration.configuration.clone())
+            .ok_or_else(|| format!("Agent provider `{provider}` is not registered"))
     }
 
-    pub(crate) fn find(&self, provider: &str) -> Option<Arc<T>> {
-        self.entries.get(provider).cloned()
+    pub(crate) fn runtime(&self, provider: &str) -> Result<Arc<dyn AgentRuntime>, String> {
+        self.entries
+            .get(provider)
+            .map(|registration| registration.runtime.clone())
+            .ok_or_else(|| format!("Agent provider `{provider}` is not registered for execution"))
     }
 
-    pub(crate) fn values(&self) -> impl Iterator<Item = &Arc<T>> {
+    pub(crate) fn launch(&self, provider: &str) -> Option<Arc<dyn ProviderLaunchPreparation>> {
+        self.entries
+            .get(provider)
+            .and_then(|registration| registration.launch.clone())
+    }
+
+    pub(crate) fn registrations(&self) -> impl Iterator<Item = &ProviderRegistration> {
         self.entries.values()
     }
-}
 
-#[derive(Clone)]
-pub(crate) struct ProviderRegistrations {
-    pub(crate) runtimes: ProviderMap<dyn AgentRuntime>,
-    pub(crate) configurations: ProviderMap<dyn ProviderConfigurationSource>,
-    /// Optional: a provider without native environment preparation launches with the extension
-    /// as prepared by Orchid.
-    pub(crate) launches: ProviderMap<dyn ProviderLaunchPreparation>,
-    /// Optional: a provider without transfer starts a new native conversation from the Session log.
-    pub(crate) continuations: ProviderMap<dyn ProviderContinuationPort>,
-}
-
-impl Default for ProviderRegistrations {
-    fn default() -> Self {
-        Self {
-            runtimes: ProviderMap::new("is not registered for execution"),
-            configurations: ProviderMap::new("is not registered for configuration discovery"),
-            launches: ProviderMap::new("has no launch preparation"),
-            continuations: ProviderMap::new("does not support native continuation transfer"),
-        }
+    pub(crate) fn configuration_source(
+        registration: &ProviderRegistration,
+    ) -> &Arc<dyn ProviderConfigurationSource> {
+        &registration.configuration
     }
-}
 
-impl ProviderRegistrations {
-    /// A provider with only a runtime and a configuration source, as used by tests and fakes.
+    pub(crate) fn registered_runtimes(&self) -> impl Iterator<Item = &Arc<dyn AgentRuntime>> {
+        self.entries
+            .values()
+            .map(|registration| &registration.runtime)
+    }
+
     #[cfg(test)]
     pub(crate) fn single(
         provider: &str,
@@ -96,43 +93,178 @@ impl ProviderRegistrations {
     ) -> Self {
         let mut registrations = Self::default();
         registrations
-            .configurations
-            .register(provider, configuration)
-            .expect("one configuration source");
+            .register(
+                provider,
+                ProviderRegistration::new(configuration, runtime, None),
+            )
+            .expect("one provider registration");
         registrations
-            .runtimes
-            .register(provider, runtime)
-            .expect("one runtime");
-        registrations
+    }
+
+    #[cfg(test)]
+    pub(crate) fn configuration_only(
+        provider: &str,
+        configuration: Arc<dyn ProviderConfigurationSource>,
+    ) -> Self {
+        struct UnavailableRuntime;
+        impl AgentRuntime for UnavailableRuntime {
+            fn preflight_invocation(
+                &self,
+                _: crate::agent_sessions::ports::RuntimeInvocationMode,
+                _: &crate::agent_sessions::domain::AgentRuntimeOptions,
+            ) -> Result<
+                crate::agent_sessions::ports::RuntimeInvocationPreflight,
+                crate::agent_sessions::ports::RuntimePortError,
+            > {
+                Err(crate::agent_sessions::ports::RuntimePortError::new(
+                    crate::agent_sessions::ports::RuntimePortErrorKind::Unavailable,
+                    "Test runtime is unavailable",
+                ))
+            }
+            fn start_invocation(
+                &self,
+                _: crate::agent_sessions::ports::RuntimeInvocationRequest,
+                _: Arc<dyn crate::agent_sessions::ports::AgentRuntimeUpdateSink>,
+            ) -> Result<(), crate::agent_sessions::ports::RuntimePortError> {
+                unreachable!()
+            }
+            fn resume_invocation(
+                &self,
+                _: crate::agent_sessions::ports::RuntimeInvocationRequest,
+                _: crate::agent_sessions::domain::ExternalRuntimeContextId,
+                _: Arc<dyn crate::agent_sessions::ports::AgentRuntimeUpdateSink>,
+            ) -> Result<(), crate::agent_sessions::ports::RuntimePortError> {
+                unreachable!()
+            }
+            fn cancel_invocation(
+                &self,
+                _: &crate::agent_sessions::domain::AgentInvocationId,
+            ) -> Result<(), crate::agent_sessions::ports::RuntimePortError> {
+                unreachable!()
+            }
+        }
+        Self::single(provider, configuration, Arc::new(UnavailableRuntime))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_configuration(
+        &mut self,
+        provider: &str,
+        source: Arc<dyn ProviderConfigurationSource>,
+    ) -> Result<(), String> {
+        self.entries
+            .get_mut(provider)
+            .ok_or_else(|| format!("Agent provider `{provider}` is not registered"))?
+            .configuration = source;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_runtime(
+        &mut self,
+        provider: &str,
+        runtime: Arc<dyn AgentRuntime>,
+    ) -> Result<(), String> {
+        self.entries
+            .get_mut(provider)
+            .ok_or_else(|| format!("Agent provider `{provider}` is not registered"))?
+            .runtime = runtime;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_launch(
+        &mut self,
+        provider: &str,
+        launch: Arc<dyn ProviderLaunchPreparation>,
+    ) -> Result<(), String> {
+        self.entries
+            .get_mut(provider)
+            .ok_or_else(|| format!("Agent provider `{provider}` is not registered"))?
+            .launch = Some(launch);
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_sessions::{domain::*, ports::*};
+    use crate::{
+        agent_sessions::{domain::*, ports::*},
+        execution_configuration::{
+            NativeCapabilityInventory, ProviderConfigurationSourceError, RuntimeProfileSnapshot,
+        },
+    };
 
     struct TestRuntime;
     impl AgentRuntime for TestRuntime {
-        fn preflight_invocation(&self, _: RuntimeInvocationMode, options: &AgentRuntimeOptions) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
-            Ok(RuntimeInvocationPreflight { effective_options: options.clone() })
+        fn preflight_invocation(
+            &self,
+            _: RuntimeInvocationMode,
+            options: &AgentRuntimeOptions,
+        ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+            Ok(RuntimeInvocationPreflight {
+                effective_options: options.clone(),
+            })
         }
-        fn start_invocation(&self, _: RuntimeInvocationRequest, _: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> { Ok(()) }
-        fn resume_invocation(&self, _: RuntimeInvocationRequest, _: ExternalRuntimeContextId, _: Arc<dyn AgentRuntimeUpdateSink>) -> Result<(), RuntimePortError> { Ok(()) }
-        fn cancel_invocation(&self, _: &AgentInvocationId) -> Result<(), RuntimePortError> { Ok(()) }
+        fn start_invocation(
+            &self,
+            _: RuntimeInvocationRequest,
+            _: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            Ok(())
+        }
+        fn resume_invocation(
+            &self,
+            _: RuntimeInvocationRequest,
+            _: ExternalRuntimeContextId,
+            _: Arc<dyn AgentRuntimeUpdateSink>,
+        ) -> Result<(), RuntimePortError> {
+            Ok(())
+        }
+        fn cancel_invocation(&self, _: &AgentInvocationId) -> Result<(), RuntimePortError> {
+            Ok(())
+        }
+    }
+
+    struct TestConfiguration;
+    impl ProviderConfigurationSource for TestConfiguration {
+        fn profile_for_configuration(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            Err(ProviderConfigurationSourceError::unavailable("unused"))
+        }
+        fn inventory_for_configuration(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
+            Ok(Default::default())
+        }
     }
 
     #[test]
-    fn dispatches_distinct_providers_without_a_codex_fallback() {
-        let codex: Arc<dyn AgentRuntime> = Arc::new(TestRuntime);
-        let other: Arc<dyn AgentRuntime> = Arc::new(TestRuntime);
+    fn dispatches_complete_provider_bundles_without_fallback() {
         let mut registrations = ProviderRegistrations::default();
-        registrations.runtimes.register("codex", codex.clone()).unwrap();
-        registrations.runtimes.register("test-provider", other.clone()).unwrap();
-
-        assert!(Arc::ptr_eq(&registrations.runtimes.get("codex").unwrap(), &codex));
-        assert!(Arc::ptr_eq(&registrations.runtimes.get("test-provider").unwrap(), &other));
-        assert!(registrations.runtimes.get("unregistered").err().unwrap().contains("not registered"));
-        assert!(registrations.runtimes.register("codex", codex).is_err());
+        let runtime: Arc<dyn AgentRuntime> = Arc::new(TestRuntime);
+        registrations
+            .register(
+                "test-provider",
+                ProviderRegistration::new(Arc::new(TestConfiguration), runtime.clone(), None),
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            &registrations.runtime("test-provider").unwrap(),
+            &runtime
+        ));
+        assert!(registrations.runtime("unregistered").is_err());
+        assert!(registrations
+            .register(
+                "test-provider",
+                ProviderRegistration::new(Arc::new(TestConfiguration), runtime, None),
+            )
+            .is_err());
     }
 }

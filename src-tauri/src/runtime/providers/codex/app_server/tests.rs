@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent_sessions::{application::*, repository::SqliteAgentSessionRepository};
 use crate::agent_sessions::ports::*;
+use crate::agent_sessions::{application::*, repository::SqliteAgentSessionRepository};
 use crate::runtime::processes::*;
 use orchid_engine::contracts::RuntimeInteractionResponse;
 use serde_json::{json, Value};
@@ -133,7 +133,15 @@ fn disconnected_steering_stays_uncertain_and_is_never_replayed() {
             requested_options: None,
         })
         .unwrap();
-    wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
+    wait_until(|| {
+        application
+            .load_session(&started.session_id)
+            .unwrap()
+            .invocations
+            .iter()
+            .flat_map(|invocation| &invocation.events)
+            .any(|event| event.raw_payload["kind"] == "runtime_turn_active")
+    });
     let command = SteerAgentSessionCommand {
         session_id: started.session_id.clone(),
         invocation_id: started.invocation_id.clone(),
@@ -250,7 +258,15 @@ fn terminal_observer_can_start_successor_before_old_process_exits() {
             requested_options: None,
         })
         .unwrap();
-    wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
+    wait_until(|| {
+        application
+            .load_session(&started.session_id)
+            .unwrap()
+            .invocations
+            .iter()
+            .flat_map(|invocation| &invocation.events)
+            .any(|event| event.raw_payload["kind"] == "runtime_turn_active")
+    });
     application
         .steer_session(SteerAgentSessionCommand {
             session_id: started.session_id.clone(),
@@ -348,14 +364,18 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id.clone(),
             request_id: request.id.clone(),
-            response: RuntimeInteractionResponse::Choose { choice_id: "not-offered".into() }
+            response: RuntimeInteractionResponse::Choose {
+                choice_id: "not-offered".into()
+            }
         })
         .is_err());
     let response = RespondToRuntimeRequestCommand {
         session_id: started.session_id.clone(),
         invocation_id: started.invocation_id.clone(),
         request_id: request.id.clone(),
-        response: RuntimeInteractionResponse::Choose { choice_id: "choice-1".into() },
+        response: RuntimeInteractionResponse::Choose {
+            choice_id: "choice-1".into(),
+        },
     };
     application
         .respond_to_runtime_request(response.clone())
@@ -381,7 +401,9 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id.clone(),
             request_id: question.id,
-            response: RuntimeInteractionResponse::Answer { answers: std::collections::BTreeMap::from([("choice".into(), vec!["One".into()])]) },
+            response: RuntimeInteractionResponse::Answer {
+                answers: std::collections::BTreeMap::from([("choice".into(), vec!["One".into()])]),
+            },
         })
         .unwrap();
     assert!(child

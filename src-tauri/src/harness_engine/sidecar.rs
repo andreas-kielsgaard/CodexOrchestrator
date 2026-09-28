@@ -447,12 +447,16 @@ struct ControlCommand {
     rename_all_fields = "camelCase"
 )]
 enum ControlCommandKind {
-    RegisterBinding { binding: SidecarBindingRegistration },
+    RegisterBinding {
+        binding: SidecarBindingRegistration,
+    },
     PrepareInvocation {
         binding_id: String,
         invocation_id: String,
     },
-    RetireBinding { binding_id: String },
+    RetireBinding {
+        binding_id: String,
+    },
     Shutdown,
 }
 

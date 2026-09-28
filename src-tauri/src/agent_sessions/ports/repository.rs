@@ -37,7 +37,11 @@ impl AgentInvocationHistory {
 
     /// The agent's reply text.
     pub(crate) fn final_reply(&self) -> Option<&str> {
-        self.final_reply_event()?.normalized.as_ref()?.text.as_deref()
+        self.final_reply_event()?
+            .normalized
+            .as_ref()?
+            .text
+            .as_deref()
     }
 }
 
@@ -129,6 +133,13 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     ) -> Result<Option<super::super::preparation::SessionPreparation>, RepositoryError> {
         Ok(None)
     }
+    fn invocation_execution_snapshot(
+        &self,
+        _id: &AgentInvocationId,
+    ) -> Result<Option<super::super::preparation::InvocationExecutionSnapshot>, RepositoryError>
+    {
+        Ok(None)
+    }
     fn save_preparation(
         &self,
         _preparation: &super::super::preparation::SessionPreparation,
@@ -138,12 +149,12 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
             "Session preparation storage is unavailable",
         ))
     }
-    /// A provider's parked conversation in this Session, if it has one.
-    fn parked_native_conversation(
+    /// A provider-owned conversation cached at this exact execution route.
+    fn provider_session_binding(
         &self,
         _session_id: &AgentSessionId,
-        _provider: &str,
-    ) -> Result<Option<crate::agent_sessions::domain::ParkedNativeConversation>, RepositoryError>
+        _execution: &crate::execution_targets::domain::ExecutionBinding,
+    ) -> Result<Option<crate::agent_sessions::domain::ProviderSessionBinding>, RepositoryError>
     {
         Ok(None)
     }
@@ -161,8 +172,7 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     ) -> Result<Option<super::InitialPromptPrefix>, RepositoryError> {
         Ok(None)
     }
-    /// Commits the destination binding. When the preparation parks the source provider's
-    /// conversation, it is stored; the destination provider's parked conversation becomes current.
+    /// Commits the destination binding and retains the previous route's provider session.
     fn commit_prepared_binding(
         &self,
         _preparation: &super::super::preparation::SessionPreparation,

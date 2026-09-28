@@ -39,6 +39,7 @@ ON session_harness_bindings(stage, prepared_at, id);
 
 pub(crate) trait HarnessBindingRepository: Send + Sync {
     fn insert_prepared(&self, binding: &HarnessBindingRecord) -> Result<(), String>;
+    fn discard_prepared(&self, binding_id: &str) -> Result<(), String>;
     fn mark_bound(
         &self,
         binding_id: &str,
@@ -137,6 +138,22 @@ impl HarnessBindingRepository for SqliteHarnessBindingRepository {
             })?;
         Ok(())
     })
+    }
+
+    fn discard_prepared(&self, binding_id: &str) -> Result<(), String> {
+        self.write("discard prepared Harness binding", |transaction| {
+            let changed = transaction
+                .execute(
+                    "DELETE FROM session_harness_bindings WHERE id=?1 AND stage='prepared'",
+                    [binding_id],
+                )
+                .map_err(|error| format!("Unable to discard prepared Harness binding: {error}"))?;
+            if changed == 1 {
+                Ok(())
+            } else {
+                Err("Only a prepared Harness binding can be discarded.".to_string())
+            }
+        })
     }
 
     fn mark_bound(

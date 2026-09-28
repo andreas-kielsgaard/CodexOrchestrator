@@ -128,7 +128,7 @@ fn request(cwd: &std::path::Path) -> RuntimeInvocationRequest {
     RuntimeInvocationRequest {
         session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: AgentInvocationId::new("invocation").unwrap(),
-        submitted_text: "frozen original prompt".into(),
+        content: InvocationContent::query("frozen original prompt"),
         working_directory: Some(cwd.to_string_lossy().into_owned()),
         options: Default::default(),
         launch_extension: None,
@@ -163,7 +163,6 @@ fn preparation_retains_native_identity_and_cwd_without_delivering_until_release(
         .unwrap()
         .iter()
         .any(|r| r["method"] == "skills/extraRoots/set"));
-    assert!(runtime.active_turn(&id).is_err());
     runtime.deliver_prepared_invocation(&id).unwrap();
     assert!(runtime.deliver_prepared_invocation(&id).is_err());
     let calls = child.requests.lock().unwrap();
@@ -279,7 +278,7 @@ fn invoked_pinned_native_skill_is_an_explicit_turn_input() {
     let factory = Arc::new(Factory::default());
     let runtime = CodexAppServerRuntime::new("fake", factory.clone());
     let mut request = request(directory.path());
-    request.submitted_text = "$review Examine this.".into();
+    request.content = InvocationContent::query("$review Examine this.");
     request.launch_extension = Some(RuntimeLaunchExtension {
         skill_inputs: vec![RuntimeSkillInput {
             id: skill.to_string_lossy().into_owned(),

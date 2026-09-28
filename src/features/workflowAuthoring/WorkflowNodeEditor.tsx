@@ -1,4 +1,9 @@
-import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
+import {
+  capabilityProfileDeviceModels,
+  type CapabilityProfileDto,
+  type ExecutionConfigurationClient,
+  type ProfileModelCatalogueDto,
+} from '../../application/executionConfiguration';
 import type {
   WorkflowAuthoringNodeDto,
   WorkflowRecipeDraftDto,
@@ -11,8 +16,41 @@ import {
   type CapabilityProfileOption,
   type NodeProfileEditorValue,
   type RuntimeProfileViewModel,
+  type RuntimeCapabilityCatalogs,
 } from '../executionConfiguration';
 import { AgentMcpConfigurationEditor } from './AgentMcpConfigurationEditor';
+
+function profileModels(
+  profile: CapabilityProfileDto | undefined,
+  catalogues: Readonly<Record<string, ProfileModelCatalogueDto>>,
+) {
+  const execution = profile
+    ? (profile.execution ??
+      profile.routePolicies?.find((route) => route.routeId === profile.defaultRouteId)?.execution ??
+      profile.routePolicies?.[0]?.execution)
+    : undefined;
+  return capabilityProfileDeviceModels(profile, execution, catalogues);
+}
+
+function routeAwareCeiling(
+  profile: CapabilityProfileDto | undefined,
+  catalogues: Readonly<Record<string, ProfileModelCatalogueDto>>,
+) {
+  if (!profile) return undefined;
+  const models = profileModels(profile, catalogues);
+  const reasoningModes = [
+    ...new Set(models.flatMap((model) => model.reasoningModes.map((mode) => mode.id))),
+  ];
+  return {
+    ...profile.allowedCapabilities,
+    models: models.length
+      ? [...new Set(models.map((model) => model.id))]
+      : profile.allowedCapabilities.models,
+    reasoningModes: reasoningModes.length
+      ? reasoningModes
+      : profile.allowedCapabilities.reasoningModes,
+  };
+}
 
 export function WorkflowNodeEditor({
   node,
@@ -20,6 +58,7 @@ export function WorkflowNodeEditor({
   runtime,
   profiles,
   profileValues,
+  modelCatalogues,
   identities,
   onChange,
   onCopy,
@@ -32,6 +71,7 @@ export function WorkflowNodeEditor({
     string,
     Awaited<ReturnType<ExecutionConfigurationClient['loadCapabilityProfile']>>
   >;
+  readonly modelCatalogues: Readonly<Record<string, ProfileModelCatalogueDto>>;
   readonly identities: readonly AgentIdentityOption[];
   readonly onChange: (node: WorkflowAuthoringNodeDto) => void;
   readonly onCopy: (nodeId: string) => void;
@@ -44,8 +84,34 @@ export function WorkflowNodeEditor({
     exposedCapabilities: node.nodeProfile.allowedCapabilities,
     pinnedDefaults: node.nodeProfile.pinnedDefaults,
   };
-  const ceiling = profileValues.get(node.capabilityProfileId)?.allowedCapabilities;
-  const catalogs = nodeProfileCatalogs(runtime.catalogs, ceiling);
+  const selectedProfile = profileValues.get(node.capabilityProfileId);
+  const routeModels = profileModels(selectedProfile, modelCatalogues);
+  const routeReasoningModes = [
+    ...new Set(routeModels.flatMap((model) => model.reasoningModes.map((mode) => mode.id))),
+  ];
+  const ceiling = routeAwareCeiling(selectedProfile, modelCatalogues);
+  const routeCatalogs: RuntimeCapabilityCatalogs = routeModels.length
+    ? {
+        ...runtime.catalogs,
+        models: {
+          availability: 'available',
+          sourceLabel: 'Capability Profile routes',
+          options: [...new Map(routeModels.map((model) => [model.id, model])).values()].map(
+            (model) => ({
+              value: model.id,
+              label: model.label,
+              description: model.description,
+            }),
+          ),
+        },
+        reasoningModes: {
+          availability: 'available',
+          sourceLabel: 'Capability Profile routes',
+          options: routeReasoningModes.map((mode) => ({ value: mode, label: mode })),
+        },
+      }
+    : runtime.catalogs;
+  const catalogs = nodeProfileCatalogs(routeCatalogs, ceiling);
   const errors = nodeProfileValidationErrors(node.nodeProfile, ceiling);
   const update = (next: NodeProfileEditorValue) => {
     const profileChanged = next.capabilityProfileId !== value.capabilityProfileId;
@@ -54,7 +120,8 @@ export function WorkflowNodeEditor({
       : undefined;
     const exposedCapabilities =
       profileChanged && selectedProfile
-        ? selectedProfile.allowedCapabilities
+        ? (routeAwareCeiling(selectedProfile, modelCatalogues) ??
+          selectedProfile.allowedCapabilities)
         : next.exposedCapabilities;
     onChange({
       ...node,

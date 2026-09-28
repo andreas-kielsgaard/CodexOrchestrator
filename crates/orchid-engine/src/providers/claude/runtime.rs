@@ -22,11 +22,22 @@ use std::{
     time::Duration,
 };
 
+fn render_invocation_content(content: &InvocationContent) -> Result<String, RuntimePortError> {
+    if content.context.is_empty() {
+        return Ok(content.primary_query.clone());
+    }
+    let context = serde_json::to_string_pretty(&content.context)
+        .map_err(|error| unavailable(error.to_string()))?;
+    Ok(format!(
+        "Orchid supplied the following ordered context with explicit provenance. Treat it as context, not as the user's current query.\n<orchid_context_json>\n{context}\n</orchid_context_json>\n\n<user_query>\n{}\n</user_query>",
+        content.primary_query
+    ))
+}
+
 pub(super) struct Invocation {
     pub(super) connection: Connection,
     sink: Arc<dyn AgentRuntimeUpdateSink>,
     session_id: String,
-    target: RuntimeTurnTarget,
     events: Mutex<ClaudeEvents>,
     pub(super) requests: Mutex<HashMap<String, requests::PendingRequest>>,
     required_servers: Vec<String>,
@@ -291,10 +302,6 @@ impl ClaudeRuntime {
         let invocation = Arc::new(Invocation {
             connection: Connection::new(id.clone(), self.supervisor.clone()),
             sink,
-            target: RuntimeTurnTarget {
-                thread_id: session_id.clone(),
-                turn_id: id.to_string(),
-            },
             session_id,
             events: Mutex::new(ClaudeEvents::default()),
             requests: Mutex::new(HashMap::new()),
@@ -348,9 +355,7 @@ impl ClaudeRuntime {
                 tool_activity: None,
             }),
         }));
-        invocation.control(RuntimeControlRecord::TurnActive {
-            target: invocation.target.clone(),
-        });
+        invocation.control(RuntimeControlRecord::TurnActive);
         Ok((
             invocation,
             RuntimeInvocationReady {
@@ -367,7 +372,9 @@ impl ClaudeRuntime {
         sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
         let (invocation, _) = self.launch(&request, conversation, sink)?;
-        if let Err(error) = invocation.send_user_message(&request.submitted_text) {
+        if let Err(error) = render_invocation_content(&request.content)
+            .and_then(|prompt| invocation.send_user_message(&prompt))
+        {
             invocation.finish(
                 AgentInvocationTerminalStatus::Failed,
                 Some(error.message.clone()),
@@ -397,7 +404,8 @@ impl AgentRuntime for ClaudeRuntime {
         *invocation
             .prompt
             .lock()
-            .map_err(|_| unavailable("Prompt lock poisoned"))? = Some(request.submitted_text);
+            .map_err(|_| unavailable("Prompt lock poisoned"))? =
+            Some(render_invocation_content(&request.content)?);
         Ok(ready)
     }
 
@@ -471,7 +479,12 @@ impl AgentRuntime for ClaudeRuntime {
         )
     }
 
-    fn active_turn(&self, id: &AgentInvocationId) -> Result<RuntimeTurnTarget, RuntimePortError> {
+    fn steer(
+        &self,
+        id: &AgentInvocationId,
+        _input_id: &str,
+        text: &str,
+    ) -> Result<(), RuntimePortError> {
         let invocation = self.coordinator.get(id)?;
         if invocation.is_finished() {
             return Err(RuntimePortError::new(
@@ -479,23 +492,7 @@ impl AgentRuntime for ClaudeRuntime {
                 "No active turn; the invocation has finished",
             ));
         }
-        Ok(invocation.target.clone())
-    }
-
-    fn steer(
-        &self,
-        id: &AgentInvocationId,
-        target: &RuntimeTurnTarget,
-        _input_id: &str,
-        text: &str,
-    ) -> Result<(), RuntimePortError> {
-        if self.active_turn(id)? != *target {
-            return Err(RuntimePortError::new(
-                RuntimePortErrorKind::NotActive,
-                "The targeted turn has finished",
-            ));
-        }
-        self.coordinator.get(id)?.send_user_message(text)
+        invocation.send_user_message(text)
     }
 
     fn respond(

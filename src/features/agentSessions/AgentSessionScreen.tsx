@@ -1,13 +1,19 @@
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
-import { otherRouteModels, withOtherRouteModels } from './routeModels';
+import {
+  capabilityProfileDeviceModels,
+  withCapabilityProfileDeviceModels,
+} from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import {
   localExecutionBinding,
+  executionRouteKey,
+  executionRouteRef,
   type ExecutionTargetClient,
 } from '../../application/executionTargets/contracts';
+import type { ProfileModelCatalogueDto } from '../../application/executionConfiguration';
 import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
 import { useSessionTarget } from './useSessionTarget';
 import { SessionComposerToolbar } from './SessionComposerToolbar';
@@ -45,6 +51,7 @@ import type {
 import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
+import { effectiveSessionOptions } from './effectiveSessionOptions';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSessionCollection } from './useAgentSessionCollection';
@@ -316,14 +323,73 @@ export function StandaloneAgentSessionScreen({
           limitations: [],
         }
       : undefined);
-  const capabilities = withOtherRouteModels(
+  const [routeModelCatalogues, setRouteModelCatalogues] = useState<
+    Readonly<Record<string, ProfileModelCatalogueDto>>
+  >({});
+  const modelCatalogueRoutes = useMemo(
+    () =>
+      (targetDraft.profile?.routePolicies ?? [])
+      .filter(
+        (route) =>
+          route.execution.deviceId ===
+          (targetDraft.selection?.execution ?? currentTarget?.execution)?.deviceId,
+      )
+      .map((route) => executionRouteRef(route.execution)),
+    [
+      targetDraft.profile?.routePolicies,
+      targetDraft.selection?.execution,
+      currentTarget?.execution,
+    ],
+  );
+  const profileRouteKey = JSON.stringify(modelCatalogueRoutes);
+  useEffect(() => {
+    let active = true;
+    const load = executionConfigurationClient?.loadProfileModelCatalogue;
+    if (!load || modelCatalogueRoutes.length === 0) {
+      setRouteModelCatalogues({});
+      return;
+    }
+    void Promise.all(
+      modelCatalogueRoutes.map(async (reference) => {
+        return [executionRouteKey(reference), await load(reference)] as const;
+      }),
+    ).then(
+      (entries) => active && setRouteModelCatalogues(Object.fromEntries(entries)),
+      () => active && setRouteModelCatalogues({}),
+    );
+    return () => {
+      active = false;
+    };
+  }, [executionConfigurationClient, modelCatalogueRoutes, profileRouteKey]);
+  const capabilities = withCapabilityProfileDeviceModels(
     routeCapabilities,
-    otherRouteModels(
+    capabilityProfileDeviceModels(
       targetDraft.profile,
       targetDraft.selection?.execution ?? currentTarget?.execution,
+      routeModelCatalogues,
     ),
   );
+  const messageSelection = view.selection;
+  const setMessageSelection = view.setSelection;
+  useEffect(() => {
+    if (!capabilities || targetDraft.loading) return;
+    if (!messageSelection.model && !messageSelection.reasoningMode) return;
+    if (
+      messageSelection.model &&
+      !capabilities.models.some((model) => model.id === messageSelection.model)
+    ) {
+      setMessageSelection({ model: null, reasoningMode: null });
+      return;
+    }
+    const effective = effectiveSessionOptions(capabilities, messageSelection);
+    if (messageSelection.reasoningMode !== effective.reasoningMode)
+      setMessageSelection({
+        model: messageSelection.model,
+        reasoningMode: effective.reasoningMode,
+      });
+  }, [capabilities, targetDraft.loading, messageSelection, setMessageSelection]);
   const models = capabilities?.models.map((model) => model.id) ?? [];
+  const effectiveOptions = effectiveSessionOptions(capabilities, messageSelection);
   const hasRuntimeFacts = Boolean(capabilities);
   const selectionError = targetDraft.branchChoice?.requiresWorktree
     ? 'Choose which matching worktree to use.'
@@ -336,12 +402,12 @@ export function StandaloneAgentSessionScreen({
             view.selection.model &&
             !targetDraft.loading &&
             !models.includes(view.selection.model)
-          ? `Model ${view.selection.model} is unavailable on the selected provider route.`
+          ? `Model ${view.selection.model} is unavailable in this Capability Profile on the selected device.`
           : hasRuntimeFacts &&
               view.selection.reasoningMode &&
               !targetDraft.loading &&
-              !capabilities?.models.some((model) =>
-                model.reasoningModes.some((mode) => mode.id === view.selection.reasoningMode),
+              !effectiveOptions.model?.reasoningModes.some(
+                (mode) => mode.id === view.selection.reasoningMode,
               )
             ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected model.`
             : undefined;

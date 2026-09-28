@@ -3,19 +3,6 @@ use super::{AgentSessionApplication, AgentSessionApplicationError};
 use crate::agent_sessions::{domain::AgentSessionId, workspace::SessionWorkspaces};
 
 impl AgentSessionApplication {
-    pub(super) fn add_workspace_capabilities(
-        &self,
-        extension: Option<crate::agent_sessions::ports::RuntimeLaunchExtension>,
-    ) -> Option<crate::agent_sessions::ports::RuntimeLaunchExtension> {
-        let Some(workspaces) = &self.workspaces else {
-            return extension;
-        };
-        let extension = extension.unwrap_or_default();
-        // Workspace skills are selected by the session capability manifest. Adding the root here
-        // would make every workspace skill ambient and would no longer affect app-server launch.
-        let _ = workspaces;
-        Some(extension)
-    }
     pub(crate) fn resolve_working_directory(
         &self,
         id: &AgentSessionId,

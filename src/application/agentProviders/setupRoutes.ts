@@ -13,15 +13,16 @@ export function providerSetupRoutes(
   return setups.map((setup) => {
     const descriptor = agentProviderDescriptor(setup.provider);
     const deviceLabel = setup.deviceId === 'local' ? 'This device' : setup.deviceId;
+    const folder = displayFolderPath(setup.folder);
     return {
       id: `${setup.deviceId}/${setup.provider}/${setup.configurationId}`,
       selected: setup.selected,
-      label: `${deviceLabel} · ${setup.selected ? `selected ${descriptor.harnessLabel}` : descriptor.harnessLabel}`,
+      label: `${deviceLabel} · ${descriptor.harnessLabel} · ${folder}${setup.selected ? ' · selected' : ''}`,
       sourceLabel: descriptor.inferenceLabel,
       deviceLabel,
       harnessLabel: descriptor.harnessLabel,
       inferenceLabel: descriptor.inferenceLabel,
-      detail: `${displayFolderPath(setup.folder)} · account configuration stays in this ${descriptor.configurationLabel}`,
+      detail: `${folder} · account configuration stays in this ${descriptor.configurationLabel}`,
       execution: {
         deviceId: setup.deviceId,
         deviceName: deviceLabel,

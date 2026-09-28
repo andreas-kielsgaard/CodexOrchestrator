@@ -1,6 +1,6 @@
 //! Resolve the destination, establish native readiness, then release the accepted turn.
 use super::*;
-use crate::agent_sessions::application::history_handoff::{handoff_prefix, Handoff};
+use crate::agent_sessions::application::delivery::context::{handoff_context, Handoff};
 use crate::agent_sessions::application::update_sink::{
     DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink,
 };
@@ -82,15 +82,20 @@ impl AgentSessionApplication {
         } else {
             "Resolve working folder"
         };
-        // The provider follows from the device and model: a model offered by another route of the
-        // profile on this device moves the Session to that route.
+        // The provider follows from the device and provider-reported model catalogue. Capability
+        // Profile model ranges are preferences for authoring, not a runtime allow-list.
         if let Some(model) = p.model.as_deref() {
             let capability = profiles
                 .read(&selection.capability_profile_id)
                 .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
-            if let Some(route) =
-                capability.route_for_model(&selection.execution.device_id, model)
-            {
+            if !capability.route_policies.is_empty() {
+                let cwd = match &selection.workspace {
+                    SessionWorkspaceSelection::Existing { target } => Some(target.path.as_str()),
+                    _ => None,
+                };
+                let route = profiles
+                    .route_exposing_model(&capability, &selection.execution.device_id, model, cwd)
+                    .map_err(|error| AgentSessionApplicationError::invalid(error.to_string()))?;
                 selection.execution = route.execution.clone();
             }
         }
@@ -121,16 +126,12 @@ impl AgentSessionApplication {
         } else {
             None
         };
-        let conversation =
-            self.plan_conversation(&history, &p, source, &selection.execution, endpoints)?;
-        p.parked_source = conversation.parked_source.clone();
+        let conversation = self.plan_conversation(&history, &p, source, &selection.execution)?;
+        p.source_provider_binding = conversation.source_provider_binding.clone();
         let mut required = vec![
             ("workspace", workspace_label),
             ("configuration", "Resolve execution settings"),
         ];
-        if conversation.needs_transfer(&selection.execution) {
-            required.push(("history", "Transfer conversation history"));
-        }
         required.extend([
             ("conversation", "Prepare conversation"),
             ("delivery", "Deliver submitted prompt"),
@@ -293,30 +294,6 @@ impl AgentSessionApplication {
             "Resolve execution settings",
             PreparationStepStatus::Completed,
         )?;
-        if let Some((source, context)) = conversation.continued.as_ref() {
-            if source != &destination.execution
-                && !p
-                    .steps
-                    .iter()
-                    .any(|s| s.id == "history" && s.status == PreparationStepStatus::Completed)
-            {
-                self.step(
-                    &mut p,
-                    "history",
-                    "Transfer conversation history",
-                    PreparationStepStatus::Running,
-                )?;
-                endpoints
-                    .transfer_continuation(source, &destination.execution, context)
-                    .map_err(AgentSessionApplicationError::invalid)?;
-                self.step(
-                    &mut p,
-                    "history",
-                    "Transfer conversation history",
-                    PreparationStepStatus::Completed,
-                )?;
-            }
-        }
         Self::check_preparation_cancel(cancel)?;
         let runtime = if let Some(service) = &self.execution_target_service {
             service
@@ -352,7 +329,6 @@ impl AgentSessionApplication {
         .map_err(AgentSessionApplicationError::invalid)?;
         let mut extension = Some(extension);
         if !destination.execution.is_remote() {
-            extension = self.add_workspace_capabilities(extension);
             if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
                 extension = Some(
                     preparation
@@ -365,6 +341,16 @@ impl AgentSessionApplication {
                         )
                         .map_err(AgentSessionApplicationError::invalid)?,
                 );
+            }
+            if let Some(authority) = self.session_harness_launch_authority.as_ref() {
+                extension = authority
+                    .prepare_resolved_launch(
+                        &p.session_id,
+                        &p.invocation_id,
+                        p.current_resolution.as_ref(),
+                        extension,
+                    )
+                    .map_err(AgentSessionApplicationError::invalid)?;
             }
         }
         let invocation = self
@@ -383,28 +369,65 @@ impl AgentSessionApplication {
                 );
             }
         }
-        if let Some(extension) = extension.as_mut() {
-            let caller = extension.initial_prompt_prefix.take();
-            if let Some(prefix) = &caller {
-                self.repository
-                    .record_initial_prompt_prefix(&p.session_id, prefix)
-                    .map_err(AgentSessionApplicationError::repository)?;
-            }
-            let initial = match conversation.handoff {
-                Handoff::Full => self
-                    .repository
-                    .initial_prompt_prefix(&p.session_id)
-                    .map_err(AgentSessionApplicationError::repository)?,
-                _ => None,
-            };
-            extension.initial_prompt_prefix = handoff_prefix(
-                &history,
-                &p.invocation_id,
-                &conversation.handoff,
-                initial.as_ref(),
-                caller,
-            );
+        let caller = extension
+            .as_mut()
+            .and_then(|extension| extension.initial_prompt_prefix.take());
+        p.execution_snapshot = Some(
+            crate::agent_sessions::preparation::InvocationExecutionSnapshot {
+                target: destination.clone(),
+                working_directory: destination.path.clone(),
+                session_policy: p
+                    .current_resolution
+                    .clone()
+                    .expect("resolved creation snapshot"),
+                invocation_resolution: resolution.clone(),
+                managed_mcp_servers: extension
+                    .as_ref()
+                    .map(|extension| {
+                        extension
+                            .managed_mcp_servers
+                            .iter()
+                            .map(|server| {
+                                crate::agent_sessions::preparation::InvocationManagedMcpSnapshot {
+                                    name: server.name.clone(),
+                                    enabled_tools: server.enabled_tools.clone(),
+                                    required: server.required,
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                invoked_skill_ids: extension
+                    .as_ref()
+                    .map(|extension| extension.invoked_skill_ids.clone())
+                    .unwrap_or_default(),
+                harness_version: session.harness_version.clone(),
+            },
+        );
+        if let Some(prefix) = &caller {
+            self.repository
+                .record_initial_prompt_prefix(&p.session_id, prefix)
+                .map_err(AgentSessionApplicationError::repository)?;
         }
+        let initial = match conversation.handoff {
+            Handoff::Full => self
+                .repository
+                .initial_prompt_prefix(&p.session_id)
+                .map_err(AgentSessionApplicationError::repository)?,
+            _ => None,
+        };
+        let mut context = p.context.clone();
+        context.extend(handoff_context(
+            &history,
+            &p.invocation_id,
+            &conversation.handoff,
+            initial.as_ref(),
+            caller,
+        ));
+        let content = InvocationContent {
+            primary_query: invocation.submitted_text.clone(),
+            context,
+        };
         let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
             Arc::new(PersistedRuntimeUpdateSink::new(
                 self.repository.clone(),
@@ -437,7 +460,7 @@ impl AgentSessionApplication {
                 RuntimeInvocationRequest {
                     session_id: p.session_id.clone(),
                     invocation_id: id.clone(),
-                    submitted_text: invocation.submitted_text,
+                    content,
                     working_directory: Some(destination.path.clone()),
                     options: preflight.effective_options.clone(),
                     launch_extension: extension,

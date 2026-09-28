@@ -50,16 +50,6 @@ pub enum HostCommand {
     AuxiliaryWorkspace {
         session_id: String,
     },
-    ExportContinuation {
-        provider: String,
-        configuration_ref: String,
-        external_context_id: ExternalRuntimeContextId,
-    },
-    InstallContinuation {
-        provider: String,
-        configuration_ref: String,
-        continuation: crate::contracts::provider::ProviderContinuationPayload,
-    },
     PrepareInvocation {
         provider: String,
         configuration_ref: String,
@@ -98,12 +88,8 @@ pub enum HostCommand {
     Cancel {
         invocation_id: AgentInvocationId,
     },
-    ActiveTurn {
-        invocation_id: AgentInvocationId,
-    },
     Steer {
         invocation_id: AgentInvocationId,
-        target: RuntimeTurnTarget,
         input_id: String,
         text: String,
     },

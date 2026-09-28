@@ -360,28 +360,64 @@ impl BranchFirstReviewService {
             .discover(&self.context()?, &self.repository(repository_id)?, ids)
     }
 
-    pub(crate) fn detached_worktrees(&self, repository_id: &str) -> Result<Vec<DetachedWorktreeView>, String> {
+    pub(crate) fn detached_worktrees(
+        &self,
+        repository_id: &str,
+    ) -> Result<Vec<DetachedWorktreeView>, String> {
         let repository = self.repository(repository_id)?;
         let context = self.context()?;
-        let observations = context.worktrees().list(&repository.id, repository.top_level.path())
+        let observations = context
+            .worktrees()
+            .list(&repository.id, repository.top_level.path())
             .map_err(|error| error.to_string())?;
         let id = DomainRepositoryId::new(repository_id).map_err(|error| error.to_string())?;
-        let associations = self.database.associations().list_for_repository(&id).map_err(|error| error.to_string())?;
-        observations.iter().filter(|item| item.head_ref.is_none())
-            .filter_map(|item| match &item.location { WorktreeLocation::Available(_) => Some(item), _ => None })
+        let associations = self
+            .database
+            .associations()
+            .list_for_repository(&id)
+            .map_err(|error| error.to_string())?;
+        observations
+            .iter()
+            .filter(|item| item.head_ref.is_none())
+            .filter_map(|item| match &item.location {
+                WorktreeLocation::Available(_) => Some(item),
+                _ => None,
+            })
             .map(|item| {
                 let path = available_path(item)?;
-                let status = context.status().status(path).map_err(|error| error.to_string())?;
-                let worktree_id = super::domain::WorktreeId::new(item.id.as_str()).map_err(|error| error.to_string())?;
-                let workspaces = self.database.workspaces().list_for_worktree(&worktree_id).map_err(|error| error.to_string())?;
-                let related = associations.iter().filter(|entry| entry.worktree_id == worktree_id).collect::<Vec<_>>();
-                let mut recorded_branches = related.iter().map(|entry| entry.branch_ref.as_str().to_owned()).collect::<Vec<_>>();
+                let status = context
+                    .status()
+                    .status(path)
+                    .map_err(|error| error.to_string())?;
+                let worktree_id = super::domain::WorktreeId::new(item.id.as_str())
+                    .map_err(|error| error.to_string())?;
+                let workspaces = self
+                    .database
+                    .workspaces()
+                    .list_for_worktree(&worktree_id)
+                    .map_err(|error| error.to_string())?;
+                let related = associations
+                    .iter()
+                    .filter(|entry| entry.worktree_id == worktree_id)
+                    .collect::<Vec<_>>();
+                let mut recorded_branches = related
+                    .iter()
+                    .map(|entry| entry.branch_ref.as_str().to_owned())
+                    .collect::<Vec<_>>();
                 recorded_branches.sort();
                 recorded_branches.dedup();
-                let first_recorded_at = related.iter().map(|entry| entry.associated_at)
-                    .chain(workspaces.iter().map(|entry| entry.created_at)).min().map(|date| date.to_rfc3339());
-                let activity = self.activity.discover(&context, &repository, &[item.id.as_str().into()])?
-                    .into_iter().next().map(|entry| entry.estimate);
+                let first_recorded_at = related
+                    .iter()
+                    .map(|entry| entry.associated_at)
+                    .chain(workspaces.iter().map(|entry| entry.created_at))
+                    .min()
+                    .map(|date| date.to_rfc3339());
+                let activity = self
+                    .activity
+                    .discover(&context, &repository, &[item.id.as_str().into()])?
+                    .into_iter()
+                    .next()
+                    .map(|entry| entry.estimate);
                 let (disk_size_bytes, disk_size_limited) = directory_size(path);
                 Ok(DetachedWorktreeView {
                     worktree_id: item.id.as_str().into(),
@@ -396,18 +432,28 @@ impl BranchFirstReviewService {
                     disk_size_bytes,
                     disk_size_limited,
                 })
-            }).collect()
+            })
+            .collect()
     }
 
     pub(crate) fn create_build(&self, input: CreateBuildInput) -> Result<ReviewBuildView, String> {
         self.builds.create_build(input)
     }
 
-    pub(crate) fn create_build_with_started(&self, input: CreateBuildInput, on_started: impl FnOnce(ReviewBuildView)) -> Result<ReviewBuildView, String> {
+    pub(crate) fn create_build_with_started(
+        &self,
+        input: CreateBuildInput,
+        on_started: impl FnOnce(ReviewBuildView),
+    ) -> Result<ReviewBuildView, String> {
         self.builds.create_build_with_started(input, on_started)
     }
 
-    pub(crate) fn read_build_log(&self, build_id: &str, attempt_id: &str, offset: u64) -> Result<super::build_service::BuildLogChunkView, String> {
+    pub(crate) fn read_build_log(
+        &self,
+        build_id: &str,
+        attempt_id: &str,
+        offset: u64,
+    ) -> Result<super::build_service::BuildLogChunkView, String> {
         self.builds.read_log(build_id, attempt_id, offset)
     }
 
@@ -756,15 +802,28 @@ fn directory_size(root: &Path) -> (Option<u64>, bool) {
     let mut bytes = 0_u64;
     let mut entries = 0_usize;
     while let Some(directory) = stack.pop() {
-        let Ok(children) = std::fs::read_dir(directory) else { return (None, false) };
+        let Ok(children) = std::fs::read_dir(directory) else {
+            return (None, false);
+        };
         for child in children {
-            let Ok(child) = child else { return (None, false) };
-            let Ok(metadata) = std::fs::symlink_metadata(child.path()) else { return (None, false) };
-            if metadata.file_type().is_symlink() { continue; }
+            let Ok(child) = child else {
+                return (None, false);
+            };
+            let Ok(metadata) = std::fs::symlink_metadata(child.path()) else {
+                return (None, false);
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
             entries += 1;
-            if entries > 150_000 { return (Some(bytes), true); }
-            if metadata.is_dir() { stack.push(child.path()); }
-            else if metadata.is_file() { bytes = bytes.saturating_add(metadata.len()); }
+            if entries > 150_000 {
+                return (Some(bytes), true);
+            }
+            if metadata.is_dir() {
+                stack.push(child.path());
+            } else if metadata.is_file() {
+                bytes = bytes.saturating_add(metadata.len());
+            }
         }
     }
     (Some(bytes), false)

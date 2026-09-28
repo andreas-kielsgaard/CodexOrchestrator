@@ -104,7 +104,7 @@ impl Host {
                         config.provider
                     ))
                 })?;
-                Ok((config.id.clone(), provider.runtime(config)))
+                Ok((config.id.clone(), provider.runtime(config)?))
             })
             .collect::<Result<HashMap<_, _>, RuntimePortError>>()?;
         Ok(Self {
@@ -234,29 +234,6 @@ impl Host {
                 crate::workspaces::auxiliary_workspace(&self.sessions_directory, &session_id)?,
             )
             .map_err(unavailable),
-            HostCommand::ExportContinuation {
-                provider,
-                configuration_ref,
-                external_context_id,
-            } => {
-                let (config, host_provider) =
-                    self.provider_configuration(&provider, &configuration_ref)?;
-                self.assert_native_idle(&configuration_ref, &external_context_id)?;
-                serde_json::to_value(host_provider.export_continuation(config, &external_context_id)?)
-                    .map_err(unavailable)
-            }
-            HostCommand::InstallContinuation {
-                provider,
-                configuration_ref,
-                continuation,
-            } => {
-                let (config, host_provider) =
-                    self.provider_configuration(&provider, &configuration_ref)?;
-                let id = host_provider.continuation_context(&continuation)?;
-                self.assert_native_idle(&configuration_ref, &id)?;
-                host_provider.install_continuation(config, &continuation)?;
-                Ok(Value::Null)
-            }
             HostCommand::PrepareInvocation {
                 provider,
                 configuration_ref,
@@ -342,20 +319,13 @@ impl Host {
                     .cancel_invocation(&invocation_id)?;
                 Ok(Value::Null)
             }
-            HostCommand::ActiveTurn { invocation_id } => serde_json::to_value(
-                self.invocation_runtime(&invocation_id)?
-                    .active_turn(&invocation_id)?,
-            )
-            .map_err(unavailable),
             HostCommand::Steer {
                 invocation_id,
-                target,
                 input_id,
                 text,
             } => {
                 self.invocation_runtime(&invocation_id)?.steer(
                     &invocation_id,
-                    &target,
                     &input_id,
                     &text,
                 )?;
@@ -409,7 +379,7 @@ impl Host {
                 "Remote workflow tools are outside this prototype",
             ));
         }
-        for (key, value) in self.host_provider(config)?.launch_environment(config) {
+        for (key, value) in self.host_provider(config)?.launch_environment(config)? {
             extension.environment.retain(|(existing, _)| existing != &key);
             extension.environment.push((key, value));
         }
@@ -470,29 +440,6 @@ impl Host {
             let _ = runtime.cancel_invocation(&id);
         }
         result
-    }
-
-    fn assert_native_idle(
-        &self,
-        configuration_ref: &str,
-        external: &ExternalRuntimeContextId,
-    ) -> Result<(), RuntimePortError> {
-        let active = self.active_sessions.lock().map_err(unavailable)?;
-        for session in active.keys() {
-            let path = self.binding_path(session);
-            if let Ok(bytes) = fs::read(path) {
-                let binding: SessionBinding =
-                    serde_json::from_slice(&bytes).map_err(unavailable)?;
-                if binding.configuration_ref == configuration_ref
-                    && binding.external_context_id.as_ref() == Some(external)
-                {
-                    return Err(unavailable(
-                        "Native conversation has an active or preparing invocation",
-                    ));
-                }
-            }
-        }
-        Ok(())
     }
 
     fn binding_path(&self, id: &AgentSessionId) -> PathBuf {
@@ -758,8 +705,7 @@ mod tests {
                 configurations: vec![HostProviderConfiguration {
                     provider: "codex".into(),
                     id: "codex-default".into(),
-                    executable: "fake-codex".into(),
-                    home: native_home.clone(),
+                    settings: json!({"executable":"fake-codex","home":native_home}),
                 }],
             },
             directory.path().join("bindings"),
@@ -772,7 +718,7 @@ mod tests {
         let request = RuntimeInvocationRequest {
             session_id: AgentSessionId::new("session-1").unwrap(),
             invocation_id: AgentInvocationId::new("invocation-1").unwrap(),
-            submitted_text: "work here".into(),
+            content: InvocationContent::query("work here"),
             working_directory: Some(directory.path().to_string_lossy().into_owned()),
             options: Default::default(),
             launch_extension: Some(RuntimeLaunchExtension {
@@ -953,8 +899,7 @@ mod tests {
             configurations: vec![HostProviderConfiguration {
                 provider: "codex".into(),
                 id: "codex".into(),
-                executable: "fake".into(),
-                home: folder.path().into(),
+                settings: json!({"executable":"fake","home":folder.path()}),
             }],
         };
         let mut host = Host::new(configuration, folder.path().join("bindings")).unwrap();
@@ -976,7 +921,7 @@ mod tests {
         let request = RuntimeInvocationRequest {
             session_id: id.clone(),
             invocation_id: AgentInvocationId::new("prepared").unwrap(),
-            submitted_text: "continue".into(),
+            content: InvocationContent::query("continue"),
             working_directory: Some(new.to_string_lossy().into_owned()),
             options: Default::default(),
             launch_extension: None,

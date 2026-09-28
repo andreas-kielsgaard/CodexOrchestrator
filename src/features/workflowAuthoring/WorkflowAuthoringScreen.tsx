@@ -86,6 +86,7 @@ export function WorkflowAuthoringScreen({
     runtime,
     profiles,
     profileValues,
+    modelCatalogues,
     identities,
     error: catalogError,
   } = useExecutionConfigurationCatalog(
@@ -559,6 +560,7 @@ export function WorkflowAuthoringScreen({
                       runtime={runtime}
                       profiles={profiles}
                       profileValues={profileValues}
+                      modelCatalogues={modelCatalogues}
                       identities={identities}
                       onChange={(node) =>
                         editDraft({

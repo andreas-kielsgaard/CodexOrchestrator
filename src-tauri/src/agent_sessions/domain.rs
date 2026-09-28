@@ -22,15 +22,14 @@ pub(crate) struct AgentRuntimeBinding {
     pub(crate) runtime_version: Option<String>,
 }
 
-/// The native conversation of a provider the Session no longer runs on. Switching provider parks
-/// the current conversation here; switching back continues it with the turns it missed.
+/// One provider-owned conversation cached at its exact execution route. Orchid may resume this
+/// instance later, but never moves its native handle to another provider, configuration, or device.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ParkedNativeConversation {
-    pub(crate) provider: String,
+pub(crate) struct ProviderSessionBinding {
     pub(crate) external_context_id: ExternalRuntimeContextId,
     pub(crate) runtime_version: Option<String>,
-    /// Where the conversation lives. Continuing it on another route transfers it first.
+    /// The immutable route on which the provider owns this conversation.
     pub(crate) location: crate::execution_targets::domain::ExecutionBinding,
     /// The last invocation the conversation took part in.
     pub(crate) last_invocation_id: Option<AgentInvocationId>,

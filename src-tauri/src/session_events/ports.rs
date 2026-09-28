@@ -1,6 +1,7 @@
 use super::domain::{
-    DirectUserInvocationOptions, EventDeliveryRecord, EventGroupRecord, ReferenceIdentity,
-    SessionCreationConfiguration, SessionDirectoryEntry, SessionEventSource, SessionLogicalAddress,
+    DirectUserInvocationOptions, EventDeliveryRecord, EventGroupRecord, PromptSource,
+    ReferenceIdentity, SessionCreationConfiguration, SessionDirectoryEntry, SessionEventSource,
+    SessionLogicalAddress,
 };
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
@@ -45,8 +46,8 @@ pub(crate) struct SessionInvocationRequest {
     pub(crate) delivery_id: ReferenceIdentity,
     pub(crate) target_session: ReferenceIdentity,
     pub(crate) source: SessionEventSource,
-    pub(crate) prompt: String,
-    pub(crate) initial_prompt: Option<String>,
+    pub(crate) prompt_sources: Vec<PromptSource>,
+    pub(crate) initial_prompt_sources: Vec<PromptSource>,
     pub(crate) direct_user_options: Option<DirectUserInvocationOptions>,
 }
 

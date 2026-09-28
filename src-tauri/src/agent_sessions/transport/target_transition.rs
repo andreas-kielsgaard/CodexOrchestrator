@@ -1,7 +1,6 @@
 use super::AgentSessionTauriState;
 use crate::agent_sessions::{
-    application::target_transition::RequestTargetTransitionInput,
-    domain::AgentSessionId,
+    application::target_transition::RequestTargetTransitionInput, domain::AgentSessionId,
     target_transition::SessionTargetTransition,
 };
 use crate::execution_targets::domain::{SessionExecutionSelection, SessionExecutionTarget};

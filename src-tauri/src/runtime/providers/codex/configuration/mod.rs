@@ -1,16 +1,16 @@
 //! Selected native environment discovery. Defaults remain absent so Codex resolves them at launch.
 use crate::execution_configuration::{
-    RuntimeProfileSnapshot, SandboxMode, ProviderConfigurationSource,
-    ProviderConfigurationSourceError,
+    ProviderConfigurationSource, ProviderConfigurationSourceError, RuntimeProfileSnapshot,
+    SandboxMode,
+};
+use crate::runtime::providers::codex::{
+    app_server::environment::{CodexEnvironmentReader, CodexEnvironmentSource},
+    profiles::NativeProfileService,
 };
 use orchid_engine::contracts::ProviderConfigurationRef;
 use orchid_engine::providers::codex::{
     options::{CodexNativeOptions, PROVIDER as CODEX},
     runtime_profile,
-};
-use crate::runtime::providers::codex::{
-    app_server::environment::{CodexEnvironmentReader, CodexEnvironmentSource},
-    profiles::NativeProfileService,
 };
 use std::sync::{Arc, Mutex};
 mod quick_features;
@@ -19,8 +19,9 @@ pub(crate) struct CodexConfigurationSource {
     service: Arc<NativeProfileService>,
     product_tools: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     reader: Arc<dyn CodexEnvironmentSource>,
-    quick_feature_cache:
-        Mutex<std::collections::BTreeMap<String, crate::execution_configuration::RuntimeQuickFeatures>>,
+    quick_feature_cache: Mutex<
+        std::collections::BTreeMap<String, crate::execution_configuration::RuntimeQuickFeatures>,
+    >,
 }
 
 impl CodexConfigurationSource {
@@ -63,7 +64,10 @@ impl CodexConfigurationSource {
         reference: &str,
         cwd: Option<&str>,
         refresh: bool,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
+    ) -> Result<
+        crate::execution_configuration::RuntimeQuickFeatures,
+        ProviderConfigurationSourceError,
+    > {
         let selected = self
             .service
             .resolve_configuration_home(reference)
@@ -108,17 +112,6 @@ impl CodexConfigurationSource {
         cache.insert(cache_key, features.clone());
         Ok(features)
     }
-
-    /// The Codex home a configuration resolves to. Only Codex continuation uses it.
-    pub(crate) fn configuration_home(
-        &self,
-        reference: &str,
-    ) -> Result<std::path::PathBuf, ProviderConfigurationSourceError> {
-        self.service
-            .resolve_configuration_home(reference)
-            .map(|home| home.home)
-            .map_err(ProviderConfigurationSourceError::unavailable)
-    }
 }
 
 fn codex_configuration(profile_id: &str) -> ProviderConfigurationRef {
@@ -152,14 +145,20 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
+    ) -> Result<
+        crate::execution_configuration::RuntimeQuickFeatures,
+        ProviderConfigurationSourceError,
+    > {
         self.read_quick_features(reference, cwd, false)
     }
     fn refresh_quick_features_for_configuration(
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::RuntimeQuickFeatures, ProviderConfigurationSourceError> {
+    ) -> Result<
+        crate::execution_configuration::RuntimeQuickFeatures,
+        ProviderConfigurationSourceError,
+    > {
         self.read_quick_features(reference, cwd, true)
     }
     fn setups(
@@ -183,7 +182,10 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
         &self,
         reference: &str,
         cwd: Option<&str>,
-    ) -> Result<crate::execution_configuration::NativeCapabilityInventory, ProviderConfigurationSourceError> {
+    ) -> Result<
+        crate::execution_configuration::NativeCapabilityInventory,
+        ProviderConfigurationSourceError,
+    > {
         let selected = self
             .service
             .resolve_configuration_home(reference)

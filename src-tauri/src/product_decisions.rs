@@ -1281,13 +1281,13 @@ mod tests {
         repository::SqliteAgentSessionRepository,
     };
     #[cfg(feature = "live-tests")]
-    use crate::runtime::providers::codex::CodexCliRuntime;
-    #[cfg(feature = "live-tests")]
     use crate::runtime::processes::ProcessLaunchSpec;
     #[cfg(feature = "live-tests")]
-    use std::time::{Duration, Instant};
+    use crate::runtime::providers::codex::CodexCliRuntime;
     #[cfg(feature = "live-tests")]
     use std::sync::Mutex;
+    #[cfg(feature = "live-tests")]
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     struct NoopNotifier;
@@ -1926,7 +1926,12 @@ mod tests {
             let continuation_id = AgentInvocationId::new(continuation.invocation_id)
                 .map_err(|error| error.to_string())?;
             let history = wait_for_terminal_invocation(&state, &session_id, &continuation_id)?;
-            let response = history.invocations.iter().find(|item| item.invocation.id == continuation_id).and_then(|item| item.final_reply_event()).ok_or_else(|| "no persisted final response".to_string())?;
+            let response = history
+                .invocations
+                .iter()
+                .find(|item| item.invocation.id == continuation_id)
+                .and_then(|item| item.final_reply_event())
+                .ok_or_else(|| "no persisted final response".to_string())?;
             let proposal = retain_product_decision_correction_proposal(
                 &state,
                 SaveProductDecisionCorrectionProposalInput {

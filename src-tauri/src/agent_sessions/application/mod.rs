@@ -8,10 +8,10 @@ mod addressed;
 mod commands;
 pub(crate) mod configuration;
 mod creation;
+mod delivery;
 mod dependencies;
 mod diagnostics;
 mod direct_user;
-pub(crate) mod history_handoff;
 mod interactions;
 mod invocation;
 mod lifecycle;
@@ -38,6 +38,7 @@ pub(crate) use configuration::{reasoning_launch_extension, runtime_options};
 pub(crate) use configuration::{
     LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand,
 };
+pub(crate) use delivery::InvocationDeliveryIntent;
 pub(crate) use dependencies::{
     AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification, AgentSessionNotifier,
     ProviderLaunchPreparation, SessionHarnessLaunchAuthority, SessionHarnessVersionResolver,

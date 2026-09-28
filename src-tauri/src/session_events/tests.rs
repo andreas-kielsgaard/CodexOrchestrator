@@ -340,8 +340,9 @@ fn create_on_missing_pins_configuration_and_uses_initial_prompt_once() {
     );
     assert_eq!(
         dispatcher.requests.lock().unwrap()[0]
-            .initial_prompt
-            .as_deref(),
+            .initial_prompt_sources
+            .first()
+            .map(PromptSource::text),
         Some("Initial context")
     );
     let creation = directory.creations.lock().unwrap()[0].clone();
@@ -360,7 +361,9 @@ fn create_on_missing_pins_configuration_and_uses_initial_prompt_once() {
         MissingTargetPolicy::Fail,
     ))
     .unwrap();
-    assert_eq!(dispatcher.requests.lock().unwrap()[1].initial_prompt, None);
+    assert!(dispatcher.requests.lock().unwrap()[1]
+        .initial_prompt_sources
+        .is_empty());
 }
 
 #[test]
@@ -418,9 +421,19 @@ fn dispatches_a_materialized_application_event_through_the_session_kernel() {
 
     assert_eq!(result.group.outcome, EventGroupOutcome::Delivered);
     let requests = dispatcher.requests.lock().unwrap();
-    assert_eq!(requests[0].prompt, "Plan contents\n\nReview this plan.");
     assert_eq!(
-        requests[0].initial_prompt.as_deref(),
+        requests[0]
+            .prompt_sources
+            .iter()
+            .map(PromptSource::text)
+            .collect::<Vec<_>>(),
+        ["Plan contents", "Review this plan."]
+    );
+    assert_eq!(
+        requests[0]
+            .initial_prompt_sources
+            .first()
+            .map(PromptSource::text),
         Some("You review plans.")
     );
 }
@@ -463,7 +476,12 @@ fn fan_out_retains_contributions_and_partial_delivery_provenance() {
         .lock()
         .unwrap()
         .iter()
-        .all(|request| request.prompt == "one\n\ntwo" && request.initial_prompt.is_none()));
+        .all(|request| request
+            .prompt_sources
+            .iter()
+            .map(PromptSource::text)
+            .eq(["one", "two"])
+            && request.initial_prompt_sources.is_empty()));
     assert_eq!(store.records().unwrap().len(), 1);
 }
 

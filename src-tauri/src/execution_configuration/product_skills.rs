@@ -111,11 +111,20 @@ mod tests {
         let offered = features
             .skills
             .iter()
-            .map(|skill| (skill.name.as_str(), skill.group_id.as_str(), skill.invocation_text.as_str()))
+            .map(|skill| {
+                (
+                    skill.name.as_str(),
+                    skill.group_id.as_str(),
+                    skill.invocation_text.as_str(),
+                )
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             offered,
-            [("review", "orchid-skills", "$review"), ("deploy", "otp:jobs:skills", "$deploy")]
+            [
+                ("review", "orchid-skills", "$review"),
+                ("deploy", "otp:jobs:skills", "$deploy")
+            ]
         );
         assert_eq!(features.limitations.len(), 1);
     }

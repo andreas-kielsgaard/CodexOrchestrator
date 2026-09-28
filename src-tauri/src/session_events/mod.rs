@@ -109,8 +109,6 @@ impl SessionEventApplication {
             }
         }
 
-        let prompt = render_prompt(&command.prompt_sources);
-        let created_prompt = render_optional_prompt(&command.created_session_prompt_sources);
         let mut deliveries = Vec::with_capacity(targets.len());
         let mut first_addressing_error = None;
 
@@ -128,8 +126,12 @@ impl SessionEventApplication {
                 delivery_id: delivery_id.clone(),
                 target_session: target.session.clone(),
                 source: command.source.clone(),
-                prompt: prompt.clone(),
-                initial_prompt: target_created.then(|| created_prompt.clone()).flatten(),
+                prompt_sources: command.prompt_sources.clone(),
+                initial_prompt_sources: if target_created {
+                    command.created_session_prompt_sources.clone()
+                } else {
+                    Vec::new()
+                },
                 direct_user_options: command.direct_user_options.clone(),
             };
 
@@ -297,18 +299,6 @@ fn delivery_identity(
         format!("{:x}", digest.finalize()),
     )
     .map_err(SessionEventApplicationError::Domain)
-}
-
-fn render_prompt(sources: &[PromptSource]) -> String {
-    sources
-        .iter()
-        .map(PromptSource::text)
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn render_optional_prompt(sources: &[PromptSource]) -> Option<String> {
-    (!sources.is_empty()).then(|| render_prompt(sources))
 }
 
 fn build_empty_result(

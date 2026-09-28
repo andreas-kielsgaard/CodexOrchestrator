@@ -163,8 +163,8 @@ impl CapabilityProfile {
                     ));
                 }
             }
-            // The provider for a message follows from its device and model, so each device has
-            // at most one route per provider and a model belongs to one route on a device.
+            // A device has at most one route per provider. Model preferences may overlap; actual
+            // routing is resolved from provider-reported model exposure when a message is sent.
             for (index, route) in self.route_policies.iter().enumerate() {
                 for other in &self.route_policies[..index] {
                     if other.execution.device_id != route.execution.device_id {
@@ -174,17 +174,6 @@ impl CapabilityProfile {
                         return Err(format!(
                             "Capability Profile has two `{}` routes on device `{}`",
                             route.execution.provider, route.execution.device_name
-                        ));
-                    }
-                    if let Some(model) = route.model_allowances.iter().find(|allowance| {
-                        other
-                            .model_allowances
-                            .iter()
-                            .any(|existing| existing.model_id == allowance.model_id)
-                    }) {
-                        return Err(format!(
-                            "Capability Profile offers model `{}` on two routes of device `{}`",
-                            model.model_id, route.execution.device_name
                         ));
                     }
                 }
@@ -222,32 +211,17 @@ impl CapabilityProfile {
             .find(|route| route.execution.route_ref() == execution.route_ref())
     }
 
-    /// The route on a device that offers a model.
-    pub(crate) fn route_for_model(
-        &self,
-        device_id: &str,
-        model: &str,
-    ) -> Option<&ProfileRoutePolicy> {
-        self.route_policies.iter().find(|route| {
-            route.execution.device_id == device_id
-                && route
-                    .model_allowances
-                    .iter()
-                    .any(|allowance| allowance.model_id == model)
-        })
-    }
-
     /// The route a resolved runtime configuration belongs to: the default route when it matches,
     /// otherwise the first route with that configuration.
     pub(crate) fn route_for_configuration(
         &self,
         configuration: &orchid_engine::contracts::ProviderConfigurationRef,
     ) -> Option<&ProfileRoutePolicy> {
-        let matches = |route: &&ProfileRoutePolicy| &route.execution.configuration() == configuration;
+        let matches =
+            |route: &&ProfileRoutePolicy| &route.execution.configuration() == configuration;
         self.default_route()
             .filter(matches)
             .or_else(|| self.route_policies.iter().find(matches))
-            .or_else(|| self.default_route())
     }
 
     pub(crate) fn contains_execution(
@@ -307,29 +281,43 @@ mod route_tests {
     }
 
     #[test]
-    fn a_device_routes_each_model_to_its_provider() {
+    fn a_device_accepts_distinct_model_preferences_per_provider() {
         let profile = profile(vec![
             route("codex", "laptop", "codex", &["gpt-5"]),
             route("claude", "laptop", "claude", &["opus"]),
         ]);
         profile.validate().unwrap();
-        assert_eq!(profile.route_for_model("laptop", "opus").unwrap().route_id, "claude");
-        assert_eq!(profile.route_for_model("laptop", "gpt-5").unwrap().route_id, "codex");
-        assert!(profile.route_for_model("server", "opus").is_none());
     }
 
     #[test]
-    fn a_device_has_one_route_per_provider_and_one_route_per_model() {
+    fn an_unknown_provider_configuration_never_inherits_the_default_route() {
+        let profile = profile(vec![
+            route("codex", "laptop", "codex", &["gpt-5"]),
+            route("claude", "laptop", "claude", &["opus"]),
+        ]);
+        let unknown = orchid_engine::contracts::ProviderConfigurationRef::new(
+            "claude",
+            "another-claude-setup",
+        );
+
+        assert!(profile.route_for_configuration(&unknown).is_none());
+    }
+
+    #[test]
+    fn a_device_has_one_route_per_provider_while_preferences_may_overlap() {
         let two_codex = profile(vec![
             route("one", "laptop", "codex", &["gpt-5"]),
             route("two", "laptop", "codex", &["gpt-5-mini"]),
         ]);
-        assert!(two_codex.validate().unwrap_err().contains("two `codex` routes"));
+        assert!(two_codex
+            .validate()
+            .unwrap_err()
+            .contains("two `codex` routes"));
         let shared_model = profile(vec![
             route("codex", "laptop", "codex", &["shared"]),
             route("claude", "laptop", "claude", &["shared"]),
         ]);
-        assert!(shared_model.validate().unwrap_err().contains("model `shared`"));
+        shared_model.validate().unwrap();
         let other_device = profile(vec![
             route("laptop", "laptop", "codex", &["gpt-5"]),
             route("server", "server", "codex", &["gpt-5"]),

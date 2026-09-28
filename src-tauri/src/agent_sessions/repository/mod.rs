@@ -220,19 +220,25 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<Option<super::preparation::SessionPreparation>, RepositoryError> {
         self.read_latest_preparation(id)
     }
+    fn invocation_execution_snapshot(
+        &self,
+        id: &AgentInvocationId,
+    ) -> Result<Option<super::preparation::InvocationExecutionSnapshot>, RepositoryError> {
+        self.read_invocation_execution_snapshot(id)
+    }
     fn save_preparation(
         &self,
         preparation: &super::preparation::SessionPreparation,
     ) -> Result<(), RepositoryError> {
         self.save_preparation_record(preparation)
     }
-    fn parked_native_conversation(
+    fn provider_session_binding(
         &self,
         session_id: &AgentSessionId,
-        provider: &str,
-    ) -> Result<Option<crate::agent_sessions::domain::ParkedNativeConversation>, RepositoryError>
+        execution: &crate::execution_targets::domain::ExecutionBinding,
+    ) -> Result<Option<crate::agent_sessions::domain::ProviderSessionBinding>, RepositoryError>
     {
-        self.read_parked_conversation(session_id, provider)
+        self.read_provider_session_binding(session_id, execution)
     }
     fn record_initial_prompt_prefix(
         &self,

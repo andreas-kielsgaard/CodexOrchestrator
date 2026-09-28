@@ -10,10 +10,10 @@ use super::{
     },
     ports::{
         AgentInvocationHistory, AgentRuntime, AgentRuntimeUpdateSink, AgentSessionHistory,
-        AgentSessionRepository, AgentSessionSummary, ListAgentSessionsQuery, RepositoryError,
-        RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode, RuntimeInvocationOutcome,
-        RuntimeInvocationPreflight, RuntimeInvocationRequest, RuntimePortError, RuntimeUpdate,
-        RuntimeUpdateDeliveryFailure,
+        AgentSessionRepository, AgentSessionSummary, InvocationContent, ListAgentSessionsQuery,
+        RepositoryError, RepositoryErrorKind, RuntimeEventDraft, RuntimeInvocationMode,
+        RuntimeInvocationOutcome, RuntimeInvocationPreflight, RuntimeInvocationRequest,
+        RuntimePortError, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
     },
 };
 use chrono::{DateTime, Utc};
@@ -295,7 +295,7 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
     let request = RuntimeInvocationRequest {
         session_id: session_id("session-local"),
         invocation_id: invocation_id("invocation-1"),
-        submitted_text: "Continue the work".to_string(),
+        content: InvocationContent::query("Continue the work"),
         working_directory: Some("C:/work/session-local".to_string()),
         options: runtime_options(),
         launch_extension: None,

@@ -1,6 +1,8 @@
 //! SSH owns bytes and request correlation; the remote runtime owns session semantics.
 use crate::agent_sessions::{domain::*, ports::*};
-use orchid_engine::protocol::{HostCommand, HostDescription, HostFrame, HostRequest, HOST_PROTOCOL_VERSION};
+use orchid_engine::protocol::{
+    HostCommand, HostDescription, HostFrame, HostRequest, HOST_PROTOCOL_VERSION,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{

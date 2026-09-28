@@ -1,13 +1,63 @@
 use super::*;
 use crate::agent_sessions::application::preparation::PreparedMessageInput;
 use crate::agent_sessions::domain::ExternalRuntimeContextId;
-use crate::agent_sessions::ports::RuntimeInvocationReady;
+use crate::agent_sessions::ports::{
+    InitialPromptPrefix, RuntimeInvocationReady, RuntimeManagedMcpServer,
+};
 use crate::agent_sessions::preparation::{PreparationPhase, SessionPreparation};
 use crate::execution_configuration::{
     CapabilityProfileService, InMemoryCapabilityProfileRepository, NativeCapabilityInventory,
 };
 use crate::execution_targets::{domain::*, endpoints::ExecutionEndpoints, ExecutionTargetService};
 use std::{sync::Condvar, time::Instant};
+
+#[derive(Default)]
+struct PreparedHarnessAuthority {
+    invocations: Mutex<Vec<AgentInvocationId>>,
+    resolved_profiles: Mutex<Vec<String>>,
+}
+
+impl SessionHarnessLaunchAuthority for PreparedHarnessAuthority {
+    fn prepare_launch(
+        &self,
+        _: &AgentSessionId,
+        _: &AgentInvocationId,
+        _: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        panic!("prepared delivery must provide its resolved invocation profile")
+    }
+
+    fn prepare_resolved_launch(
+        &self,
+        _: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        profile: Option<&crate::execution_configuration::SessionCreationResolution>,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        self.invocations.lock().unwrap().push(invocation_id.clone());
+        self.resolved_profiles.lock().unwrap().push(
+            profile
+                .expect("prepared invocation profile")
+                .session_profile()
+                .configuration()
+                .to_string(),
+        );
+        let mut extension = extension.unwrap_or_default();
+        extension.initial_prompt_prefix = Some(InitialPromptPrefix {
+            source: "prepared-harness".into(),
+            version: 1,
+            content: "Harness context".into(),
+        });
+        extension.managed_mcp_servers.push(RuntimeManagedMcpServer {
+            name: "session_tools".into(),
+            url: "http://127.0.0.1:43123/mcp".into(),
+            bearer_token: Some("secret-session-token".into()),
+            enabled_tools: Some(vec!["record_result".into()]),
+            required: true,
+        });
+        Ok(Some(extension))
+    }
+}
 
 #[derive(Default)]
 struct BlockingPreparationRuntime {
@@ -160,12 +210,19 @@ impl PreparationFixture {
             },
         };
         let endpoints = Arc::new(
-            ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), runtime.clone()))
-                .with_runtime(&old_execution, old_runtime.clone()),
+            ExecutionEndpoints::new(
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    source.clone(),
+                    runtime.clone(),
+                ),
+            )
+            .with_runtime(&old_execution, old_runtime.clone()),
         );
         let profiles = Arc::new(
-            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
-            .with_endpoints(endpoints.clone()),
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()))
+                .with_configuration_source(source.clone())
+                .with_endpoints(endpoints.clone()),
         );
         let profile = profiles
             .create_with_defaults(
@@ -254,6 +311,7 @@ impl PreparationFixture {
             session_id: Some(self.session.id.clone()),
             submission_id: AgentInvocationId::new(id).unwrap(),
             submitted_text: "Frozen submitted text".into(),
+            context: Vec::new(),
             title: None,
             working_directory: None,
             execution_selection: Some(self.selection.clone()),
@@ -322,7 +380,7 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
             .as_deref(),
         Some("medium")
     );
-    assert_eq!(requests[0].submitted_text, "Frozen submitted text");
+    assert_eq!(requests[0].content.primary_query, "Frozen submitted text");
     fixture.runtime.release(true);
     fixture.wait(|| fixture.preparation(&ack.invocation_id).delivery_started);
     fixture.wait(|| {
@@ -338,6 +396,64 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
         fixture.runtime.state.lock().unwrap().delivered,
         vec![ack.invocation_id]
     );
+}
+
+#[test]
+fn prepared_delivery_applies_the_resolved_harness_and_delivers_its_context() {
+    let mut fixture = PreparationFixture::new();
+    let authority = Arc::new(PreparedHarnessAuthority::default());
+    fixture.app = fixture
+        .app
+        .clone()
+        .with_session_harness_launch_authority(authority.clone());
+
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("prepared-harness"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+
+    let state = fixture.runtime.state.lock().unwrap();
+    let request = &state.requests[0];
+    assert_eq!(request.content.primary_query, "Frozen submitted text");
+    assert!(serde_json::to_string(&request.content.context)
+        .unwrap()
+        .contains("Harness context"));
+    let extension = request.launch_extension.as_ref().unwrap();
+    assert!(extension.initial_prompt_prefix.is_none());
+    assert_eq!(extension.managed_mcp_servers[0].name, "session_tools");
+    drop(state);
+    assert_eq!(
+        authority.invocations.lock().unwrap().as_slice(),
+        std::slice::from_ref(&ack.invocation_id)
+    );
+    assert_eq!(authority.resolved_profiles.lock().unwrap().len(), 1);
+    fixture.runtime.release(true);
+    let expected_target = fixture
+        .preparation(&ack.invocation_id)
+        .resolved_target
+        .expect("resolved target");
+    fixture.wait(|| {
+        fixture
+            .repository
+            .invocation_execution_snapshot(&ack.invocation_id)
+            .unwrap()
+            .is_some()
+    });
+    let snapshot = fixture
+        .repository
+        .invocation_execution_snapshot(&ack.invocation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.target, expected_target);
+    assert_eq!(snapshot.managed_mcp_servers[0].name, "session_tools");
+    assert_eq!(
+        snapshot.managed_mcp_servers[0].enabled_tools.as_deref(),
+        Some(["record_result".to_string()].as_slice())
+    );
+    assert!(!serde_json::to_string(&snapshot)
+        .unwrap()
+        .contains("secret-session-token"));
 }
 
 #[test]

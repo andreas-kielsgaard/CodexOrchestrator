@@ -131,21 +131,9 @@ impl AgentRuntime for RemoteRuntime {
             },
         )
     }
-    fn active_turn(
-        &self,
-        invocation_id: &AgentInvocationId,
-    ) -> Result<RuntimeTurnTarget, RuntimePortError> {
-        request_host(
-            &*self.current_connection(),
-            HostCommand::ActiveTurn {
-                invocation_id: invocation_id.clone(),
-            },
-        )
-    }
     fn steer(
         &self,
         invocation_id: &AgentInvocationId,
-        target: &RuntimeTurnTarget,
         input_id: &str,
         text: &str,
     ) -> Result<(), RuntimePortError> {
@@ -153,7 +141,6 @@ impl AgentRuntime for RemoteRuntime {
             &*self.current_connection(),
             HostCommand::Steer {
                 invocation_id: invocation_id.clone(),
-                target: target.clone(),
                 input_id: input_id.into(),
                 text: text.into(),
             },

@@ -10,36 +10,68 @@ mod import_tests;
 
 /// Test composition: register fakes as the `codex` provider, served by this application's runtime.
 impl AgentSessionApplication {
-    pub(crate) fn with_profile_source(self, source: Arc<dyn ProviderConfigurationSource>) -> Self {
-        self.with_codex_parts(|providers| providers.configurations.replace("codex", source))
-    }
-
-    pub(crate) fn with_launch_preparation(
-        self,
-        preparation: Arc<dyn ProviderLaunchPreparation>,
-    ) -> Self {
-        self.with_codex_parts(|providers| providers.launches.replace("codex", preparation))
-    }
-
-    fn with_codex_parts(
+    pub(crate) fn with_profile_source(
         mut self,
-        register: impl FnOnce(&mut crate::runtime::providers::registrations::ProviderRegistrations),
+        source: Arc<dyn ProviderConfigurationSource>,
     ) -> Self {
         let mut providers = self
             .endpoints
             .as_ref()
             .map(|endpoints| endpoints.providers().clone())
-            .unwrap_or_default();
-        if providers.runtimes.find("codex").is_none() {
-            providers.runtimes.replace("codex", self.runtime.clone());
-        }
-        register(&mut providers);
+            .unwrap_or_else(|| {
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    source.clone(),
+                    self.runtime.clone(),
+                )
+            });
+        let _ = providers.replace_configuration("codex", source);
+        self.install_test_providers(providers);
+        self
+    }
+
+    pub(crate) fn with_launch_preparation(
+        mut self,
+        preparation: Arc<dyn ProviderLaunchPreparation>,
+    ) -> Self {
+        let mut providers = self
+            .endpoints
+            .as_ref()
+            .map(|endpoints| endpoints.providers().clone())
+            .unwrap_or_else(|| {
+                struct UnusedConfigurationSource;
+                impl ProviderConfigurationSource for UnusedConfigurationSource {
+                    fn profile_for_configuration(
+                        &self,
+                        _: &str,
+                        _: Option<&str>,
+                    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>
+                    {
+                        Err(ProviderConfigurationSourceError::unavailable(
+                            "Test provider configuration is unavailable",
+                        ))
+                    }
+                }
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    Arc::new(UnusedConfigurationSource),
+                    self.runtime.clone(),
+                )
+            });
+        providers.replace_launch("codex", preparation).unwrap();
+        self.install_test_providers(providers);
+        self
+    }
+
+    fn install_test_providers(
+        &mut self,
+        providers: crate::runtime::providers::registrations::ProviderRegistrations,
+    ) {
         let endpoints = match &self.endpoints {
             Some(endpoints) => endpoints.with_providers(providers),
             None => crate::execution_targets::endpoints::ExecutionEndpoints::new(providers),
         };
         self.endpoints = Some(Arc::new(endpoints));
-        self
     }
 }
 mod preparation_tests;
@@ -52,10 +84,10 @@ fn addressed_creation_retry_uses_its_original_native_evidence() {
     struct OneReadSource(AtomicU64);
     impl ProviderConfigurationSource for OneReadSource {
         fn profile_for_configuration(
-        &self,
-        _reference: &str,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            &self,
+            _reference: &str,
+            _cwd: Option<&str>,
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
                 return Err(ProviderConfigurationSourceError::unavailable(
                     "native discovery changed",
@@ -148,9 +180,9 @@ use crate::agent_sessions::{
 use crate::{
     agent_sessions::session_event_adapter::AgentSessionEventAdapter,
     execution_configuration::{
-        CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
-        SandboxMode as ExecutionSandboxMode, ProviderConfigurationSource,
-        ProviderConfigurationSourceError, SessionCreationRequest,
+        CapabilityProfile, CapabilitySet, NodeProfile, ProviderConfigurationSource,
+        ProviderConfigurationSourceError, RuntimeProfileSnapshot, RuntimeSelections,
+        SandboxMode as ExecutionSandboxMode, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
     identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
@@ -402,14 +434,9 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         })
         .collect::<Vec<_>>();
     assert_eq!(launches.len(), 3);
-    assert_eq!(
-        launches[0]
-            .launch_extension
-            .as_ref()
-            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
-            .map(|prefix| prefix.content.as_str()),
-        Some("You are the plan reviewer.")
-    );
+    assert!(launches[0]
+        .content
+        .contains_text("You are the plan reviewer."));
     assert!(launches[1]
         .launch_extension
         .as_ref()
@@ -833,12 +860,10 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         })
         .collect::<Vec<_>>();
     assert_eq!(requests.len(), 2);
-    assert!(requests
-        .iter()
-        .all(|request| request
-            .launch_extension
-            .as_ref()
-            .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
+    assert!(requests.iter().all(|request| request
+        .launch_extension
+        .as_ref()
+        .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
 }
 
 #[test]
@@ -2188,10 +2213,12 @@ impl FakeRuntime {
 }
 
 impl AgentRuntime for FakeRuntime {
-    fn active_turn(
+    fn steer(
         &self,
         invocation_id: &AgentInvocationId,
-    ) -> Result<crate::agent_sessions::ports::RuntimeTurnTarget, RuntimePortError> {
+        input_id: &str,
+        _text: &str,
+    ) -> Result<(), RuntimePortError> {
         let active = self.active.lock().unwrap();
         if !active.as_ref().is_some_and(|(id, _)| id == invocation_id) {
             return Err(RuntimePortError::new(
@@ -2199,19 +2226,6 @@ impl AgentRuntime for FakeRuntime {
                 "not active",
             ));
         }
-        Ok(crate::agent_sessions::ports::RuntimeTurnTarget {
-            thread_id: "test-thread".into(),
-            turn_id: "test-turn".into(),
-        })
-    }
-    fn steer(
-        &self,
-        invocation_id: &AgentInvocationId,
-        target: &crate::agent_sessions::ports::RuntimeTurnTarget,
-        input_id: &str,
-        _text: &str,
-    ) -> Result<(), RuntimePortError> {
-        assert_eq!(*target, self.active_turn(invocation_id)?);
         self.calls
             .lock()
             .unwrap()

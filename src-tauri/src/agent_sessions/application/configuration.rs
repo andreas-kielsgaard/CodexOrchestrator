@@ -5,8 +5,7 @@ use crate::agent_sessions::{
     ports::{InitialPromptPrefix, RuntimeLaunchExtension},
 };
 use crate::execution_configuration::{
-    compile_session_skill_inputs, skill_mentions, CapabilityProfile, RuntimeSelections,
-    SandboxMode,
+    compile_session_skill_inputs, skill_mentions, CapabilityProfile, RuntimeSelections, SandboxMode,
 };
 use orchid_engine::contracts::ProviderConfigurationRef;
 
@@ -49,9 +48,14 @@ pub(super) fn pinned_exposure_extension(
     if !skills.is_empty() {
         let context = skill_manifest_context(&skills);
         match extension.initial_prompt_prefix.as_mut() {
-            Some(prefix) => prefix.content = format!("{}
+            Some(prefix) => {
+                prefix.content = format!(
+                    "{}
 
-{}", prefix.content, context),
+{}",
+                    prefix.content, context
+                )
+            }
             None => {
                 extension.initial_prompt_prefix = Some(InitialPromptPrefix {
                     source: "session_skill_manifest".into(),
@@ -72,8 +76,10 @@ fn skill_manifest_context(skills: &[crate::agent_sessions::ports::RuntimeSkillIn
         .iter()
         .map(|skill| format!("- {}: {}", skill.name, skill.description))
         .collect::<Vec<_>>()
-        .join("
-");
+        .join(
+            "
+",
+        );
     format!(
         "Skills available to this session (not invoked automatically). A $name mention refers to the skill with that name; read its instructions with read_skill unless they are already attached:
 {manifest}"
@@ -96,7 +102,9 @@ pub(super) fn session_configuration(
                 .as_ref()
                 .map(|profile| profile.session_profile().configuration().clone())
         })
-        .unwrap_or_else(|| crate::execution_targets::domain::ExecutionBinding::default().configuration())
+        .unwrap_or_else(|| {
+            crate::execution_targets::domain::ExecutionBinding::default().configuration()
+        })
 }
 
 pub(super) fn default_node_capabilities(
@@ -116,7 +124,7 @@ use super::{
 use crate::{
     agent_sessions::domain::AgentSessionId,
     execution_configuration::{
-        DirectUserInvocationResolution, NodeProfile, ResolutionError, ProviderConfigurationSource,
+        DirectUserInvocationResolution, NodeProfile, ProviderConfigurationSource, ResolutionError,
         SessionCreationRequest, SessionCreationResolution, SessionProfileResolver,
     },
 };
@@ -196,11 +204,14 @@ impl AgentSessionApplication {
             .filter(|input| skill_mentions::mentions(submitted_text, &input.name))
             .map(|input| input.id.clone())
             .collect::<Vec<_>>();
-        let catalogue = (!pinned_profile).then(|| self.configuration_source(&configuration.provider).ok()).flatten().and_then(|source| {
-            source
-                .native_skills_for_configuration(&configuration.configuration_id, cwd)
-                .ok()
-        });
+        let catalogue = (!pinned_profile)
+            .then(|| self.configuration_source(&configuration.provider).ok())
+            .flatten()
+            .and_then(|source| {
+                source
+                    .native_skills_for_configuration(&configuration.configuration_id, cwd)
+                    .ok()
+            });
         for skill in catalogue.iter().flat_map(|catalogue| {
             catalogue.skills.iter().filter(|skill| {
                 skill.enabled
@@ -312,11 +323,7 @@ impl AgentSessionApplication {
             )
                 })?;
         let session_skill_inputs = self
-            .compile_capability_skill_inputs(
-                &capability,
-                &capability.execution,
-                working_directory,
-            )
+            .compile_capability_skill_inputs(&capability, &capability.execution, working_directory)
             .map_err(|error| {
                 SessionConfigurationError::new(
                     SessionConfigurationErrorKind::MissingPinnedProfile,

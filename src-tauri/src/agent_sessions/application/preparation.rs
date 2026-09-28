@@ -15,6 +15,8 @@ pub(crate) struct PreparedMessageInput {
     pub(crate) session_id: Option<AgentSessionId>,
     pub(crate) submission_id: AgentInvocationId,
     pub(crate) submitted_text: String,
+    #[serde(default)]
+    pub(crate) context: Vec<InvocationContextPart>,
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
     pub(crate) execution_selection: Option<SessionExecutionSelection>,
@@ -69,6 +71,13 @@ impl PreparationWorkers {
 impl AgentSessionApplication {
     pub(crate) fn accept_prepared_message(
         &self,
+        input: PreparedMessageInput,
+    ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
+        self.delivery().accept_prepared(input)
+    }
+
+    pub(super) fn accept_prepared_delivery(
+        &self,
         mut input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         if input.submitted_text.trim().is_empty() {
@@ -120,6 +129,7 @@ impl AgentSessionApplication {
                         && p.sandbox_mode == input.sandbox_mode
                         && p.selection == input.execution_selection
                         && p.accepted_working_directory == input.working_directory
+                        && p.context == input.context
                 });
             if !matches {
                 return Err(AgentSessionApplicationError::conflict(
@@ -225,14 +235,16 @@ impl AgentSessionApplication {
             source_target: session.execution_target.clone(),
             source_binding: session.runtime_binding.clone(),
             prepared_binding: None,
-            parked_source: None,
+            source_provider_binding: None,
             resolved_target: None,
             accepted_working_directory: input.working_directory.clone(),
+            context: input.context,
             resolved_working_directory: input
                 .working_directory
                 .or(session.working_directory.clone()),
             current_resolution: None,
             resolution: None,
+            execution_snapshot: None,
             model: input.model,
             reasoning_mode: input.reasoning_mode,
             sandbox_mode: input.sandbox_mode,
@@ -465,5 +477,4 @@ impl AgentSessionApplication {
     }
 }
 
-mod conversation;
 mod execution;

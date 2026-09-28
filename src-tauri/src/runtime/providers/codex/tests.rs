@@ -14,7 +14,7 @@ use crate::{
         ports::{
             AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
             AgentRuntime, AgentRuntimeUpdateSink, CapabilityDiscoveryState, CapabilityProvenance,
-            CapabilitySupport, InvocationCapabilities, RuntimeInvocationMode,
+            CapabilitySupport, InvocationCapabilities, InvocationContent, RuntimeInvocationMode,
             RuntimeInvocationRequest, RuntimeLaunchExtension, RuntimePortError,
             RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
         },
@@ -211,7 +211,8 @@ fn builds_supported_first_turn_and_resume_commands() {
         InvocationCommand::Start,
         "hello",
         &start_effective,
-        None, None
+        None,
+        None,
     );
     assert_eq!(
         start,
@@ -237,7 +238,8 @@ fn builds_supported_first_turn_and_resume_commands() {
         InvocationCommand::Resume(&context),
         "continue",
         &resume_effective,
-        None, None
+        None,
+        None,
     );
     assert_eq!(
         resume,
@@ -275,7 +277,8 @@ fn resume_assembles_sandbox_through_the_supported_strict_config_surface() {
             InvocationCommand::Resume(&context),
             "continue",
             &effective,
-            None, None
+            None,
+            None
         ),
         [
             "exec",
@@ -353,7 +356,14 @@ fn assembles_enforced_plan_builder_runtime_and_child_configuration() {
     );
     assert_eq!(
         &args[..6],
-        ["exec", "--json", "--sandbox", "read-only", "-c", "approval_policy=\"never\""]
+        [
+            "exec",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "-c",
+            "approval_policy=\"never\""
+        ]
     );
     for expected in [
         "mcp_servers.role.url=\"http://127.0.0.1:1/mcp\"",
@@ -430,7 +440,8 @@ fn typed_reasoning_is_applied_for_start_and_resume() {
                 command,
                 "continue",
                 &AgentRuntimeOptions::default(),
-                Some(&extension), None
+                Some(&extension),
+                None
             ),
             expected,
         );
@@ -1010,7 +1021,7 @@ fn launch_observer_sees_resume_external_context_not_local_ids() {
             RuntimeInvocationRequest {
                 session_id: local_session,
                 invocation_id: local_invocation,
-                submitted_text: "continue".to_string(),
+                content: InvocationContent::query("continue"),
                 working_directory: None,
                 options: AgentRuntimeOptions::default(),
                 launch_extension: None,
@@ -1075,7 +1086,7 @@ fn request(invocation: &str, prompt: &str) -> RuntimeInvocationRequest {
     RuntimeInvocationRequest {
         session_id: AgentSessionId::new("local-session-id").expect("session"),
         invocation_id: AgentInvocationId::new(invocation).expect("invocation"),
-        submitted_text: prompt.to_string(),
+        content: InvocationContent::query(prompt),
         working_directory: Some("C:/work/project".to_string()),
         options: AgentRuntimeOptions::default(),
         launch_extension: None,

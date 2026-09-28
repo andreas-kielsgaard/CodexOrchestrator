@@ -124,10 +124,14 @@ fn creation_request() -> SessionCreationRequest {
 #[test]
 fn creation_resolves_an_immutable_session_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let resolution =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let profile = resolution.session_profile();
 
-    assert_eq!(profile.configuration(), &orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected"));
+    assert_eq!(
+        profile.configuration(),
+        &orchid_engine::contracts::ProviderConfigurationRef::new("codex", "selected")
+    );
     assert_eq!(
         profile.attached_runtime_capabilities(),
         &runtime_profile().exposure
@@ -288,7 +292,8 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
     let original_defaults = creation.session_profile().pinned_defaults().clone();
 
     let invocation = SessionProfileResolver::validate_direct_user_invocation(
-        &source, None,
+        &source,
+        None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -319,11 +324,13 @@ fn direct_user_can_select_model_and_reasoning_without_mutating_session_profile()
 #[test]
 fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let creation =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let before = creation.clone();
 
     let result = SessionProfileResolver::validate_direct_user_invocation(
-        &source, None,
+        &source,
+        None,
         &creation,
         DirectUserInvocationRequest {
             contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -344,14 +351,17 @@ fn direct_user_selection_must_remain_inside_the_attached_runtime_exposure() {
 #[test]
 fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let creation =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
+    changed.configuration =
+        orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
         SessionProfileResolver::validate_direct_user_invocation(
-            &changed_source, None,
+            &changed_source,
+            None,
             &creation,
             DirectUserInvocationRequest {
                 contract_version: DIRECT_USER_INVOCATION_REQUEST_CONTRACT_VERSION,
@@ -367,9 +377,11 @@ fn direct_user_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let creation = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let creation =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut changed = runtime_profile();
-    changed.configuration = orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
+    changed.configuration =
+        orchid_engine::contracts::ProviderConfigurationRef::new("codex", "other");
     let changed_source = FixedProfileSource(Ok(changed));
 
     assert!(matches!(
@@ -381,7 +393,8 @@ fn pinned_workflow_validation_rejects_a_different_selected_runtime_profile() {
 #[test]
 fn digest_is_stable_for_equivalent_unordered_inputs() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let first = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let first =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut reordered_runtime = runtime_profile();
     reordered_runtime.exposure = reverse_insertion_order(&reordered_runtime.exposure);
     let reordered_source = FixedProfileSource(Ok(reordered_runtime));
@@ -391,7 +404,8 @@ fn digest_is_stable_for_equivalent_unordered_inputs() {
     reordered_request.node_profile.allowed_capabilities =
         reverse_insertion_order(&reordered_request.node_profile.allowed_capabilities);
     let second =
-        SessionProfileResolver::resolve_creation(&reordered_source, None, reordered_request).unwrap();
+        SessionProfileResolver::resolve_creation(&reordered_source, None, reordered_request)
+            .unwrap();
 
     assert_eq!(first.digest(), second.digest());
 }
@@ -414,7 +428,8 @@ fn reverse_insertion_order(capabilities: &CapabilitySet) -> CapabilitySet {
 #[test]
 fn digest_verification_rejects_a_contract_version_change() {
     let source = FixedProfileSource(Ok(runtime_profile()));
-    let resolution = SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
+    let resolution =
+        SessionProfileResolver::resolve_creation(&source, None, creation_request()).unwrap();
     let mut value = serde_json::to_value(resolution).unwrap();
     value["contractVersion"] = serde_json::json!(2);
     let changed: SessionCreationResolution = serde_json::from_value(value).unwrap();
@@ -526,14 +541,19 @@ fn sqlite_profiles_store_route_references_and_resolve_device_owned_connections()
     );
 }
 
-fn native_options(provider: &str, personality: &str) -> orchid_engine::contracts::ProviderNativeOptions {
+fn native_options(
+    provider: &str,
+    personality: &str,
+) -> orchid_engine::contracts::ProviderNativeOptions {
     orchid_engine::contracts::ProviderNativeOptions {
         provider: provider.into(),
         settings: serde_json::json!({ "personality": personality }),
     }
 }
 
-fn routed_request(route_options: Option<orchid_engine::contracts::ProviderNativeOptions>) -> SessionCreationRequest {
+fn routed_request(
+    route_options: Option<orchid_engine::contracts::ProviderNativeOptions>,
+) -> SessionCreationRequest {
     let mut request = creation_request();
     request.capability_profile.route_policies = vec![super::ProfileRoutePolicy {
         route_id: "local".into(),

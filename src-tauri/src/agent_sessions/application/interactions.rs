@@ -100,23 +100,14 @@ impl AgentSessionApplication {
         }
 
         let runtime = self.runtime_for_invocation(&command.invocation_id)?;
-        let target = runtime
-            .active_turn(&command.invocation_id)
-            .map_err(AgentSessionApplicationError::runtime)?;
         self.record_interaction(
             &command.invocation_id,
             RuntimeControlRecord::SteeringPending {
                 input_id: command.input_id.clone(),
                 text: command.text.clone(),
-                target: target.clone(),
             },
         )?;
-        let result = runtime.steer(
-            &command.invocation_id,
-            &target,
-            &command.input_id,
-            &command.text,
-        );
+        let result = runtime.steer(&command.invocation_id, &command.input_id, &command.text);
         let state = match &result {
             Ok(()) => "accepted",
             Err(e) if e.kind == RuntimePortErrorKind::Unavailable => "uncertain",

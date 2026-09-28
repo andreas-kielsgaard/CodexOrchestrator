@@ -1,8 +1,8 @@
 //! Persistence for one current device/worktree transition per Agent Session.
 
 use super::*;
-use crate::agent_sessions::{
-    target_transition::{validate_target_transition, SessionTargetTransition},
+use crate::agent_sessions::target_transition::{
+    validate_target_transition, SessionTargetTransition,
 };
 
 pub(crate) const SCHEMA: &str = r#"

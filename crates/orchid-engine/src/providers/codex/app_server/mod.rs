@@ -3,7 +3,6 @@ mod approval_choices;
 mod client;
 pub mod configuration;
 mod connection;
-pub mod continuation;
 pub mod environment;
 pub mod history;
 mod inventory;
@@ -31,14 +30,32 @@ use std::{
     time::Duration,
 };
 
+fn render_invocation_content(content: &InvocationContent) -> Result<String, RuntimePortError> {
+    if content.context.is_empty() {
+        return Ok(content.primary_query.clone());
+    }
+    let context = serde_json::to_string_pretty(&content.context)
+        .map_err(|error| unavailable(error.to_string()))?;
+    Ok(format!(
+        "Orchid supplied the following ordered context with explicit provenance. Treat it as context, not as the user's current query.\n<orchid_context_json>\n{context}\n</orchid_context_json>\n\n<user_query>\n{}\n</user_query>",
+        content.primary_query
+    ))
+}
+
 struct Invocation {
     connection: Connection,
     sink: Arc<dyn AgentRuntimeUpdateSink>,
     protocol: Mutex<CodexJsonlProtocol>,
-    target: Mutex<Option<RuntimeTurnTarget>>,
+    target: Mutex<Option<CodexTurnTarget>>,
     requests: Mutex<HashMap<String, requests::PendingRequest>>,
     finished: AtomicBool,
     prepared_turn: Mutex<Option<Value>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodexTurnTarget {
+    thread_id: String,
+    turn_id: String,
 }
 
 impl Invocation {
@@ -102,7 +119,7 @@ impl Invocation {
             return Ok(());
         }
         if method == "turn/started" {
-            let target = RuntimeTurnTarget {
+            let target = CodexTurnTarget {
                 thread_id: params["threadId"].as_str().unwrap_or("").into(),
                 turn_id: params["turn"]["id"].as_str().unwrap_or("").into(),
             };
@@ -110,7 +127,7 @@ impl Invocation {
                 .target
                 .lock()
                 .map_err(|_| unavailable("Turn lock poisoned"))? = Some(target.clone());
-            self.control(RuntimeControlRecord::TurnActive { target });
+            self.control(RuntimeControlRecord::TurnActive);
         }
         if let Some(mut raw) = notifications::legacy_event(method, params) {
             // Attach native evidence before normalization. The shared normalizer can defer an
@@ -144,6 +161,7 @@ impl Invocation {
         }
         Ok(())
     }
+
 }
 
 #[derive(Default)]
@@ -382,6 +400,21 @@ impl CodexAppServerRuntime {
             })?;
         Ok(())
     }
+
+    fn active_turn(&self, id: &AgentInvocationId) -> Result<CodexTurnTarget, RuntimePortError> {
+        self.coordinator
+            .get(id)?
+            .target
+            .lock()
+            .map_err(|_| unavailable("Turn lock poisoned"))?
+            .clone()
+            .ok_or_else(|| {
+                RuntimePortError::new(
+                    RuntimePortErrorKind::NotActive,
+                    "No active turn; wait for the turn to start",
+                )
+            })
+    }
 }
 
 fn initialize_turn(
@@ -521,7 +554,7 @@ fn initialize_turn(
         .or(request.working_directory.as_deref())
         .ok_or_else(|| unavailable("App-server did not return a working directory"))?
         .to_owned();
-    let mut input = vec![json!({"type":"text","text":request.submitted_text})];
+    let mut input = vec![json!({"type":"text","text":render_invocation_content(&request.content)?})];
     if let Some(extension) = request
         .launch_extension
         .as_ref()
@@ -687,33 +720,13 @@ impl AgentRuntime for CodexAppServerRuntime {
     ) -> Result<(), RuntimePortError> {
         self.launch(request, Some(external), sink, None)
     }
-    fn active_turn(&self, id: &AgentInvocationId) -> Result<RuntimeTurnTarget, RuntimePortError> {
-        self.coordinator
-            .get(id)?
-            .target
-            .lock()
-            .map_err(|_| unavailable("Turn lock poisoned"))?
-            .clone()
-            .ok_or_else(|| {
-                RuntimePortError::new(
-                    RuntimePortErrorKind::NotActive,
-                    "No active turn; wait for the turn to start",
-                )
-            })
-    }
     fn steer(
         &self,
         id: &AgentInvocationId,
-        target: &RuntimeTurnTarget,
         input_id: &str,
         text: &str,
     ) -> Result<(), RuntimePortError> {
-        if self.active_turn(id)? != *target {
-            return Err(RuntimePortError::new(
-                RuntimePortErrorKind::NotActive,
-                "The targeted turn has finished",
-            ));
-        }
+        let target = self.active_turn(id)?;
         let result = self.coordinator.get(id)?.connection.call("turn/steer", json!({"threadId":target.thread_id,"expectedTurnId":target.turn_id,"clientUserMessageId":input_id,"input":[{"type":"text","text":text}]}))?;
         if result["turnId"] != target.turn_id {
             return Err(unavailable(

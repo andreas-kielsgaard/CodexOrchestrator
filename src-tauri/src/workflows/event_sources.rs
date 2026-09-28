@@ -1,7 +1,6 @@
 use super::execution::WorkflowExecutionService;
 use crate::{
-    agent_sessions::application::AgentSessionNotification,
-    otp_api::*,
+    agent_sessions::application::AgentSessionNotification, otp_api::*,
     otp_host::workflow::WorkflowHost,
 };
 use std::collections::BTreeSet;

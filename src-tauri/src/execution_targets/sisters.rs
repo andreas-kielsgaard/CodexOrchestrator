@@ -81,7 +81,9 @@ impl SisterWorktreeStore {
         session_id: &str,
         at: DateTime<Utc>,
     ) -> Result<String, String> {
-        if source.repository_id != destination.repository_id || source.branch_ref != destination.branch_ref {
+        if source.repository_id != destination.repository_id
+            || source.branch_ref != destination.branch_ref
+        {
             return Err("Sister worktrees must share a repository and branch".into());
         }
         let repository_id = source.repository_id.clone();
@@ -260,7 +262,10 @@ mod tests {
                 connection: if device == "laptop" {
                     ExecutionConnection::Local
                 } else {
-                    ExecutionConnection::Ssh { target: "host".into(), host_executable: "orchid-host".into() }
+                    ExecutionConnection::Ssh {
+                        target: "host".into(),
+                        host_executable: "orchid-host".into(),
+                    }
                 },
             },
             repository_id: "repository".into(),
@@ -275,7 +280,9 @@ mod tests {
     fn moving_a_sister_keeps_both_instances_and_rejects_another_session() {
         let database = Arc::new(
             ActiveDatabase::from_connection(Connection::open_in_memory().unwrap(), |connection| {
-                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())
+                connection
+                    .execute_batch(SCHEMA)
+                    .map_err(|error| error.to_string())
             })
             .unwrap(),
         );

@@ -31,4 +31,30 @@ impl SessionHarnessLaunchAuthority for SessionProfileHarnessAuthority {
         self.engine
             .prepare_launch(session_id, invocation_id, extension)
     }
+
+    fn prepare_resolved_launch(
+        &self,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        profile: Option<&crate::execution_configuration::SessionCreationResolution>,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        let stored;
+        let profile = match profile {
+            Some(profile) => Some(profile),
+            None => {
+                stored = self
+                    .sessions
+                    .get_session(session_id)
+                    .map_err(|error| error.to_string())?
+                    .ok_or("Session is missing")?;
+                stored.session_profile.as_ref()
+            }
+        };
+        if let Some(profile) = profile {
+            self.engine.bind_session_profile(session_id, profile)?;
+        }
+        self.engine
+            .prepare_launch(session_id, invocation_id, extension)
+    }
 }

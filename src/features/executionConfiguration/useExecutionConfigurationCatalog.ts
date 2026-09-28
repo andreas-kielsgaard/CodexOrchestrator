@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
   CapabilityProfileDto,
   ExecutionConfigurationClient,
+  ProfileModelCatalogueDto,
 } from '../../application/executionConfiguration';
+import { executionRouteKey, executionRouteRef } from '../../application/executionTargets/contracts';
 import type { IdentityManagementClient } from '../../application/identities';
 import type { OtpCatalogueReader } from '../../application/otp';
 import { runtimeProfileViewModel } from './presentation';
@@ -23,6 +25,9 @@ export function useExecutionConfigurationCatalog(
   const [profileValues, setProfileValues] = useState<ReadonlyMap<string, CapabilityProfileDto>>(
     new Map(),
   );
+  const [modelCatalogues, setModelCatalogues] = useState<
+    Readonly<Record<string, ProfileModelCatalogueDto>>
+  >({});
   const [identities, setIdentities] = useState<readonly AgentIdentityOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +55,29 @@ export function useExecutionConfigurationCatalog(
       setProfileValues(
         new Map(capabilityProfiles.map((profile) => [profile.capabilityProfileId, profile])),
       );
+      const loadModels = client.loadProfileModelCatalogue;
+      if (loadModels) {
+        const routes = new Map(
+          capabilityProfiles
+            .flatMap((profile) => profile.routePolicies ?? [])
+            .map((route) => {
+              const reference = executionRouteRef(route.execution);
+              return [executionRouteKey(reference), reference] as const;
+            }),
+        );
+        const entries = await Promise.all(
+          [...routes].map(async ([key, route]) => {
+            try {
+              return [key, await loadModels(route)] as const;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        setModelCatalogues(Object.fromEntries(entries.filter((entry) => entry !== null)));
+      } else {
+        setModelCatalogues({});
+      }
       setProfiles(
         capabilityProfiles.map((profile) => ({
           id: profile.capabilityProfileId,
@@ -76,5 +104,14 @@ export function useExecutionConfigurationCatalog(
     void reload();
   }, [reload]);
 
-  return { runtime, profiles, profileValues, identities, error, loading, reload } as const;
+  return {
+    runtime,
+    profiles,
+    profileValues,
+    modelCatalogues,
+    identities,
+    error,
+    loading,
+    reload,
+  } as const;
 }

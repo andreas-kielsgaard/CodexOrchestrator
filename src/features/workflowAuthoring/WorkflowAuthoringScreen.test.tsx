@@ -130,3 +130,54 @@ it('limits node choices to the selected profile and shows a removed default', as
   expect(screen.getByRole('option', { name: /model-a \(unavailable\)/ })).toBeDisabled();
   expect(screen.getByText(/Default model .* is not exposed/)).toBeInTheDocument();
 });
+
+it('offers models observed from every provider route in a workflow profile', async () => {
+  const user = userEvent.setup();
+  const fixture = repairClients();
+  const current = fixture.profiles[0];
+  fixture.profiles[0] = {
+    ...current,
+    routePolicies: [
+      ...(current.routePolicies ?? []),
+      {
+        routeId: 'fixture-claude',
+        execution: {
+          deviceId: 'fixture-device',
+          deviceName: 'Fixture device',
+          provider: 'claude',
+          configurationRef: 'fixture-claude',
+          connection: { kind: 'local' },
+        },
+        modelAllowances: [],
+        mcpGroups: [],
+        skillGroups: [],
+        defaults: { model: null, reasoningMode: null, sandboxMode: null },
+      },
+    ],
+  };
+  fixture.configuration.loadProfileModelCatalogue = async (route) => ({
+    route,
+    observedAt: '2026-09-28',
+    observationError: null,
+    models: [
+      {
+        id: route.provider === 'claude' ? 'model-b' : 'model-a',
+        label: route.provider === 'claude' ? 'Model B' : 'Model A',
+        description: '',
+        defaultReasoningMode: 'high',
+        reasoningModes: [{ id: 'high', description: '' }],
+      },
+    ],
+  });
+  render(
+    <WorkflowAuthoringScreen
+      client={fixture.authoring}
+      executionConfigurationClient={fixture.configuration}
+    />,
+  );
+  await user.click(await screen.findByRole('button', { name: 'Configure Author' }));
+  const modelB = await screen.findByRole('checkbox', { name: 'Model B' });
+  expect(modelB).toBeInTheDocument();
+  await user.click(modelB);
+  expect(screen.getByRole('option', { name: 'Model B' })).toBeInTheDocument();
+});

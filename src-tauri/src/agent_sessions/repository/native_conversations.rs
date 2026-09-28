@@ -1,15 +1,17 @@
-//! Parked native conversations of providers a Session no longer runs on, and the initial prompt
-//! prefix a provider new to the Session receives.
+//! Provider-owned conversation bindings and the first prompt prefix delivered to a Session.
 use super::*;
-use crate::agent_sessions::{domain::ParkedNativeConversation, ports::InitialPromptPrefix};
+use crate::{
+    agent_sessions::{domain::ProviderSessionBinding, ports::InitialPromptPrefix},
+    execution_targets::domain::ExecutionBinding,
+};
 
 pub(crate) const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS agent_session_parked_conversations (
+CREATE TABLE IF NOT EXISTS agent_session_provider_bindings (
  session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
- provider TEXT NOT NULL,
- conversation_json TEXT NOT NULL CHECK(json_valid(conversation_json)),
- parked_at TEXT NOT NULL,
- PRIMARY KEY (session_id, provider)
+ execution_key TEXT NOT NULL,
+ binding_json TEXT NOT NULL CHECK(json_valid(binding_json)),
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY (session_id, execution_key)
 );
 CREATE TABLE IF NOT EXISTS agent_session_initial_prompt_prefixes (
  session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -18,47 +20,51 @@ CREATE TABLE IF NOT EXISTS agent_session_initial_prompt_prefixes (
 );
 "#;
 
-/// Within a prepared-binding commit: park the source provider's conversation and make the
-/// destination provider's parked conversation current by removing it from the parked set.
-pub(super) fn swap_parked_conversations(
+fn execution_key(execution: &ExecutionBinding) -> Result<String, RepositoryError> {
+    to_json(execution)
+}
+
+/// Within a prepared-binding commit, retain the source route's provider-owned conversation. The
+/// destination binding remains cached too; selecting it never consumes or relocates its handle.
+pub(super) fn retain_source_provider_binding(
     tx: &rusqlite::Transaction<'_>,
     session_id: &AgentSessionId,
-    parked_source: Option<&ParkedNativeConversation>,
-    destination_provider: &str,
+    source: Option<&ProviderSessionBinding>,
     at: DateTime<Utc>,
 ) -> Result<(), RepositoryError> {
-    if let Some(parked) = parked_source {
-        tx.execute(
-            "INSERT INTO agent_session_parked_conversations(session_id,provider,conversation_json,parked_at)
-             VALUES(?1,?2,?3,?4) ON CONFLICT(session_id,provider)
-             DO UPDATE SET conversation_json=excluded.conversation_json,parked_at=excluded.parked_at",
-            params![session_id.as_str(), parked.provider, to_json(parked)?, timestamp(at)],
-        )
-        .map_err(sql_write("park native conversation"))?;
-    }
+    let Some(source) = source else {
+        return Ok(());
+    };
     tx.execute(
-        "DELETE FROM agent_session_parked_conversations WHERE session_id=?1 AND provider=?2",
-        params![session_id.as_str(), destination_provider],
+        "INSERT INTO agent_session_provider_bindings(session_id,execution_key,binding_json,updated_at)
+         VALUES(?1,?2,?3,?4) ON CONFLICT(session_id,execution_key)
+         DO UPDATE SET binding_json=excluded.binding_json,updated_at=excluded.updated_at",
+        params![
+            session_id.as_str(),
+            execution_key(&source.location)?,
+            to_json(source)?,
+            timestamp(at)
+        ],
     )
-    .map_err(sql_write("resume parked native conversation"))?;
+    .map_err(sql_write("retain provider session binding"))?;
     Ok(())
 }
 
 impl SqliteAgentSessionRepository {
-    pub(super) fn read_parked_conversation(
+    pub(super) fn read_provider_session_binding(
         &self,
         session_id: &AgentSessionId,
-        provider: &str,
-    ) -> Result<Option<ParkedNativeConversation>, RepositoryError> {
-        self.read("read parked native conversation", |connection| {
+        execution: &ExecutionBinding,
+    ) -> Result<Option<ProviderSessionBinding>, RepositoryError> {
+        self.read("read provider session binding", |connection| {
             let json: Option<String> = connection
                 .query_row(
-                    "SELECT conversation_json FROM agent_session_parked_conversations WHERE session_id=?1 AND provider=?2",
-                    params![session_id.as_str(), provider],
+                    "SELECT binding_json FROM agent_session_provider_bindings WHERE session_id=?1 AND execution_key=?2",
+                    params![session_id.as_str(), execution_key(execution)?],
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(sql_unavailable("read parked native conversation"))?;
+                .map_err(sql_unavailable("read provider session binding"))?;
             json.map(|json| {
                 serde_json::from_str(&json).map_err(|error| {
                     RepositoryError::new(RepositoryErrorKind::InvalidState, error.to_string())

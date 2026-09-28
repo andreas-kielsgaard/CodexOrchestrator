@@ -171,14 +171,14 @@ mod tests {
     use super::*;
     use crate::contracts::{
         domain::{AgentInvocationId, AgentRuntimeOptions, AgentSessionId},
-        ports::RuntimeManagedMcpServer,
+        ports::{InvocationContent, RuntimeManagedMcpServer},
     };
 
     fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest {
         RuntimeInvocationRequest {
             session_id: AgentSessionId::new("session").unwrap(),
             invocation_id: AgentInvocationId::new("invocation").unwrap(),
-            submitted_text: "hello".into(),
+            content: InvocationContent::query("hello"),
             working_directory: Some("/work".into()),
             options: AgentRuntimeOptions {
                 model: Some("sonnet".into()),

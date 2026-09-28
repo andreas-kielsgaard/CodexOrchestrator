@@ -234,7 +234,11 @@ impl NativeProfileService {
     }
 
     /// Binds a Session to the home it now runs on after a target change.
-    pub(crate) fn bind_session_home(&self, reference: &str, session_id: &str) -> Result<(), String> {
+    pub(crate) fn bind_session_home(
+        &self,
+        reference: &str,
+        session_id: &str,
+    ) -> Result<(), String> {
         let home = self.resolve_configuration_home(reference)?;
         self.write("commit Session native destination", |tx| {
             tx.execute(

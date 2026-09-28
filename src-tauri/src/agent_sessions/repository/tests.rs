@@ -826,7 +826,7 @@ fn organization_creation_is_atomic_and_default_pin_does_not_change_placement() {
 }
 
 #[test]
-fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() {
+fn provider_sessions_are_retained_by_exact_execution_route() {
     let connection = Connection::open_in_memory().expect("memory database");
     connection
         .execute_batch(&format!(
@@ -838,35 +838,32 @@ fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() 
     let session = repository
         .create_session(test_session("switching", at(0)))
         .unwrap();
-    let parked = crate::agent_sessions::domain::ParkedNativeConversation {
-        provider: "codex".into(),
+    let cached = crate::agent_sessions::domain::ProviderSessionBinding {
         external_context_id: ExternalRuntimeContextId::new("codex-thread").unwrap(),
         runtime_version: None,
         location: crate::execution_targets::domain::ExecutionBinding::default(),
         last_invocation_id: Some(AgentInvocationId::new("turn-one").unwrap()),
     };
     repository
-        .write("park", |tx| {
-            super::native_conversations::swap_parked_conversations(
+        .write("retain", |tx| {
+            super::native_conversations::retain_source_provider_binding(
                 tx,
                 &session.id,
-                Some(&parked),
-                "claude",
+                Some(&cached),
                 at(1),
             )
         })
         .unwrap();
     assert_eq!(
-        repository.parked_native_conversation(&session.id, "codex").unwrap(),
-        Some(parked)
+        repository
+            .provider_session_binding(&session.id, &cached.location)
+            .unwrap(),
+        Some(cached.clone())
     );
-    repository
-        .write("return", |tx| {
-            super::native_conversations::swap_parked_conversations(tx, &session.id, None, "codex", at(2))
-        })
-        .unwrap();
+    let mut other_configuration = cached.location.clone();
+    other_configuration.configuration_ref = "other-setup".into();
     assert!(repository
-        .parked_native_conversation(&session.id, "codex")
+        .provider_session_binding(&session.id, &other_configuration)
         .unwrap()
         .is_none());
 }

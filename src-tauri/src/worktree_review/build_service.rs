@@ -594,13 +594,12 @@ impl ReviewBuildCoordinator {
                 Some(worktree_id.as_str().to_owned())
             }
             super::domain::ReviewSourceSelection::LiveWorktree { association_id, .. }
-            | super::domain::ReviewSourceSelection::WorktreeSnapshot { association_id, .. } => {
-                self.database
-                    .associations()
-                    .find(association_id)
-                    .map_err(|error| error.to_string())?
-                    .map(|association| association.worktree_id.as_str().to_owned())
-            }
+            | super::domain::ReviewSourceSelection::WorktreeSnapshot { association_id, .. } => self
+                .database
+                .associations()
+                .find(association_id)
+                .map_err(|error| error.to_string())?
+                .map(|association| association.worktree_id.as_str().to_owned()),
             _ => None,
         };
         Ok(review_build_view(

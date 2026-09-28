@@ -64,7 +64,13 @@ pub(crate) trait ProviderLaunchPreparation: Send + Sync {
         resuming: bool,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<RuntimeLaunchExtension, String> {
-        self.prepare_launch(configuration, session_id, invocation_id, resuming, extension)
+        self.prepare_launch(
+            configuration,
+            session_id,
+            invocation_id,
+            resuming,
+            extension,
+        )
     }
 
     /// Records that the Session now runs on this configuration.
@@ -95,6 +101,19 @@ pub(crate) trait SessionHarnessLaunchAuthority: Send + Sync {
         invocation_id: &AgentInvocationId,
         extension: Option<RuntimeLaunchExtension>,
     ) -> Result<Option<RuntimeLaunchExtension>, String>;
+
+    /// Prepares a launch against the exact execution profile resolved for this invocation. Legacy
+    /// callers may omit it and use the Session's stored policy; mutable ordinary Sessions pass the
+    /// current resolution explicitly.
+    fn prepare_resolved_launch(
+        &self,
+        session_id: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        _profile: Option<&crate::execution_configuration::SessionCreationResolution>,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        self.prepare_launch(session_id, invocation_id, extension)
+    }
 }
 
 /// Resolves the Session's exact owned Harness reference before any launch configuration is built.

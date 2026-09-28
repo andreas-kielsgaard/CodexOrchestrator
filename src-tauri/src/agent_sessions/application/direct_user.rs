@@ -93,11 +93,7 @@ impl AgentSessionApplication {
                     )
                 })?;
             let session_skill_inputs = self
-                .compile_capability_skill_inputs(
-                    &capability,
-                    &target.execution,
-                    Some(&target.path),
-                )
+                .compile_capability_skill_inputs(&capability, &target.execution, Some(&target.path))
                 .map_err(|error| {
                     SessionConfigurationError::new(
                         SessionConfigurationErrorKind::InvalidInvocationSelection,

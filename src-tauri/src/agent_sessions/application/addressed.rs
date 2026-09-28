@@ -25,6 +25,23 @@ impl AgentSessionApplication {
         {
             return Ok(existing);
         }
+        if let Some(model) = creation.node_profile.pinned_defaults.model.as_deref() {
+            if !creation.capability_profile.route_policies.is_empty() {
+                let profiles = self
+                    .capability_profiles
+                    .as_ref()
+                    .ok_or_else(|| SessionDirectoryError::new("Capability Profiles unavailable"))?;
+                let route = profiles
+                    .route_exposing_model(
+                        &creation.capability_profile,
+                        &creation.capability_profile.execution.device_id,
+                        model,
+                        working_directory.as_deref(),
+                    )
+                    .map_err(|error| SessionDirectoryError::new(error.to_string()))?;
+                creation.capability_profile.execution = route.execution;
+            }
+        }
         let source = self
             .configuration_source(&creation.capability_profile.execution.provider)
             .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
@@ -40,7 +57,7 @@ impl AgentSessionApplication {
             working_directory.as_deref(),
             creation.clone(),
         )
-            .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+        .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         let session = self.prepare_session_with_id(
             CreateAgentSessionCommand {
@@ -147,9 +164,7 @@ impl AgentSessionApplication {
         &self,
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
-        prompt: String,
-        initial_prompt: Option<String>,
-        event_group_id: String,
+        content: InvocationContent,
         direct_user_options: Option<DirectUserInvocationOptions>,
         direct_user: bool,
     ) -> Result<SendAgentSessionMessageLaunchResult, SessionInvocationError> {
@@ -189,30 +204,24 @@ impl AgentSessionApplication {
             }
         };
         let requested_options = runtime_options(&selections);
-        let mut extension = reasoning_launch_extension(&selections).unwrap_or_default();
-        if let Some(initial_prompt) = initial_prompt {
-            extension.initial_prompt_prefix = Some(InitialPromptPrefix {
-                source: format!("session_event:{event_group_id}"),
-                version: 1,
-                content: initial_prompt,
-            });
-        }
-        let command = SendIdempotentApplicationAgentSessionMessageCommand {
-            invocation_id,
-            message: SendAgentSessionMessageCommand {
+        let extension = reasoning_launch_extension(&selections).unwrap_or_default();
+        self.delivery()
+            .deliver(InvocationDeliveryIntent {
+                invocation_id: Some(invocation_id),
+                provenance: if direct_user {
+                    AgentInvocationInputProvenance::User
+                } else {
+                    AgentInvocationInputProvenance::Application
+                },
                 session_id: Some(session_id),
-                submitted_text: prompt,
                 title: None,
                 working_directory: history.session.working_directory,
                 requested_options: Some(requested_options),
-            },
-        };
-        let extension = (extension != RuntimeLaunchExtension::default()).then_some(extension);
-        if direct_user {
-            self.send_idempotent_user_message_with_launch_observation(command, extension)
-        } else {
-            self.send_idempotent_application_message_with_launch_observation(command, extension)
-        }
-        .map_err(|error| SessionInvocationError::new(error.to_string()))
+                content,
+                launch_extension: (extension != RuntimeLaunchExtension::default())
+                    .then_some(extension),
+                prepared_only: false,
+            })
+            .map_err(|error| SessionInvocationError::new(error.to_string()))
     }
 }

@@ -164,9 +164,7 @@ pub(crate) fn order_harness_version_replacement(
     state: State<'_, HarnessCatalogTauriState>,
     input: HarnessReplacementInput,
 ) -> Result<super::domain::HarnessVersionReplacement, String> {
-    state
-        .service
-        .order_replacement(input.source, input.target)
+    state.service.order_replacement(input.source, input.target)
 }
 
 #[tauri::command]

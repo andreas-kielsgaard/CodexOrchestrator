@@ -35,8 +35,14 @@ fn remote_target_preserves_linux_path_and_routes_continuation_without_local_laun
     ));
     let target = remote_target();
     let endpoints = Arc::new(
-        ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source, harness.runtime.clone()))
-            .with_runtime(&target.execution, remote.clone()),
+        ExecutionEndpoints::new(
+            crate::runtime::providers::registrations::ProviderRegistrations::single(
+                "codex",
+                source,
+                harness.runtime.clone(),
+            ),
+        )
+        .with_runtime(&target.execution, remote.clone()),
     );
     let folder = tempfile::tempdir().unwrap();
     let app = harness
@@ -92,9 +98,15 @@ fn cancellation_uses_the_bound_remote_runtime() {
     let remote = Arc::new(FakeRuntime::new(RuntimeBehavior::StayRunning));
     let target = remote_target();
     let endpoints = Arc::new(
-        ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", Arc::new(FixedProviderConfigurationSource(
-                test_selected_runtime_profile(),
-            )), harness.runtime.clone()))
+        ExecutionEndpoints::new(
+            crate::runtime::providers::registrations::ProviderRegistrations::single(
+                "codex",
+                Arc::new(FixedProviderConfigurationSource(
+                    test_selected_runtime_profile(),
+                )),
+                harness.runtime.clone(),
+            ),
+        )
         .with_runtime(&target.execution, remote.clone()),
     );
     let app = harness.application.with_execution_endpoints(endpoints);
@@ -182,10 +194,17 @@ fn profiled_first_send_freezes_target_and_followup_uses_its_endpoint() {
     let harness = Harness::new(RuntimeBehavior::SpawnFailure);
     let selected_runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::CompleteWithBinding));
     let source = Arc::new(ConfiguredSource::default());
-    let endpoints = Arc::new(ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), selected_runtime.clone())));
+    let endpoints = Arc::new(ExecutionEndpoints::new(
+        crate::runtime::providers::registrations::ProviderRegistrations::single(
+            "codex",
+            source.clone(),
+            selected_runtime.clone(),
+        ),
+    ));
     let profiles = Arc::new(
-        CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
-        .with_endpoints(endpoints.clone()),
+        CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()))
+            .with_configuration_source(source.clone())
+            .with_endpoints(endpoints.clone()),
     );
     let saved = profiles
         .create_with_defaults(
@@ -303,7 +322,8 @@ fn workflow_creation_rejects_remote_profile_without_local_discovery() {
     let mut creation = test_session_creation_request();
     creation.capability_profile.execution = remote_target().execution;
     let result = crate::execution_configuration::SessionProfileResolver::resolve_creation(
-        &ConfiguredSource::default(), None,
+        &ConfiguredSource::default(),
+        None,
         creation,
     );
     assert!(result
