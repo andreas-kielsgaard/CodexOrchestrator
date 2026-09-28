@@ -125,7 +125,9 @@ it('limits node choices to the selected profile and shows a removed default', as
   );
   await user.click(await screen.findByRole('button', { name: 'Configure Author' }));
   expect(screen.queryByRole('checkbox', { name: 'model-b' })).not.toBeInTheDocument();
-  expect(screen.getByRole('group', { name: /Skills Profile device runtime/i })).toBeDisabled();
+  expect(screen.queryByRole('checkbox', { name: /workspace/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Default model' })).toBeVisible();
+  expect(screen.queryByText(/Profile device runtime/)).not.toBeInTheDocument();
   await user.click(screen.getByRole('checkbox', { name: 'model-a' }));
   expect(screen.getByRole('option', { name: /model-a \(unavailable\)/ })).toBeDisabled();
   expect(screen.getByText(/Default model .* is not exposed/)).toBeInTheDocument();

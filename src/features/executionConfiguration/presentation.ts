@@ -32,7 +32,7 @@ function availableCatalog<T extends string>(
 export function runtimeProfileViewModel(
   runtime: RuntimeProfileSnapshotDto,
 ): RuntimeProfileViewModel {
-  const sourceLabel = 'Profile device runtime';
+  const sourceLabel = '';
   const mcpTools = Object.entries(runtime.exposure.mcpTools).flatMap(([connectionId, tools]) =>
     tools.map((toolId) => ({
       value: mcpToolCatalogValue(connectionId, toolId),

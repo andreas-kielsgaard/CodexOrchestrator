@@ -86,10 +86,6 @@ impl SessionProfile {
         &self.node_capabilities
     }
 
-    pub(crate) fn agent_mcp_configuration(&self) -> &BTreeMap<String, serde_json::Value> {
-        &self.agent_mcp_configuration
-    }
-
     pub(crate) fn session_skill_inputs(&self) -> &[RuntimeSkillInput] {
         &self.session_skill_inputs
     }

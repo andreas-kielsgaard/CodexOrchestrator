@@ -1,6 +1,8 @@
 use super::compiled_plan::WorkflowCompiledPlan;
 use super::{
-    authoring::{WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary},
+    authoring::{
+        WorkflowAuthoringWorkspace, WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary,
+    },
     authoring_service::WorkflowAuthoringService,
 };
 use serde::Deserialize;
@@ -19,14 +21,14 @@ impl WorkflowAuthoringTauriState {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CreateWorkflowRecipeInput {
-    name: String,
+pub(crate) struct LoadWorkflowRecipeInput {
+    recipe_id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LoadWorkflowRecipeInput {
-    recipe_id: String,
+pub(crate) struct OpenWorkflowAuthoringWorkspaceInput {
+    preferred_recipe_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +61,16 @@ pub(crate) struct CompileWorkflowRecipeInstanceInput {
 }
 
 #[tauri::command]
+pub(crate) fn open_workflow_authoring_workspace(
+    state: State<'_, WorkflowAuthoringTauriState>,
+    input: OpenWorkflowAuthoringWorkspaceInput,
+) -> Result<WorkflowAuthoringWorkspace, String> {
+    state
+        .service
+        .open_workspace(input.preferred_recipe_id.as_deref())
+}
+
+#[tauri::command]
 pub(crate) fn list_workflow_recipes(
     state: State<'_, WorkflowAuthoringTauriState>,
 ) -> Result<Vec<WorkflowRecipeSummary>, String> {
@@ -76,9 +88,8 @@ pub(crate) fn load_workflow_recipe(
 #[tauri::command]
 pub(crate) fn create_workflow_recipe(
     state: State<'_, WorkflowAuthoringTauriState>,
-    input: CreateWorkflowRecipeInput,
 ) -> Result<WorkflowRecipeState, String> {
-    state.service.create(input.name)
+    state.service.create()
 }
 
 #[tauri::command]
@@ -129,8 +140,9 @@ mod tests {
     #[test]
     fn transport_inputs_reject_unknown_fields() {
         assert!(
-            serde_json::from_value::<CreateWorkflowRecipeInput>(serde_json::json!({
-                "name": "Review",
+            serde_json::from_value::<ActivateWorkflowRecipeInput>(serde_json::json!({
+                "recipeId": "recipe-review",
+                "expectedRevision": 1,
                 "legacyRoleId": "role-reviewer"
             }))
             .is_err()

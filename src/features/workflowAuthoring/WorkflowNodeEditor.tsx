@@ -18,7 +18,6 @@ import {
   type RuntimeProfileViewModel,
   type RuntimeCapabilityCatalogs,
 } from '../executionConfiguration';
-import { AgentMcpConfigurationEditor } from './AgentMcpConfigurationEditor';
 
 function profileModels(
   profile: CapabilityProfileDto | undefined,
@@ -150,12 +149,6 @@ export function WorkflowNodeEditor({
           .map((candidate) => ({ nodeId: candidate.nodeId, nodeName: candidate.name }))}
         onChange={update}
         onCopyFromNode={onCopy}
-      />
-      <AgentMcpConfigurationEditor
-        packages={runtime.catalogs.otpPackages ?? []}
-        selectedTools={node.nodeProfile.allowedCapabilities.mcpTools}
-        value={node.agentMcpConfiguration ?? {}}
-        onChange={(agentMcpConfiguration) => onChange({ ...node, agentMcpConfiguration })}
       />
     </>
   );

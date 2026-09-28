@@ -397,8 +397,9 @@ impl Fixture {
     }
 
     fn instance(&self, file: Option<&str>) -> RecipeInstance {
-        let mut state = self.authoring.create("Review".into()).unwrap();
-        state.draft.starting_node_id = Some("a".into());
+        let mut state = self.authoring.create().unwrap();
+        state.draft.name = "Review".into();
+        state.draft.entry_node_ids = vec!["a".into()];
         state.draft.nodes = ["a", "b"]
             .into_iter()
             .map(|id| WorkflowAuthoringNode {
@@ -410,7 +411,6 @@ impl Fixture {
                 node_profile: test_session_creation_request().node_profile,
                 initial_prompt: Some(format!("Initial for {id}")),
                 agent_identity_id: None,
-                agent_mcp_configuration: Default::default(),
             })
             .collect();
         let mut prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
@@ -442,12 +442,7 @@ impl Fixture {
         state = self.authoring.save_draft(state.draft).unwrap();
         self.authoring.activate(&state.draft.recipe_id).unwrap();
         self.execution
-            .create_instance(
-                &state.draft.recipe_id,
-                state.draft.revision,
-                "Run".into(),
-                self.target(),
-            )
+            .create_instance(&state.draft.recipe_id, state.draft.revision, self.target())
             .unwrap()
     }
 

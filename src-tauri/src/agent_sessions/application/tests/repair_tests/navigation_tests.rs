@@ -51,7 +51,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
     let instance = fixture
         .execution
         .instances
-        .create("Feature build".into(), base.recipe, target)
+        .create(base.recipe, target)
         .unwrap();
     let source = Arc::new(QuickSource {
         configuration: test_selected_runtime_profile().configuration,
@@ -181,7 +181,7 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
             .iter()
             .find(|flow| flow.id == instance.id)
             .unwrap();
-        assert_eq!(flow.name, "Feature build");
+        assert_eq!(flow.name, "Review: Instance 2");
         assert_eq!(
             flow.nodes
                 .iter()

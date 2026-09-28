@@ -18,8 +18,6 @@ export interface WorkflowCompiledPlanDto {
   readonly instance: ReferenceIdentityDto;
   readonly recipe: ReferenceIdentityDto;
   readonly startingNode: ReferenceIdentityDto;
-  readonly entryAction: OtpCapabilityRefDto;
-  readonly entryConfiguration?: Readonly<Record<string, unknown>>;
   readonly nodes: readonly {
     readonly reference: ReferenceIdentityDto;
     readonly initialPrompt: string | null;
@@ -38,12 +36,6 @@ export interface WorkflowCompiledPlanDto {
   }[];
 }
 
-export interface AgentMcpConfigurationDto {
-  readonly [packageId: string]: {
-    readonly [serverName: string]: { readonly [key: string]: unknown };
-  };
-}
-
 export interface WorkflowAuthoringNodeDto {
   readonly nodeId: string;
   readonly name: string;
@@ -53,7 +45,6 @@ export interface WorkflowAuthoringNodeDto {
   readonly nodeProfile: NodeProfileDto;
   readonly initialPrompt: string | null;
   readonly agentIdentityId: string | null;
-  readonly agentMcpConfiguration?: AgentMcpConfigurationDto;
 }
 
 export interface WorkflowAuthoringConnectionDto {
@@ -69,13 +60,11 @@ export interface WorkflowAuthoringConnectionDto {
 }
 
 export interface WorkflowRecipeDraftDto {
-  readonly contractVersion: 2;
+  readonly contractVersion: 3;
   readonly recipeId: string;
   readonly name: string;
   readonly revision: number;
-  readonly startingNodeId: string | null;
-  readonly entryAction: OtpCapabilityRefDto;
-  readonly entryConfiguration?: Readonly<Record<string, unknown>>;
+  readonly entryNodeIds: readonly string[];
   readonly nodes: readonly WorkflowAuthoringNodeDto[];
   readonly connections: readonly WorkflowAuthoringConnectionDto[];
 }
@@ -95,6 +84,11 @@ export interface WorkflowRecipeSummaryDto {
   readonly updatedAt: string;
 }
 
+export interface WorkflowAuthoringWorkspaceDto {
+  readonly summaries: readonly WorkflowRecipeSummaryDto[];
+  readonly selected: WorkflowRecipeStateDto | null;
+}
+
 export interface CopyWorkflowNodeConfigurationInput {
   readonly recipeId: string;
   readonly expectedRevision: number;
@@ -109,9 +103,10 @@ export interface DispatchWorkflowUserRequestInput {
 }
 
 export interface WorkflowAuthoringClient {
+  openWorkspace(preferredRecipeId?: string | null): Promise<WorkflowAuthoringWorkspaceDto>;
   listRecipes(): Promise<readonly WorkflowRecipeSummaryDto[]>;
   loadRecipe(recipeId: string): Promise<WorkflowRecipeStateDto>;
-  createRecipe(name: string): Promise<WorkflowRecipeStateDto>;
+  createRecipe(): Promise<WorkflowRecipeStateDto>;
   saveDraft(draft: WorkflowRecipeDraftDto): Promise<WorkflowRecipeStateDto>;
   copyNodeConfiguration(input: CopyWorkflowNodeConfigurationInput): Promise<WorkflowRecipeStateDto>;
   activateRecipe(recipeId: string, expectedRevision: number): Promise<WorkflowRecipeStateDto>;

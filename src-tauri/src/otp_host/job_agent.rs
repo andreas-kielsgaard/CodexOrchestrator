@@ -78,22 +78,12 @@ impl AgentMcpUpstreamProvisioner for JobAgentMcpProvisioner {
                     .ok_or_else(|| format!("Unknown Job Agent MCP tool {tool}"))
             })
             .collect::<Result<BTreeSet<_>, _>>()?;
-        let configuration = profile
-            .session_profile()
-            .agent_mcp_configuration()
-            .get("job_agent")
-            .and_then(Value::as_object)
-            .and_then(|servers| servers.get("job_agent"))
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        self.registry
-            .validate_agent_mcp_configuration("job_agent", "job_agent", &configuration)?;
-        let grants = crate::otp_packages::job_agent::grants_from_configuration(&configuration)?;
         let tools = descriptor
             .tools
             .into_iter()
             .filter(|tool| selected_tools.contains(&tool.id))
             .collect::<Vec<_>>();
+        let grants = crate::otp_packages::job_agent::grants_for_tools(&selected_tools)?;
         let facade =
             JobAgentMcpFacade::start(self.installations.clone(), tools, capabilities, grants)?;
         let registration =

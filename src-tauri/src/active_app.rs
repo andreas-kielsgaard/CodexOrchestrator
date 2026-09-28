@@ -433,6 +433,7 @@ pub(crate) fn run() {
             crate::harness_engine::transport::order_harness_version_replacement,
             crate::harness_engine::transport::resolve_harness_version,
             crate::workflows::authoring_transport::list_workflow_recipes,
+            crate::workflows::authoring_transport::open_workflow_authoring_workspace,
             crate::workflows::authoring_transport::load_workflow_recipe,
             crate::workflows::authoring_transport::create_workflow_recipe,
             crate::workflows::authoring_transport::save_workflow_recipe_draft,

@@ -165,11 +165,7 @@ export function NodeProfileEditor({
         />
       </CollapsibleSection>
 
-      <CollapsibleSection
-        title="Pinned defaults"
-        description="Workflow-triggered messages use these defaults. Runtime locks remain inherited."
-        className="execution-configuration__section"
-      >
+      <div className="execution-configuration__section execution-configuration__node-defaults">
         <RuntimeDefaultsFields
           catalogs={capabilityCatalogs}
           allowed={value.exposedCapabilities}
@@ -177,7 +173,7 @@ export function NodeProfileEditor({
           locked={runtimeLockedSelections}
           onChange={(pinnedDefaults) => onChange({ ...value, pinnedDefaults })}
         />
-      </CollapsibleSection>
+      </div>
     </div>
   );
 }
