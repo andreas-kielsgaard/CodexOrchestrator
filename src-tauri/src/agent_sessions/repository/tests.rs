@@ -138,6 +138,24 @@ fn model_override_persists_without_replacing_the_session_sandbox() {
 }
 
 #[test]
+fn renamed_session_title_is_persisted() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("rename-session", at(0)))
+        .expect("create session");
+
+    let renamed = repository
+        .update_session_title(&session.id, "Planning notes".into(), at(1))
+        .expect("rename session");
+
+    assert_eq!(renamed.title, "Planning notes");
+    assert_eq!(
+        repository.get_session(&session.id).unwrap().unwrap().title,
+        "Planning notes"
+    );
+}
+
+#[test]
 fn persists_and_updates_session_owned_harness_and_identity() {
     let path = temporary_database_path();
     let connection = initialized_file_database(&path);
@@ -634,6 +652,7 @@ fn test_invocation(
     created_at: DateTime<Utc>,
 ) -> AgentInvocation {
     AgentInvocation {
+        attachments: vec![],
         id: AgentInvocationId::new(id).expect("invocation ID"),
         session_id: session_id.clone(),
         submitted_text: format!("input for {id}"),
@@ -857,12 +876,20 @@ fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() 
         })
         .unwrap();
     assert_eq!(
-        repository.parked_native_conversation(&session.id, "codex").unwrap(),
+        repository
+            .parked_native_conversation(&session.id, "codex")
+            .unwrap(),
         Some(parked)
     );
     repository
         .write("return", |tx| {
-            super::native_conversations::swap_parked_conversations(tx, &session.id, None, "codex", at(2))
+            super::native_conversations::swap_parked_conversations(
+                tx,
+                &session.id,
+                None,
+                "codex",
+                at(2),
+            )
         })
         .unwrap();
     assert!(repository

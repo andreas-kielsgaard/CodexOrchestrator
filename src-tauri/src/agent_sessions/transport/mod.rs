@@ -9,9 +9,9 @@ pub(crate) mod selections;
 use self::dto::{
     AgentInvocationDto, AgentSessionDetailsDto, AgentSessionDto, AgentSessionUpdateDto,
     CancelAgentInvocationCommandDto, CreateAgentSessionCommandDto, ListAgentSessionsQueryDto,
-    LoadAgentSessionQueryDto, SendAgentSessionMessageCommandDto, SendAgentSessionMessageResultDto,
-    UpdateAgentSessionHarnessCommandDto, UpdateAgentSessionIdentityCommandDto,
-    UpdateAgentSessionModelOverrideCommandDto,
+    LoadAgentSessionQueryDto, RenameAgentSessionCommandDto, SendAgentSessionMessageCommandDto,
+    SendAgentSessionMessageResultDto, UpdateAgentSessionHarnessCommandDto,
+    UpdateAgentSessionIdentityCommandDto, UpdateAgentSessionModelOverrideCommandDto,
 };
 use crate::agent_sessions::application::{
     AgentSessionApplication, AgentSessionNotification, AgentSessionNotifier,

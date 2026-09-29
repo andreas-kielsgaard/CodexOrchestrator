@@ -73,7 +73,7 @@ impl AgentSessionImportStore for SqliteAgentSessionRepository {
                 let id = AgentInvocationId::new(format!("{}-import-{ordinal:08}", session.id.as_str())).map_err(contract_error)?;
                 let input = turn.items.iter().find(|i| i.kind == "user").map(|i| i.text.as_str()).unwrap_or("[No user message in imported turn]");
                 let invocation = AgentInvocation {
-                    id: id.clone(), session_id: session.id.clone(), submitted_text: input.into(),
+                    id: id.clone(), session_id: session.id.clone(), submitted_text: input.into(), attachments: vec![],
                     input_provenance: AgentInvocationInputProvenance::User, status: turn.status,
                     requested_options: Default::default(), effective_options: None, started_at: None,
                     completed_at: None, exit_code: None, signal: None, runtime_error: None,

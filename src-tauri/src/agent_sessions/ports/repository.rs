@@ -37,7 +37,11 @@ impl AgentInvocationHistory {
 
     /// The agent's reply text.
     pub(crate) fn final_reply(&self) -> Option<&str> {
-        self.final_reply_event()?.normalized.as_ref()?.text.as_deref()
+        self.final_reply_event()?
+            .normalized
+            .as_ref()?
+            .text
+            .as_deref()
     }
 }
 
@@ -280,6 +284,13 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         session_id: &AgentSessionId,
         assigned_identity: Option<AssignedAgentIdentity>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError>;
+
+    fn update_session_title(
+        &self,
+        session_id: &AgentSessionId,
+        title: String,
         updated_at: DateTime<Utc>,
     ) -> Result<AgentSession, RepositoryError>;
 

@@ -279,13 +279,24 @@ impl CodexCliRuntime {
             InvocationCommand::Start => "start",
             InvocationCommand::Resume(_) => "resume",
         };
-        let args = build_args_from_effective_options(
+        let resume = matches!(&command, InvocationCommand::Resume(_));
+        let mut args = build_args_from_effective_options(
             command,
             &request.submitted_text,
             &request.options,
             request.launch_extension.as_ref(),
             request.working_directory.as_deref(),
         );
+        let image_paths =
+            orchid_engine::providers::codex::materialize_images(&request.attachments)?;
+        if !image_paths.is_empty() {
+            let insert_at = args.len() - if resume { 2 } else { 1 };
+            let mut image_args = Vec::with_capacity(image_paths.len() * 2);
+            for path in image_paths {
+                image_args.extend(["--image".into(), path.to_string_lossy().into_owned()]);
+            }
+            args.splice(insert_at..insert_at, image_args);
+        }
         let program = self
             .program
             .clone()

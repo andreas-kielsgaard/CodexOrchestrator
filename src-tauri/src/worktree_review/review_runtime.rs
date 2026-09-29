@@ -13,6 +13,7 @@ pub(crate) const REVIEW_INSTANCE_LABEL_ENV: &str = "CODEX_ORCHESTRATOR_REVIEW_IN
 const RUNTIME_DIRECTORY: &str = "review-runtimes";
 const SEED_MANIFEST: &str = "seed.json";
 const SEED_FORMAT_VERSION: u32 = 2;
+const COMPATIBLE_IMPORT_RECEIPT: &str = ".controller-data-import-v1.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ReviewApplicationIdentity {
@@ -47,6 +48,178 @@ struct ExistingSeedManifest {
     seed_format_version: u32,
     target_schema_version: Option<i64>,
     database_seeded: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibleImportSeed {
+    source_app_data: String,
+    database_seeded: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibleImportReceipt {
+    source_database: String,
+    imported_at: String,
+}
+
+/// Older reviewed builds cannot open a newer controller database directly. On first launch,
+/// merge the rows that fit their own schema into the private review database instead.
+pub(crate) fn import_compatible_controller_data(app_data: &Path) -> Result<(), String> {
+    let receipt = app_data.join(COMPATIBLE_IMPORT_RECEIPT);
+    if receipt.is_file() {
+        return Ok(());
+    }
+    let Some(runtime_root) = app_data.parent() else {
+        return Ok(());
+    };
+    let manifest = runtime_root.join(SEED_MANIFEST);
+    let Ok(bytes) = fs::read(&manifest) else {
+        return Ok(());
+    };
+    let seed: CompatibleImportSeed = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Review data seed receipt could not be read: {error}"))?;
+    if seed.database_seeded {
+        return Ok(());
+    }
+    let source =
+        PathBuf::from(seed.source_app_data).join(crate::storage::ACTIVE_DATABASE_FILE_NAME);
+    if !source.is_file() {
+        return Ok(());
+    }
+    let destination = crate::storage::active_database_path(app_data);
+    let connection = Connection::open(&destination)
+        .map_err(|error| format!("Review database could not be opened: {error}"))?;
+    crate::storage::configure_sqlite_connection(&connection)
+        .map_err(|error| format!("Review database could not be configured: {error}"))?;
+    crate::storage::initialize_active_database(&connection)?;
+    merge_compatible_tables(&connection, &source)?;
+    fs::write(
+        receipt,
+        serde_json::to_vec_pretty(&CompatibleImportReceipt {
+            source_database: source.to_string_lossy().into_owned(),
+            imported_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("Review data import receipt could not be written: {error}"))
+}
+
+fn merge_compatible_tables(connection: &Connection, source: &Path) -> Result<(), String> {
+    connection
+        .execute(
+            "ATTACH DATABASE ?1 AS controller_data",
+            [source.to_string_lossy().as_ref()],
+        )
+        .map_err(|error| format!("Controller database could not be attached: {error}"))?;
+    let result = (|| {
+        connection
+            .execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;")
+            .map_err(|error| {
+                format!("Compatible controller data import could not begin: {error}")
+            })?;
+        let tables = connection
+            .prepare(
+                "SELECT name FROM main.sqlite_schema
+                 WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(|error| format!("Review database tables could not be inspected: {error}"))?;
+        for table in tables {
+            if !source_table_exists(connection, &table)? {
+                continue;
+            }
+            let target_columns = table_columns(connection, "main", &table)?;
+            let source_columns = table_columns(connection, "controller_data", &table)?;
+            let source_names = source_columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<std::collections::HashSet<_>>();
+            if target_columns.iter().any(|column| {
+                column.required_without_default && !source_names.contains(column.name.as_str())
+            }) {
+                continue;
+            }
+            let shared = target_columns
+                .iter()
+                .filter(|column| source_names.contains(column.name.as_str()))
+                .map(|column| quoted_identifier(&column.name))
+                .collect::<Vec<_>>();
+            if shared.is_empty() {
+                continue;
+            }
+            let columns = shared.join(",");
+            connection
+                .execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO main.{} ({columns}) SELECT {columns} FROM controller_data.{}",
+                        quoted_identifier(&table),
+                        quoted_identifier(&table)
+                    ),
+                    [],
+                )
+                .map_err(|error| format!("Compatible rows for {table} could not be imported: {error}"))?;
+        }
+        connection
+            .execute_batch("COMMIT; PRAGMA foreign_keys=ON;")
+            .map_err(|error| format!("Compatible controller data import could not commit: {error}"))
+    })();
+    if result.is_err() {
+        let _ = connection.execute_batch("ROLLBACK; PRAGMA foreign_keys=ON;");
+    }
+    let detach = connection.execute("DETACH DATABASE controller_data", []);
+    result.and_then(|_| {
+        detach
+            .map(|_| ())
+            .map_err(|error| format!("Controller database could not be detached: {error}"))
+    })
+}
+
+struct CompatibleColumn {
+    name: String,
+    required_without_default: bool,
+}
+
+fn table_columns(
+    connection: &Connection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<CompatibleColumn>, String> {
+    connection
+        .prepare(&format!(
+            "SELECT name, \"notnull\", dflt_value FROM {schema}.pragma_table_info(?1)"
+        ))
+        .and_then(|mut statement| {
+            statement
+                .query_map([table], |row| {
+                    Ok(CompatibleColumn {
+                        name: row.get(0)?,
+                        required_without_default: row.get::<_, i64>(1)? != 0
+                            && row.get::<_, Option<String>>(2)?.is_none(),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("Columns for {table} could not be inspected: {error}"))
+}
+
+fn source_table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM controller_data.sqlite_schema WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Controller table {table} could not be inspected: {error}"))
+}
+
+fn quoted_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 pub(crate) fn identity(
@@ -528,6 +701,86 @@ mod tests {
         assert_eq!(
             manifest["targetSchemaVersion"],
             crate::storage::ACTIVE_SCHEMA_VERSION - 1
+        );
+    }
+
+    #[test]
+    fn reviewed_build_imports_compatible_rows_from_a_newer_controller_database_once() {
+        let source = tempfile::tempdir().unwrap();
+        let runtime = tempfile::tempdir().unwrap();
+        let app_data = runtime.path().join("app-data");
+        fs::create_dir(&app_data).unwrap();
+        let source_database = source
+            .path()
+            .join(crate::storage::ACTIVE_DATABASE_FILE_NAME);
+        let source_connection = crate::storage::open_active_database(&source_database).unwrap();
+        source_connection
+            .execute(
+                "INSERT INTO claude_setups(id,folder,executable,created_at) VALUES('claude-test','C:/claude','claude','2026-09-29T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        source_connection
+            .execute(
+                "INSERT INTO execution_capability_profiles(capability_profile_id,revision,profile_json) VALUES('profile-test',1,'{}')",
+                [],
+            )
+            .unwrap();
+        source_connection
+            .pragma_update(
+                None,
+                "user_version",
+                crate::storage::ACTIVE_SCHEMA_VERSION + 3,
+            )
+            .unwrap();
+        fs::write(
+            runtime.path().join(SEED_MANIFEST),
+            serde_json::to_vec(&serde_json::json!({
+                "sourceAppData": source.path().to_string_lossy(),
+                "databaseSeeded": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        import_compatible_controller_data(&app_data).unwrap();
+
+        let imported = Connection::open(crate::storage::active_database_path(&app_data)).unwrap();
+        assert_eq!(
+            imported
+                .query_row(
+                    "SELECT folder FROM claude_setups WHERE id='claude-test'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "C:/claude"
+        );
+        assert_eq!(
+            imported
+                .query_row(
+                    "SELECT revision FROM execution_capability_profiles WHERE capability_profile_id='profile-test'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert!(app_data.join(COMPATIBLE_IMPORT_RECEIPT).is_file());
+
+        source_connection
+            .execute("DELETE FROM claude_setups WHERE id='claude-test'", [])
+            .unwrap();
+        import_compatible_controller_data(&app_data).unwrap();
+        assert_eq!(
+            imported
+                .query_row(
+                    "SELECT COUNT(*) FROM claude_setups WHERE id='claude-test'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
         );
     }
 

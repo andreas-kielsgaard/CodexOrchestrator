@@ -40,7 +40,24 @@ const props = () => ({
   onMove: vi.fn().mockResolvedValue(undefined),
   onReorder: vi.fn().mockResolvedValue(undefined),
   onPin: vi.fn().mockResolvedValue(undefined),
+  onRename: vi.fn().mockResolvedValue(undefined),
   onReload: vi.fn(),
+});
+
+it('renames a session from its context menu', async () => {
+  const actions = props();
+  render(<SessionSelector {...actions} />);
+
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Session 1' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Session name' }), {
+    target: { value: '  Planning notes  ' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() =>
+    expect(actions.onRename).toHaveBeenCalledWith('session-1', 'Planning notes'),
+  );
 });
 it('shows five sessions per folder, reveals more, and creates at a folder target', async () => {
   const actions = props();

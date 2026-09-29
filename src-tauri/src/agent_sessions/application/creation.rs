@@ -3,7 +3,7 @@
 use super::{
     AgentSessionApplication, AgentSessionApplicationError, AgentSessionOwnership,
     CreateAgentSessionCommand, CreateApplicationAgentSessionCommand, ListAgentSessionsResult,
-    UpdateAgentSessionHarnessCommand, UpdateAgentSessionIdentityCommand,
+    RenameAgentSessionCommand, UpdateAgentSessionHarnessCommand, UpdateAgentSessionIdentityCommand,
     UpdateAgentSessionModelOverrideCommand,
 };
 use crate::agent_sessions::domain::{
@@ -154,6 +154,21 @@ impl AgentSessionApplication {
                 command.assigned_identity,
                 self.clock.now(),
             )
+            .map_err(AgentSessionApplicationError::repository)
+    }
+
+    pub(crate) fn rename_session(
+        &self,
+        command: RenameAgentSessionCommand,
+    ) -> Result<AgentSession, AgentSessionApplicationError> {
+        let title = command.title.trim();
+        if title.is_empty() {
+            return Err(AgentSessionApplicationError::invalid(
+                "Session title cannot be blank",
+            ));
+        }
+        self.repository
+            .update_session_title(&command.session_id, title.to_string(), self.clock.now())
             .map_err(AgentSessionApplicationError::repository)
     }
 

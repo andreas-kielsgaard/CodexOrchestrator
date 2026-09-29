@@ -38,6 +38,8 @@ pub(crate) struct SteerAgentSessionCommand {
     pub(crate) invocation_id: AgentInvocationId,
     pub(crate) input_id: String,
     pub(crate) text: String,
+    #[serde(default)]
+    pub(crate) attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -64,7 +66,9 @@ impl AgentSessionApplication {
         &self,
         command: SteerAgentSessionCommand,
     ) -> Result<SessionInteraction, AgentSessionApplicationError> {
-        if command.text.trim().is_empty() || command.input_id.trim().is_empty() {
+        if (command.text.trim().is_empty() && command.attachments.is_empty())
+            || command.input_id.trim().is_empty()
+        {
             return Err(AgentSessionApplicationError::invalid(
                 "Steering requires text and an input identity",
             ));
@@ -116,6 +120,7 @@ impl AgentSessionApplication {
             &target,
             &command.input_id,
             &command.text,
+            &command.attachments,
         );
         let state = match &result {
             Ok(()) => "accepted",

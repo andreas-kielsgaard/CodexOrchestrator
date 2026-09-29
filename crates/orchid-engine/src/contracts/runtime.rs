@@ -13,10 +13,22 @@ pub struct RuntimeInvocationRequest {
     pub session_id: AgentSessionId,
     pub invocation_id: AgentInvocationId,
     pub submitted_text: String,
+    #[serde(default)]
+    pub attachments: Vec<RuntimeImageAttachment>,
     pub working_directory: Option<String>,
     pub options: AgentRuntimeOptions,
     /// Prepared native-home binding, capability additions and explicit domain launch selections.
     pub launch_extension: Option<RuntimeLaunchExtension>,
+}
+
+/// Portable image bytes. The provider materializes these on the execution device.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeImageAttachment {
+    pub id: String,
+    pub name: String,
+    pub media_type: String,
+    pub data_base64: String,
 }
 
 /// Launch data prepared by the application. Authority is established before crossing this port.
@@ -342,6 +354,7 @@ pub trait AgentRuntime: Send + Sync {
         _target: &RuntimeTurnTarget,
         _input_id: &str,
         _text: &str,
+        _attachments: &[RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         Err(RuntimePortError::new(
             RuntimePortErrorKind::UnsupportedOptions,

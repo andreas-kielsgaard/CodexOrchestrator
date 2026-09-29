@@ -3,7 +3,7 @@ import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
-import type { RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
+import type { NewAgentImageAttachmentDto, RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   projectedTranscriptContent,
@@ -40,7 +40,7 @@ export interface ConversationViewportComposerTarget {
   canceling: boolean;
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
-  send(): Promise<void>;
+  send(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
   cancel(): Promise<void>;
 }
 
@@ -162,6 +162,7 @@ export function ConversationViewport({
       </div>
       {composerTarget && (
         <AgentSessionComposer
+          key={composerTarget.sessionId ?? 'new-session'}
           toolbar={composerTarget.toolbar}
           quickFeatures={composerTarget.quickFeatures}
           targetSource={composerTarget.targetSource}
@@ -180,9 +181,9 @@ export function ConversationViewport({
           keyboardHint={composerPresentation?.keyboardHint ?? 'tooltip'}
           onDraftChange={composerTarget.setDraft}
           onWorkingDirectoryChange={composerTarget.setWorkingDirectory}
-          onSend={() => {
+          onSend={(attachments) => {
             follow.requestFollow();
-            void composerTarget.send();
+            void composerTarget.send(attachments);
           }}
           onCancel={() => void composerTarget.cancel()}
         />

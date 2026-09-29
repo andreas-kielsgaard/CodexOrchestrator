@@ -41,6 +41,8 @@ pub(crate) struct StartSessionRequest {
     #[serde(default)]
     pub(crate) execution_target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
     pub(crate) submitted_text: String,
+    #[serde(default)]
+    pub(crate) attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
     pub(crate) model: Option<String>,
@@ -223,7 +225,10 @@ impl SessionNavigationService {
             .pin_session(&id, pinned, chrono::Utc::now())
             .map_err(|e| e.to_string())
     }
-    pub(crate) fn working_directory_for_folder(&self, target: &SessionFolderTarget) -> Result<String, String> {
+    pub(crate) fn working_directory_for_folder(
+        &self,
+        target: &SessionFolderTarget,
+    ) -> Result<String, String> {
         let repository = self.repository_for_folder(target)?;
         Ok(self
             .catalog
@@ -280,8 +285,9 @@ impl SessionNavigationService {
             request.working_directory = Some(self.working_directory_for_folder(target)?);
         }
         self.sessions
-            .start_direct_user_session_with_target(
+            .start_direct_user_session_with_target_and_attachments(
                 request.submitted_text,
+                request.attachments,
                 request.title,
                 request.working_directory,
                 request.model,

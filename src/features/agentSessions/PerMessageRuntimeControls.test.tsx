@@ -18,7 +18,9 @@ describe('PerMessageRuntimeControls', () => {
       />,
     );
 
-    expect(screen.getByText('These choices apply only to the next user message.')).toBeVisible();
+    expect(
+      screen.getByText('The accepted choice remains selected for this conversation.'),
+    ).toBeVisible();
     expect(screen.getByRole('option', { name: 'GPT-5.4' })).toBeDisabled();
     expect(screen.getByLabelText('Model')).toHaveValue('gpt-5.6');
     expect(screen.getByLabelText('Reasoning')).toHaveValue('high');

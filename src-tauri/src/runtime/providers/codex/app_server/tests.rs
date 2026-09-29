@@ -1,6 +1,6 @@
 use super::*;
-use crate::agent_sessions::{application::*, repository::SqliteAgentSessionRepository};
 use crate::agent_sessions::ports::*;
+use crate::agent_sessions::{application::*, repository::SqliteAgentSessionRepository};
 use crate::runtime::processes::*;
 use orchid_engine::contracts::RuntimeInteractionResponse;
 use serde_json::{json, Value};
@@ -126,6 +126,7 @@ fn disconnected_steering_stays_uncertain_and_is_never_replayed() {
     );
     let started = application
         .send_message(SendAgentSessionMessageCommand {
+            attachments: vec![],
             session_id: None,
             submitted_text: "Wait".into(),
             title: None,
@@ -135,6 +136,7 @@ fn disconnected_steering_stays_uncertain_and_is_never_replayed() {
         .unwrap();
     wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
     let command = SteerAgentSessionCommand {
+        attachments: vec![],
         session_id: started.session_id.clone(),
         invocation_id: started.invocation_id.clone(),
         input_id: "lost-ack".into(),
@@ -198,6 +200,7 @@ impl AgentSessionNotifier for ReentrantNotifier {
                 *successor = Some(
                     application
                         .send_message(SendAgentSessionMessageCommand {
+                            attachments: vec![],
                             session_id: Some(session_id),
                             submitted_text: "Successor".into(),
                             title: None,
@@ -243,6 +246,7 @@ fn terminal_observer_can_start_successor_before_old_process_exits() {
     *notifier.application.lock().unwrap() = Some(Arc::downgrade(&application));
     let started = application
         .send_message(SendAgentSessionMessageCommand {
+            attachments: vec![],
             session_id: None,
             submitted_text: "First".into(),
             title: None,
@@ -253,6 +257,7 @@ fn terminal_observer_can_start_successor_before_old_process_exits() {
     wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
     application
         .steer_session(SteerAgentSessionCommand {
+            attachments: vec![],
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id,
             input_id: "finish".into(),
@@ -325,6 +330,7 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
     );
     let started = application
         .send_message(SendAgentSessionMessageCommand {
+            attachments: vec![],
             session_id: None,
             submitted_text: "Wait for steering".into(),
             title: None,
@@ -348,14 +354,18 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id.clone(),
             request_id: request.id.clone(),
-            response: RuntimeInteractionResponse::Choose { choice_id: "not-offered".into() }
+            response: RuntimeInteractionResponse::Choose {
+                choice_id: "not-offered".into()
+            }
         })
         .is_err());
     let response = RespondToRuntimeRequestCommand {
         session_id: started.session_id.clone(),
         invocation_id: started.invocation_id.clone(),
         request_id: request.id.clone(),
-        response: RuntimeInteractionResponse::Choose { choice_id: "choice-1".into() },
+        response: RuntimeInteractionResponse::Choose {
+            choice_id: "choice-1".into(),
+        },
     };
     application
         .respond_to_runtime_request(response.clone())
@@ -381,7 +391,9 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id.clone(),
             request_id: question.id,
-            response: RuntimeInteractionResponse::Answer { answers: std::collections::BTreeMap::from([("choice".into(), vec!["One".into()])]) },
+            response: RuntimeInteractionResponse::Answer {
+                answers: std::collections::BTreeMap::from([("choice".into(), vec!["One".into()])]),
+            },
         })
         .unwrap();
     assert!(child
@@ -402,6 +414,7 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
     });
     for (id, text) in [("input-one", "Continue"), ("input-two", "FINISH")] {
         let command = SteerAgentSessionCommand {
+            attachments: vec![],
             session_id: started.session_id.clone(),
             invocation_id: started.invocation_id.clone(),
             input_id: id.into(),

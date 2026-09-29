@@ -4,6 +4,7 @@ import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 import type { DraftBranchChoice } from './draftTargetResolver';
 
 const STORAGE_PREFIX = 'codex-orchestrator/composer-draft/v1/';
+const LAST_SENT_RUNTIME_KEY = 'global:last-sent-runtime';
 
 export interface CachedComposerDraft {
   readonly text?: string;
@@ -59,6 +60,14 @@ export function clearCachedComposerDraft(key: string): void {
   } catch {
     // The send already succeeded; retaining a recoverable stale draft is safer than failing it.
   }
+}
+
+export function readLastSentRuntimeSelection(): PerMessageRuntimeSelection | null {
+  return readCachedComposerDraft(LAST_SENT_RUNTIME_KEY)?.runtimeSelection ?? null;
+}
+
+export function writeLastSentRuntimeSelection(selection: PerMessageRuntimeSelection): void {
+  writeCachedComposerDraft(LAST_SENT_RUNTIME_KEY, { runtimeSelection: selection });
 }
 
 function browserStorage(): Storage | null {

@@ -42,6 +42,7 @@ pub(super) type InvocationRow = (
     Option<String>,
     String,
     String,
+    String,
 );
 pub(super) type EventRow = (String, String, i64, String, String, Option<String>, String);
 
@@ -80,6 +81,7 @@ pub(super) fn invocation_row(row: &Row<'_>) -> rusqlite::Result<InvocationRow> {
         row.get(11)?,
         row.get(12)?,
         row.get(13)?,
+        row.get(14)?,
     ))
 }
 
@@ -143,6 +145,7 @@ pub(super) fn map_invocation_row(row: InvocationRow) -> Result<AgentInvocation, 
         id: AgentInvocationId::new(row.0).map_err(contract_error)?,
         session_id: AgentSessionId::new(row.1).map_err(contract_error)?,
         submitted_text: row.2,
+        attachments: from_json(&row.14, "invocation image attachments")?,
         input_provenance: parse_input_provenance(&row.3)?,
         status: parse_status(&row.4)?,
         requested_options: from_json(&row.5, "invocation requested options")?,
@@ -209,8 +212,8 @@ pub(super) fn insert_invocation(
     invocation: &AgentInvocation,
 ) -> Result<(), RepositoryError> {
     transaction.execute(
-        "INSERT INTO agent_session_invocations (id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![invocation.id.as_str(), invocation.session_id.as_str(), invocation.submitted_text, input_provenance_text(invocation.input_provenance), status_text(invocation.status), to_json(&invocation.requested_options)?, invocation.effective_options.as_ref().map(to_json).transpose()?, invocation.started_at.map(timestamp), invocation.completed_at.map(timestamp), invocation.exit_code, invocation.signal, invocation.runtime_error.as_ref().map(to_json).transpose()?, timestamp(invocation.created_at), timestamp(invocation.updated_at)],
+        "INSERT INTO agent_session_invocations (id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at, attachments_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![invocation.id.as_str(), invocation.session_id.as_str(), invocation.submitted_text, input_provenance_text(invocation.input_provenance), status_text(invocation.status), to_json(&invocation.requested_options)?, invocation.effective_options.as_ref().map(to_json).transpose()?, invocation.started_at.map(timestamp), invocation.completed_at.map(timestamp), invocation.exit_code, invocation.signal, invocation.runtime_error.as_ref().map(to_json).transpose()?, timestamp(invocation.created_at), timestamp(invocation.updated_at), to_json(&invocation.attachments)?],
     ).map_err(sql_write("create pending invocation"))?;
     Ok(())
 }
@@ -227,7 +230,7 @@ pub(super) fn update_invocation(
 }
 
 pub(super) const SESSION_SELECT: &str = "SELECT id, title, availability, external_context_id, runtime_version, working_directory, requested_options_json, session_profile_json, harness_version_ref_json, assigned_identity_json, created_at, updated_at, workspace_origin, execution_target_json FROM agent_sessions";
-pub(super) const INVOCATION_SELECT: &str = "SELECT id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at FROM agent_session_invocations";
+pub(super) const INVOCATION_SELECT: &str = "SELECT id, session_id, submitted_text, input_provenance, status, requested_options_json, effective_options_json, started_at, completed_at, exit_code, signal, runtime_error_json, created_at, updated_at, attachments_json FROM agent_session_invocations";
 
 pub(super) fn list_sessions_from(
     conn: &Connection,

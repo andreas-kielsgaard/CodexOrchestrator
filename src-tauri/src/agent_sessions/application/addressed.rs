@@ -40,7 +40,7 @@ impl AgentSessionApplication {
             working_directory.as_deref(),
             creation.clone(),
         )
-            .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
+        .map_err(|e| SessionDirectoryError::new(e.to_string()))?;
         let requested_options = runtime_options(resolution.session_profile().pinned_defaults());
         let session = self.prepare_session_with_id(
             CreateAgentSessionCommand {
@@ -200,6 +200,7 @@ impl AgentSessionApplication {
         let command = SendIdempotentApplicationAgentSessionMessageCommand {
             invocation_id,
             message: SendAgentSessionMessageCommand {
+                attachments: vec![],
                 session_id: Some(session_id),
                 submitted_text: prompt,
                 title: None,

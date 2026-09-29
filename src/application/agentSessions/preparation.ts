@@ -31,6 +31,7 @@ export interface SendPreparedAgentSessionMessageInput {
   readonly sessionId: string | null;
   readonly submissionId: string;
   readonly submittedText: string;
+  readonly attachments?: readonly import('./contracts').NewAgentImageAttachmentDto[];
   readonly title: string | null;
   readonly workingDirectory: string | null;
   readonly executionSelection: SessionExecutionSelectionDto | null;

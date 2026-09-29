@@ -281,7 +281,7 @@ fn invocation_id() -> AgentInvocationId {
 }
 
 fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest {
-    RuntimeInvocationRequest {
+    RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: invocation_id(),
         submitted_text: "Reply with exactly the word: ok".into(),
@@ -517,6 +517,7 @@ fn steering_joins_the_running_turn_and_completes_once() {
             &target,
             "input",
             "Also: end your final reply with the word banana.",
+            &[],
         )
         .unwrap();
     assert_eq!(
@@ -553,7 +554,7 @@ fn a_result_before_a_steering_message_is_taken_in_does_not_finish() {
     harness.sink.wait_for(|updates| updates.iter().any(|update| matches!(update, RuntimeUpdate::Event(e) if e.raw_payload["type"] == "assistant")));
     harness
         .runtime
-        .steer(&invocation_id(), &target, "input", "more")
+        .steer(&invocation_id(), &target, "input", "more", &[])
         .unwrap();
     assert_eq!(
         harness.sink.outcome().status,

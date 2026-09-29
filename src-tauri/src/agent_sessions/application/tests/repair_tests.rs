@@ -101,10 +101,10 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
     struct RecordingSource(Mutex<Vec<String>>);
     impl ProviderConfigurationSource for RecordingSource {
         fn profile_for_configuration(
-        &self,
-        _reference: &str,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            &self,
+            _reference: &str,
+            _cwd: Option<&str>,
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(test_selected_runtime_profile())
         }
         fn quick_features_for_configuration(
@@ -121,7 +121,15 @@ fn new_workspace_discovers_from_its_selected_codex_configuration() {
     let mut application = fixture.direct.clone().with_profile_source(source.clone());
     application.capability_profiles = None;
     application
-        .load_quick_features_for_configuration(None, None, None, Some(&orchid_engine::contracts::ProviderConfigurationRef::new("codex", "profile-two")))
+        .load_quick_features_for_configuration(
+            None,
+            None,
+            None,
+            Some(&orchid_engine::contracts::ProviderConfigurationRef::new(
+                "codex",
+                "profile-two",
+            )),
+        )
         .unwrap();
     assert_eq!(*source.0.lock().unwrap(), ["profile-two"]);
 }
@@ -166,7 +174,10 @@ fn quick_features_use_session_context_and_reject_a_different_provider_profile() 
         .invocations
         .is_empty());
     let changed = application.with_profile_source(Arc::new(QuickSource {
-        configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "different-profile"),
+        configuration: orchid_engine::contracts::ProviderConfigurationRef::new(
+            "codex",
+            "different-profile",
+        ),
         contexts: Mutex::new(Vec::new()),
     }));
     assert!(changed
@@ -186,6 +197,7 @@ fn steering_is_durable_and_does_not_create_a_workflow_delivery() {
     let launch = fixture.launches().remove(0);
     let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
     let command = super::super::SteerAgentSessionCommand {
+        attachments: vec![],
         session_id: launch.session_id.clone(),
         invocation_id: launch.invocation_id.clone(),
         input_id: "steering-input".into(),
@@ -296,9 +308,12 @@ impl Fixture {
             );
         }
         let source = Arc::new(FixedProviderConfigurationSource(snapshot.clone()));
-        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(SqliteCapabilityProfileRepository::from_database(
-                database.clone(),
-            ))).with_configuration_source(source.clone()));
+        let profiles = Arc::new(
+            CapabilityProfileService::new(Arc::new(
+                SqliteCapabilityProfileRepository::from_database(database.clone()),
+            ))
+            .with_configuration_source(source.clone()),
+        );
         let definition = test_session_creation_request().capability_profile;
         profiles
             .create(
@@ -319,7 +334,7 @@ impl Fixture {
         );
         let adapter = Arc::new(
             AgentSessionEventAdapter::new(sessions.clone(), repository.clone(), identities)
-            .with_capability_profiles(profiles.clone()),
+                .with_capability_profiles(profiles.clone()),
         );
         let events = Arc::new(SessionEventApplication::new(
             adapter.clone(),
@@ -566,6 +581,7 @@ fn standalone_first_and_second_message_use_pinned_profile_without_pinning_first_
     fixture
         .direct
         .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            attachments: vec![],
             sandbox_mode: None,
             session_id: session_id.clone(),
             submitted_text: "Second".into(),

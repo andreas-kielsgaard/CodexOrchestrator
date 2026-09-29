@@ -352,12 +352,14 @@ impl Host {
                 target,
                 input_id,
                 text,
+                attachments,
             } => {
                 self.invocation_runtime(&invocation_id)?.steer(
                     &invocation_id,
                     &target,
                     &input_id,
                     &text,
+                    &attachments,
                 )?;
                 Ok(Value::Null)
             }
@@ -769,7 +771,7 @@ mod tests {
             .insert("codex-default".into(), runtime.clone());
         let host = Arc::new(host);
         let capture = Arc::new(Capture::default());
-        let request = RuntimeInvocationRequest {
+        let request = RuntimeInvocationRequest { attachments: vec![],
             session_id: AgentSessionId::new("session-1").unwrap(),
             invocation_id: AgentInvocationId::new("invocation-1").unwrap(),
             submitted_text: "work here".into(),
@@ -973,7 +975,7 @@ mod tests {
             serde_json::to_vec(&binding).unwrap(),
         )
         .unwrap();
-        let request = RuntimeInvocationRequest {
+        let request = RuntimeInvocationRequest { attachments: vec![],
             session_id: id.clone(),
             invocation_id: AgentInvocationId::new("prepared").unwrap(),
             submitted_text: "continue".into(),

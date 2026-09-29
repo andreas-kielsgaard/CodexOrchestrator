@@ -65,7 +65,9 @@ function Harness({
       keyboardHint="tooltip"
       onWorkingDirectoryChange={() => {}}
       onCancel={() => {}}
-      onSend={() => send(draft, selection)}
+      onSend={(attachments) =>
+        attachments.length ? send(draft, selection, attachments) : send(draft, selection)
+      }
       quickFeatures={{
         contextKey,
         load,
@@ -249,4 +251,52 @@ it('ignores a late capability response from a different session context', async 
   await act(async () => resolveFirst(capabilities));
   expect(screen.queryByRole('option', { name: /review/ })).not.toBeInTheDocument();
   expect(send).not.toHaveBeenCalled();
+});
+
+it('attaches an image without text, previews it, and sends portable content', async () => {
+  const send = vi.fn();
+  render(<Harness load={async () => capabilities} send={send} />);
+  const image = new File([new Uint8Array([1, 2, 3])], 'diagram.png', { type: 'image/png' });
+  Object.defineProperty(image, 'arrayBuffer', {
+    value: async () => new Uint8Array([1, 2, 3]).buffer,
+  });
+  await userEvent.setup().upload(screen.getByLabelText('Image files'), image);
+  expect(await screen.findByRole('img', { name: 'diagram.png' })).toBeVisible();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0][2]).toEqual([
+    expect.objectContaining({ name: 'diagram.png', mediaType: 'image/png', dataBase64: 'AQID' }),
+  ]);
+});
+
+it('pastes clipboard images without replacing ordinary text paste', async () => {
+  const send = vi.fn();
+  render(<Harness load={async () => capabilities} send={send} />);
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  const image = new File([new Uint8Array([4, 5, 6])], '', { type: 'image/png' });
+  Object.defineProperty(image, 'arrayBuffer', {
+    value: async () => new Uint8Array([4, 5, 6]).buffer,
+  });
+
+  const imagePasteAccepted = fireEvent.paste(input, {
+    clipboardData: {
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+      files: [image],
+    },
+  });
+
+  expect(imagePasteAccepted).toBe(false);
+  expect(await screen.findByRole('img', { name: 'Pasted image 1.png' })).toBeVisible();
+  const textPasteAccepted = fireEvent.paste(input, {
+    clipboardData: { items: [], files: [], getData: () => 'ordinary text' },
+  });
+  expect(textPasteAccepted).toBe(true);
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
+  expect(send.mock.calls[0][2]).toEqual([
+    expect.objectContaining({
+      name: 'Pasted image 1.png',
+      mediaType: 'image/png',
+      dataBase64: 'BAUG',
+    }),
+  ]);
 });

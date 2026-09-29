@@ -31,6 +31,7 @@ describe('product application composition', () => {
     expect(composition.repositoryCatalogClient).toBeDefined();
     expect(composition.worktreeReviewClient).toBeDefined();
     expect(composition.worktreeReviewBuildActivitySource).toBeDefined();
+    expect(composition.completionNotificationSource).toBeDefined();
     expect(composition.nativeProfileApplicationConsumer).toBeDefined();
   });
 

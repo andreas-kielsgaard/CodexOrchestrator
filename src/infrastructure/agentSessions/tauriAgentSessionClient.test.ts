@@ -8,6 +8,17 @@ import {
 } from './tauriAgentSessionClient';
 
 describe('Tauri Agent Session client', () => {
+  it('renames a Session through the dedicated command', async () => {
+    const invoke = vi.fn().mockResolvedValue(completedDetails().session);
+    const client = createTauriAgentSessionClient({ invoke });
+
+    await client.renameSession?.({ sessionId: 'session-1', title: 'Planning notes' });
+
+    expect(invoke).toHaveBeenCalledWith('rename_agent_session', {
+      input: { sessionId: 'session-1', title: 'Planning notes' },
+    });
+  });
+
   it('sends Session-owned model selection and clearing through the dedicated command', async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const client = createTauriAgentSessionClient({

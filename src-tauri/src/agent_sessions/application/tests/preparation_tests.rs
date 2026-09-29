@@ -160,12 +160,19 @@ impl PreparationFixture {
             },
         };
         let endpoints = Arc::new(
-            ExecutionEndpoints::new(crate::runtime::providers::registrations::ProviderRegistrations::single("codex", source.clone(), runtime.clone()))
-                .with_runtime(&old_execution, old_runtime.clone()),
+            ExecutionEndpoints::new(
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    source.clone(),
+                    runtime.clone(),
+                ),
+            )
+            .with_runtime(&old_execution, old_runtime.clone()),
         );
         let profiles = Arc::new(
-            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(source.clone())
-            .with_endpoints(endpoints.clone()),
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()))
+                .with_configuration_source(source.clone())
+                .with_endpoints(endpoints.clone()),
         );
         let profile = profiles
             .create_with_defaults(
@@ -251,6 +258,7 @@ impl PreparationFixture {
     }
     fn input(&self, id: &str) -> PreparedMessageInput {
         PreparedMessageInput {
+            attachments: vec![],
             session_id: Some(self.session.id.clone()),
             submission_id: AgentInvocationId::new(id).unwrap(),
             submitted_text: "Frozen submitted text".into(),

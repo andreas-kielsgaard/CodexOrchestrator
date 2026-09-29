@@ -4,6 +4,7 @@ import type {
   SessionExecutionSelectionDto,
   SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
+import type { DirectUserInvocationResolutionDto } from '../../application/executionConfiguration';
 import {
   isSessionPreparing,
   type SessionPreparationDto,
@@ -17,6 +18,7 @@ import type {
   AgentSessionProfileClient,
   PinnedAgentSessionProfileDto,
   RuntimeInteractionResponseDto,
+  NewAgentImageAttachmentDto,
 } from '../../application/agentSessions';
 import { samePreparedConfiguration } from './sessionPreparationState';
 import {
@@ -30,6 +32,7 @@ import {
   projectAgentSessionTranscript,
 } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
+import { effectiveSessionOptions } from './effectiveSessionOptions';
 
 const EMPTY_HISTORY_SNAPSHOT = {
   details: null,
@@ -60,7 +63,7 @@ export interface AgentSessionWorkspaceController {
   expandedProcessing: ReadonlySet<string>;
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
-  send(): Promise<void>;
+  send(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
   /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
   sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
@@ -120,10 +123,14 @@ export interface UseAgentSessionOptions {
     readonly client: AgentSessionProfileClient;
     readonly selection: { readonly model: string | null; readonly reasoningMode: string | null };
     readonly setSelection?: ComposerQuickFeatures['setSelection'];
-    afterAccepted(): void;
+    afterAccepted(
+      sessionId: string,
+      selection: { readonly model: string | null; readonly reasoningMode: string | null },
+    ): void;
   };
   startSession?(input: {
     readonly submittedText: string;
+    readonly attachments?: readonly NewAgentImageAttachmentDto[];
     readonly workingDirectory: string | null;
     readonly title: string | null;
   }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
@@ -135,6 +142,7 @@ export interface UseAgentSessionOptions {
   sendExistingMessage?(input: {
     readonly sessionId: string;
     readonly submittedText: string;
+    readonly attachments?: readonly NewAgentImageAttachmentDto[];
   }): Promise<{ readonly sessionId: string; readonly invocationId: string }>;
   /** Optional managed-composition metadata for first-session creation. */
   sessionTitle?: string;
@@ -193,6 +201,9 @@ export function useAgentSession(
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
+  const quickCatalogueRef = useRef<AgentSessionQuickFeatures | undefined>(
+    options.executionQuickFeatures,
+  );
 
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
@@ -380,9 +391,14 @@ export function useAgentSession(
   }, [loadSelected]);
 
   const sendText = useCallback(
-    async (value: string, clearComposer = false) => {
+    async (
+      value: string,
+      clearComposer = false,
+      attachments: readonly NewAgentImageAttachmentDto[] = [],
+    ) => {
       const submittedText = value.trim();
-      if (!submittedText || sendingRef.current) return;
+      if ((!submittedText && !attachments.length) || sendingRef.current) return;
+      const attachmentInput = attachments.length ? { attachments } : {};
       const preparingNow = isSessionPreparing(preparation);
       if (preparingNow) return;
       const sendContext = contextRef.current;
@@ -416,6 +432,7 @@ export function useAgentSession(
             invocationId: activeInvocationId,
             inputId: crypto.randomUUID(),
             text: submittedText,
+            ...attachmentInput,
           });
           if (outcome.state === 'accepted' || outcome.state === 'uncertain') {
             acceptedDelivery = outcome.state === 'accepted';
@@ -450,6 +467,7 @@ export function useAgentSession(
                 sessionId: existingSessionId,
                 submissionId: crypto.randomUUID(),
                 submittedText,
+                ...attachmentInput,
                 title: options.sessionTitle ?? null,
                 workingDirectory: workingDirectory.trim() || null,
                 executionSelection: options.executionSelection ?? null,
@@ -460,16 +478,19 @@ export function useAgentSession(
               ? await options.sendExistingMessage({
                   sessionId: existingSessionId,
                   submittedText,
+                  ...attachmentInput,
                 })
               : options.execution
                 ? existingSessionId
                   ? await options.execution.client.sendDirectUserMessage({
                       sessionId: existingSessionId,
                       submittedText,
+                      ...attachmentInput,
                       ...options.execution.selection,
                     })
                   : await options.execution.client.startDirectUserSession({
                       submittedText,
+                      ...attachmentInput,
                       workingDirectory:
                         options.execution.target?.path ?? (workingDirectory.trim() || null),
                       title: options.sessionTitle ?? null,
@@ -482,12 +503,14 @@ export function useAgentSession(
                 : !existingSessionId && options.startSession
                   ? await options.startSession({
                       submittedText,
+                      ...attachmentInput,
                       workingDirectory: workingDirectory.trim() || null,
                       title: options.sessionTitle ?? null,
                     })
                   : await client.sendMessage({
                       ...(existingSessionId ? { sessionId: existingSessionId } : {}),
                       submittedText,
+                      ...attachmentInput,
                       ...(!existingSessionId && options.sessionTitle
                         ? { title: options.sessionTitle }
                         : {}),
@@ -497,7 +520,24 @@ export function useAgentSession(
                     });
         acceptedOptionsRef.current = preparedOptions;
         acceptedDelivery = true;
-        if (!options.preparedExecution) options.execution?.afterAccepted();
+        if (options.execution) {
+          const effective = effectiveSessionOptions(
+            quickCatalogueRef.current,
+            options.execution.selection,
+          );
+          const resolved =
+            'invocationResolution' in acknowledgement
+              ? (acknowledgement.invocationResolution as DirectUserInvocationResolutionDto)
+                  .selections
+              : null;
+          options.execution.afterAccepted(acknowledgement.sessionId, {
+            model: resolved?.model ?? effective.model?.id ?? options.execution.selection.model,
+            reasoningMode:
+              resolved?.reasoningMode ??
+              effective.reasoningMode ??
+              options.execution.selection.reasoningMode,
+          });
+        }
         if (
           !existingSessionId &&
           contextRef.current === sendContext &&
@@ -524,7 +564,8 @@ export function useAgentSession(
         if (acceptedDelivery && clearComposer && draftRef.current === value) {
           draftRef.current = '';
           setDraft('');
-          clearCachedComposerDraft(sendCacheKey);
+          if (existingSessionId) writeCachedComposerDraft(sendCacheKey, { text: '' });
+          else clearCachedComposerDraft(sendCacheKey);
         }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
@@ -533,7 +574,11 @@ export function useAgentSession(
     [client, details, loadSelected, options, preparation, workingDirectory],
   );
 
-  const send = useCallback(() => sendText(draft, true), [draft, sendText]);
+  const send = useCallback(
+    (attachments: readonly NewAgentImageAttachmentDto[] = []) =>
+      sendText(draft, true, attachments),
+    [draft, sendText],
+  );
 
   const cancel = useCallback(async () => {
     const activeInvocationId = details
@@ -706,6 +751,7 @@ export function useAgentSession(
         ? quickFeatureBucket(quickFeatureCaches, quickFeatureOwner).get(quickFeatureKey)
         : undefined) ?? options.executionQuickFeatures,
   );
+  quickCatalogueRef.current = quickCatalogue;
   useEffect(() => {
     let current = true;
     setQuickCatalogue(

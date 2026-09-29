@@ -74,6 +74,7 @@ export interface AgentInvocationDto {
   id: AgentInvocationIdDto;
   sessionId: AgentSessionIdDto;
   submittedText: string;
+  attachments?: readonly AgentImageAttachmentDto[];
   inputProvenance: AgentInvocationInputProvenanceDto;
   status: AgentInvocationStatusDto;
   requestedOptions: AgentRuntimeOptionsDto;
@@ -86,6 +87,21 @@ export interface AgentInvocationDto {
   diagnostics: AgentDiagnosticDto[];
   createdAt: IsoDateTimeDto;
   updatedAt: IsoDateTimeDto;
+}
+
+/** Portable image content owned by Orchid rather than a device-local path. */
+export interface AgentImageAttachmentDto {
+  readonly id: string;
+  readonly name: string;
+  readonly mediaType: string;
+  readonly dataBase64: string;
+}
+
+export interface NewAgentImageAttachmentDto {
+  readonly id: string;
+  readonly name: string;
+  readonly mediaType: string;
+  readonly dataBase64: string;
 }
 
 export type AgentRuntimeEventSourceDto = 'stdout' | 'stderr' | 'runtime';
@@ -220,6 +236,7 @@ export interface CreateAgentSessionCommandDto {
 export interface SendAgentSessionMessageCommandDto {
   sessionId?: AgentSessionIdDto;
   submittedText: string;
+  attachments?: readonly NewAgentImageAttachmentDto[];
   title?: string;
   workingDirectory?: string;
   requestedOptions?: PartialAgentRuntimeOptionsDto;
@@ -285,6 +302,7 @@ export interface AgentSessionClient {
     invocationId: string;
     inputId: string;
     text: string;
+    attachments?: readonly NewAgentImageAttachmentDto[];
   }): Promise<SessionInteractionDto>;
   respondToRuntimeRequest?(input: {
     sessionId: string;
@@ -296,6 +314,7 @@ export interface AgentSessionClient {
   createSession(command: CreateAgentSessionCommandDto): Promise<AgentSessionDto>;
   updateHarness?(command: UpdateAgentSessionHarnessCommandDto): Promise<AgentSessionDto>;
   updateIdentity?(command: UpdateAgentSessionIdentityCommandDto): Promise<AgentSessionDto>;
+  renameSession?(command: RenameAgentSessionCommandDto): Promise<AgentSessionDto>;
   updateModelOverride?(
     command: UpdateAgentSessionModelOverrideCommandDto,
   ): Promise<AgentSessionDto>;
@@ -318,6 +337,11 @@ export interface UpdateAgentSessionHarnessCommandDto {
 export interface UpdateAgentSessionIdentityCommandDto {
   readonly sessionId: AgentSessionIdDto;
   readonly assignedIdentity: AssignedAgentIdentity | null;
+}
+
+export interface RenameAgentSessionCommandDto {
+  readonly sessionId: AgentSessionIdDto;
+  readonly title: string;
 }
 
 export interface UpdateAgentSessionModelOverrideCommandDto {

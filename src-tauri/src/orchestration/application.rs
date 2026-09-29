@@ -524,6 +524,7 @@ impl ManagedPlanBuilderService {
         let command = SendIdempotentApplicationAgentSessionMessageCommand {
             invocation_id,
             message: SendAgentSessionMessageCommand {
+                attachments: vec![],
                 session_id: Some(session_id.clone()),
                 submitted_text,
                 title: None,
@@ -1357,6 +1358,7 @@ mod tests {
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id,
                     message: SendAgentSessionMessageCommand {
+                        attachments: vec![],
                         session_id: Some(session_id),
                         submitted_text: submitted_text.into(),
                         title: None,
@@ -2123,6 +2125,7 @@ mod tests {
         );
         let ordinary = sessions
             .send_message(SendAgentSessionMessageCommand {
+                attachments: vec![],
                 session_id: None,
                 submitted_text: "ordinary".into(),
                 title: None,

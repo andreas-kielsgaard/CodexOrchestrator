@@ -155,6 +155,11 @@ import { WorkflowAuthoringScreen } from '../features/workflowAuthoring';
 
 import type { WorktreeReviewClient } from '../application/worktreeReview';
 import type { WorktreeReviewBuildActivitySource } from '../application/worktreeReview';
+import type {
+  CompletionNotificationSource,
+  CompletionSoundPlayer,
+} from '../application/completionNotifications';
+import { useCompletionNotificationSound } from './useCompletionNotificationSound';
 
 import type { RepositoryCatalogClient } from '../application/repositoryCatalog';
 
@@ -276,6 +281,10 @@ export interface AppProps {
 
   readonly worktreeReviewBuildActivitySource?: WorktreeReviewBuildActivitySource;
 
+  readonly completionNotificationSource?: CompletionNotificationSource;
+
+  readonly completionSound?: CompletionSoundPlayer;
+
   /** Shared registered-repository authority used by Worktree Review and Workflow target selection. */
 
   readonly repositoryCatalogClient?: RepositoryCatalogClient;
@@ -380,10 +389,15 @@ export function App({
 
   worktreeReviewBuildActivitySource,
 
+  completionNotificationSource,
+
+  completionSound,
+
   repositoryCatalogClient,
 
   initialSurface = 'epics',
 }: AppProps) {
+  useCompletionNotificationSound(completionNotificationSource, completionSound);
   const buildActivitySnapshot = useSyncExternalStore(
     worktreeReviewBuildActivitySource?.subscribe ?? emptySubscribe,
     worktreeReviewBuildActivitySource?.getSnapshot ?? emptyBuildActivitySnapshot,

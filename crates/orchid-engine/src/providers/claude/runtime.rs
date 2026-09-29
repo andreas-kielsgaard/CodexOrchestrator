@@ -31,7 +31,7 @@ pub(super) struct Invocation {
     pub(super) requests: Mutex<HashMap<String, requests::PendingRequest>>,
     required_servers: Vec<String>,
     /// A prepared prompt awaiting delivery.
-    prompt: Mutex<Option<String>>,
+    prompt: Mutex<Option<(String, Vec<crate::contracts::RuntimeImageAttachment>)>>,
     /// User messages written but not yet taken into the conversation. The invocation finishes at
     /// the result that follows the last of them.
     unanswered: AtomicUsize,
@@ -60,11 +60,32 @@ impl Invocation {
         self.finished.load(Ordering::Acquire)
     }
 
-    fn send_user_message(&self, text: &str) -> Result<(), RuntimePortError> {
+    fn send_user_message(
+        &self,
+        text: &str,
+        attachments: &[crate::contracts::RuntimeImageAttachment],
+    ) -> Result<(), RuntimePortError> {
         self.unanswered.fetch_add(1, Ordering::AcqRel);
+        let content = if attachments.is_empty() {
+            json!(text)
+        } else {
+            let mut content = Vec::new();
+            if !text.is_empty() {
+                content.push(json!({"type": "text", "text": text}));
+            }
+            content.extend(attachments.iter().map(|image| json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": image.media_type,
+                    "data": image.data_base64,
+                }
+            })));
+            json!(content)
+        };
         let written = self.connection.write(json!({
             "type": "user",
-            "message": {"role": "user", "content": text},
+            "message": {"role": "user", "content": content},
             "parent_tool_use_id": null,
             "session_id": self.session_id,
         }));
@@ -367,7 +388,7 @@ impl ClaudeRuntime {
         sink: Arc<dyn AgentRuntimeUpdateSink>,
     ) -> Result<(), RuntimePortError> {
         let (invocation, _) = self.launch(&request, conversation, sink)?;
-        if let Err(error) = invocation.send_user_message(&request.submitted_text) {
+        if let Err(error) = invocation.send_user_message(&request.submitted_text, &request.attachments) {
             invocation.finish(
                 AgentInvocationTerminalStatus::Failed,
                 Some(error.message.clone()),
@@ -397,7 +418,8 @@ impl AgentRuntime for ClaudeRuntime {
         *invocation
             .prompt
             .lock()
-            .map_err(|_| unavailable("Prompt lock poisoned"))? = Some(request.submitted_text);
+            .map_err(|_| unavailable("Prompt lock poisoned"))? =
+            Some((request.submitted_text, request.attachments));
         Ok(ready)
     }
 
@@ -414,7 +436,7 @@ impl AgentRuntime for ClaudeRuntime {
             .ok_or_else(|| {
                 unavailable("Prepared prompt is unavailable or was already delivered")
             })?;
-        if let Err(error) = invocation.send_user_message(&prompt) {
+        if let Err(error) = invocation.send_user_message(&prompt.0, &prompt.1) {
             invocation.finish(
                 AgentInvocationTerminalStatus::Failed,
                 Some(error.message.clone()),
@@ -488,6 +510,7 @@ impl AgentRuntime for ClaudeRuntime {
         target: &RuntimeTurnTarget,
         _input_id: &str,
         text: &str,
+        attachments: &[crate::contracts::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         if self.active_turn(id)? != *target {
             return Err(RuntimePortError::new(
@@ -495,7 +518,7 @@ impl AgentRuntime for ClaudeRuntime {
                 "The targeted turn has finished",
             ));
         }
-        self.coordinator.get(id)?.send_user_message(text)
+        self.coordinator.get(id)?.send_user_message(text, attachments)
     }
 
     fn respond(

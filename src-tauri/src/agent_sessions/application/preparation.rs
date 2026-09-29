@@ -15,6 +15,8 @@ pub(crate) struct PreparedMessageInput {
     pub(crate) session_id: Option<AgentSessionId>,
     pub(crate) submission_id: AgentInvocationId,
     pub(crate) submitted_text: String,
+    #[serde(default)]
+    pub(crate) attachments: Vec<RuntimeImageAttachment>,
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
     pub(crate) execution_selection: Option<SessionExecutionSelection>,
@@ -71,9 +73,9 @@ impl AgentSessionApplication {
         &self,
         mut input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
-        if input.submitted_text.trim().is_empty() {
+        if input.submitted_text.trim().is_empty() && input.attachments.is_empty() {
             return Err(AgentSessionApplicationError::invalid(
-                "A message must contain text",
+                "A message must contain text or an image",
             ));
         }
         // A device move has no synthetic invocation. When a prompt arrives, retain the normal
@@ -110,6 +112,7 @@ impl AgentSessionApplication {
                 .preparation(&existing.id)
                 .map_err(AgentSessionApplicationError::repository)?;
             let matches = existing.submitted_text == input.submitted_text
+                && existing.attachments == input.attachments
                 && input
                     .session_id
                     .as_ref()
@@ -153,10 +156,17 @@ impl AgentSessionApplication {
             Some(id) => self.load_session(id)?.session,
             None => AgentSession {
                 id: self.ids.session_id(),
-                title: input
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| super::creation::title_from_message(&input.submitted_text)),
+                title: input.title.clone().unwrap_or_else(|| {
+                    if input.submitted_text.trim().is_empty() {
+                        input
+                            .attachments
+                            .first()
+                            .map(|image| image.name.clone())
+                            .unwrap_or_else(|| "Image".into())
+                    } else {
+                        super::creation::title_from_message(&input.submitted_text)
+                    }
+                }),
                 execution_target: None,
                 working_directory: None,
                 workspace_origin: None,
@@ -201,6 +211,7 @@ impl AgentSessionApplication {
             id: id.clone(),
             session_id: session.id.clone(),
             submitted_text: input.submitted_text,
+            attachments: input.attachments,
             input_provenance: AgentInvocationInputProvenance::User,
             status: AgentInvocationStatus::Pending,
             requested_options: AgentRuntimeOptions::default(),

@@ -15,6 +15,7 @@ export interface PinnedAgentSessionProfileDto {
 export interface SendDirectUserAgentSessionMessageInput {
   readonly sessionId: string;
   readonly submittedText: string;
+  readonly attachments?: readonly import('./contracts').NewAgentImageAttachmentDto[];
   readonly model: string | null;
   readonly reasoningMode: string | null;
   readonly sandboxMode?: SandboxModeDto | null;

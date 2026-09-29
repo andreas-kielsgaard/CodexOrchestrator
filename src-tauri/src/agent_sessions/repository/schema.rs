@@ -33,6 +33,7 @@ CREATE TABLE agent_session_invocations (
   runtime_error_json TEXT CHECK (runtime_error_json IS NULL OR json_valid(runtime_error_json)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  attachments_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(attachments_json)),
   FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
 );
 
@@ -88,6 +89,18 @@ pub(crate) fn ensure_agent_session_ownership_schema(conn: &Connection) -> Result
     let columns = table_columns(conn, "agent_sessions")?;
     if columns.is_empty() {
         return Ok(());
+    }
+    let invocation_columns = table_columns(conn, "agent_session_invocations")?;
+    if !invocation_columns.is_empty()
+        && !invocation_columns
+            .iter()
+            .any(|column| column == "attachments_json")
+    {
+        conn.execute(
+            "ALTER TABLE agent_session_invocations ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(attachments_json))",
+            [],
+        )
+        .map_err(|error| format!("Unable to add Agent Session image attachments: {error}"))?;
     }
     if !columns
         .iter()

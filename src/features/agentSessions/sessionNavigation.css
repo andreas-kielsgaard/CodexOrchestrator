@@ -241,6 +241,30 @@
   border-block: 1px solid #e2e6df;
   margin: 4px;
 }
+.session-rename-form {
+  padding: 6px 8px 8px;
+  border-block: 1px solid #e2e6df;
+}
+.session-rename-form label,
+.session-rename-form label span {
+  display: block;
+}
+.session-rename-form label span {
+  margin-bottom: 4px;
+  color: #5d675f;
+  font-size: 0.72rem;
+}
+.session-rename-form input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #c9d2c9;
+  border-radius: 5px;
+  font: inherit;
+}
+.session-rename-form button {
+  margin-top: 5px;
+}
 .session-context-menu p {
   font-size: 0.75rem;
   color: #934a37;

@@ -2,8 +2,9 @@ use super::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
     CancelAgentInvocationCommand, CreateAgentSessionCommand, ProviderLaunchPreparation,
-    SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
-    SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
+    RenameAgentSessionCommand, SendAgentSessionMessageCommand,
+    SendIdempotentApplicationAgentSessionMessageCommand, SessionHarnessLaunchAuthority,
+    SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 mod import_tests;
@@ -52,10 +53,10 @@ fn addressed_creation_retry_uses_its_original_native_evidence() {
     struct OneReadSource(AtomicU64);
     impl ProviderConfigurationSource for OneReadSource {
         fn profile_for_configuration(
-        &self,
-        _reference: &str,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            &self,
+            _reference: &str,
+            _cwd: Option<&str>,
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             if self.0.fetch_add(1, Ordering::SeqCst) > 0 {
                 return Err(ProviderConfigurationSourceError::unavailable(
                     "native discovery changed",
@@ -148,9 +149,9 @@ use crate::agent_sessions::{
 use crate::{
     agent_sessions::session_event_adapter::AgentSessionEventAdapter,
     execution_configuration::{
-        CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
-        SandboxMode as ExecutionSandboxMode, ProviderConfigurationSource,
-        ProviderConfigurationSourceError, SessionCreationRequest,
+        CapabilityProfile, CapabilitySet, NodeProfile, ProviderConfigurationSource,
+        ProviderConfigurationSourceError, RuntimeProfileSnapshot, RuntimeSelections,
+        SandboxMode as ExecutionSandboxMode, SessionCreationRequest,
     },
     harness_engine::domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef},
     identities::{service::IdentityService, AssignedAgentIdentity, IdentityId, IdentityShape},
@@ -356,6 +357,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
 
     let direct_user = profile_application
         .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            attachments: vec![],
             session_id: session_id.clone(),
             submitted_text: "User prompt".into(),
             model: Some("user-only".into()),
@@ -381,6 +383,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     );
     let invalid = profile_application
         .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
+            attachments: vec![],
             session_id: session_id.clone(),
             submitted_text: "Invalid selection must not launch".into(),
             model: Some("not-exposed".into()),
@@ -597,6 +600,21 @@ fn application_creates_and_updates_session_owned_harness_and_identity() {
         })
         .expect("clear Session identity");
     assert!(cleared.assigned_identity.is_none());
+
+    let renamed = application
+        .rename_session(RenameAgentSessionCommand {
+            session_id: cleared.id.clone(),
+            title: "  Renamed session  ".into(),
+        })
+        .expect("rename Session");
+    assert_eq!(renamed.title, "Renamed session");
+    let blank = application
+        .rename_session(RenameAgentSessionCommand {
+            session_id: cleared.id,
+            title: "  ".into(),
+        })
+        .expect_err("blank Session title");
+    assert!(blank.to_string().contains("cannot be blank"));
 }
 
 #[test]
@@ -833,12 +851,10 @@ fn session_harness_authority_is_consulted_for_every_fresh_and_resumed_invocation
         })
         .collect::<Vec<_>>();
     assert_eq!(requests.len(), 2);
-    assert!(requests
-        .iter()
-        .all(|request| request
-            .launch_extension
-            .as_ref()
-            .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
+    assert!(requests.iter().all(|request| request
+        .launch_extension
+        .as_ref()
+        .is_some_and(|extension| extension.native_mcp_enabled == Some(false))));
 }
 
 #[test]
@@ -1516,6 +1532,7 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
         .expect("pending session");
     let created_at = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
     let pending = AgentInvocation {
+        attachments: vec![],
         id: AgentInvocationId::new("pending-manual").expect("ID"),
         session_id: pending_session.id,
         submitted_text: "Pending".to_string(),
@@ -1856,6 +1873,7 @@ impl Harness {
 
 fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCommand {
     SendAgentSessionMessageCommand {
+        attachments: vec![],
         session_id: Some(session_id.clone()),
         submitted_text: text.to_string(),
         title: None,
@@ -2210,6 +2228,7 @@ impl AgentRuntime for FakeRuntime {
         target: &crate::agent_sessions::ports::RuntimeTurnTarget,
         input_id: &str,
         _text: &str,
+        _attachments: &[crate::agent_sessions::domain::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         assert_eq!(*target, self.active_turn(invocation_id)?);
         self.calls
@@ -2565,6 +2584,16 @@ impl AgentSessionRepository for FaultInjectingRepository {
     ) -> Result<AgentSession, RepositoryError> {
         self.inner
             .update_assigned_identity(session_id, assigned_identity, updated_at)
+    }
+
+    fn update_session_title(
+        &self,
+        session_id: &AgentSessionId,
+        title: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner
+            .update_session_title(session_id, title, updated_at)
     }
 
     fn update_session_model_override(

@@ -77,6 +77,7 @@ impl AgentRuntimeUpdateSink for Sink {
 
 fn invocation(id: &str) -> RuntimeInvocationRequest {
     RuntimeInvocationRequest {
+        attachments: vec![],
         session_id: AgentSessionId::new("remote-session").unwrap(),
         invocation_id: AgentInvocationId::new(id).unwrap(),
         submitted_text: "Create the requested file".into(),
@@ -189,7 +190,13 @@ fn active_connection_is_not_replaced_for_preflight_or_interaction() {
         .is_err());
     assert!(runtime.cancel_invocation(&request.invocation_id).is_err());
     assert!(runtime
-        .respond(&request.invocation_id, "approval", RuntimeInteractionResponse::Choose { choice_id: "allow".into() })
+        .respond(
+            &request.invocation_id,
+            "approval",
+            RuntimeInteractionResponse::Choose {
+                choice_id: "allow".into()
+            }
+        )
         .is_err());
     assert_eq!(attempts.load(Ordering::SeqCst), 0);
     assert!(replacement.calls.lock().unwrap().is_empty());

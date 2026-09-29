@@ -100,6 +100,19 @@ export function useAgentSessionCollection(
       navigation ? mutate(() => navigation.pin(id, pinned)) : Promise.resolve(),
     [mutate, navigation],
   );
+  const rename = useCallback(
+    async (id: string, title: string) => {
+      try {
+        if (!client.renameSession) throw new Error('Session renaming is unavailable.');
+        await client.renameSession({ sessionId: id, title });
+        await refresh(false);
+      } catch (cause) {
+        setError(sessionErrorMessage(cause));
+        throw cause;
+      }
+    },
+    [client, refresh],
+  );
   const clearError = useCallback(() => setError(null), []);
   return {
     data,
@@ -111,5 +124,6 @@ export function useAgentSessionCollection(
     move,
     reorder,
     pin,
+    rename,
   };
 }

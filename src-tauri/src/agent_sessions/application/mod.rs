@@ -29,10 +29,10 @@ pub(crate) use interactions::{RespondToRuntimeRequestCommand, SteerAgentSessionC
 pub(crate) use commands::{
     AgentSessionApplicationError, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
     CancelAgentInvocationCommand, CreateAgentSessionCommand, CreateApplicationAgentSessionCommand,
-    ListAgentSessionsResult, SendAgentSessionMessageCommand, SendAgentSessionMessageLaunchResult,
-    SendAgentSessionMessageResult, SendIdempotentApplicationAgentSessionMessageCommand,
-    UpdateAgentSessionHarnessCommand, UpdateAgentSessionIdentityCommand,
-    UpdateAgentSessionModelOverrideCommand,
+    ListAgentSessionsResult, RenameAgentSessionCommand, SendAgentSessionMessageCommand,
+    SendAgentSessionMessageLaunchResult, SendAgentSessionMessageResult,
+    SendIdempotentApplicationAgentSessionMessageCommand, UpdateAgentSessionHarnessCommand,
+    UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 pub(crate) use configuration::{reasoning_launch_extension, runtime_options};
 pub(crate) use configuration::{

@@ -148,6 +148,7 @@ impl AgentRuntime for RemoteRuntime {
         target: &RuntimeTurnTarget,
         input_id: &str,
         text: &str,
+        attachments: &[orchid_engine::contracts::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         request_host(
             &*self.current_connection(),
@@ -156,6 +157,7 @@ impl AgentRuntime for RemoteRuntime {
                 target: target.clone(),
                 input_id: input_id.into(),
                 text: text.into(),
+                attachments: attachments.to_vec(),
             },
         )
     }

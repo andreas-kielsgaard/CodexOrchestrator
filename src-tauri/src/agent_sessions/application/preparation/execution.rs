@@ -88,9 +88,7 @@ impl AgentSessionApplication {
             let capability = profiles
                 .read(&selection.capability_profile_id)
                 .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
-            if let Some(route) =
-                capability.route_for_model(&selection.execution.device_id, model)
-            {
+            if let Some(route) = capability.route_for_model(&selection.execution.device_id, model) {
                 selection.execution = route.execution.clone();
             }
         }
@@ -438,6 +436,7 @@ impl AgentSessionApplication {
                     session_id: p.session_id.clone(),
                     invocation_id: id.clone(),
                     submitted_text: invocation.submitted_text,
+                    attachments: invocation.attachments,
                     working_directory: Some(destination.path.clone()),
                     options: preflight.effective_options.clone(),
                     launch_extension: extension,

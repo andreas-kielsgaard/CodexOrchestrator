@@ -48,10 +48,35 @@ impl AgentSessionApplication {
         mut target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
         placement: Option<crate::agent_sessions::organization::SessionPlacement>,
     ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
-        if submitted_text.trim().is_empty() {
+        self.start_direct_user_session_with_target_and_attachments(
+            submitted_text,
+            vec![],
+            title,
+            working_directory,
+            model,
+            reasoning_mode,
+            sandbox_mode,
+            target,
+            placement,
+        )
+    }
+
+    pub(crate) fn start_direct_user_session_with_target_and_attachments(
+        &self,
+        submitted_text: String,
+        attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
+        title: Option<String>,
+        working_directory: Option<String>,
+        model: Option<String>,
+        reasoning_mode: Option<String>,
+        sandbox_mode: Option<SandboxMode>,
+        mut target: Option<crate::execution_targets::domain::SessionExecutionTarget>,
+        placement: Option<crate::agent_sessions::organization::SessionPlacement>,
+    ) -> Result<SendDirectUserAgentSessionMessageResult, SessionConfigurationError> {
+        if submitted_text.trim().is_empty() && attachments.is_empty() {
             return Err(SessionConfigurationError::new(
                 SessionConfigurationErrorKind::InvalidInvocationSelection,
-                "A message must contain text",
+                "A message must contain text or an image",
             ));
         }
         let (runtime, resolution) = if let Some(target) = target.as_mut() {
@@ -93,11 +118,7 @@ impl AgentSessionApplication {
                     )
                 })?;
             let session_skill_inputs = self
-                .compile_capability_skill_inputs(
-                    &capability,
-                    &target.execution,
-                    Some(&target.path),
-                )
+                .compile_capability_skill_inputs(&capability, &target.execution, Some(&target.path))
                 .map_err(|error| {
                     SessionConfigurationError::new(
                         SessionConfigurationErrorKind::InvalidInvocationSelection,
@@ -167,6 +188,7 @@ impl AgentSessionApplication {
             SendDirectUserAgentSessionMessageCommand {
                 session_id: session.id,
                 submitted_text,
+                attachments,
                 model,
                 reasoning_mode,
                 sandbox_mode,
@@ -263,6 +285,7 @@ impl AgentSessionApplication {
                 SendAgentSessionMessageCommand {
                     session_id: Some(command.session_id),
                     submitted_text: command.submitted_text,
+                    attachments: command.attachments,
                     title: None,
                     working_directory: None,
                     requested_options: Some(requested_options),

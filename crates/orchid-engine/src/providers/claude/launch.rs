@@ -175,7 +175,7 @@ mod tests {
     };
 
     fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest {
-        RuntimeInvocationRequest {
+        RuntimeInvocationRequest { attachments: vec![],
             session_id: AgentSessionId::new("session").unwrap(),
             invocation_id: AgentInvocationId::new("invocation").unwrap(),
             submitted_text: "hello".into(),

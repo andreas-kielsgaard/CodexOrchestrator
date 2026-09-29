@@ -11,6 +11,7 @@ export function SessionContextMenu({
   onClose,
   onMove,
   onPin,
+  onRename,
   onCopy,
   organizing,
 }: {
@@ -21,10 +22,13 @@ export function SessionContextMenu({
   onClose(): void;
   onMove(placement: SessionPlacement): void;
   onPin(): void;
+  onRename(title: string): Promise<void>;
   onCopy(): Promise<void>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [moving, setMoving] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [title, setTitle] = useState(session.summary.title);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     ref.current?.querySelector<HTMLButtonElement>('button')?.focus();
@@ -49,6 +53,7 @@ export function SessionContextMenu({
           event.preventDefault();
           onClose();
         }
+        if (event.target instanceof HTMLInputElement) return;
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           const buttons = [...ref.current!.querySelectorAll<HTMLButtonElement>('button')];
           const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -62,6 +67,39 @@ export function SessionContextMenu({
       <button role="menuitem" disabled={!organizing} onClick={onPin}>
         {session.pinned ? 'Unpin' : 'Pin'}
       </button>
+      <button
+        role="menuitem"
+        aria-expanded={renaming}
+        onClick={() => setRenaming(!renaming)}
+      >
+        Rename
+      </button>
+      {renaming && (
+        <form
+          className="session-rename-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const next = title.trim();
+            if (!next) {
+              setError('Enter a session name.');
+              return;
+            }
+            setError(null);
+            void onRename(next).catch(() => setError('The session could not be renamed.'));
+          }}
+        >
+          <label>
+            <span>Session name</span>
+            <input
+              value={title}
+              maxLength={160}
+              autoFocus
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          <button type="submit">Save</button>
+        </form>
+      )}
       <button
         role="menuitem"
         disabled={!organizing}

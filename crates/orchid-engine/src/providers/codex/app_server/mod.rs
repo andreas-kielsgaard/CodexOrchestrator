@@ -521,7 +521,13 @@ fn initialize_turn(
         .or(request.working_directory.as_deref())
         .ok_or_else(|| unavailable("App-server did not return a working directory"))?
         .to_owned();
-    let mut input = vec![json!({"type":"text","text":request.submitted_text})];
+    let mut input = Vec::new();
+    if !request.submitted_text.is_empty() {
+        input.push(json!({"type":"text","text":request.submitted_text}));
+    }
+    for path in super::materialize_images(&request.attachments)? {
+        input.push(json!({"type":"localImage","path":path.to_string_lossy()}));
+    }
     if let Some(extension) = request
         .launch_extension
         .as_ref()
@@ -707,6 +713,7 @@ impl AgentRuntime for CodexAppServerRuntime {
         target: &RuntimeTurnTarget,
         input_id: &str,
         text: &str,
+        attachments: &[crate::contracts::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         if self.active_turn(id)? != *target {
             return Err(RuntimePortError::new(
@@ -714,7 +721,12 @@ impl AgentRuntime for CodexAppServerRuntime {
                 "The targeted turn has finished",
             ));
         }
-        let result = self.coordinator.get(id)?.connection.call("turn/steer", json!({"threadId":target.thread_id,"expectedTurnId":target.turn_id,"clientUserMessageId":input_id,"input":[{"type":"text","text":text}]}))?;
+        let mut input = Vec::new();
+        if !text.is_empty() { input.push(json!({"type":"text","text":text})); }
+        for path in super::materialize_images(attachments)? {
+            input.push(json!({"type":"localImage","path":path.to_string_lossy()}));
+        }
+        let result = self.coordinator.get(id)?.connection.call("turn/steer", json!({"threadId":target.thread_id,"expectedTurnId":target.turn_id,"clientUserMessageId":input_id,"input":input}))?;
         if result["turnId"] != target.turn_id {
             return Err(unavailable(
                 "Steering acknowledgement named a different turn; delivery is uncertain",

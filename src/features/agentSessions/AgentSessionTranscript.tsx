@@ -85,6 +85,17 @@ export function AgentSessionTranscript({
                     </span>
                   </header>
                   <p>{invocation.submittedText}</p>
+                  {invocation.attachments.length > 0 && (
+                    <div className="transcript-image-attachments">
+                      {invocation.attachments.map((attachment) => (
+                        <img
+                          key={attachment.id}
+                          src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                          alt={attachment.name}
+                        />
+                      ))}
+                    </div>
+                  )}
                   {invocation.preparing && (
                     <small className="waiting-status" role="status">
                       Waiting for setup

@@ -19,6 +19,8 @@ pub(crate) struct LoadPinnedSessionProfileInput {
 pub(crate) struct SendDirectUserAgentSessionMessageInput {
     session_id: AgentSessionId,
     submitted_text: String,
+    #[serde(default)]
+    attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
     model: Option<String>,
     reasoning_mode: Option<String>,
     sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
@@ -67,6 +69,7 @@ pub(crate) async fn send_direct_user_agent_session_message(
             .send_direct_user_message(SendDirectUserAgentSessionMessageCommand {
                 session_id: input.session_id,
                 submitted_text: input.submitted_text,
+                attachments: input.attachments,
                 model: input.model,
                 reasoning_mode: input.reasoning_mode,
                 sandbox_mode: input.sandbox_mode,

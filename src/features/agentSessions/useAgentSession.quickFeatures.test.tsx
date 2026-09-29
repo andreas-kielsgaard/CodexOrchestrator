@@ -56,7 +56,10 @@ it('discovers folder drafts independently and keeps saved session execution cont
   expect(start).toHaveBeenCalledWith(
     expect.objectContaining({ folderTarget: workflow, model: 'model-b', reasoningMode: 'medium' }),
   );
-  expect(execution.afterAccepted).toHaveBeenCalledOnce();
+  expect(execution.afterAccepted).toHaveBeenCalledWith('session-1', {
+    model: 'model-a',
+    reasoningMode: 'high',
+  });
   rerender({ draftId: 'draft-3', folderTarget: repository, selectedSessionId: 'session-1' });
   await waitFor(() => expect(result.current.details?.session.id).toBe('session-1'));
   await act(() => result.current.quickFeatures!.load());

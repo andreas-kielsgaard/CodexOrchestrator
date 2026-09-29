@@ -1,9 +1,10 @@
 use crate::agent_sessions::{
     application::{
         project_invocation_observation, AgentInvocationObservation, AgentSessionNotification,
-        CancelAgentInvocationCommand, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
-        SendAgentSessionMessageResult, UpdateAgentSessionHarnessCommand,
-        UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
+        CancelAgentInvocationCommand, CreateAgentSessionCommand, RenameAgentSessionCommand,
+        SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
+        UpdateAgentSessionHarnessCommand, UpdateAgentSessionIdentityCommand,
+        UpdateAgentSessionModelOverrideCommand,
     },
     domain::{
         AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeOptions, AgentSession,
@@ -76,6 +77,22 @@ impl From<UpdateAgentSessionIdentityCommandDto> for UpdateAgentSessionIdentityCo
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RenameAgentSessionCommandDto {
+    pub(crate) session_id: AgentSessionId,
+    pub(crate) title: String,
+}
+
+impl From<RenameAgentSessionCommandDto> for RenameAgentSessionCommand {
+    fn from(value: RenameAgentSessionCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            title: value.title,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct UpdateAgentSessionModelOverrideCommandDto {
     pub(crate) session_id: AgentSessionId,
     pub(crate) model: Option<String>,
@@ -105,6 +122,8 @@ impl From<CreateAgentSessionCommandDto> for CreateAgentSessionCommand {
 pub(crate) struct SendAgentSessionMessageCommandDto {
     pub(crate) session_id: Option<AgentSessionId>,
     pub(crate) submitted_text: String,
+    #[serde(default)]
+    pub(crate) attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
     pub(crate) title: Option<String>,
     pub(crate) working_directory: Option<String>,
     pub(crate) requested_options: Option<AgentRuntimeOptions>,
@@ -115,6 +134,7 @@ impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand 
         Self {
             session_id: value.session_id,
             submitted_text: value.submitted_text,
+            attachments: value.attachments,
             title: value.title,
             working_directory: value.working_directory,
             requested_options: value.requested_options,
@@ -388,6 +408,7 @@ mod tests {
             },
             invocations: vec![AgentInvocationHistory {
                 invocation: AgentInvocation {
+                    attachments: vec![],
                     id: invocation_id,
                     session_id,
                     submitted_text: "Work".into(),

@@ -88,6 +88,7 @@ export interface ProjectedInvocation {
   interactions?: readonly SessionInteractionDto[];
   id: string;
   submittedText: string;
+  attachments: readonly import('../../application/agentSessions').AgentImageAttachmentDto[];
   inputProvenance: 'user' | 'application';
   status: AgentInvocationStatusDto;
   isActive: boolean;
@@ -221,6 +222,7 @@ function projectInvocation(
     id: invocation.id,
     interactions,
     submittedText: invocation.submittedText,
+    attachments: invocation.attachments ?? [],
     inputProvenance: invocation.inputProvenance,
     status: invocation.status,
     isActive: activeStatuses.has(invocation.status),

@@ -14,6 +14,7 @@ import type {
   CreateAgentSessionCommandDto,
   ListAgentSessionsQueryDto,
   LoadAgentSessionQueryDto,
+  RenameAgentSessionCommandDto,
   SendAgentSessionMessageCommandDto,
   SendAgentSessionMessageResultDto,
   UpdateAgentSessionHarnessCommandDto,
@@ -107,6 +108,10 @@ export function createTauriAgentSessionClient(
 
     updateIdentity(command: UpdateAgentSessionIdentityCommandDto): Promise<AgentSessionDto> {
       return invokeCommand<AgentSessionDto>('update_agent_session_identity', { input: command });
+    },
+
+    renameSession(command: RenameAgentSessionCommandDto): Promise<AgentSessionDto> {
+      return invokeCommand<AgentSessionDto>('rename_agent_session', { input: command });
     },
 
     updateModelOverride(

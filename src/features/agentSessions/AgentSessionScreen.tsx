@@ -221,6 +221,13 @@ export function StandaloneAgentSessionScreen({
       select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget }),
     [select],
   );
+  const onRename = useCallback(
+    async (sessionId: string, title: string) => {
+      await collection.rename(sessionId, title);
+      if (sessionId === selectedSessionId) await session.reload();
+    },
+    [collection.rename, selectedSessionId, session.reload],
+  );
   const tree = useSessionNavigation(
     model,
     selectedSessionId,
@@ -514,6 +521,7 @@ export function StandaloneAgentSessionScreen({
               onNew={onNew}
               onMove={collection.move}
               onPin={collection.pin}
+              onRename={onRename}
               onReorder={collection.reorder}
               organizing={Boolean(navigationClient)}
               onReload={() => {

@@ -7,7 +7,9 @@ import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 import type { SessionFolderTarget } from '../../application/agentSessions/organization';
 import {
   composerDraftCacheKey,
+  readLastSentRuntimeSelection,
   readCachedComposerDraft,
+  writeLastSentRuntimeSelection,
   writeCachedComposerDraft,
 } from './composerDraftCache';
 
@@ -34,7 +36,11 @@ export function useSessionExecutionSelection(
     setError(null);
     setHydratedCacheKey(null);
     const cached = readCachedComposerDraft(cacheKey)?.runtimeSelection;
-    if (previousContext.current !== cacheKey) setSelection(cached ?? inherited());
+    if (previousContext.current !== cacheKey) {
+      setSelection(
+        cached ?? (sessionId ? inherited() : readLastSentRuntimeSelection() ?? inherited()),
+      );
+    }
     previousContext.current = cacheKey;
     setHydratedCacheKey(cacheKey);
     if (client && sessionId)
@@ -67,9 +73,16 @@ export function useSessionExecutionSelection(
         setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [client, sessionId]);
-  const afterAccepted = () => {
-    if (currentSession.current === (sessionId ?? draftId))
-      setSelection((current) => (current === selection ? inherited() : current));
+  const afterAccepted = (
+    acceptedSessionId: string,
+    acceptedSelection: PerMessageRuntimeSelection,
+  ) => {
+    if (currentSession.current !== (sessionId ?? draftId)) return;
+    writeCachedComposerDraft(composerDraftCacheKey(acceptedSessionId), {
+      runtimeSelection: acceptedSelection,
+    });
+    writeLastSentRuntimeSelection(acceptedSelection);
+    setSelection(acceptedSelection);
   };
   return {
     profile,

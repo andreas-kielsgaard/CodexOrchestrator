@@ -44,7 +44,7 @@ export function PerMessageRuntimeControls({
   return (
     <fieldset className="per-message-runtime-controls" disabled={disabled}>
       <legend>Options for this message</legend>
-      <p>These choices apply only to the next user message.</p>
+      <p>The accepted choice remains selected for this conversation.</p>
       <div className="per-message-runtime-controls__fields">
         <label>
           <span>Model</span>

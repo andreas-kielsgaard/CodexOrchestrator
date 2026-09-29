@@ -458,6 +458,28 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         })
     }
 
+    fn update_session_title(
+        &self,
+        session_id: &AgentSessionId,
+        title: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.write("rename Agent Session", |transaction| {
+            let current = required_session(transaction, session_id)?;
+            let mut candidate = current.clone();
+            candidate.title = title;
+            candidate.updated_at = updated_at;
+            validate_session_update(&current, &candidate).map_err(contract_error)?;
+            transaction
+                .execute(
+                    "UPDATE agent_sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![candidate.title, timestamp(updated_at), session_id.as_str()],
+                )
+                .map_err(sql_unavailable("rename Agent Session"))?;
+            Ok(candidate)
+        })
+    }
+
     fn update_session_model_override(
         &self,
         session_id: &AgentSessionId,

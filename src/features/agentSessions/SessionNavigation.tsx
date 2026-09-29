@@ -35,6 +35,7 @@ export function SessionNavigation({
   onOpenWorkflow,
   onMove,
   onPin,
+  onRename,
   onReorder,
   organizing = true,
 }: {
@@ -46,6 +47,7 @@ export function SessionNavigation({
   onNew(target: SessionFolderTarget | null): void;
   onMove(id: string, target: SessionPlacement, orderedIds?: readonly string[]): Promise<void>;
   onPin(id: string, pinned: boolean): Promise<void>;
+  onRename(id: string, title: string): Promise<void>;
   onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
   organizing?: boolean;
 }) {
@@ -229,6 +231,10 @@ export function SessionNavigation({
           }}
           onPin={() => {
             void onPin(menu.row.summary.id, !menu.row.pinned);
+            closeMenu();
+          }}
+          onRename={async (title) => {
+            await onRename(menu.row.summary.id, title);
             closeMenu();
           }}
           onCopy={() =>

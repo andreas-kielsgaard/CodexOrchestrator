@@ -116,7 +116,9 @@ impl AgentSessionApplication {
         &self,
         command: SendIdempotentApplicationAgentSessionMessageCommand,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
-        if command.message.submitted_text.trim().is_empty() {
+        if command.message.submitted_text.trim().is_empty()
+            && command.message.attachments.is_empty()
+        {
             return Err(AgentSessionApplicationError::invalid(
                 "submitted text cannot be empty",
             ));
@@ -148,6 +150,7 @@ impl AgentSessionApplication {
         {
             if existing.session_id != session.id
                 || existing.submitted_text != command.message.submitted_text
+                || existing.attachments != command.message.attachments
                 || existing.input_provenance != AgentInvocationInputProvenance::Application
                 || existing.requested_options != requested_options
             {
@@ -167,6 +170,7 @@ impl AgentSessionApplication {
                 id: command.invocation_id,
                 session_id: session.id.clone(),
                 submitted_text: command.message.submitted_text,
+                attachments: command.message.attachments,
                 input_provenance: AgentInvocationInputProvenance::Application,
                 status: AgentInvocationStatus::Pending,
                 requested_options,
@@ -291,9 +295,9 @@ impl AgentSessionApplication {
         requested_invocation_id: Option<AgentInvocationId>,
         launch_existing_prepared: bool,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
-        if command.submitted_text.trim().is_empty() {
+        if command.submitted_text.trim().is_empty() && command.attachments.is_empty() {
             return Err(AgentSessionApplicationError::invalid(
-                "submitted text cannot be empty",
+                "a message requires text or an image",
             ));
         }
 
@@ -306,10 +310,17 @@ impl AgentSessionApplication {
                     AgentSessionApplicationError::not_found("Agent Session not found")
                 })?,
             None => self.create_session(CreateAgentSessionCommand {
-                title: command
-                    .title
-                    .clone()
-                    .or_else(|| Some(title_from_message(&command.submitted_text))),
+                title: command.title.clone().or_else(|| {
+                    Some(if command.submitted_text.trim().is_empty() {
+                        command
+                            .attachments
+                            .first()
+                            .map(|image| image.name.clone())
+                            .unwrap_or_else(|| "Image".into())
+                    } else {
+                        title_from_message(&command.submitted_text)
+                    })
+                }),
                 working_directory: command.working_directory.clone(),
                 requested_options: command.requested_options.clone().unwrap_or_default(),
             })?,
@@ -353,6 +364,7 @@ impl AgentSessionApplication {
             {
                 if existing.session_id != session.id
                     || existing.submitted_text != command.submitted_text
+                    || existing.attachments != command.attachments
                     || existing.input_provenance != input_provenance
                     || existing.requested_options != requested_options
                 {
@@ -398,6 +410,7 @@ impl AgentSessionApplication {
                         id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
                         session_id: session.id.clone(),
                         submitted_text: command.submitted_text.clone(),
+                        attachments: command.attachments.clone(),
                         input_provenance,
                         status: AgentInvocationStatus::Pending,
                         requested_options: requested_options.clone(),
@@ -509,7 +522,10 @@ impl AgentSessionApplication {
             .as_ref()
             .and_then(|extension| extension.initial_prompt_prefix.as_ref())
         {
-            if let Err(error) = self.repository.record_initial_prompt_prefix(&session.id, prefix) {
+            if let Err(error) = self
+                .repository
+                .record_initial_prompt_prefix(&session.id, prefix)
+            {
                 self.finish_preflight_failure(
                     &invocation,
                     RuntimePortError::new(RuntimePortErrorKind::Unavailable, error.to_string()),
@@ -596,6 +612,7 @@ impl AgentSessionApplication {
                 .and_then(|extension| extension.initial_prompt_prefix.as_ref())
                 .map(|context| context.render_before_user_query(&invocation.submitted_text))
                 .unwrap_or_else(|| invocation.submitted_text.clone()),
+            attachments: invocation.attachments.clone(),
             // Product-specific callers may select a neutral per-invocation discovery root without
             // mutating the provider-neutral Agent Session identity. Ordinary sends continue to
             // inherit the durable session directory because they do not supply an override.

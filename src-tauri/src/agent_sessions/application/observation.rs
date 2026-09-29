@@ -6,8 +6,8 @@ use crate::agent_sessions::{
     },
     ports::AgentInvocationHistory,
 };
-use orchid_engine::contracts::{ProcessExitStatus, RuntimeControlRecord};
 use chrono::{DateTime, Utc};
+use orchid_engine::contracts::{ProcessExitStatus, RuntimeControlRecord};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -398,6 +398,7 @@ mod tests {
     ) -> AgentInvocationHistory {
         AgentInvocationHistory {
             invocation: AgentInvocation {
+                attachments: vec![],
                 id: crate::agent_sessions::domain::AgentInvocationId::new(id).unwrap(),
                 session_id: AgentSessionId::new("session").unwrap(),
                 submitted_text: "work".into(),

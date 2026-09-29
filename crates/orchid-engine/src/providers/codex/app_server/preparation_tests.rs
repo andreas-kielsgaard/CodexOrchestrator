@@ -125,7 +125,7 @@ impl AgentRuntimeUpdateSink for Sink {
     fn report_delivery_failure(&self, _: &AgentInvocationId, _: RuntimeUpdateDeliveryFailure) {}
 }
 fn request(cwd: &std::path::Path) -> RuntimeInvocationRequest {
-    RuntimeInvocationRequest {
+    RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: AgentInvocationId::new("invocation").unwrap(),
         submitted_text: "frozen original prompt".into(),

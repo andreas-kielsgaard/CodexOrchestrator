@@ -97,6 +97,7 @@ mod tests {
 
     fn invocation(id: &str, text: &str, status: AgentInvocationStatus) -> AgentInvocation {
         AgentInvocation {
+            attachments: vec![],
             id: AgentInvocationId::new(id).unwrap(),
             session_id: AgentSessionId::new("session").unwrap(),
             submitted_text: text.into(),
@@ -138,7 +139,9 @@ mod tests {
         let entry = |id: &str, text: &str, status, answer: Option<&str>| AgentInvocationHistory {
             invocation: invocation(id, text, status),
             launch_accepted_at: None,
-            events: answer.map(|answer| vec![reply(id, answer)]).unwrap_or_default(),
+            events: answer
+                .map(|answer| vec![reply(id, answer)])
+                .unwrap_or_default(),
             import_provenance: None,
         };
         AgentSessionHistory {
@@ -161,9 +164,24 @@ mod tests {
                 updated_at: Utc::now(),
             },
             invocations: vec![
-                entry("one", "First question", AgentInvocationStatus::Completed, Some("First answer")),
-                entry("two", "Second question", AgentInvocationStatus::Completed, Some("Second answer")),
-                entry("three", "Current question", AgentInvocationStatus::Pending, None),
+                entry(
+                    "one",
+                    "First question",
+                    AgentInvocationStatus::Completed,
+                    Some("First answer"),
+                ),
+                entry(
+                    "two",
+                    "Second question",
+                    AgentInvocationStatus::Completed,
+                    Some("Second answer"),
+                ),
+                entry(
+                    "three",
+                    "Current question",
+                    AgentInvocationStatus::Pending,
+                    None,
+                ),
             ],
         }
     }
@@ -183,12 +201,25 @@ mod tests {
     #[test]
     fn a_new_provider_receives_the_initial_prefix_and_every_earlier_turn() {
         let initial = prefix("harness", "Role instructions");
-        let handoff = handoff_prefix(&history(), &id("three"), &Handoff::Full, Some(&initial), None)
-            .unwrap();
+        let handoff = handoff_prefix(
+            &history(),
+            &id("three"),
+            &Handoff::Full,
+            Some(&initial),
+            None,
+        )
+        .unwrap();
         assert_eq!(handoff.source, HANDOFF_SOURCE);
         let content = handoff.content;
-        assert!(content.starts_with("<first_message_context source=\"harness\" version=\"2\">\nRole instructions"));
-        for text in ["First question", "First answer", "Second question", "Second answer"] {
+        assert!(content.starts_with(
+            "<first_message_context source=\"harness\" version=\"2\">\nRole instructions"
+        ));
+        for text in [
+            "First question",
+            "First answer",
+            "Second question",
+            "Second answer",
+        ] {
             assert!(content.contains(text), "{text}");
         }
         assert!(!content.contains("Current question"));
@@ -215,16 +246,30 @@ mod tests {
     fn nothing_to_hand_over_keeps_the_callers_prefix() {
         let caller = prefix("caller", "Message context");
         assert_eq!(
-            handoff_prefix(&history(), &id("three"), &Handoff::Since(Some(id("two"))), None, Some(caller.clone())),
+            handoff_prefix(
+                &history(),
+                &id("three"),
+                &Handoff::Since(Some(id("two"))),
+                None,
+                Some(caller.clone())
+            ),
             Some(caller.clone())
         );
         assert_eq!(
-            handoff_prefix(&history(), &id("three"), &Handoff::None, None, Some(caller.clone())),
+            handoff_prefix(
+                &history(),
+                &id("three"),
+                &Handoff::None,
+                None,
+                Some(caller.clone())
+            ),
             Some(caller.clone())
         );
         let combined = handoff_prefix(&history(), &id("three"), &Handoff::Full, None, Some(caller))
             .unwrap()
             .content;
-        assert!(combined.contains("<message_context source=\"caller\" version=\"2\">\nMessage context"));
+        assert!(
+            combined.contains("<message_context source=\"caller\" version=\"2\">\nMessage context")
+        );
     }
 }

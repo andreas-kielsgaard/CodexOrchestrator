@@ -106,6 +106,7 @@ pub enum HostCommand {
         target: RuntimeTurnTarget,
         input_id: String,
         text: String,
+        attachments: Vec<crate::contracts::RuntimeImageAttachment>,
     },
 }
 

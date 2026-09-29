@@ -39,6 +39,9 @@ pub(crate) fn run() {
             })?;
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
+            crate::worktree_review::review_runtime::import_compatible_controller_data(
+                &app_data_dir,
+            )?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let database = crate::product_database::open(&database_path)?;
             let repository_catalog = Arc::new(crate::repository_catalog::RepositoryCatalog::new(
@@ -364,6 +367,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::list_agent_sessions,
             crate::agent_sessions::transport::load_agent_session,
             crate::agent_sessions::transport::send_agent_session_message,
+            crate::agent_sessions::transport::read_agent_session_image,
             crate::execution_configuration::transport::load_default_capability_profile,
             crate::execution_configuration::transport::set_default_capability_profile,
             crate::agent_sessions::transport::interactions::steer_agent_session,
@@ -385,6 +389,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::cancel_agent_invocation,
             crate::agent_sessions::transport::update_agent_session_harness,
             crate::agent_sessions::transport::update_agent_session_identity,
+            crate::agent_sessions::transport::rename_agent_session,
             crate::agent_sessions::transport::update_agent_session_model_override,
             crate::execution_configuration::transport::load_selected_runtime_profile,
             crate::execution_configuration::transport::list_provider_setups,

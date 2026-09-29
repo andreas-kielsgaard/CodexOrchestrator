@@ -562,10 +562,125 @@
 }
 
 .agent-session-composer {
+  position: relative;
   flex-shrink: 0;
   padding: 12px clamp(18px, 7vw, 96px) 16px;
   border-top: 1px solid #d8ddd5;
   background: #f6f7f4;
+}
+
+.agent-session-composer--dragging {
+  background: #edf5ee;
+}
+
+.composer-drop-overlay {
+  position: absolute;
+  inset: 8px clamp(18px, 7vw, 96px);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed #51745c;
+  border-radius: 12px;
+  background: rgb(246 251 246 / 94%);
+  color: #274b31;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.composer-attachments {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 0;
+  margin-top: 0;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.composer-attachments li {
+  position: relative;
+  width: 88px;
+  flex: 0 0 88px;
+}
+
+.composer-attachments img {
+  display: block;
+  width: 88px;
+  height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid #bbc4bb;
+}
+
+.transcript-image-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.transcript-image-attachments img {
+  max-width: min(320px, 100%);
+  max-height: 240px;
+  border: 1px solid rgb(23 33 27 / 15%);
+  border-radius: 9px;
+  object-fit: contain;
+}
+
+.composer-attachments span {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #59655e;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachments button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  place-items: center;
+  background: rgb(23 33 27 / 86%);
+  color: white;
+  cursor: pointer;
+}
+
+.composer-leading-actions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.attach-image-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #bbc4bb;
+  border-radius: 50%;
+  background: #fffdf8;
+  color: #26382d;
+  cursor: pointer;
+  place-items: center;
+}
+
+.attach-image-button:hover {
+  background: #edf2ec;
+}
+
+.composer-attachment-notice {
+  margin-top: 6px;
+  color: #8c3928;
+  font-size: 0.75rem;
 }
 
 .agent-session-composer > * {

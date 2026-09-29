@@ -3,6 +3,8 @@ import {
   clearCachedComposerDraft,
   composerDraftCacheKey,
   readCachedComposerDraft,
+  readLastSentRuntimeSelection,
+  writeLastSentRuntimeSelection,
   writeCachedComposerDraft,
 } from './composerDraftCache';
 
@@ -47,5 +49,15 @@ describe('composer draft cache', () => {
     clearCachedComposerDraft(repository);
     expect(readCachedComposerDraft(repository)).toBeNull();
     expect(readCachedComposerDraft(unattached)?.text).toBe('Investigate separately');
+  });
+
+  it('stores the last sent runtime choice separately from conversation drafts', () => {
+    writeLastSentRuntimeSelection({ model: 'gpt-6-astra', reasoningMode: 'high' });
+
+    expect(readLastSentRuntimeSelection()).toEqual({
+      model: 'gpt-6-astra',
+      reasoningMode: 'high',
+    });
+    expect(readCachedComposerDraft('new:unattached')).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 pub(crate) use orchid_engine::contracts::domain::*;
+pub(crate) use orchid_engine::contracts::RuntimeImageAttachment;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -99,6 +100,8 @@ pub(crate) struct AgentInvocation {
     pub(crate) id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
     pub(crate) submitted_text: String,
+    #[serde(default)]
+    pub(crate) attachments: Vec<RuntimeImageAttachment>,
     pub(crate) input_provenance: AgentInvocationInputProvenance,
     pub(crate) status: AgentInvocationStatus,
     pub(crate) requested_options: AgentRuntimeOptions,
@@ -304,9 +307,24 @@ pub(crate) fn validate_invocation(invocation: &AgentInvocation) -> Result<(), Co
         });
     }
 
-    if invocation.submitted_text.trim().is_empty() {
+    if invocation.submitted_text.trim().is_empty() && invocation.attachments.is_empty() {
         return Err(ContractViolation::InvalidInvocationRecord {
-            reason: "submitted text cannot be empty",
+            reason: "an invocation requires text or an image",
+        });
+    }
+    if invocation.attachments.len() > 4
+        || invocation.attachments.iter().any(|image| {
+            image.id.len() != 64
+                || !image.id.bytes().all(|value| value.is_ascii_hexdigit())
+                || !matches!(
+                    image.media_type.as_str(),
+                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                )
+                || image.data_base64.len() > 14 * 1024 * 1024
+        })
+    {
+        return Err(ContractViolation::InvalidInvocationRecord {
+            reason: "image attachments are invalid",
         });
     }
 

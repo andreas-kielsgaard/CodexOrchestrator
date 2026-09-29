@@ -293,6 +293,7 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
     let runtime = FakeRuntime::default();
     let sink = Arc::new(CollectingUpdateSink::default());
     let request = RuntimeInvocationRequest {
+        attachments: vec![],
         session_id: session_id("session-local"),
         invocation_id: invocation_id("invocation-1"),
         submitted_text: "Continue the work".to_string(),
@@ -582,6 +583,22 @@ impl AgentSessionRepository for FakeRepository {
             .get_mut(session_id)
             .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
         session.assigned_identity = assigned_identity;
+        session.updated_at = updated_at;
+        Ok(session.clone())
+    }
+
+    fn update_session_title(
+        &self,
+        session_id: &AgentSessionId,
+        title: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        let mut state = self.state.lock().expect("fake repository");
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| repository_error(RepositoryErrorKind::NotFound, "session not found"))?;
+        session.title = title;
         session.updated_at = updated_at;
         Ok(session.clone())
     }
@@ -926,6 +943,7 @@ fn binding(external_context_id_value: Option<&str>) -> AgentRuntimeBinding {
 
 fn invocation(id: &str, session: &str, status: AgentInvocationStatus) -> AgentInvocation {
     AgentInvocation {
+        attachments: vec![],
         id: invocation_id(id),
         session_id: session_id(session),
         submitted_text: "Do the work".to_string(),
