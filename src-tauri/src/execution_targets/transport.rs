@@ -7,23 +7,22 @@ use tauri::State;
 pub(crate) struct ExecutionTargetTauriState(pub(crate) Arc<ExecutionTargetService>);
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PublishedCommitQuery {
+pub(crate) struct BranchCommitQuery {
     repository_id: String,
     branch_ref: String,
     execution: ExecutionBinding,
 }
 #[tauri::command]
-pub(crate) async fn resolve_published_worktree_commit(
+pub(crate) async fn resolve_worktree_branch_commit(
     state: State<'_, ExecutionTargetTauriState>,
-    input: PublishedCommitQuery,
+    input: BranchCommitQuery,
 ) -> Result<serde_json::Value, String> {
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let root = service.repository_root(&input.repository_id, &input.execution)?;
-        let commit =
-            service
-                .endpoints
-                .published_commit(&input.execution, &root, &input.branch_ref)?;
+        let commit = service
+            .endpoints
+            .branch_commit(&input.execution, &root, &input.branch_ref)?;
         Ok(serde_json::json!({"commit":commit}))
     })
     .await

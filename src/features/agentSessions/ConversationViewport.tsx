@@ -41,6 +41,7 @@ export interface ConversationViewportComposerTarget {
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
   send(): Promise<void>;
+  steer?(): Promise<void>;
   cancel(): Promise<void>;
 }
 
@@ -184,6 +185,7 @@ export function ConversationViewport({
             follow.requestFollow();
             void composerTarget.send();
           }}
+          onSteer={composerTarget.steer ? () => void composerTarget.steer?.() : undefined}
           onCancel={() => void composerTarget.cancel()}
         />
       )}

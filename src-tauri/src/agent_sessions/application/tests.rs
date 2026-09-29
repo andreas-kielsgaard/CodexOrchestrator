@@ -2391,10 +2391,9 @@ impl AgentSessionNotifier for RecordingNotifier {
                 .repository
                 .preparation(invocation_id)
                 .is_ok_and(|p| p.is_some()),
-            AgentSessionNotification::TargetTransitionUpdated { session_id } => self
-                .repository
-                .target_transition(session_id)
-                .is_ok_and(|transition| transition.is_some()),
+            AgentSessionNotification::QueueUpdated { session_id } => {
+                self.repository.session_queue(session_id).is_ok()
+            }
             AgentSessionNotification::SteeringAccepted {
                 invocation_id,
                 input_id,

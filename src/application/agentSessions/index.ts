@@ -7,18 +7,9 @@
  */
 export * from './contracts';
 export * from './liveHistory';
+export * from './sessionQueue';
 
 export * from './selections';
-
-export type {
-  RequestSessionTargetTransitionInput,
-  SessionTargetTransitionDto,
-  SessionTargetTransitionEstimateDto,
-  SessionTargetTransitionPhaseDto,
-  SessionTargetTransitionSnapshotDto,
-  SessionTargetTransitionSnapshotArtifactDto,
-  SessionTargetTransitionTaskDto,
-} from './preparation';
 
 export type {
   AgentSessionImportClient,

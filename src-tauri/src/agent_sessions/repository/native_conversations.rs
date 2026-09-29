@@ -1,8 +1,11 @@
 //! Provider-owned conversation bindings and the first prompt prefix delivered to a Session.
 use super::*;
 use crate::{
-    agent_sessions::{domain::ProviderSessionBinding, ports::InitialPromptPrefix},
-    execution_targets::domain::ExecutionBinding,
+    agent_sessions::{
+        domain::{ProviderSessionBinding, ProviderWorkspaceIdentity},
+        ports::InitialPromptPrefix,
+    },
+    execution_targets::domain::{ExecutionBinding, SessionExecutionTarget},
 };
 
 pub(crate) const SCHEMA: &str = r#"
@@ -20,8 +23,11 @@ CREATE TABLE IF NOT EXISTS agent_session_initial_prompt_prefixes (
 );
 "#;
 
-fn execution_key(execution: &ExecutionBinding) -> Result<String, RepositoryError> {
-    to_json(execution)
+fn execution_key(
+    execution: &ExecutionBinding,
+    workspace: Option<&ProviderWorkspaceIdentity>,
+) -> Result<String, RepositoryError> {
+    to_json(&(execution, workspace))
 }
 
 /// Within a prepared-binding commit, retain the source route's provider-owned conversation. The
@@ -41,7 +47,7 @@ pub(super) fn retain_source_provider_binding(
          DO UPDATE SET binding_json=excluded.binding_json,updated_at=excluded.updated_at",
         params![
             session_id.as_str(),
-            execution_key(&source.location)?,
+            execution_key(&source.location, source.workspace.as_ref())?,
             to_json(source)?,
             timestamp(at)
         ],
@@ -54,13 +60,13 @@ impl SqliteAgentSessionRepository {
     pub(super) fn read_provider_session_binding(
         &self,
         session_id: &AgentSessionId,
-        execution: &ExecutionBinding,
+        target: &SessionExecutionTarget,
     ) -> Result<Option<ProviderSessionBinding>, RepositoryError> {
         self.read("read provider session binding", |connection| {
             let json: Option<String> = connection
                 .query_row(
                     "SELECT binding_json FROM agent_session_provider_bindings WHERE session_id=?1 AND execution_key=?2",
-                    params![session_id.as_str(), execution_key(execution)?],
+                    params![session_id.as_str(), execution_key(&target.execution, Some(&ProviderWorkspaceIdentity::from(target)))?],
                     |row| row.get(0),
                 )
                 .optional()

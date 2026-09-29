@@ -1,6 +1,7 @@
 //! Which native conversation a destination instance continues, and what its provider has not seen.
 use crate::agent_sessions::{
-    application::delivery::context::Handoff, domain::ProviderSessionBinding,
+    application::delivery::context::Handoff,
+    domain::{ProviderSessionBinding, ProviderWorkspaceIdentity},
     ports::AgentSessionHistory,
 };
 use crate::agent_sessions::{
@@ -8,7 +9,7 @@ use crate::agent_sessions::{
     domain::{AgentInvocationId, ExternalRuntimeContextId},
     preparation::SessionPreparation,
 };
-use crate::execution_targets::domain::ExecutionBinding;
+use crate::execution_targets::domain::{ExecutionBinding, SessionExecutionTarget};
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct ConversationPlan {
@@ -21,7 +22,11 @@ pub(crate) struct ConversationPlan {
 
 /// The Session's current conversation, before the destination instance is prepared.
 pub(super) struct CurrentConversation {
-    pub(super) conversation: Option<(ExecutionBinding, ExternalRuntimeContextId)>,
+    pub(super) conversation: Option<(
+        ExecutionBinding,
+        Option<ProviderWorkspaceIdentity>,
+        ExternalRuntimeContextId,
+    )>,
     pub(super) runtime_version: Option<String>,
     /// The Session's latest invocation before the one being prepared.
     pub(super) last_invocation_id: Option<AgentInvocationId>,
@@ -31,16 +36,21 @@ pub(super) struct CurrentConversation {
 /// configuration, or device is a separate instance and receives the canonical missed history.
 pub(super) fn plan(
     current: CurrentConversation,
-    destination: &ExecutionBinding,
+    destination: &SessionExecutionTarget,
     cached_destination: Option<ProviderSessionBinding>,
 ) -> ConversationPlan {
+    let destination_workspace = ProviderWorkspaceIdentity::from(destination);
     if current
         .conversation
         .as_ref()
-        .is_some_and(|(location, _)| location == destination)
+        .is_some_and(|(location, workspace, _)| {
+            location == &destination.execution && workspace.as_ref() == Some(&destination_workspace)
+        })
     {
         return ConversationPlan {
-            continued: current.conversation,
+            continued: current
+                .conversation
+                .map(|(location, _, external_context_id)| (location, external_context_id)),
             source_provider_binding: None,
             handoff: Handoff::None,
         };
@@ -48,12 +58,15 @@ pub(super) fn plan(
     let source_provider_binding =
         current
             .conversation
-            .map(|(location, external_context_id)| ProviderSessionBinding {
-                external_context_id,
-                runtime_version: current.runtime_version,
-                location,
-                last_invocation_id: current.last_invocation_id,
-            });
+            .map(
+                |(location, workspace, external_context_id)| ProviderSessionBinding {
+                    external_context_id,
+                    runtime_version: current.runtime_version,
+                    location,
+                    workspace,
+                    last_invocation_id: current.last_invocation_id,
+                },
+            );
     match cached_destination {
         Some(cached) => ConversationPlan {
             continued: Some((cached.location, cached.external_context_id)),
@@ -74,10 +87,14 @@ impl AgentSessionApplication {
         &self,
         history: &AgentSessionHistory,
         p: &SessionPreparation,
-        source: Option<ExecutionBinding>,
-        destination: &ExecutionBinding,
+        source: Option<(ExecutionBinding, Option<ProviderWorkspaceIdentity>)>,
+        destination: &SessionExecutionTarget,
     ) -> Result<ConversationPlan, AgentSessionApplicationError> {
-        let cached_destination = if source.as_ref() == Some(destination) {
+        let destination_workspace = ProviderWorkspaceIdentity::from(destination);
+        let cached_destination = if source.as_ref().is_some_and(|(execution, workspace)| {
+            execution == &destination.execution
+                && workspace.as_ref() == Some(&destination_workspace)
+        }) {
             None
         } else {
             self.repository
@@ -85,7 +102,9 @@ impl AgentSessionApplication {
                 .map_err(AgentSessionApplicationError::repository)?
         };
         let current = CurrentConversation {
-            conversation: source.zip(p.source_binding.external_context_id.clone()),
+            conversation: source
+                .zip(p.source_binding.external_context_id.clone())
+                .map(|((execution, workspace), id)| (execution, workspace, id)),
             runtime_version: p.source_binding.runtime_version.clone(),
             last_invocation_id: history
                 .invocations
@@ -118,9 +137,27 @@ mod tests {
         ExternalRuntimeContextId::new(value).unwrap()
     }
 
+    fn target(provider: &str, device: &str, worktree: &str) -> SessionExecutionTarget {
+        SessionExecutionTarget {
+            capability_profile_id: "profile".into(),
+            capability_profile_revision: 1,
+            execution: route(provider, device),
+            repository_id: "repository".into(),
+            branch_ref: "refs/heads/main".into(),
+            worktree_id: worktree.into(),
+            path: format!("/{device}/{worktree}"),
+            head: None,
+        }
+    }
+
     fn current(provider: &str, device: &str) -> CurrentConversation {
+        let target = target(provider, device, "current-worktree");
         CurrentConversation {
-            conversation: Some((route(provider, device), id("current-thread"))),
+            conversation: Some((
+                target.execution.clone(),
+                Some(ProviderWorkspaceIdentity::from(&target)),
+                id("current-thread"),
+            )),
             runtime_version: None,
             last_invocation_id: Some(AgentInvocationId::new("previous").unwrap()),
         }
@@ -128,7 +165,11 @@ mod tests {
 
     #[test]
     fn the_same_provider_on_another_device_starts_a_distinct_session() {
-        let plan = plan(current("codex", "laptop"), &route("codex", "server"), None);
+        let plan = plan(
+            current("codex", "laptop"),
+            &target("codex", "server", "server-worktree"),
+            None,
+        );
         assert!(plan.continued.is_none());
         assert_eq!(
             plan.source_provider_binding.unwrap().location,
@@ -139,7 +180,11 @@ mod tests {
 
     #[test]
     fn a_new_provider_parks_the_current_conversation_and_starts_from_the_log() {
-        let plan = plan(current("codex", "laptop"), &route("claude", "laptop"), None);
+        let plan = plan(
+            current("codex", "laptop"),
+            &target("claude", "laptop", "current-worktree"),
+            None,
+        );
         assert!(plan.continued.is_none());
         let parked = plan.source_provider_binding.unwrap();
         assert_eq!(parked.external_context_id, id("current-thread"));
@@ -153,11 +198,16 @@ mod tests {
             external_context_id: id("codex-thread"),
             runtime_version: None,
             location: route("codex", "laptop"),
+            workspace: Some(ProviderWorkspaceIdentity::from(&target(
+                "codex",
+                "laptop",
+                "return-worktree",
+            ))),
             last_invocation_id: Some(AgentInvocationId::new("codex-last").unwrap()),
         };
         let plan = plan(
             current("claude", "laptop"),
-            &route("codex", "laptop"),
+            &target("codex", "laptop", "return-worktree"),
             Some(parked),
         );
         assert_eq!(plan.continued.unwrap().1, id("codex-thread"));
@@ -175,11 +225,22 @@ mod tests {
     fn the_exact_current_route_continues_without_history_handoff() {
         let plan = plan(
             current("claude", "laptop"),
-            &route("claude", "laptop"),
+            &target("claude", "laptop", "current-worktree"),
             None,
         );
         assert_eq!(plan.continued.unwrap().1, id("current-thread"));
         assert!(plan.source_provider_binding.is_none());
         assert_eq!(plan.handoff, Handoff::None);
+    }
+
+    #[test]
+    fn another_worktree_on_the_same_route_starts_a_distinct_provider_session() {
+        let plan = plan(
+            current("codex", "laptop"),
+            &target("codex", "laptop", "other-worktree"),
+            None,
+        );
+        assert!(plan.continued.is_none());
+        assert_eq!(plan.handoff, Handoff::Full);
     }
 }

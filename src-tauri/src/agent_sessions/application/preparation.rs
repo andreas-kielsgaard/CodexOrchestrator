@@ -32,7 +32,7 @@ pub(super) struct PreparationWorkers {
     stopping: AtomicBool,
 }
 impl PreparationWorkers {
-    fn reserve(
+    pub(super) fn reserve(
         &self,
         id: &AgentInvocationId,
     ) -> Result<Arc<AtomicBool>, AgentSessionApplicationError> {
@@ -61,7 +61,7 @@ impl PreparationWorkers {
             }
         }
     }
-    fn release(&self, id: &AgentInvocationId) {
+    pub(super) fn release(&self, id: &AgentInvocationId) {
         if let Ok(mut slots) = self.slots.lock() {
             slots.remove(id);
         }
@@ -78,36 +78,12 @@ impl AgentSessionApplication {
 
     pub(super) fn accept_prepared_delivery(
         &self,
-        mut input: PreparedMessageInput,
+        input: PreparedMessageInput,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         if input.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
                 "A message must contain text",
             ));
-        }
-        // A device move has no synthetic invocation. When a prompt arrives, retain the normal
-        // durable invocation but bind its preparation to the move's requested/resolved target.
-        if let Some(session_id) = input.session_id.clone() {
-            if let Some(transition) = self.queue_target_transition_prompt(
-                &session_id,
-                input.submitted_text.clone(),
-                input.submission_id.as_str().into(),
-            )? {
-                if transition.phase.is_unfinished()
-                    || transition.phase
-                        == crate::agent_sessions::target_transition::TargetTransitionPhase::Ready
-                {
-                    input.execution_selection = Some(match transition.resolved_target {
-                        Some(target) => SessionExecutionSelection {
-                            capability_profile_id: target.capability_profile_id.clone(),
-                            capability_profile_revision: target.capability_profile_revision,
-                            execution: target.execution.clone(),
-                            workspace: SessionWorkspaceSelection::Existing { target },
-                        },
-                        None => transition.destination_selection,
-                    });
-                }
-            }
         }
         if let Some(existing) = self
             .repository
@@ -127,7 +103,6 @@ impl AgentSessionApplication {
                     p.model == input.model
                         && p.reasoning_mode == input.reasoning_mode
                         && p.sandbox_mode == input.sandbox_mode
-                        && p.selection == input.execution_selection
                         && p.accepted_working_directory == input.working_directory
                         && p.context == input.context
                 });
@@ -141,18 +116,7 @@ impl AgentSessionApplication {
                 invocation_id: existing.id,
             });
         }
-        let cancel = self.preparation_workers.reserve(&input.submission_id)?;
-        let result = self.accept_prepared_inner(input.clone());
-        match result {
-            Ok(ack) => {
-                self.spawn_preparation(ack.invocation_id.clone(), cancel);
-                Ok(ack)
-            }
-            Err(error) => {
-                self.preparation_workers.release(&input.submission_id);
-                Err(error)
-            }
-        }
+        self.accept_prepared_inner(input)
     }
     fn accept_prepared_inner(
         &self,
@@ -198,14 +162,9 @@ impl AgentSessionApplication {
                 .resolve_draft_selection(&selection.capability_profile_id, &selection.execution)
                 .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
             selection.capability_profile_revision = capability.revision;
-            if let SessionWorkspaceSelection::Create { commit, .. } = &selection.workspace {
-                if commit.len() != 40 || !commit.bytes().all(|c| c.is_ascii_hexdigit()) {
-                    return Err(AgentSessionApplicationError::invalid(
-                        "Confirm an exact published commit before Send",
-                    ));
-                }
-            }
         }
+        let operation =
+            self.target_operation_for_submission(&session, input.execution_selection.as_ref())?;
         let id = input.submission_id.clone();
         let pending = AgentInvocation {
             id: id.clone(),
@@ -231,7 +190,7 @@ impl AgentSessionApplication {
             steps: vec![],
             error: None,
             can_retry: false,
-            selection: input.execution_selection,
+            selection: None,
             source_target: session.execution_target.clone(),
             source_binding: session.runtime_binding.clone(),
             prepared_binding: None,
@@ -254,26 +213,42 @@ impl AgentSessionApplication {
             .session_id
             .is_none()
             .then(|| (session.clone(), input.folder_target.map(Into::into)));
+        let operation_id = operation.as_ref().map(|operation| operation.id.clone());
         self.repository
-            .accept_preparation(new_session, pending, preparation)
+            .accept_queued_preparation(new_session, pending, preparation, operation, now)
             .map_err(AgentSessionApplicationError::repository)?;
         self.notify_or_record(AgentSessionNotification::PreparationUpdated {
             session_id: session.id.clone(),
             invocation_id: id.clone(),
         });
+        if let Some(operation_id) = operation_id {
+            self.start_target_operation_early(operation_id)?;
+        }
+        self.wake_session_queue(session.id.clone());
         Ok(SendAgentSessionMessageResult {
             session_id: session.id,
             invocation_id: id,
         })
     }
-    fn spawn_preparation(&self, id: AgentInvocationId, cancel: Arc<AtomicBool>) {
+    pub(super) fn spawn_preparation(&self, id: AgentInvocationId, cancel: Arc<AtomicBool>) {
         let app = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let result = app.run_preparation(&id, &cancel);
             if let Err(error) = result {
-                let _ = app.fail_preparation(&id, error.to_string(), cancel.load(Ordering::SeqCst));
+                let message = error.to_string();
+                let _ = app.fail_preparation(&id, message.clone(), cancel.load(Ordering::SeqCst));
+                app.block_queued_invocation(&id, message);
+            } else if app
+                .repository
+                .get_invocation(&id)
+                .ok()
+                .flatten()
+                .is_some_and(|invocation| invocation.status.is_terminal())
+            {
+                app.complete_queued_invocation(&id);
             }
             app.preparation_workers.release(&id);
+            app.wake_all_session_queues();
         });
     }
     pub(super) fn reconcile_preparation_on_startup(

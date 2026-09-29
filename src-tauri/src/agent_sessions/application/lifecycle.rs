@@ -68,6 +68,39 @@ impl AgentSessionApplication {
             .list_session_summaries(ListAgentSessionsQuery::default())
             .map_err(AgentSessionApplicationError::repository)?
         {
+            let queue = self
+                .repository
+                .session_queue(&summary.session.id)
+                .map_err(AgentSessionApplicationError::repository)?;
+            for entry in queue
+                .entries
+                .iter()
+                .filter(|entry| entry.state.is_unfinished())
+            {
+                let crate::agent_sessions::queue::SessionQueueEntryItem::TargetOperation {
+                    operation_id,
+                } = &entry.item
+                else {
+                    continue;
+                };
+                let operation = self
+                    .repository
+                    .target_operation(operation_id)
+                    .map_err(AgentSessionApplicationError::repository)?;
+                if operation.as_ref().is_some_and(|operation| {
+                    matches!(
+                        operation.phase,
+                        crate::agent_sessions::target_operation::TargetOperationPhase::Staging
+                            | crate::agent_sessions::target_operation::TargetOperationPhase::Activating
+                    )
+                }) {
+                    self.block_target_operation(
+                        operation_id,
+                        "Application restarted while this target operation was in progress. Retry resumes from its durable queue entry."
+                            .into(),
+                    )?;
+                }
+            }
             let history = self
                 .repository
                 .load_session_history(&summary.session.id)
@@ -79,6 +112,22 @@ impl AgentSessionApplication {
                 })?;
             for invocation_history in history.invocations {
                 let invocation = invocation_history.invocation;
+                let queue_entry = self
+                    .repository
+                    .queue_entry_for_invocation(&invocation.id)
+                    .map_err(AgentSessionApplicationError::repository)?;
+                if invocation.status
+                    == crate::agent_sessions::domain::AgentInvocationStatus::Pending
+                    && queue_entry.as_ref().is_some_and(|entry| {
+                        matches!(
+                            entry.state,
+                            crate::agent_sessions::queue::SessionQueueEntryState::Pending
+                                | crate::agent_sessions::queue::SessionQueueEntryState::Blocked
+                        )
+                    })
+                {
+                    continue;
+                }
                 self.reconcile_preparation_on_startup(&invocation.id)?;
                 if !invocation.status.is_active() {
                     continue;
@@ -104,6 +153,7 @@ impl AgentSessionApplication {
                         session_id: history.session.id.clone(),
                         invocation: updated,
                     });
+                    self.complete_queued_invocation(&invocation.id);
                     continue;
                 }
                 let completed_at = self.clock.now();
@@ -142,8 +192,13 @@ impl AgentSessionApplication {
                     session_id: history.session.id.clone(),
                     invocation: updated,
                 });
+                self.block_queued_invocation(
+                    &invocation.id,
+                    "Application stopped while this message was executing. Retry keeps the queued message.".into(),
+                );
             }
         }
+        self.wake_all_session_queues();
         Ok(reconciled)
     }
 

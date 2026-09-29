@@ -12,7 +12,7 @@ export function createTauriExecutionTargetClient(
       invokeCommand('stop_execution_device', { input: { deviceId } }),
     holdConfiguredDeviceAwake: (deviceId, seconds) =>
       invokeCommand('hold_execution_device_awake', { input: { deviceId, seconds } }),
-    resolvePublishedTip: (input) => invokeCommand('resolve_published_worktree_commit', { input }),
+    resolveBranchTip: (input) => invokeCommand('resolve_worktree_branch_commit', { input }),
     listDevices: () => invokeCommand('list_execution_target_devices'),
     listWorktreeChoices: (scope) => invokeCommand('list_execution_worktree_choices', { scope }),
     listTargets: (repositoryId, branchRef) =>

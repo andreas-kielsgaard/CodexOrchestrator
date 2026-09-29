@@ -430,9 +430,7 @@ impl ExecutionDeviceService {
                            SELECT device_id FROM execution_device_activity_leases l
                            WHERE (l.owner_kind='agent_invocation' AND NOT EXISTS(
                              SELECT 1 FROM agent_session_invocations i WHERE i.id=l.owner_id AND i.status='running'
-                           )) OR (l.owner_kind='target_transition' AND NOT EXISTS(
-                             SELECT 1 FROM agent_session_target_transitions t WHERE t.session_id=l.owner_id AND json_extract(t.payload_json,'$.phase')='running'
-                           ))
+                           )) OR l.owner_kind='target_transition'
                          )",
                         [now],
                     )
@@ -442,9 +440,7 @@ impl ExecutionDeviceService {
                         "DELETE FROM execution_device_activity_leases AS l
                          WHERE (l.owner_kind='agent_invocation' AND NOT EXISTS(
                            SELECT 1 FROM agent_session_invocations i WHERE i.id=l.owner_id AND i.status='running'
-                         )) OR (l.owner_kind='target_transition' AND NOT EXISTS(
-                           SELECT 1 FROM agent_session_target_transitions t WHERE t.session_id=l.owner_id AND json_extract(t.payload_json,'$.phase')='running'
-                         ))",
+                         )) OR l.owner_kind='target_transition'",
                         [],
                     )
                     .map_err(|error| error.to_string())?;

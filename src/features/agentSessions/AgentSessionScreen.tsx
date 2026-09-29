@@ -19,6 +19,7 @@ import { useSessionTarget } from './useSessionTarget';
 import { SessionComposerToolbar } from './SessionComposerToolbar';
 import { SessionPreparationPanel } from './SessionPreparationPanel';
 import { preparationPreview } from './preparationPreview';
+import { SessionQueuePanel } from './SessionQueuePanel';
 import { SessionTargetDialog } from './SessionTargetDialog';
 import { DeviceContinuationDialog } from './DeviceContinuationDialog';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
@@ -35,6 +36,7 @@ import type {
   AgentSessionClient,
   AgentSessionProfileClient,
 } from '../../application/agentSessions';
+import type { SessionQueueEntryViewDto } from '../../application/agentSessions/sessionQueue';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ProductDecisionEvidenceDestination } from '../../application/productDecisions';
@@ -103,7 +105,10 @@ export function StandaloneAgentSessionScreen({
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
-  const [targetPicker, setTargetPicker] = useState<{ deviceId?: string } | null>(null);
+  const [targetPicker, setTargetPicker] = useState<{
+    deviceId?: string;
+    queueEntry?: SessionQueueEntryViewDto;
+  } | null>(null);
   const [deviceContinuationOpen, setDeviceContinuationOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
@@ -392,7 +397,7 @@ export function StandaloneAgentSessionScreen({
   const effectiveOptions = effectiveSessionOptions(capabilities, messageSelection);
   const hasRuntimeFacts = Boolean(capabilities);
   const selectionError = targetDraft.branchChoice?.requiresWorktree
-    ? 'Choose which matching worktree to use.'
+    ? 'Choose or create a worktree for this branch.'
     : targetDraft.deviceId && !targetDraft.selection
       ? 'Choose a Capability Profile for this device.'
       : targetDraft.selection?.execution.connection.kind === 'ssh' &&
@@ -411,11 +416,7 @@ export function StandaloneAgentSessionScreen({
               )
             ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected model.`
             : undefined;
-  const sendUnavailableReason =
-    selectionError ??
-    (targetDraft.selection && (targetDraft.loading || targetDraft.error || !targetDraft.runtime)
-      ? (targetDraft.error ?? 'Loading target capabilities…')
-      : view.sendUnavailableReason);
+  const sendUnavailableReason = selectionError ?? view.sendUnavailableReason;
   const workspaceChoice = targetDraft.selection?.workspace;
   const pending = Boolean(
     targetDraft.selection &&
@@ -453,18 +454,37 @@ export function StandaloneAgentSessionScreen({
         onPreview={() => setPreviewOpen(!previewOpen)}
       />
     ) : undefined;
+  const queueHasUnfinished = Boolean(
+    session.queue?.entries.some(({ entry }) => entry.state !== 'completed' && entry.state !== 'canceled'),
+  );
   const preparationPanel = (
-    <SessionPreparationPanel
-      preparation={session.preparation}
-      preview={preview}
-      deviceName={
-        (previewOpen ? targetDraft.selection : session.preparation?.selection)?.execution
-          .deviceName ?? 'this device'
-      }
-      onClosePreview={() => setPreviewOpen(false)}
-      onCancel={() => void session.cancel()}
-      onRetry={() => void session.retryPreparation?.()}
-    />
+    <>
+      {session.queue && (
+        <SessionQueuePanel
+          queue={session.queue}
+          controller={session}
+          onChooseTarget={(queueEntry) =>
+            setTargetPicker({
+              deviceId: queueEntry.targetOperation?.destinationSelection.execution.deviceId,
+              queueEntry,
+            })
+          }
+        />
+      )}
+      {!queueHasUnfinished && (
+        <SessionPreparationPanel
+          preparation={session.preparation}
+          preview={preview}
+          deviceName={
+            (previewOpen ? targetDraft.selection : session.preparation?.selection)?.execution
+              .deviceName ?? 'this device'
+          }
+          onClosePreview={() => setPreviewOpen(false)}
+          onCancel={() => void session.cancel()}
+          onRetry={() => void session.retryPreparation?.()}
+        />
+      )}
+    </>
   );
   const workspace =
     selection.kind === 'initial' ? (
@@ -514,8 +534,22 @@ export function StandaloneAgentSessionScreen({
         <SessionTargetDialog
           client={executionTargetClient}
           source={branchSource}
-          selected={targetDraft.target}
-          initialRepositoryId={draftRepositoryId ?? undefined}
+          selected={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'existing'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.target
+              : targetDraft.target
+          }
+          initialRepositoryId={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind === 'create'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.repositoryId
+              : draftRepositoryId ?? undefined
+          }
+          initialBranchRef={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind === 'create'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.branchRef
+              : targetDraft.branchChoice?.branchRef
+          }
           deviceId={targetPicker.deviceId}
           capabilityProfileId={
             targetPicker.deviceId === targetDraft.deviceId
@@ -525,11 +559,26 @@ export function StandaloneAgentSessionScreen({
           sessionId={selectedSessionId ?? undefined}
           onClose={() => setTargetPicker(null)}
           onSelect={(target) => {
-            targetDraft.setTarget(target);
+            if (targetPicker.queueEntry && target) {
+              void session.updateTargetOperation?.({
+                entryId: targetPicker.queueEntry.entry.id,
+                destination: {
+                  capabilityProfileId: target.capabilityProfileId,
+                  capabilityProfileRevision: target.capabilityProfileRevision,
+                  execution: target.execution,
+                  workspace: { kind: 'existing', target },
+                },
+              });
+            } else if (!targetPicker.queueEntry) targetDraft.setTarget(target);
             setTargetPicker(null);
           }}
           onSelectSelection={(next) => {
-            targetDraft.setSelection(next);
+            if (targetPicker.queueEntry)
+              void session.updateTargetOperation?.({
+                entryId: targetPicker.queueEntry.entry.id,
+                destination: next,
+              });
+            else targetDraft.setSelection(next);
             setTargetPicker(null);
           }}
         />
@@ -537,15 +586,18 @@ export function StandaloneAgentSessionScreen({
       {deviceContinuationOpen && executionTargetClient && branchSource && (
         <DeviceContinuationDialog
           client={executionTargetClient}
-          profileClient={profileClient}
           sessionId={selectedSessionId ?? undefined}
           source={branchSource}
           sourceTarget={currentTarget ?? targetDraft.target}
           onChooseDevice={targetDraft.chooseDevice}
-          onTransitionChanged={() => {
-            void session.reload();
-            void reloadCollection();
-          }}
+          onQueueSelection={
+            selectedSessionId
+              ? async (destination) => {
+                  targetDraft.setSelection(destination);
+                  await session.enqueueTargetOperation?.(destination);
+                }
+              : undefined
+          }
           onClose={() => setDeviceContinuationOpen(false)}
         />
       )}

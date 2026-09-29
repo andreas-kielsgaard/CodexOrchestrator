@@ -25,6 +25,7 @@ export interface AgentSessionComposerProps {
   onDraftChange(value: string): void;
   onWorkingDirectoryChange(value: string): void;
   onSend(): void;
+  onSteer?(): void;
   onCancel(): void;
 }
 
@@ -47,7 +48,6 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     if (
       props.draft.trim() &&
       !props.sending &&
-      (!props.active || props.steeringAvailable) &&
       !props.sendUnavailableReason
     )
       props.onSend();
@@ -109,6 +109,16 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
               {props.canceling ? 'Canceling…' : 'Cancel'}
             </button>
           )}
+          {props.active && props.steeringAvailable && props.onSteer && (
+            <button
+              className="steer-agent-button"
+              type="button"
+              disabled={!props.draft.trim() || props.sending}
+              onClick={props.onSteer}
+            >
+              Steer current turn
+            </button>
+          )}
           {
             <span className="composer-send-action">
               <button
@@ -117,7 +127,6 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 disabled={
                   !props.draft.trim() ||
                   props.sending ||
-                  (props.active && !props.steeringAvailable) ||
                   Boolean(props.sendUnavailableReason)
                 }
                 aria-describedby={
@@ -127,8 +136,8 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 <Send size={16} aria-hidden="true" />
                 {props.sending
                   ? 'Sending…'
-                  : props.active && props.steeringAvailable
-                    ? 'Steer'
+                  : props.active
+                    ? 'Queue'
                     : 'Send'}
               </button>
               {props.keyboardHint === 'tooltip' && (

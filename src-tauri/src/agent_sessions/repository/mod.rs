@@ -2,8 +2,9 @@ mod native_conversations;
 pub(crate) use native_conversations::SCHEMA as NATIVE_CONVERSATION_SCHEMA;
 mod preparation;
 pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
-mod target_transition;
-pub(crate) use target_transition::SCHEMA as TARGET_TRANSITION_SCHEMA;
+mod queue;
+pub(crate) use queue::migrate_legacy_target_transitions;
+pub(crate) use queue::SCHEMA as QUEUE_SCHEMA;
 mod addressing;
 pub(crate) mod file_history;
 mod mapping;
@@ -235,10 +236,10 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     fn provider_session_binding(
         &self,
         session_id: &AgentSessionId,
-        execution: &crate::execution_targets::domain::ExecutionBinding,
+        target: &crate::execution_targets::domain::SessionExecutionTarget,
     ) -> Result<Option<crate::agent_sessions::domain::ProviderSessionBinding>, RepositoryError>
     {
-        self.read_provider_session_binding(session_id, execution)
+        self.read_provider_session_binding(session_id, target)
     }
     fn record_initial_prompt_prefix(
         &self,
@@ -268,26 +269,126 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<(), RepositoryError> {
         self.retry_preparation_record(id, at)
     }
-    fn target_transition(
+    fn accept_queued_preparation(
+        &self,
+        session: Option<(
+            AgentSession,
+            Option<crate::agent_sessions::organization::SessionPlacement>,
+        )>,
+        invocation: AgentInvocation,
+        preparation: super::preparation::SessionPreparation,
+        operation: Option<super::target_operation::SessionTargetOperation>,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.accept_queued_preparation_record(session, invocation, preparation, operation, at)
+    }
+    fn session_queue(
         &self,
         session_id: &AgentSessionId,
-    ) -> Result<
-        Option<crate::agent_sessions::target_transition::SessionTargetTransition>,
-        RepositoryError,
-    > {
-        self.read_target_transition_record(session_id)
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.read_queue_snapshot_record(session_id)
     }
-    fn save_target_transition(
+    fn enqueue_target_operation(
         &self,
-        transition: &crate::agent_sessions::target_transition::SessionTargetTransition,
-    ) -> Result<crate::agent_sessions::target_transition::SessionTargetTransition, RepositoryError>
-    {
-        self.save_target_transition_record(transition)
+        operation: super::target_operation::SessionTargetOperation,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.enqueue_target_operation_record(operation, at)
     }
-    fn clear_target_transition(&self, session_id: &AgentSessionId) -> Result<(), RepositoryError> {
-        self.clear_target_transition_record(session_id)
+    fn target_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<super::target_operation::SessionTargetOperation>, RepositoryError> {
+        self.read_target_operation_record(operation_id)
     }
-
+    fn save_target_operation(
+        &self,
+        operation: &super::target_operation::SessionTargetOperation,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.save_target_operation_record(operation)
+    }
+    fn set_queue_entry_state(
+        &self,
+        entry_id: &str,
+        state: super::queue::SessionQueueEntryState,
+        blocked_reason: Option<String>,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.set_queue_entry_state_record(entry_id, state, blocked_reason, at)
+    }
+    fn retry_queue_entry(
+        &self,
+        entry_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.retry_queue_entry_record(entry_id, at)
+    }
+    fn queue_entry_for_invocation(
+        &self,
+        invocation_id: &AgentInvocationId,
+    ) -> Result<Option<super::queue::SessionQueueEntry>, RepositoryError> {
+        self.queue_entry_for_invocation_record(invocation_id)
+    }
+    fn queue_entry_for_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<super::queue::SessionQueueEntry>, RepositoryError> {
+        self.queue_entry_for_operation_record(operation_id)
+    }
+    fn reorder_session_queue(
+        &self,
+        session_id: &AgentSessionId,
+        expected_revision: u64,
+        entry_ids: &[String],
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.reorder_queue_record(session_id, expected_revision, entry_ids, at)
+    }
+    fn update_queued_message(
+        &self,
+        session_id: &AgentSessionId,
+        entry_id: &str,
+        expected_revision: u64,
+        submitted_text: &str,
+        model: Option<String>,
+        reasoning_mode: Option<String>,
+        sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.update_queued_message_record(
+            session_id,
+            entry_id,
+            expected_revision,
+            submitted_text,
+            model,
+            reasoning_mode,
+            sandbox_mode,
+            at,
+        )
+    }
+    fn replace_target_operation(
+        &self,
+        session_id: &AgentSessionId,
+        entry_id: &str,
+        expected_revision: u64,
+        destination: crate::execution_targets::domain::SessionExecutionSelection,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.replace_target_operation_record(
+            session_id,
+            entry_id,
+            expected_revision,
+            destination,
+            at,
+        )
+    }
+    fn activate_target_operation(
+        &self,
+        operation_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.activate_target_operation_record(operation_id, at)
+    }
     fn create_session_with_placement(
         &self,
         session: AgentSession,
@@ -682,18 +783,9 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
 
 #[cfg(any(test, feature = "live-tests"))]
 fn initialize_agent_session_storage(connection: &Connection) -> Result<(), String> {
-    let exists = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_sessions')",
-            [],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(|error| format!("Unable to inspect Agent Session storage: {error}"))?;
-    if !exists {
-        connection
-            .execute_batch(AGENT_SESSION_SCHEMA)
-            .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
-    }
+    connection
+        .execute_batch(AGENT_SESSION_SCHEMA)
+        .map_err(|error| format!("Unable to initialize Agent Session storage: {error}"))?;
     connection
         .execute_batch(PREPARATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -701,8 +793,9 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
         .execute_batch(NATIVE_CONVERSATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
-        .execute_batch(TARGET_TRANSITION_SCHEMA)
+        .execute_batch(QUEUE_SCHEMA)
         .map_err(|e| e.to_string())?;
+    migrate_legacy_target_transitions(connection)?;
     ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(IMPORT_SCHEMA)

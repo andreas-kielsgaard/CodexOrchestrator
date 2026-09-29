@@ -2587,7 +2587,7 @@ impl SprintRunnerTransitionService {
         let (notification_invocation, handler_invocation) = match notification {
             AgentSessionNotification::SteeringAccepted { .. }
             | AgentSessionNotification::PreparationUpdated { .. }
-            | AgentSessionNotification::TargetTransitionUpdated { .. } => return Ok(()),
+            | AgentSessionNotification::QueueUpdated { .. } => return Ok(()),
             AgentSessionNotification::EventPersisted { event, .. } => {
                 let handler = self.read_database("identify Handler notification", |connection| connection.query_row(
                     "SELECT EXISTS(SELECT 1 FROM work_unit_handler_activations WHERE handler_invocation_id=?1)",

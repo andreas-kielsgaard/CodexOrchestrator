@@ -49,6 +49,32 @@ it('selecting a branch selects its only matching worktree', async () => {
   expect(onSelect).toHaveBeenCalledWith(remoteTarget);
 });
 
+it('opens a stale target replacement on its original branch', async () => {
+  const fixture = sessionTargetFixtures();
+  render(
+    <SessionTargetDialog
+      client={fixture.client}
+      source={fixture.source}
+      selected={null}
+      initialRepositoryId={remoteTarget.repositoryId}
+      initialBranchRef={remoteTarget.branchRef}
+      onClose={() => {}}
+      onSelect={() => {}}
+    />,
+  );
+  await waitFor(() =>
+    expect(fixture.client.listTargets).toHaveBeenCalledWith(
+      remoteTarget.repositoryId,
+      remoteTarget.branchRef,
+    ),
+  );
+  expect(
+    within(screen.getByRole('region', { name: 'Worktrees by device' })).getByText(
+      'codex/durable-review',
+    ),
+  ).toBeVisible();
+});
+
 it('highlights multiple matching worktrees and requires an instance choice', async () => {
   const user = userEvent.setup();
   const fixture = sessionTargetFixtures();

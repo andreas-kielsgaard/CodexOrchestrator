@@ -346,7 +346,14 @@ pub(super) fn active_invocation(
     conn: &Connection,
     session_id: &AgentSessionId,
 ) -> Result<Option<AgentInvocation>, RepositoryError> {
-    let row = conn.query_row(&format!("{INVOCATION_SELECT} WHERE session_id = ?1 AND status IN ('pending', 'running') LIMIT 1"), params![session_id.as_str()], invocation_row).optional().map_err(sql_unavailable("load active invocation"))?;
+    let row = conn
+        .query_row(
+            &format!("{INVOCATION_SELECT} WHERE session_id = ?1 AND status = 'running' LIMIT 1"),
+            params![session_id.as_str()],
+            invocation_row,
+        )
+        .optional()
+        .map_err(sql_unavailable("load active invocation"))?;
     row.map(map_invocation_row).transpose()
 }
 

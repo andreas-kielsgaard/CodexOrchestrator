@@ -9,10 +9,9 @@ import { repairSessionClients } from './profileTestFixtures';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
 import { selectionForTarget } from './useSessionTarget';
 
-it('confirms a missing branch instance at the published SHA and does no preparation on selection', async () => {
+it('queues missing-worktree intent without resolving the branch before selection', async () => {
   const fixture = sessionTargetFixtures();
-  const commit = 'a'.repeat(40);
-  fixture.client.resolvePublishedTip = vi.fn().mockResolvedValue({ commit });
+  fixture.client.resolveBranchTip = vi.fn();
   const onSelectSelection = vi.fn();
   const onSelect = vi.fn();
   render(
@@ -27,21 +26,11 @@ it('confirms a missing branch instance at the published SHA and does no preparat
       onSelectSelection={onSelectSelection}
     />,
   );
-  expect(await screen.findByRole('heading', { name: 'Create a worktree on Send?' })).toBeVisible();
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Use this commit' })).toBeEnabled(),
-  );
-  expect(screen.getByTitle(commit)).toHaveTextContent(commit.slice(0, 12));
+  expect(await screen.findByRole('button', { name: 'Queue worktree creation' })).toBeEnabled();
+  expect(fixture.client.resolveBranchTip).not.toHaveBeenCalled();
   expect(fixture.client.loadRuntime).not.toHaveBeenCalled();
   expect(onSelectSelection).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(onSelect).not.toHaveBeenCalled();
-  expect(onSelectSelection).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Create worktree on Send…' }));
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Use this commit' })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Use this commit' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Queue worktree creation' }));
   expect(onSelectSelection).toHaveBeenCalledWith({
     capabilityProfileId: 'local-profile',
     capabilityProfileRevision: 1,
@@ -50,13 +39,13 @@ it('confirms a missing branch instance at the published SHA and does no preparat
       kind: 'create',
       repositoryId: remoteTarget.repositoryId,
       branchRef: remoteTarget.branchRef,
-      commit,
+      commit: '',
       attachment: 'branch',
     },
   });
 });
 
-it('keeps the focused next draft through first-session acceptance and disables another Send during setup', async () => {
+it('keeps the focused next draft through first-session acceptance and permits queueing during setup', async () => {
   const fixture = repairSessionClients(false);
   const selection = selectionForTarget(remoteTarget);
   let acknowledge!: (value: { sessionId: string; invocationId: string }) => void;
@@ -114,16 +103,16 @@ it('keeps the focused next draft through first-session acceptance and disables a
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
   expect(input).toHaveFocus();
   expect(input).toHaveValue('My next draft');
-  expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Queue' })).toBeEnabled();
   fireEvent.keyDown(input, { key: 'Enter' });
-  expect(sendPreparedMessage).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(sendPreparedMessage).toHaveBeenCalledTimes(2));
   expect(steerSession).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(cancelPreparation).toHaveBeenCalledWith('invocation-1'));
   expect(input).toHaveValue('My next draft');
 });
 
-it('does not steer changed execution settings into the active prepared turn', async () => {
+it('queues changed execution settings instead of steering the active prepared turn', async () => {
   const fixture = repairSessionClients();
   fixture.details.invocations[0].invocation.status = 'running';
   const selection = selectionForTarget(remoteTarget);
@@ -158,5 +147,5 @@ it('does not steer changed execution settings into the active prepared turn', as
   act(() => result.current.setDraft('For the next model'));
   await act(async () => result.current.send());
   expect(steerSession).not.toHaveBeenCalled();
-  expect(result.current.draft).toBe('For the next model');
+  expect(result.current.draft).toBe('');
 });

@@ -19,23 +19,13 @@ impl AgentSessionApplication {
             .preparation(id)
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
-        if let Some(transition) = self.await_target_transition(&p.session_id)? {
-            let target = transition.resolved_target.ok_or_else(|| {
-                AgentSessionApplicationError::invalid(
-                    "The device switch completed without a destination worktree",
-                )
-            })?;
-            p.selection = Some(SessionExecutionSelection {
-                capability_profile_id: target.capability_profile_id.clone(),
-                capability_profile_revision: target.capability_profile_revision,
-                execution: target.execution.clone(),
-                workspace: SessionWorkspaceSelection::Existing { target },
-            });
-            p.source_target = Some(transition.source_target);
-            self.save_progress(&p)?;
-        }
         let history = self.load_session(&p.session_id)?;
         let session = history.session.clone();
+        // Queue order owns the target. Refresh these source facts only when the entry reaches the
+        // head so a drag across a target operation has concrete execution semantics.
+        p.source_target = session.execution_target.clone();
+        p.source_binding = session.runtime_binding.clone();
+        self.save_progress(&p)?;
         let endpoints = self.endpoints.as_ref().ok_or_else(|| {
             AgentSessionApplicationError::invalid("Execution endpoints unavailable")
         })?;
@@ -118,16 +108,17 @@ impl AgentSessionApplication {
                     }
                 }
             }
-            Some(
+            Some((
                 endpoints
                     .freeze_binding(source)
                     .map_err(AgentSessionApplicationError::invalid)?,
-            )
+                p.source_target
+                    .as_ref()
+                    .map(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from),
+            ))
         } else {
             None
         };
-        let conversation = self.plan_conversation(&history, &p, source, &selection.execution)?;
-        p.source_provider_binding = conversation.source_provider_binding.clone();
         let mut required = vec![
             ("workspace", workspace_label),
             ("configuration", "Resolve execution settings"),
@@ -217,6 +208,8 @@ impl AgentSessionApplication {
         )?;
         Self::check_preparation_cancel(cancel)?;
         let destination = p.resolved_target.as_ref().expect("materialized").clone();
+        let conversation = self.plan_conversation(&history, &p, source, &destination)?;
+        p.source_provider_binding = conversation.source_provider_binding.clone();
         let capability = profiles
             .read(&selection.capability_profile_id)
             .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
@@ -429,12 +422,15 @@ impl AgentSessionApplication {
             context,
         };
         let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
-            Arc::new(PersistedRuntimeUpdateSink::new(
-                self.repository.clone(),
-                self.notifier.clone(),
-                self.clock.clone(),
-                self.ids.clone(),
-                self.update_lanes.clone(),
+            Arc::new(super::super::queue::QueueDispatchRuntimeUpdateSink::new(
+                Arc::new(PersistedRuntimeUpdateSink::new(
+                    self.repository.clone(),
+                    self.notifier.clone(),
+                    self.clock.clone(),
+                    self.ids.clone(),
+                    self.update_lanes.clone(),
+                )),
+                self.clone(),
             ));
         if let Some(targets) = &self.execution_target_service {
             if destination.execution.is_remote() {

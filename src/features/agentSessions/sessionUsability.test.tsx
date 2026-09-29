@@ -38,6 +38,7 @@ it('keeps a pending question reachable across runtime updates and steering witho
     setDraft: vi.fn(),
     setWorkingDirectory: vi.fn(),
     send: vi.fn(async () => {}),
+    steer: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     respondToRequest: vi.fn(async () => {}),
   };
@@ -66,7 +67,8 @@ it('keeps a pending question reachable across runtime updates and steering witho
   details.invocations[0].events.push(runtimeEvent(2, 'unknown', 'More runtime detail'));
   rerender(view());
   expect(screen.getByRole('button', { name: 'Review request' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Steer' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Steer current turn' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Queue' })).toBeEnabled();
   expect(screen.queryByText('More runtime detail')).toBeNull();
   details.interactions[0] = { ...request, state: 'answered' };
   rerender(view());

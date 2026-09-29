@@ -14,7 +14,7 @@ pub(crate) enum AgentSessionNotification {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
     },
-    TargetTransitionUpdated {
+    QueueUpdated {
         session_id: AgentSessionId,
     },
     SteeringAccepted {

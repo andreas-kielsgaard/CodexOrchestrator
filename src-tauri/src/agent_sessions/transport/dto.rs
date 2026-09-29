@@ -252,7 +252,7 @@ pub(crate) enum AgentSessionUpdateDto {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
     },
-    TargetTransitionUpdated {
+    QueueUpdated {
         session_id: AgentSessionId,
     },
     SteeringAccepted {
@@ -287,8 +287,8 @@ impl From<AgentSessionNotification> for AgentSessionUpdateDto {
                 session_id,
                 invocation_id,
             },
-            AgentSessionNotification::TargetTransitionUpdated { session_id } => {
-                Self::TargetTransitionUpdated { session_id }
+            AgentSessionNotification::QueueUpdated { session_id } => {
+                Self::QueueUpdated { session_id }
             }
             AgentSessionNotification::SteeringAccepted {
                 session_id,

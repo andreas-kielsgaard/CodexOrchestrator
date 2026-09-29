@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS agent_session_invocation_execution_snapshots (
  recorded_at TEXT NOT NULL
 );
 "#;
-fn read_record(
+pub(super) fn read_record(
     conn: &Connection,
     id: &AgentInvocationId,
 ) -> Result<Option<SessionPreparation>, RepositoryError> {
@@ -244,30 +244,6 @@ impl SqliteAgentSessionRepository {
                 return Err(RepositoryError::new(
                     RepositoryErrorKind::Conflict,
                     "Only known preparation failures can be retried",
-                ));
-            }
-            let latest: String = tx
-                .query_row(
-                    "SELECT id FROM agent_session_invocations WHERE session_id=?1
-                 ORDER BY created_at DESC,rowid DESC LIMIT 1",
-                    [preparation.session_id.as_str()],
-                    |row| row.get(0),
-                )
-                .map_err(sql_unavailable("check retry boundary"))?;
-            if latest != id.as_str() {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "A later submission exists; send a new prompt instead",
-                ));
-            }
-            let active = active_invocation(tx, &preparation.session_id)?;
-            if active
-                .as_ref()
-                .is_some_and(|invocation| invocation.id != *id)
-            {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "Another submission is active",
                 ));
             }
             tx.execute(

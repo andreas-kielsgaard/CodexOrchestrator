@@ -35,7 +35,8 @@ export interface StartDirectUserAgentSessionInput extends Omit<
   readonly folderTarget?: SessionFolderTarget | null;
   readonly executionTarget?: SessionExecutionTargetDto;
 }
-export interface AgentSessionProfileClient {
+export interface AgentSessionProfileClient
+  extends Partial<import('./sessionQueue').SessionQueueClient> {
   loadCurrentProfile?(sessionId: string): Promise<PinnedAgentSessionProfileDto>;
   sendPreparedMessage?(
     input: import('./preparation').SendPreparedAgentSessionMessageInput,
@@ -45,15 +46,6 @@ export interface AgentSessionProfileClient {
   ): Promise<import('./preparation').SessionPreparationDto | null>;
   cancelPreparation?(invocationId: string): Promise<void>;
   retryPreparation?(invocationId: string): Promise<void>;
-  requestTargetTransition?(
-    input: import('./preparation').RequestSessionTargetTransitionInput,
-  ): Promise<import('./preparation').SessionTargetTransitionDto>;
-  loadTargetTransition?(
-    sessionId: string,
-  ): Promise<import('./preparation').SessionTargetTransitionDto | null>;
-  startTargetTransition?(
-    sessionId: string,
-  ): Promise<import('./preparation').SessionTargetTransitionDto>;
   loadQuickFeatures?(
     input: import('./quickFeatures').LoadAgentSessionQuickFeaturesInput,
   ): Promise<import('./quickFeatures').AgentSessionQuickFeatures>;

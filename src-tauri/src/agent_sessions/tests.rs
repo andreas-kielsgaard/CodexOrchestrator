@@ -153,15 +153,22 @@ fn invocation_lifecycle_accepts_proven_transitions_and_rejects_terminal_reentry(
 }
 
 #[test]
-fn active_invocation_check_is_session_scoped() {
+fn running_invocation_check_is_session_scoped_and_pending_messages_can_queue() {
     let session_one = session("session-1", None);
     let session_two = session("session-2", None);
-    let active = invocation("invocation-1", "session-1", AgentInvocationStatus::Pending);
+    let pending = invocation("invocation-1", "session-1", AgentInvocationStatus::Pending);
+    let running = pending
+        .mark_running(at(1), runtime_options(), at(1))
+        .expect("running invocation");
     let same_session = invocation("invocation-2", "session-1", AgentInvocationStatus::Pending);
     let other_session = invocation("invocation-3", "session-2", AgentInvocationStatus::Pending);
 
     assert_eq!(
-        validate_new_invocation(&session_one, Some(&active), &same_session),
+        validate_new_invocation(&session_one, Some(&pending), &same_session),
+        Ok(())
+    );
+    assert_eq!(
+        validate_new_invocation(&session_one, Some(&running), &same_session),
         Err(ContractViolation::ActiveInvocationExists {
             invocation_id: invocation_id("invocation-1"),
         })
@@ -211,7 +218,7 @@ fn event_sequence_is_strictly_increasing_without_requiring_contiguous_numbers() 
 }
 
 #[test]
-fn fake_repository_proves_one_active_invocation_and_session_availability_are_independent() {
+fn fake_repository_allows_queued_messages_but_only_one_running_invocation() {
     let repository = FakeRepository::default();
     let session = session("session-1", None);
     repository
@@ -225,18 +232,25 @@ fn fake_repository_proves_one_active_invocation_and_session_availability_are_ind
             AgentInvocationStatus::Pending,
         ))
         .expect("create first invocation");
-    let conflict = repository
+    repository
         .create_pending_invocation(invocation(
             "invocation-2",
             "session-1",
             AgentInvocationStatus::Pending,
         ))
-        .expect_err("second active invocation must conflict");
-    assert_eq!(conflict.kind, RepositoryErrorKind::Conflict);
+        .expect("queue second invocation");
 
     repository
         .mark_invocation_running(&first.id, at(1), runtime_options(), at(1))
         .expect("mark running");
+    let conflict = repository
+        .create_pending_invocation(invocation(
+            "invocation-3",
+            "session-1",
+            AgentInvocationStatus::Pending,
+        ))
+        .expect_err("running invocation must block launch of another message");
+    assert_eq!(conflict.kind, RepositoryErrorKind::Conflict);
     let completion = InvocationCompletion {
         status: AgentInvocationTerminalStatus::Completed,
         completed_at: at(2),
@@ -268,7 +282,7 @@ fn fake_repository_proves_one_active_invocation_and_session_availability_are_ind
     assert_eq!(
         repository
             .create_pending_invocation(invocation(
-                "invocation-2",
+                "invocation-3",
                 "session-1",
                 AgentInvocationStatus::Pending,
             ))
@@ -281,7 +295,7 @@ fn fake_repository_proves_one_active_invocation_and_session_availability_are_ind
         .expect("restore session availability");
     assert!(repository
         .create_pending_invocation(invocation(
-            "invocation-2",
+            "invocation-3",
             "session-1",
             AgentInvocationStatus::Pending,
         ))
@@ -616,7 +630,8 @@ impl AgentSessionRepository for FakeRepository {
             .invocations
             .values()
             .find(|existing| {
-                existing.session_id == invocation.session_id && existing.status.is_active()
+                existing.session_id == invocation.session_id
+                    && existing.status == AgentInvocationStatus::Running
             })
             .cloned();
         validate_new_invocation(&session, active.as_ref(), &invocation).map_err(|error| {

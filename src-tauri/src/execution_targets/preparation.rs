@@ -87,7 +87,7 @@ impl ExecutionEndpoints {
         }
     }
 
-    pub(crate) fn published_commit(
+    pub(crate) fn branch_commit(
         &self,
         binding: &ExecutionBinding,
         root: &str,
@@ -95,7 +95,8 @@ impl ExecutionEndpoints {
     ) -> Result<String, String> {
         match &binding.connection {
             ExecutionConnection::Local => {
-                orchid_engine::workspaces::published_commit(root, branch).map_err(|e| e.to_string())
+                orchid_engine::workspaces::local_branch_commit(root, branch)
+                    .map_err(|e| e.to_string())
             }
             ExecutionConnection::Ssh {
                 target,

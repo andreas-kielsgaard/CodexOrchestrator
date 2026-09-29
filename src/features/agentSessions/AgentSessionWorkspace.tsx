@@ -242,13 +242,13 @@ export function AgentSessionWorkspace({
             workingDirectory: controller.workingDirectory,
             sending: controller.sending,
             sendUnavailableReason:
-              controller.submissionUnavailableReason ??
-              (active && controller.steeringAvailable ? undefined : sendUnavailableReason),
+              controller.submissionUnavailableReason ?? sendUnavailableReason,
             active,
             canceling: controller.canceling,
             setDraft: controller.setDraft,
             setWorkingDirectory: controller.setWorkingDirectory,
             send: controller.send,
+            steer: controller.steer,
             cancel: controller.cancel,
           }}
         />

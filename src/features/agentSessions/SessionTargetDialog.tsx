@@ -1,7 +1,3 @@
-import {
-  WorktreeCreationConfirmation,
-  type WorktreeCreationRequest,
-} from './WorktreeCreationConfirmation';
 import { Monitor, Server, Check, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
@@ -35,6 +31,7 @@ export function SessionTargetDialog({
   sessionId,
   onSelectSelection,
   initialRepositoryId,
+  initialBranchRef,
 }: {
   readonly deviceId?: string | null;
   readonly capabilityProfileId?: string | null;
@@ -46,9 +43,8 @@ export function SessionTargetDialog({
   readonly onClose: () => void;
   readonly onSelect: (target: SessionExecutionTargetDto | null) => void;
   readonly initialRepositoryId?: string;
+  readonly initialBranchRef?: string;
 }) {
-  const [creation, setCreation] = useState<WorktreeCreationRequest | null>(null);
-  const [confirmedBranchKey, setConfirmedBranchKey] = useState('');
   const [repositories, setRepositories] = useState<readonly RegisteredRepository[]>([]);
   const [loadingRepositories, setLoadingRepositories] = useState(true);
   const [repositoryId, setRepositoryId] = useState(
@@ -59,7 +55,7 @@ export function SessionTargetDialog({
   const [inventoryProfiles, setInventoryProfiles] = useState<readonly ProfileWorktreeTargetsDto[]>(
     [],
   );
-  const [branchRef, setBranchRef] = useState(selected?.branchRef ?? '');
+  const [branchRef, setBranchRef] = useState(selected?.branchRef ?? initialBranchRef ?? '');
   const [devices, setDevices] = useState<readonly ExecutionTargetDeviceDto[]>([]);
   const [candidate, setCandidate] = useState(selected);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -177,37 +173,7 @@ export function SessionTargetDialog({
       );
     if (matches.length === 1)
       setCandidate(toSessionExecutionTarget(repositoryId, matches[0].profile, matches[0].instance));
-  }, [branchRef, candidate, capabilityProfileId, deviceId, devices, loadingDevices, repositoryId]);
-  useEffect(() => {
-    if (!deviceId || !onSelectSelection || loadingDevices || !branchRef) return;
-    const key = `${repositoryId}:${branchRef}:${deviceId}`;
-    if (confirmedBranchKey === key) return;
-    const matching =
-      devices
-        .find((device) => device.deviceId === deviceId)
-        ?.profiles.filter(
-          (profile) => !capabilityProfileId || profile.capabilityProfileId === capabilityProfileId,
-        ) ?? [];
-    if (matching.length !== 1 || matching[0].error || matching[0].instances.length) return;
-    setConfirmedBranchKey(key);
-    setCreation({
-      repositoryId,
-      repositoryName:
-        repositories.find((repo) => repo.repositoryId === repositoryId)?.name ?? repositoryId,
-      branchRef,
-      profile: matching[0],
-    });
-  }, [
-    deviceId,
-    onSelectSelection,
-    loadingDevices,
-    branchRef,
-    repositoryId,
-    confirmedBranchKey,
-    devices,
-    capabilityProfileId,
-    repositories,
-  ]);
+  }, [branchRef, candidate, capabilityProfileId, deviceId, devices, loadingDevices, repositoryId, sessionId]);
   const selectedBranch = useMemo<ReviewTarget | null>(
     () => (branchRef ? { kind: 'branch', repositoryId, branchRef } : null),
     [repositoryId, branchRef],
@@ -392,18 +358,21 @@ export function SessionTargetDialog({
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    setCreation({
-                                      repositoryId,
-                                      repositoryName:
-                                        repositories.find(
-                                          (repo) => repo.repositoryId === repositoryId,
-                                        )?.name ?? repositoryId,
-                                      branchRef,
-                                      profile,
+                                    onSelectSelection({
+                                      capabilityProfileId: profile.capabilityProfileId,
+                                      capabilityProfileRevision: profile.capabilityProfileRevision,
+                                      execution: profile.execution,
+                                      workspace: {
+                                        kind: 'create',
+                                        repositoryId,
+                                        branchRef,
+                                        commit: '',
+                                        attachment: 'branch',
+                                      },
                                     })
                                   }
                                 >
-                                  Create worktree on Send…
+                                  Queue worktree creation
                                 </button>
                               )
                             )}
@@ -470,14 +439,6 @@ export function SessionTargetDialog({
           </button>
         </footer>
       </ModalDialog>
-      {creation && onSelectSelection && (
-        <WorktreeCreationConfirmation
-          client={client}
-          request={creation}
-          onCancel={() => setCreation(null)}
-          onConfirm={onSelectSelection}
-        />
-      )}
     </>
   );
 }

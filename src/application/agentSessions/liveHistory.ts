@@ -67,7 +67,10 @@ export function reduceAgentSessionHistory(
     }));
     return next ? { kind: 'changed', details: next } : { kind: 'reconcile' };
   }
-  if (update.kind === 'preparation_updated' || update.kind === 'target_transition_updated') {
+  if (
+    update.kind === 'preparation_updated' ||
+    update.kind === 'queue_updated'
+  ) {
     return { kind: 'unchanged', details };
   }
   return { kind: 'reconcile' };

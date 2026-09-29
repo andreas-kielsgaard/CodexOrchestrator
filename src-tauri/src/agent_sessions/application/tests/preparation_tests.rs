@@ -179,7 +179,6 @@ struct PreparationFixture {
     repository: Arc<SqliteAgentSessionRepository>,
     runtime: Arc<BlockingPreparationRuntime>,
     old_runtime: Arc<FakeRuntime>,
-    old_target: SessionExecutionTarget,
     selection: SessionExecutionSelection,
     session: AgentSession,
 }
@@ -301,7 +300,6 @@ impl PreparationFixture {
             repository,
             runtime,
             old_runtime,
-            old_target,
             selection,
             session,
         }
@@ -362,7 +360,12 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
             .unwrap()
             .session
             .execution_target,
-        Some(fixture.old_target.clone())
+        Some(
+            fixture
+                .preparation(&ack.invocation_id)
+                .resolved_target
+                .expect("resolved destination"),
+        )
     );
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     input.submitted_text = "Next draft changed".into();
@@ -457,7 +460,7 @@ fn prepared_delivery_applies_the_resolved_harness_and_delivers_its_context() {
 }
 
 #[test]
-fn native_failure_preserves_previous_binding_and_retry_reuses_resolved_workspace() {
+fn native_failure_preserves_activated_destination_and_retry_reuses_resolved_workspace() {
     let fixture = PreparationFixture::new();
     let ack = fixture
         .app
@@ -486,7 +489,7 @@ fn native_failure_preserves_previous_binding_and_retry_reuses_resolved_workspace
             .unwrap()
             .session
             .execution_target,
-        Some(fixture.old_target.clone())
+        Some(target.clone())
     );
     assert!(fixture.preparation(&ack.invocation_id).can_retry);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
@@ -557,7 +560,7 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
             .unwrap()
             .session
             .execution_target,
-        Some(fixture.old_target.clone())
+        fixture.preparation(&ack.invocation_id).resolved_target
     );
 }
 

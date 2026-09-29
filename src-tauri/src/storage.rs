@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 62;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 63;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -65,6 +65,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Agent Session schema: {error}"))?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version < 59 {
@@ -384,6 +387,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Agent Session schema: {error}"))?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version == 14 {
@@ -512,8 +518,9 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
         .map_err(|e| e.to_string())?;
     migrate_provider_session_bindings(connection)?;
     connection
-        .execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA)
+        .execute_batch(crate::agent_sessions::repository::QUEUE_SCHEMA)
         .map_err(|e| e.to_string())?;
+    crate::agent_sessions::repository::migrate_legacy_target_transitions(connection)?;
     connection
         .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -700,10 +707,14 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         "SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_imports','agent_session_imported_turns')",
         [], |row| row.get(0)).map_err(|e| e.to_string())?;
     let preparation_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    let target_transition_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_target_transitions','sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let sister_worktree_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let legacy_target_transition_schema_is_absent: bool = connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_target_transitions')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let session_queue_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_queue_state','agent_session_target_operations','agent_session_queue_entries')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     Ok(execution_device_schema_is_present
         && preparation_schema_is_present
-        && target_transition_schema_is_present
+        && sister_worktree_schema_is_present
+        && legacy_target_transition_schema_is_absent
+        && session_queue_schema_is_present
         && import_schema_is_present
         && native_profile_schema_is_present
         && epic_settlement_schema_is_present
@@ -737,6 +748,27 @@ mod tests {
                 |_| Ok(()),
             )
             .is_ok()
+    }
+
+    #[test]
+    fn active_schema_reopens_to_retire_legacy_target_transition_storage() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        initialize_active_database(&connection).expect("initialize database");
+        connection
+            .execute_batch(
+                "CREATE TABLE agent_session_target_transitions (
+                   session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                   payload_json TEXT NOT NULL CHECK(json_valid(payload_json))
+                 );",
+            )
+            .expect("restore legacy transition table");
+
+        initialize_active_database(&connection).expect("reopen current database");
+
+        assert!(!table_exists(
+            &connection,
+            "agent_session_target_transitions"
+        ));
     }
 
     #[test]
@@ -861,8 +893,10 @@ mod tests {
                 "agent_session_organization",
                 "agent_session_preparations",
                 "agent_session_provider_bindings",
+                "agent_session_queue_entries",
+                "agent_session_queue_state",
                 "agent_session_runtime_events",
-                "agent_session_target_transitions",
+                "agent_session_target_operations",
                 "agent_sessions",
                 "capability_profiles",
                 "claude_setups",
