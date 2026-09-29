@@ -1,15 +1,60 @@
 use super::*;
 use crate::agent_sessions::application::preparation::PreparedMessageInput;
+use crate::agent_sessions::application::ProviderUpdateReadiness;
 use crate::agent_sessions::domain::ExternalRuntimeContextId;
 use crate::agent_sessions::ports::{
     InitialPromptPrefix, RuntimeInvocationReady, RuntimeManagedMcpServer,
 };
-use crate::agent_sessions::preparation::{PreparationPhase, SessionPreparation};
+use crate::agent_sessions::preparation::{
+    PreparationPhase, PreparationStepStatus, SessionPreparation,
+};
 use crate::execution_configuration::{
     CapabilityProfileService, InMemoryCapabilityProfileRepository, NativeCapabilityInventory,
 };
 use crate::execution_targets::{domain::*, endpoints::ExecutionEndpoints, ExecutionTargetService};
-use std::{sync::Condvar, time::Instant};
+use std::{
+    sync::{atomic::AtomicBool, atomic::Ordering, Condvar},
+    time::Instant,
+};
+
+struct BlockingProviderUpdate {
+    active: AtomicBool,
+    changed: Condvar,
+    lock: Mutex<()>,
+}
+
+impl BlockingProviderUpdate {
+    fn new() -> Self {
+        Self {
+            active: AtomicBool::new(true),
+            changed: Condvar::new(),
+            lock: Mutex::new(()),
+        }
+    }
+
+    fn release(&self) {
+        self.active.store(false, Ordering::SeqCst);
+        self.changed.notify_all();
+    }
+}
+
+impl ProviderUpdateReadiness for BlockingProviderUpdate {
+    fn is_updating(&self, provider: &str) -> bool {
+        provider == "codex" && self.active.load(Ordering::SeqCst)
+    }
+
+    fn wait_until_ready(&self, provider: &str) -> Result<bool, String> {
+        if provider != "codex" {
+            return Ok(false);
+        }
+        let mut guard = self.lock.lock().unwrap();
+        let waited = self.active.load(Ordering::SeqCst);
+        while self.active.load(Ordering::SeqCst) {
+            guard = self.changed.wait(guard).unwrap();
+        }
+        Ok(waited)
+    }
+}
 
 #[derive(Default)]
 struct PreparedHarnessAuthority {
@@ -400,6 +445,44 @@ fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_froze
         fixture.runtime.state.lock().unwrap().delivered,
         vec![ack.invocation_id]
     );
+}
+
+#[test]
+fn prepared_message_waits_for_provider_update_then_continues_automatically() {
+    let mut fixture = PreparationFixture::new();
+    let update = Arc::new(BlockingProviderUpdate::new());
+    fixture.app = fixture
+        .app
+        .clone()
+        .with_provider_update_readiness(update.clone());
+
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("wait-for-update"))
+        .unwrap();
+    fixture.wait(|| {
+        fixture
+            .preparation(&ack.invocation_id)
+            .steps
+            .iter()
+            .any(|step| {
+                step.id == "provider-update" && step.status == PreparationStepStatus::Running
+            })
+    });
+    assert_eq!(fixture.runtime.attempts(), 0);
+
+    update.release();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(true);
+    fixture.wait(|| {
+        fixture
+            .preparation(&ack.invocation_id)
+            .steps
+            .iter()
+            .any(|step| {
+                step.id == "provider-update" && step.status == PreparationStepStatus::Completed
+            })
+    });
 }
 
 #[test]

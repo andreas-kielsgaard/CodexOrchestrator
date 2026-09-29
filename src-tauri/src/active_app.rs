@@ -59,6 +59,10 @@ pub(crate) fn run() {
             let claude_setups = Arc::new(
                 crate::runtime::providers::claude::setups::ClaudeSetups::system(database.clone()),
             );
+            let cli_updates = crate::agent_cli_updates::AgentCliUpdateService::system();
+            app.manage(crate::agent_cli_updates::AgentCliUpdateTauriState(
+                cli_updates.clone(),
+            ));
             let repository = Arc::new(
                 crate::agent_sessions::repository::SqliteAgentSessionRepository::from_database(
                     database.clone(),
@@ -128,8 +132,20 @@ pub(crate) fn run() {
                     workflow_execution: workflow_execution_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(),
+                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
             )?;
+            // Resolve runtime executable identity first, then update it off the UI thread. Sends
+            // wait at the durable preparation boundary while this work is active. Review builds
+            // leave machine-global CLI maintenance to the controller that launched them.
+            if std::env::var_os(
+                crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV,
+            )
+            .is_some()
+            {
+                cli_updates.mark_controller_managed();
+            } else {
+                cli_updates.start();
+            }
             execution_targets.synchronize_devices()?;
             let execution_devices = execution_targets.devices.clone();
             app.manage(crate::execution_devices::ExecutionDeviceTauriState(
@@ -360,6 +376,7 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::agent_cli_updates::agent_cli_update_overview,
             crate::session_navigation::agent_access::complete_session_navigation_command,
             crate::agent_sessions::transport::create_agent_session,
             crate::agent_sessions::transport::import::preview_codex_import,

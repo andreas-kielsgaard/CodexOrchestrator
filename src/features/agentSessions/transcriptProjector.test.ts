@@ -51,10 +51,13 @@ describe('projectAgentSessionTranscript', () => {
       resultClassification: 'unknown' as const,
     });
     const started = event(1, 'tool_activity', null);
+    started.recordedAt = '2026-07-10T12:00:00.000Z';
     started.normalized!.toolActivity = activity('started');
     started.rawPayload = { provider: 'started evidence' };
     const completed = event(2, 'tool_activity', null);
+    completed.recordedAt = '2026-07-10T12:00:03.000Z';
     completed.normalized!.toolActivity = activity('completed');
+    completed.normalized!.details = { fileChanges: [{ path: 'src/app.ts', operation: 'edit' }] };
     completed.rawPayload = { provider: 'completed evidence' };
 
     const invocation = projectAgentSessionTranscript(details('completed', [started, completed]))
@@ -64,6 +67,10 @@ describe('projectAgentSessionTranscript', () => {
     expect(invocation.processing[0]).toMatchObject({ text: 'mcp tool call' });
     expect(invocation.processing[0].rawPayload).toMatchObject({
       lifecycleEvents: [started.rawPayload, completed.rawPayload],
+    });
+    expect(invocation.processing[0]).toMatchObject({
+      completedAt: completed.recordedAt,
+      normalizedDetails: completed.normalized!.details,
     });
   });
 
@@ -87,6 +94,14 @@ describe('projectAgentSessionTranscript', () => {
       'Earlier candidate',
       'Checked files',
     ]);
+  });
+
+  it('drops empty agent-message placeholders instead of inventing transcript copy', () => {
+    const projected = projectAgentSessionTranscript(
+      details('running', [event(1, 'agent_message', null, { role: 'intermediate' })]),
+    );
+
+    expect(projected.invocations[0].processing).toEqual([]);
   });
 
   it('does not fabricate a final response when completion has none', () => {

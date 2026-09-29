@@ -37,6 +37,76 @@
   overflow: auto;
 }
 
+.agent-cli-updates {
+  display: grid;
+  max-width: 880px;
+  gap: 12px;
+  margin: 20px clamp(22px, 5vw, 52px) 0;
+  padding: 16px;
+  border: 1px solid #cbd5c7;
+  border-radius: 10px;
+  background: #f9fbf6;
+}
+
+.agent-cli-updates > header,
+.agent-cli-update > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-cli-updates > header p,
+.agent-cli-updates > header h2,
+.agent-cli-update p {
+  margin: 0;
+}
+
+.agent-cli-updates > header p,
+.agent-cli-updates > header > span,
+.agent-cli-update > div span,
+.agent-cli-update small {
+  color: #65736a;
+  font-size: 0.78rem;
+}
+
+.agent-cli-updates > header h2 {
+  font-size: 1rem;
+}
+
+.agent-cli-update {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #d7dfd3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.agent-cli-update--updated {
+  border-color: #84ab98;
+}
+
+.agent-cli-update--failed,
+.agent-cli-update--unavailable {
+  border-color: #c88a82;
+}
+
+.agent-cli-update details summary {
+  cursor: pointer;
+  color: #536359;
+}
+
+.agent-cli-update pre {
+  max-height: 12rem;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #f2f5f1;
+  white-space: pre-wrap;
+}
+
 .execution-setup-overview {
   display: grid;
   max-width: 880px;
@@ -89,7 +159,9 @@
   background: #fffdfa;
 }
 
-.execution-setup-overview__card > p { grid-column: 1 / -1; }
+.execution-setup-overview__card > p {
+  grid-column: 1 / -1;
+}
 
 .execution-setup-overview__card button {
   min-height: 36px;
@@ -352,8 +424,12 @@
   font-size: 0.73rem;
 }
 
-.otp-catalogue__element-section button[data-depth='1'] { padding-left: 20px; }
-.otp-catalogue__element-section button[data-depth='2'] { padding-left: 30px; }
+.otp-catalogue__element-section button[data-depth='1'] {
+  padding-left: 20px;
+}
+.otp-catalogue__element-section button[data-depth='2'] {
+  padding-left: 30px;
+}
 .otp-catalogue__element-section button:hover,
 .otp-catalogue__element-section button:focus-visible {
   border-color: #b6c8bb;
@@ -366,9 +442,14 @@
   color: #173d2a;
 }
 
-.otp-catalogue__overview { display: grid; gap: 10px; }
+.otp-catalogue__overview {
+  display: grid;
+  gap: 10px;
+}
 .otp-catalogue__overview h2,
-.otp-catalogue__overview p { margin: 0; }
+.otp-catalogue__overview p {
+  margin: 0;
+}
 .otp-catalogue__eyebrow {
   color: #69766e;
   font-size: 0.71rem;
@@ -376,7 +457,9 @@
   letter-spacing: 0.055em;
   text-transform: uppercase;
 }
-.otp-configuration__installation { margin-top: 14px; }
+.otp-configuration__installation {
+  margin-top: 14px;
+}
 .otp-configuration__installation label {
   display: grid;
   gap: 5px;
@@ -400,13 +483,30 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.otp-element-details h3 { margin: 5px 0 16px; }
-.otp-element-details section { padding: 12px 0; border-top: 1px solid #e1e6e0; }
+.otp-element-details h3 {
+  margin: 5px 0 16px;
+}
+.otp-element-details section {
+  padding: 12px 0;
+  border-top: 1px solid #e1e6e0;
+}
 .otp-element-details h4,
-.otp-element-details p { margin: 0; }
-.otp-element-details h4 { margin-bottom: 6px; font-size: 0.82rem; }
-.otp-element-details ul { margin: 0; padding-left: 20px; }
-.otp-element-details__schema { display: grid; gap: 6px; margin: 0; }
+.otp-element-details p {
+  margin: 0;
+}
+.otp-element-details h4 {
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+}
+.otp-element-details ul {
+  margin: 0;
+  padding-left: 20px;
+}
+.otp-element-details__schema {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
 .otp-element-details__schema div {
   display: grid;
   grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr);
@@ -415,14 +515,23 @@
   border-radius: 6px;
   background: #f2f5f1;
 }
-.otp-element-details__schema dt { font-weight: 750; }
-.otp-element-details__schema dd { margin: 0; color: #58665e; }
+.otp-element-details__schema dt {
+  font-weight: 750;
+}
+.otp-element-details__schema dd {
+  margin: 0;
+  color: #58665e;
+}
 @media (max-width: 750px) {
   .technical-settings > header {
     align-items: flex-start;
     flex-direction: column;
     gap: 10px;
   }
-  .otp-catalogue__master-detail { grid-template-columns: 1fr; }
-  .otp-catalogue__element-list { max-height: 320px; }
+  .otp-catalogue__master-detail {
+    grid-template-columns: 1fr;
+  }
+  .otp-catalogue__element-list {
+    max-height: 320px;
+  }
 }

@@ -2,7 +2,6 @@ export { targetKey, sourceTarget, orderReviewTargets } from '../branches';
 import type {
   BuildOutputState,
   AssociationBaseline,
-  BuildWorkspacePlan,
   CleanupState,
   ReviewBuildSource,
   ReviewOperationAttempt,
@@ -67,18 +66,6 @@ export function sourceLabel(source: ReviewBuildSource): string {
         : `Retained checkout from ${shortObjectId(source.capturedObjectId)}`;
     case 'branch_commit':
       return `Branch commit ${shortObjectId(source.objectId)}`;
-  }
-}
-
-export function workspacePlanDisclosure(plan: BuildWorkspacePlan): string {
-  switch (plan.kind) {
-    case 'borrow_physical_worktree':
-    case 'borrow_selected_worktree':
-      return 'This build will compile the live Worktree checkout using its existing dependencies. Worktree Review will neither install dependencies in nor remove that checkout.';
-    case 'create_managed_branch_worktree':
-      return 'Creating this build will first create and retain a Worktree checkout for this branch.';
-    case 'create_owned_build_worktree':
-      return 'Creating this build will create and retain an isolated Worktree checkout for the selected source.';
   }
 }
 

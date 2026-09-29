@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  workspacePlanDisclosure,
   type AssociatedWorktree,
   type BranchReviewDetail,
   type CreateBuildRequest,
@@ -39,7 +38,6 @@ export function CreateBuildDialog({
 }) {
   const [commitPickerOpen, setCommitPickerOpen] = useState(false);
   const selectedWorktreeIsActive = selectedWorktree?.worktreeId === activeWorktreeId;
-  const selectedWorktreeIsDirty = selectedWorktree ? hasUncommittedWork(selectedWorktree) : false;
   const setSourceMode = (sourceMode: SourceMode) => onDraftChange({ ...draft, sourceMode });
   const request = buildRequest(detail, selectedWorktree, draft);
 
@@ -134,13 +132,6 @@ export function CreateBuildDialog({
           The worktree running this application cannot be used as a live or snapshot source.
         </p>
       )}
-      {selectedWorktreeIsDirty && draft.sourceMode !== 'commit' && (
-        <p className="worktree-review__attention">
-          The selected checkout has uncommitted work. Worktree Review will preserve the source
-          identity without changing its branch, index, or working tree.
-        </p>
-      )}
-      {request && <p className="worktree-review__supporting">{workspacePlanDisclosure(request.workspacePlan)}</p>}
       {!buildAvailable && (
         <p className="worktree-review__error-text">
           Building is unavailable for this repository.
@@ -256,13 +247,5 @@ function SourceOption({
         <small>{description}</small>
       </span>
     </label>
-  );
-}
-
-function hasUncommittedWork(worktree: AssociatedWorktree): boolean {
-  return (
-    worktree.changes.stagedFiles > 0 ||
-    worktree.changes.unstagedFiles > 0 ||
-    worktree.changes.untrackedFiles > 0
   );
 }

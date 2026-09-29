@@ -125,6 +125,12 @@ pub(crate) trait SessionHarnessVersionResolver: Send + Sync {
     ) -> Result<HarnessVersionRef, String>;
 }
 
+/// Application-lifetime provider maintenance that may briefly make a local CLI unavailable.
+pub(crate) trait ProviderUpdateReadiness: Send + Sync {
+    fn is_updating(&self, provider: &str) -> bool;
+    fn wait_until_ready(&self, provider: &str) -> Result<bool, String>;
+}
+
 pub(crate) trait AgentSessionClock: Send + Sync {
     fn now(&self) -> DateTime<Utc>;
 }

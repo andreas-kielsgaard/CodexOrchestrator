@@ -35,8 +35,151 @@ describe('AgentSessionTranscript', () => {
     );
     expect(screen.getByText('Finished result')).toBeVisible();
     expect(screen.getByText('Read files')).not.toBeVisible();
-    fireEvent.click(screen.getByText('Processing'));
+    fireEvent.click(screen.getByText('Worked'));
     expect(onToggle).toHaveBeenCalledWith('invocation-1');
+  });
+
+  it('presents agent updates as messages and tools as compact actions', () => {
+    const started = runtimeEvent(
+      2,
+      'tool_activity',
+      '"C:\\tools\\pwsh.exe" -Command "npm test -- --run"',
+    );
+    started.recordedAt = '2026-07-10T12:00:00.000Z';
+    started.rawPayload = {
+      type: 'item.started',
+      item: {
+        id: 'command-1',
+        type: 'command_execution',
+        command: '"C:\\tools\\pwsh.exe" -Command "npm test -- --run"',
+        status: 'in_progress',
+      },
+    };
+    started.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'started',
+      itemId: 'command-1',
+      server: null,
+      tool: null,
+      status: 'in_progress',
+      resultClassification: 'unknown',
+    };
+    const completed = runtimeEvent(3, 'tool_activity', 'npm test -- --run');
+    completed.recordedAt = '2026-07-10T12:00:02.000Z';
+    completed.rawPayload = {
+      type: 'item.completed',
+      item: {
+        id: 'command-1',
+        type: 'command_execution',
+        command: 'npm test -- --run',
+        aggregated_output: '812 tests passed',
+        exit_code: 0,
+        status: 'completed',
+      },
+    };
+    completed.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'completed',
+      itemId: 'command-1',
+      server: null,
+      tool: null,
+      status: 'completed',
+      resultClassification: 'succeeded',
+    };
+
+    render(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(
+          sessionDetails('running', [
+            runtimeEvent(1, 'agent_message', 'I found the relevant files.', {
+              role: 'intermediate',
+            }),
+            started,
+            completed,
+          ]),
+        )}
+        loading={false}
+        expandedProcessing={new Set(['invocation-1'])}
+        onToggleProcessing={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('I found the relevant files.')).toBeVisible();
+    expect(screen.getByText('Ran npm test -- --run')).toBeVisible();
+    expect(screen.queryByText('Agent update')).not.toBeInTheDocument();
+    expect(screen.queryByText('Tool')).not.toBeInTheDocument();
+    expect(screen.getByText('1 action · 1 update')).toBeVisible();
+    const commandSummary = screen.getByText('Ran npm test -- --run').closest('summary');
+    expect(commandSummary).not.toBeNull();
+    fireEvent.click(commandSummary!);
+    expect(commandSummary!.parentElement).toHaveAttribute('open');
+    expect(screen.getByText('812 tests passed')).toBeVisible();
+    expect(screen.getByText('Exit code')).toBeVisible();
+    expect(screen.getByText('2.0 s')).toBeVisible();
+  });
+
+  it('shows edited files and explicit command batches in expandable details', () => {
+    const files = runtimeEvent(1, 'tool_activity', 'file change', {
+      itemType: 'file_change',
+      fileChanges: [
+        { path: 'src/app.ts', operation: 'edit' },
+        { path: 'src/new.ts', operation: 'create' },
+      ],
+    });
+    files.rawPayload = {
+      type: 'item.completed',
+      item: { id: 'files-1', type: 'file_change', status: 'completed' },
+    };
+    files.normalized!.toolActivity = {
+      kind: 'file_change',
+      phase: 'completed',
+      itemId: 'files-1',
+      server: null,
+      tool: null,
+      status: 'completed',
+      resultClassification: 'succeeded',
+    };
+    const batch = runtimeEvent(2, 'tool_activity', 'command execution');
+    batch.rawPayload = {
+      type: 'item.completed',
+      item: {
+        id: 'batch-1',
+        type: 'command_execution',
+        commands: ['npm test', 'npm run lint'],
+        status: 'completed',
+      },
+    };
+    batch.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'completed',
+      itemId: 'batch-1',
+      server: null,
+      tool: null,
+      status: 'completed',
+      resultClassification: 'succeeded',
+    };
+
+    render(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(sessionDetails('running', [files, batch]))}
+        loading={false}
+        expandedProcessing={new Set(['invocation-1'])}
+        onToggleProcessing={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Edited 2 files'));
+    expect(screen.getByText(/src\/app\.ts/)).toHaveTextContent('src/app.ts — Edit');
+    expect(screen.getByText(/src\/new\.ts/)).toHaveTextContent('src/new.ts — Create');
+    expect(screen.getByText('Ran 2 commands')).toBeVisible();
+    expect(screen.getByText('Batch · 2 commands')).toBeVisible();
+    fireEvent.click(screen.getByText('Ran 2 commands'));
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === 'PRE' && element.textContent === 'npm test\nnpm run lint',
+      ),
+    ).toBeVisible();
   });
 
   it.each([

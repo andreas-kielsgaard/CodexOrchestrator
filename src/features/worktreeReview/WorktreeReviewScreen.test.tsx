@@ -72,6 +72,8 @@ describe('WorktreeReviewScreen', () => {
     const dialog = screen.getByRole('dialog', { name: 'Create a build' });
     expect(within(dialog).getByRole('combobox', { name: 'Build mode' })).toHaveValue('release');
     expect(within(dialog).getByText('Build directly in the worktree.')).toBeVisible();
+    expect(within(dialog).queryByText(/selected checkout has uncommitted work/i)).toBeNull();
+    expect(within(dialog).queryByText(/This build will compile/i)).toBeNull();
     expect(client.createBuildCalls).toHaveLength(0);
     await user.click(within(dialog).getByRole('button', { name: 'Create build' }));
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
@@ -127,7 +129,9 @@ describe('WorktreeReviewScreen', () => {
     await user.click(screen.getByRole('button', { name: 'Create a build' }));
     expect(screen.getByRole('combobox', { name: 'Build mode' })).toHaveValue('release');
     await user.selectOptions(screen.getByRole('combobox', { name: 'Build mode' }), 'debug');
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }),
+    );
     await waitFor(() => expect(client.createBuildCalls[0]?.profile).toBe('debug'));
     expect(client.openBuildCalls).toEqual([]);
   });
@@ -212,7 +216,7 @@ describe('WorktreeReviewScreen', () => {
     );
   });
 
-  it('records an exact worktree snapshot and discloses its retained owned checkout', async () => {
+  it('records an exact worktree snapshot without extra workspace messaging', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient();
     renderScreen(client);
@@ -221,14 +225,18 @@ describe('WorktreeReviewScreen', () => {
     await user.click(screen.getByRole('radio', { name: /Agent checkout B/ }));
     await user.click(screen.getByRole('button', { name: 'Create a build' }));
     await user.click(screen.getByRole('radio', { name: /Snapshot current work/ }));
-    expect(screen.getByText('Copy the selected worktree and build in the destination.')).toBeVisible();
-    expect(screen.getByText(/create and retain an isolated Worktree checkout/)).toBeVisible();
+    expect(
+      screen.getByText('Copy the selected worktree and build in the destination.'),
+    ).toBeVisible();
+    expect(screen.queryByText(/create and retain an isolated Worktree checkout/)).toBeNull();
 
     const name = screen.getByRole('textbox', { name: 'Build name' });
     await user.clear(name);
     await user.type(name, 'Snapshot B');
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }),
+    );
 
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
@@ -245,7 +253,7 @@ describe('WorktreeReviewScreen', () => {
     expect(await screen.findByText(/Build started/)).toHaveAttribute('role', 'status');
   });
 
-  it('allows Create Build without a pre-existing worktree and makes automatic creation explicit', async () => {
+  it('allows Create Build without a pre-existing worktree', async () => {
     const user = userEvent.setup();
     const client = new FixtureClient(
       branchDetailFixture({ worktrees: [], associationCandidates: [], builds: [] }),
@@ -255,11 +263,11 @@ describe('WorktreeReviewScreen', () => {
     expect(await screen.findByText(/No matching worktree exists/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Create a build' }));
     expect(screen.getByRole('radio', { name: /Specific commit/ })).toBeChecked();
-    expect(screen.getByText(/first create and retain a Worktree checkout/)).toHaveTextContent(
-      'first create and retain a Worktree checkout for this branch',
-    );
+    expect(screen.queryByText(/first create and retain a Worktree checkout/)).toBeNull();
     expect(client.createBuildCalls).toHaveLength(0);
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }),
+    );
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       source: {
@@ -307,9 +315,9 @@ describe('WorktreeReviewScreen', () => {
     renderScreen(client);
     const builds = await screen.findByRole('heading', { name: 'Builds' });
     const region = builds.closest('section')!;
-    const failed = (
-      await within(region).findByRole('heading', { name: 'Failed rebuild' })
-    ).closest('article')!;
+    const failed = (await within(region).findByRole('heading', { name: 'Failed rebuild' })).closest(
+      'article',
+    )!;
     expect(failed).toHaveTextContent('Build failed');
     expect(failed).not.toHaveTextContent('Eligible for cleanup');
     expect(failed).toHaveTextContent('Compiler exited with code 1');
@@ -450,7 +458,9 @@ describe('WorktreeReviewScreen', () => {
       screen.getByRole('heading', { name: `Commit ${earlierCommit.abbreviatedObjectId}` }),
     ).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Create a build' }));
-    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }));
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Create build' }),
+    );
     await waitFor(() => expect(client.createBuildCalls).toHaveLength(1));
     expect(client.createBuildCalls[0]).toMatchObject({
       branchRef: null,
@@ -571,6 +581,21 @@ describe('WorktreeReviewScreen', () => {
     await user.click(within(heading.closest('article')!).getByRole('button', { name: 'Launch' }));
     await waitFor(() => expect(client.openBuildCalls).toEqual([completedBuild.buildId]));
   });
+
+  it('restores a recent view from memory without reloading its overview and detail', async () => {
+    const client = new FixtureClient();
+    const first = renderScreen(client);
+    await screen.findByRole('heading', { name: 'codex/durable-review' });
+    await waitFor(() => expect(client.targetDetailCalls).toBe(1));
+    expect(client.overviewCalls).toBe(1);
+    first.unmount();
+
+    renderScreen(client);
+    expect(screen.getByRole('heading', { name: 'codex/durable-review' })).toBeVisible();
+    await act(async () => undefined);
+    expect(client.overviewCalls).toBe(1);
+    expect(client.targetDetailCalls).toBe(1);
+  });
 });
 
 class FixtureClient implements WorktreeReviewClient {
@@ -579,18 +604,24 @@ class FixtureClient implements WorktreeReviewClient {
   readonly selectRepositoryCalls: RepositoryId[] = [];
   readonly commitHistoryCalls: { cursor?: string }[] = [];
   readonly openBuildCalls: BuildId[] = [];
+  overviewCalls = 0;
+  targetDetailCalls = 0;
 
   constructor(
     private detail = branchDetailFixture(),
     private initialOverview: WorktreeReviewOverview = overviewFixture,
   ) {}
 
-  overview = async (): Promise<WorktreeReviewOverview> => this.initialOverview;
+  overview = async (): Promise<WorktreeReviewOverview> => {
+    this.overviewCalls += 1;
+    return this.initialOverview;
+  };
   selectRepository = async (repositoryId: RepositoryId): Promise<WorktreeReviewOverview> => {
     this.selectRepositoryCalls.push(repositoryId);
     return overviewFixture;
   };
   targetDetail = async (target: ReviewTarget): Promise<BranchReviewDetail> => {
+    this.targetDetailCalls += 1;
     if (target.repositoryId !== 'repository-one') throw new Error('Unknown fixture repository.');
     if (target.kind === 'worktree') {
       const worktree = [worktreeOne, worktreeTwo].find(
@@ -710,11 +741,7 @@ class FixtureClient implements WorktreeReviewClient {
       source: sourceReceipt(input),
     };
   };
-  openBuild = async ({
-    buildId,
-  }: {
-    readonly buildId: BuildId;
-  }): Promise<OpenBuildOutcome> => {
+  openBuild = async ({ buildId }: { readonly buildId: BuildId }): Promise<OpenBuildOutcome> => {
     this.openBuildCalls.push(buildId);
     return { outcome: 'launched' };
   };

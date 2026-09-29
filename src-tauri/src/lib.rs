@@ -1,4 +1,5 @@
 mod active_app;
+mod agent_cli_updates;
 mod agent_sessions;
 mod execution_configuration;
 mod execution_devices;

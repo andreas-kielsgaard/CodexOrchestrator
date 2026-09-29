@@ -15,6 +15,7 @@ import type { ExecutionTargetClient } from '../application/executionTargets/cont
 import type { RepositoryBranchSource } from '../application/branches';
 
 import { TechnicalSettingsScreen } from '../features/technicalSettings/TechnicalSettingsScreen';
+import type { AgentCliUpdateClient } from '../application/agentCliUpdates';
 import { CodexHomeGuidanceProvider } from '../features/agentProviders/codex/CodexHomeGuidance';
 
 import type { AgentIdentity, AgentSessionClient } from '../application/agentSessions';
@@ -253,6 +254,8 @@ export interface AppProps {
   readonly nativeProfileClient?: NativeProfileClient;
   readonly claudeSetupClient?: ClaudeSetupClient;
 
+  readonly agentCliUpdateClient?: AgentCliUpdateClient;
+
   readonly nativeProfileApplicationConsumer?: NativeProfileApplicationConsumer;
 
   /** Explicit application-owned destinations only; display names never become file-review input. */
@@ -374,6 +377,8 @@ export function App({
   nativeProfileClient,
 
   claudeSetupClient,
+
+  agentCliUpdateClient,
 
   nativeProfileApplicationConsumer,
 
@@ -1807,6 +1812,7 @@ export function App({
         <TechnicalSettingsScreen
           nativeClient={nativeProfileClient}
           claudeClient={claudeSetupClient}
+          cliUpdateClient={agentCliUpdateClient}
 
           readOtpCatalogue={otpCatalogueReader}
 

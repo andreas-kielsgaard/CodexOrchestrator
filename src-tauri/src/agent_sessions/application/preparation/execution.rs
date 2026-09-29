@@ -123,6 +123,14 @@ impl AgentSessionApplication {
             ("workspace", workspace_label),
             ("configuration", "Resolve execution settings"),
         ];
+        let provider_update_pending = !selection.execution.is_remote()
+            && self
+                .provider_update_readiness
+                .as_ref()
+                .is_some_and(|readiness| readiness.is_updating(&selection.execution.provider));
+        if provider_update_pending {
+            required.insert(1, ("provider-update", "Finish agent tool update"));
+        }
         required.extend([
             ("conversation", "Prepare conversation"),
             ("delivery", "Deliver submitted prompt"),
@@ -207,6 +215,26 @@ impl AgentSessionApplication {
             PreparationStepStatus::Completed,
         )?;
         Self::check_preparation_cancel(cancel)?;
+        if provider_update_pending {
+            self.step(
+                &mut p,
+                "provider-update",
+                "Finish agent tool update",
+                PreparationStepStatus::Running,
+            )?;
+            self.provider_update_readiness
+                .as_ref()
+                .expect("provider update readiness was checked")
+                .wait_until_ready(&selection.execution.provider)
+                .map_err(AgentSessionApplicationError::invalid)?;
+            Self::check_preparation_cancel(cancel)?;
+            self.step(
+                &mut p,
+                "provider-update",
+                "Finish agent tool update",
+                PreparationStepStatus::Completed,
+            )?;
+        }
         let destination = p.resolved_target.as_ref().expect("materialized").clone();
         let conversation = self.plan_conversation(&history, &p, source, &destination)?;
         p.source_provider_binding = conversation.source_provider_binding.clone();

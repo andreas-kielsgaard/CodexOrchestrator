@@ -513,7 +513,7 @@ export function useAgentSession(
                     });
         acceptedOptionsRef.current = preparedOptions;
         acceptedDelivery = true;
-        if (!options.preparedExecution && options.execution) {
+        if (options.execution) {
           const effective =
             'invocation' in acknowledgement
               ? (

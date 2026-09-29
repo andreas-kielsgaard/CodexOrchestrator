@@ -9,24 +9,45 @@ import {
   type WorktreeActivity,
 } from '../../application/worktreeReview';
 
+interface CachedReviewSelection {
+  readonly overview: WorktreeReviewOverview;
+  readonly target: ReviewTarget | null;
+  readonly detail: BranchReviewDetail | null;
+  readonly refreshedAt: number;
+}
+
+const reviewSelectionCache = new WeakMap<WorktreeReviewClient, CachedReviewSelection>();
+const BACKGROUND_REFRESH_MS = 60_000;
+
 export function useReviewSelection(
   client: WorktreeReviewClient,
   onSelected: (detail: BranchReviewDetail, activeWorktreeId?: string) => void,
 ) {
-  const [overview, setOverview] = useState<WorktreeReviewOverview>({
-    repositories: [],
-    branches: [],
-  });
-  const [target, setTarget] = useState<ReviewTarget | null>(null);
-  const [detail, setDetail] = useState<BranchReviewDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = reviewSelectionCache.get(client);
+  const [overview, setOverview] = useState<WorktreeReviewOverview>(
+    cached?.overview ?? { repositories: [], branches: [] },
+  );
+  const [target, setTarget] = useState<ReviewTarget | null>(cached?.target ?? null);
+  const [detail, setDetail] = useState<BranchReviewDetail | null>(cached?.detail ?? null);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const activityGeneration = useRef(0);
+  const refreshedAt = useRef(cached?.refreshedAt ?? 0);
   const targetRef = useRef(target);
   const overviewRef = useRef(overview);
   targetRef.current = target;
   overviewRef.current = overview;
+
+  useEffect(() => {
+    if (!detail && overview.repositories.length === 0 && overview.branches.length === 0) return;
+    reviewSelectionCache.set(client, {
+      overview,
+      target,
+      detail,
+      refreshedAt: refreshedAt.current,
+    });
+  }, [client, detail, overview, target]);
 
   const discoverActivity = useCallback(
     async (snapshot: WorktreeReviewOverview) => {
@@ -76,6 +97,7 @@ export function useReviewSelection(
     ) => {
       const result = await client.targetDetail(next);
       if (token !== generation.current) return;
+      refreshedAt.current = Date.now();
       setDetail(result);
       setTarget(next);
       setOverview((previous) => ({
@@ -90,13 +112,15 @@ export function useReviewSelection(
   );
 
   const loadOverview = useCallback(
-    async (repositoryId?: string, preserve = false) => {
+    async (repositoryId?: string, preserve = false, background = false) => {
       const token = ++generation.current;
       activityGeneration.current++;
       const previousTarget = preserve ? targetRef.current : null;
-      setLoading(true);
-      setError(null);
-      if (!preserve) {
+      if (!background) {
+        setLoading(true);
+        setError(null);
+      }
+      if (!preserve && !background) {
         setTarget(null);
         setDetail(null);
       }
@@ -125,17 +149,20 @@ export function useReviewSelection(
             !previousTarget || targetKey(next) !== targetKey(previousTarget),
           );
         else {
+          refreshedAt.current = Date.now();
           setTarget(null);
           setDetail(null);
         }
         if (token === generation.current) void discoverActivity(snapshot);
       } catch (cause) {
         if (token === generation.current) {
-          setDetail(null);
-          setError(String(cause));
+          if (!background) {
+            if (!preserve) setDetail(null);
+            setError(String(cause));
+          }
         }
       } finally {
-        if (token === generation.current) setLoading(false);
+        if (token === generation.current && !background) setLoading(false);
       }
     },
     [client, acceptDetail, discoverActivity],
@@ -159,17 +186,36 @@ export function useReviewSelection(
     },
     [acceptDetail],
   );
+  const rememberBuilds = useCallback((builds: BranchReviewDetail['builds']) => {
+    refreshedAt.current = Date.now();
+    setDetail((previous) => (previous ? { ...previous, builds } : previous));
+  }, []);
 
   useEffect(() => {
-    void loadOverview();
+    const snapshot = reviewSelectionCache.get(client);
+    if (snapshot) {
+      if (snapshot.detail) {
+        onSelected(snapshot.detail, snapshot.overview.activeBuildContext?.worktreeId);
+      }
+      if (Date.now() - snapshot.refreshedAt >= BACKGROUND_REFRESH_MS) {
+        void loadOverview(undefined, true, true);
+      }
+    } else {
+      void loadOverview();
+    }
+    const refreshTimer = window.setInterval(
+      () => void loadOverview(undefined, true, true),
+      BACKGROUND_REFRESH_MS,
+    );
     return () => {
+      window.clearInterval(refreshTimer);
       // These are request counters, not DOM refs; invalidate all work on unmount.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       generation.current++;
       // eslint-disable-next-line react-hooks/exhaustive-deps
       activityGeneration.current++;
     };
-  }, [loadOverview]);
+  }, [client, loadOverview, onSelected]);
   const branches = useMemo(() => orderReviewTargets(overview.branches), [overview.branches]);
   return {
     overview,
@@ -181,5 +227,6 @@ export function useReviewSelection(
     selectTarget,
     selectRepository: (id: string) => loadOverview(id),
     refresh: () => loadOverview(undefined, true),
+    rememberBuilds,
   };
 }

@@ -54,6 +54,7 @@ export function WorktreeReviewScreen({
     );
   }, []);
   const selection = useReviewSelection(client, onSelected);
+  const { rememberBuilds } = selection;
   const { overview, branches, target, detail, loading } = selection;
   const repositoryId = overview.selectedRepositoryId ?? '';
   const selectedRepository = overview.repositories.find(
@@ -103,7 +104,10 @@ export function WorktreeReviewScreen({
       void client
         .targetDetail(target)
         .then((fresh) => {
-          if (active) setLiveBuilds(fresh.builds);
+          if (active) {
+            setLiveBuilds(fresh.builds);
+            rememberBuilds(fresh.builds);
+          }
         })
         .catch(() => {
           /* the primary action reports its own failure */
@@ -115,7 +119,7 @@ export function WorktreeReviewScreen({
       active = false;
       window.clearInterval(timer);
     };
-  }, [client, target, busy, hasRunningBuild]);
+  }, [client, target, busy, hasRunningBuild, rememberBuilds]);
   const disabled = loading || (busy !== null && busy !== 'create-build');
   const selectedWorktree = detail?.worktrees.find(
     (worktree) =>
@@ -241,10 +245,9 @@ export function WorktreeReviewScreen({
     setNotice(null);
     try {
       const started = await client.createBuild(request);
-      setLiveBuilds((current) => [
-        started,
-        ...current.filter((build) => build.buildId !== started.buildId),
-      ]);
+      const builds = [started, ...liveBuilds.filter((build) => build.buildId !== started.buildId)];
+      setLiveBuilds(builds);
+      rememberBuilds(builds);
       setBuildDialogOpen(false);
       requestAnimationFrame(() => buildTrigger.current?.focus());
       setNotice('Build started. You can continue navigating while it runs.');

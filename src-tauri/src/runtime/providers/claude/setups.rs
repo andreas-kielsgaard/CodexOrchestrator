@@ -221,7 +221,7 @@ impl ClaudeSetups {
     }
 }
 
-fn effective_executable(executable: &str) -> String {
+pub(crate) fn effective_executable(executable: &str) -> String {
     #[cfg(windows)]
     {
         let path = Path::new(executable);

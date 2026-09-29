@@ -41,8 +41,8 @@ pub(crate) use configuration::{
 pub(crate) use delivery::InvocationDeliveryIntent;
 pub(crate) use dependencies::{
     AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification, AgentSessionNotifier,
-    ProviderLaunchPreparation, SessionHarnessLaunchAuthority, SessionHarnessVersionResolver,
-    SystemAgentSessionProviders,
+    ProviderLaunchPreparation, ProviderUpdateReadiness, SessionHarnessLaunchAuthority,
+    SessionHarnessVersionResolver, SystemAgentSessionProviders,
 };
 pub(crate) use observation::{project_invocation_observation, AgentInvocationObservation};
 
@@ -64,6 +64,7 @@ pub(crate) struct AgentSessionApplication {
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
     execution_target_service: Option<Arc<crate::execution_targets::ExecutionTargetService>>,
+    provider_update_readiness: Option<Arc<dyn ProviderUpdateReadiness>>,
     preparation_workers: Arc<preparation::PreparationWorkers>,
     queue_dispatch_lanes: Arc<queue::QueueDispatchLanes>,
     target_operation_workers: Arc<queue::TargetOperationWorkers>,
@@ -94,6 +95,7 @@ impl AgentSessionApplication {
             capability_profiles: None,
             endpoints: None,
             execution_target_service: None,
+            provider_update_readiness: None,
             preparation_workers: Arc::new(preparation::PreparationWorkers::default()),
             queue_dispatch_lanes: Arc::new(queue::QueueDispatchLanes::default()),
             target_operation_workers: Arc::new(queue::TargetOperationWorkers::default()),
@@ -105,6 +107,14 @@ impl AgentSessionApplication {
         authority: Arc<dyn SessionHarnessLaunchAuthority>,
     ) -> Self {
         self.session_harness_launch_authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn with_provider_update_readiness(
+        mut self,
+        readiness: Arc<dyn ProviderUpdateReadiness>,
+    ) -> Self {
+        self.provider_update_readiness = Some(readiness);
         self
     }
 

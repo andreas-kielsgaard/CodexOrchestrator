@@ -27,7 +27,9 @@ export interface TranscriptActivity {
   text: string;
   source: AgentRuntimeEventDto['source'];
   recordedAt: IsoDateTimeDto;
+  completedAt: IsoDateTimeDto | null;
   rawPayload: unknown;
+  normalizedDetails: unknown;
   safeDetail: TranscriptActivitySafeDetail | null;
 }
 
@@ -371,6 +373,8 @@ function coalesceLifecycleActivities(activities: TranscriptActivity[]): Transcri
       projected[index] = {
         ...started,
         text: activity.text === toolLabelFromActivity(activity) ? started.text : activity.text,
+        completedAt: activity.recordedAt,
+        normalizedDetails: activity.normalizedDetails,
         safeDetail: activity.safeDetail,
         rawPayload: { lifecycleEvents: [started.rawPayload, activity.rawPayload] },
       };
@@ -540,7 +544,9 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     sequence: event.sequence,
     source: event.source,
     recordedAt: event.recordedAt,
+    completedAt: null,
     rawPayload: event.rawPayload,
+    normalizedDetails: normalized?.details ?? null,
     safeDetail: null,
   };
 
@@ -568,10 +574,12 @@ function projectActivity(event: AgentRuntimeEventDto): TranscriptActivity | null
     };
   }
   if (kind === 'agent_message') {
+    const text = normalized.text?.trim();
+    if (!text) return null;
     return {
       ...base,
       kind: 'agent_intermediate',
-      text: normalized.text?.trim() || 'Agent message',
+      text,
     };
   }
   if (kind === 'usage') {

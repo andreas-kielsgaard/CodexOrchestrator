@@ -1,5 +1,6 @@
-import { toolActivityLabel, type TranscriptActivity } from './transcriptProjector';
+import type { TranscriptActivity } from './transcriptProjector';
 import { AgentMarkdown } from './AgentMarkdown';
+import { presentToolActivity } from './toolActivityPresentation';
 
 interface ProcessingDisclosureProps {
   invocationId: string;
@@ -18,7 +19,7 @@ export function ProcessingDisclosure({
   expanded,
   onToggle,
   safeOnly = false,
-  heading = 'Processing',
+  heading = 'Worked',
 }: ProcessingDisclosureProps) {
   if (activity.length === 0 && !running) return null;
 
@@ -31,42 +32,85 @@ export function ProcessingDisclosure({
         }}
       >
         <span>{running ? 'Working' : heading}</span>
-        <small>{activity.length ? `${activity.length} updates` : 'Waiting for activity'}</small>
+        <small>{activity.length ? activitySummary(activity) : 'Waiting for activity'}</small>
       </summary>
-      <ol aria-label={`Processing for invocation ${invocationId}`}>
+      <ol className="turn-activity" aria-label={`Processing for invocation ${invocationId}`}>
         {activity.map((item) => (
-          <li className={`activity-${item.kind}`} key={item.id}>
-            <span>{activityLabel(item.kind)}</span>
-            {safeOnly && item.kind === 'tool' ? (
-              <p>{formatSafeToolDetail(item.safeDetail)}</p>
-            ) : item.kind === 'agent_intermediate' ? (
-              <AgentMarkdown className="agent-activity-markdown">{item.text}</AgentMarkdown>
-            ) : (
-              <p>{item.text}</p>
-            )}
-            {safeOnly && item.kind !== 'tool' && item.safeDetail && (
-              <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
-            )}
-          </li>
+          <ActivityItem item={item} safeOnly={safeOnly} key={item.id} />
         ))}
       </ol>
     </details>
   );
 }
 
-function activityLabel(kind: TranscriptActivity['kind']): string {
-  switch (kind) {
-    case 'agent_intermediate':
-      return 'Agent update';
-    case 'tool':
-      return 'Tool';
-    case 'usage':
-      return 'Usage';
-    case 'processing':
-      return 'Processing';
-    case 'technical':
-      return 'Technical';
+function ActivityItem({ item, safeOnly }: { item: TranscriptActivity; safeOnly: boolean }) {
+  if (item.kind === 'agent_intermediate' || item.kind === 'processing') {
+    return (
+      <li className={`turn-message-event activity-${item.kind}`}>
+        <AgentMarkdown className="agent-activity-markdown">{item.text}</AgentMarkdown>
+      </li>
+    );
   }
+
+  if (item.kind === 'tool') return <ToolActivityItem item={item} safeOnly={safeOnly} />;
+
+  return (
+    <li className={`turn-supporting-event activity-${item.kind}`}>
+      <span>{item.kind === 'usage' ? 'Usage' : 'Technical detail'}</span>
+      <p>{item.text}</p>
+      {safeOnly && item.safeDetail && (
+        <p className="recorded-step-detail">{formatSafeDetail(item.safeDetail)}</p>
+      )}
+    </li>
+  );
+}
+
+function ToolActivityItem({ item, safeOnly }: { item: TranscriptActivity; safeOnly: boolean }) {
+  const presentation = presentToolActivity(item, safeOnly);
+  const content = (
+    <>
+      <span className="turn-tool-event__icon" aria-hidden="true">
+        {presentation.icon}
+      </span>
+      <span className="turn-tool-event__label">{presentation.label}</span>
+      {presentation.batchLabel && (
+        <span className="turn-tool-event__batch">{presentation.batchLabel}</span>
+      )}
+      {presentation.failed && <span className="turn-tool-event__failure">Failed</span>}
+    </>
+  );
+
+  return (
+    <li className="turn-tool-event activity-tool">
+      {presentation.details.length ? (
+        <details>
+          <summary>{content}</summary>
+          <dl className="turn-tool-event__details">
+            {presentation.details.map((detail) => (
+              <div key={`${detail.label}:${detail.value}`}>
+                <dt>{detail.label}</dt>
+                <dd>{detail.code ? <pre>{detail.value}</pre> : detail.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : (
+        <div>{content}</div>
+      )}
+    </li>
+  );
+}
+
+function activitySummary(activity: TranscriptActivity[]): string {
+  const tools = activity.filter((item) => item.kind === 'tool').length;
+  const messages = activity.filter(
+    (item) => item.kind === 'agent_intermediate' || item.kind === 'processing',
+  ).length;
+  const parts = [
+    tools ? `${tools} ${tools === 1 ? 'action' : 'actions'}` : null,
+    messages ? `${messages} ${messages === 1 ? 'update' : 'updates'}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join(' · ') : `${activity.length} updates`;
 }
 
 function formatSafeDetail(detail: NonNullable<TranscriptActivity['safeDetail']>): string {
@@ -79,14 +123,5 @@ function formatSafeDetail(detail: NonNullable<TranscriptActivity['safeDetail']>)
     return parts.length ? `Usage detail: ${parts.join(', ')}` : 'Usage detail unavailable';
   }
 
-  return formatSafeToolDetail(detail);
-}
-
-function formatSafeToolDetail(detail: TranscriptActivity['safeDetail']): string {
-  if (!detail || detail.kind !== 'tool') return 'Tool activity detail unavailable';
-  const label =
-    [detail.server, detail.tool].filter(Boolean).join(' / ') || toolActivityLabel(detail.activity);
-  return [label, detail.phase, detail.resultClassification].join(
-    ' · ',
-  );
+  return 'Tool activity detail unavailable';
 }

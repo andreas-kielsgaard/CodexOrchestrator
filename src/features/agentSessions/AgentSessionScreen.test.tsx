@@ -34,7 +34,7 @@ describe('AgentSessionScreen', () => {
     expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' });
     expect(await screen.findByText('The final answer')).toBeVisible();
     expect(screen.getByText('Reading files')).toBeVisible();
-    fireEvent.click(screen.getByText('Processing'));
+    fireEvent.click(screen.getByText('Worked'));
     expect(screen.getByText('Reading files')).not.toBeVisible();
   });
 

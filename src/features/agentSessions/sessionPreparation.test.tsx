@@ -66,6 +66,7 @@ it('keeps the focused next draft through first-session acceptance and permits qu
   };
   fixture.details.invocations[0].invocation.status = 'pending';
   const cancelPreparation = vi.fn(async () => {});
+  const afterAccepted = vi.fn();
   const profileClient = {
     ...fixture.profiles,
     sendPreparedMessage,
@@ -84,8 +85,8 @@ it('keeps the focused next draft through first-session acceptance and permits qu
       executionSelection: selection,
       execution: {
         client: profileClient,
-        selection: { model: null, reasoningMode: null },
-        afterAccepted: () => {},
+        selection: { model: 'gpt-5.6-sol', reasoningMode: 'high' },
+        afterAccepted,
       },
     });
     return <AgentSessionWorkspace controller={controller} />;
@@ -99,6 +100,10 @@ it('keeps the focused next draft through first-session acceptance and permits qu
   expect(input).toBeEnabled();
   fireEvent.change(input, { target: { value: 'My next draft' } });
   await act(async () => acknowledge({ sessionId: 'session-1', invocationId: 'invocation-1' }));
+  expect(afterAccepted).toHaveBeenCalledWith('session-1', {
+    model: 'gpt-5.6-sol',
+    reasoningMode: 'high',
+  });
   await waitFor(() => expect(screen.getAllByText('Waiting for setup').length).toBeGreaterThan(0));
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(input);
   expect(input).toHaveFocus();

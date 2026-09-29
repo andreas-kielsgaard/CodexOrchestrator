@@ -43,6 +43,7 @@ import { tauriWorktreeReview } from '../infrastructure/tauriWorktreeReview';
 import { tauriWorktreeReviewBuildActivity } from '../infrastructure/tauriWorktreeReviewBuildActivity';
 import { createCompletionNotificationSource } from '../infrastructure/completionNotifications';
 import { tauriRepositoryCatalog } from '../infrastructure/repositoryCatalog/tauriRepositoryCatalog';
+import { tauriAgentCliUpdateClient } from '../infrastructure/agentCliUpdates/tauriAgentCliUpdateClient';
 
 const RepositoryWorktreeTargetSelector =
   createRepositoryWorktreeTargetSelector(tauriRepositoryCatalog);
@@ -81,6 +82,7 @@ export function createProductApplicationComposition(): AppProps {
     contextualFileReviewClient: createTauriContextualFileReviewClient(),
     nativeProfileClient: tauriNativeProfileClient,
     claudeSetupClient: tauriClaudeSetupClient,
+    agentCliUpdateClient: tauriAgentCliUpdateClient,
     nativeProfileApplicationConsumer:
       createNativeProfileApplicationConsumer(tauriNativeProfileClient),
     productDecisionClient: tauriProductDecisionClient,

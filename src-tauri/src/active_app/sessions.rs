@@ -35,6 +35,7 @@ pub(super) fn compose(
     notifier: Arc<dyn AgentSessionNotifier>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
     otp_skill_roots: BTreeMap<String, Vec<String>>,
+    provider_updates: Arc<dyn crate::agent_sessions::application::ProviderUpdateReadiness>,
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
     let (capability_profiles, endpoints, product_skills) = super::execution_configuration::compose(
@@ -68,6 +69,7 @@ pub(super) fn compose(
         .with_capability_profiles(capability_profiles.clone())
         .with_execution_endpoints(endpoints.clone())
         .with_execution_target_service(execution_targets.clone())
+        .with_provider_update_readiness(provider_updates)
         .with_workspaces(workspaces)
         .with_session_harness_version_resolver(Arc::new(harness_catalog))
         .with_session_harness_launch_authority(Arc::new(

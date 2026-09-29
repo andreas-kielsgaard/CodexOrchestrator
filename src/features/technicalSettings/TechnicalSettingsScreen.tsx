@@ -5,9 +5,11 @@ import type { OtpCatalogueReader, OtpInstallationClient } from '../../applicatio
 import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
 import type { TechnicalSettingsSection } from '../../application/productNavigation';
+import type { AgentCliUpdateClient } from '../../application/agentCliUpdates';
 import { availableProviderSettings } from '../agentProviders/registrations';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
+import { AgentCliUpdateNotice } from './AgentCliUpdateNotice';
 import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
@@ -20,6 +22,7 @@ export function TechnicalSettingsScreen({
   onSectionChange,
   selectedCodexProfileId,
   onSelectedCodexProfileChange,
+  cliUpdateClient,
 }: {
   readonly nativeClient: NativeProfileClient;
   readonly claudeClient?: ClaudeSetupClient;
@@ -31,6 +34,7 @@ export function TechnicalSettingsScreen({
   readonly onSectionChange?: (section: TechnicalSettingsSection) => void;
   readonly selectedCodexProfileId?: string | null;
   readonly onSelectedCodexProfileChange?: (profileId: string | null) => void;
+  readonly cliUpdateClient?: AgentCliUpdateClient;
 }) {
   const [localSection, setLocalSection] = useState<TechnicalSettingsSection>(
     executionClient ? 'devices' : 'native',
@@ -91,6 +95,7 @@ export function TechnicalSettingsScreen({
         </nav>
       </header>
       <div className="technical-settings__content">
+        {cliUpdateClient ? <AgentCliUpdateNotice client={cliUpdateClient} /> : null}
         {section === 'devices' && executionClient ? (
           <DeviceSetupOverview
             executionClient={executionClient}
