@@ -6,6 +6,7 @@ use crate::agent_sessions::{
     },
     queue::{SessionQueueEntryItem, SessionQueueEntryState, SessionQueueSnapshot},
     target_operation::{
+        planned_actions, replan_actions, selection_target_relation, SelectionTargetRelation,
         SessionTargetOperation, TargetOperationActionKind, TargetOperationActionStatus,
         TargetOperationPhase,
     },
@@ -368,7 +369,8 @@ impl AgentSessionApplication {
             return Ok(None);
         };
         let mut projected_matches =
-            selection_matches_target(selection, session.execution_target.as_ref());
+            selection_target_relation(selection, session.execution_target.as_ref())
+                != SelectionTargetRelation::Different;
         if let Ok(queue) = self.repository.session_queue(&session.id) {
             for operation_id in queue.entries.iter().filter_map(|entry| match &entry.item {
                 SessionQueueEntryItem::TargetOperation { operation_id }
@@ -550,6 +552,50 @@ impl AgentSessionApplication {
             self.target_operation_workers.release(&operation_id);
             return Ok(());
         }
+        let active_target = self
+            .load_session(&operation.session_id)?
+            .session
+            .execution_target;
+        if selection_target_relation(&operation.destination_selection, active_target.as_ref())
+            != SelectionTargetRelation::Different
+        {
+            let target = active_target.expect("a matching target exists");
+            operation.destination_selection = SessionExecutionSelection {
+                capability_profile_id: target.capability_profile_id.clone(),
+                capability_profile_revision: target.capability_profile_revision,
+                execution: target.execution.clone(),
+                workspace: SessionWorkspaceSelection::Existing {
+                    target: target.clone(),
+                },
+            };
+            operation.actions = planned_actions(
+                operation.source_target.as_ref(),
+                &operation.destination_selection,
+            );
+            for kind in [
+                TargetOperationActionKind::PrepareDevice,
+                TargetOperationActionKind::VerifyWorktree,
+            ] {
+                set_action(
+                    &mut operation,
+                    kind,
+                    TargetOperationActionStatus::Completed,
+                    Some("The Session already uses this target".into()),
+                    None,
+                );
+            }
+            operation.staged_target = Some(target);
+            operation.phase = TargetOperationPhase::Staged;
+            operation.error = None;
+            operation.updated_at = self.clock.now();
+            self.repository
+                .save_target_operation(&operation)
+                .map_err(AgentSessionApplicationError::repository)?;
+            self.target_operation_workers.release(&operation_id);
+            self.notify_queue(&operation.session_id);
+            self.wake_session_queue(operation.session_id);
+            return Ok(());
+        }
         operation.phase = TargetOperationPhase::Staging;
         operation.error = None;
         operation.updated_at = self.clock.now();
@@ -728,6 +774,11 @@ impl AgentSessionApplication {
             .session
             .execution_target;
         operation.source_target = source.clone();
+        operation.actions = replan_actions(
+            &operation.actions,
+            source.as_ref(),
+            &operation.destination_selection,
+        );
         operation.phase = TargetOperationPhase::Activating;
         operation.updated_at = self.clock.now();
         self.repository
@@ -1114,24 +1165,6 @@ fn validate_migration_facts(
     blocker.map_or(Ok(()), |message| {
         Err(AgentSessionApplicationError::conflict(message))
     })
-}
-
-fn selection_matches_target(
-    selection: &SessionExecutionSelection,
-    target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
-) -> bool {
-    let Some(target) = target else { return false };
-    if selection.capability_profile_id != target.capability_profile_id
-        || selection.capability_profile_revision != target.capability_profile_revision
-        || selection.execution != target.execution
-    {
-        return false;
-    }
-    match &selection.workspace {
-        SessionWorkspaceSelection::Existing { target: selected } => selected == target,
-        SessionWorkspaceSelection::Auxiliary => target.repository_id.is_empty(),
-        SessionWorkspaceSelection::Create { .. } => false,
-    }
 }
 
 fn same_selection_intent(

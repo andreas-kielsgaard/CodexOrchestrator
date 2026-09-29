@@ -1,8 +1,5 @@
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
-import {
-  capabilityProfileDeviceModels,
-  withCapabilityProfileDeviceModels,
-} from './routeModels';
+import { capabilityProfileDeviceModels, withCapabilityProfileDeviceModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
@@ -20,6 +17,7 @@ import { SessionComposerToolbar } from './SessionComposerToolbar';
 import { SessionPreparationPanel } from './SessionPreparationPanel';
 import { preparationPreview } from './preparationPreview';
 import { SessionQueuePanel } from './SessionQueuePanel';
+import { SessionDeviceActivityList } from './SessionDeviceActivityList';
 import { SessionTargetDialog } from './SessionTargetDialog';
 import { DeviceContinuationDialog } from './DeviceContinuationDialog';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
@@ -334,12 +332,12 @@ export function StandaloneAgentSessionScreen({
   const modelCatalogueRoutes = useMemo(
     () =>
       (targetDraft.profile?.routePolicies ?? [])
-      .filter(
-        (route) =>
-          route.execution.deviceId ===
-          (targetDraft.selection?.execution ?? currentTarget?.execution)?.deviceId,
-      )
-      .map((route) => executionRouteRef(route.execution)),
+        .filter(
+          (route) =>
+            route.execution.deviceId ===
+            (targetDraft.selection?.execution ?? currentTarget?.execution)?.deviceId,
+        )
+        .map((route) => executionRouteRef(route.execution)),
     [
       targetDraft.profile?.routePolicies,
       targetDraft.selection?.execution,
@@ -454,38 +452,30 @@ export function StandaloneAgentSessionScreen({
         onPreview={() => setPreviewOpen(!previewOpen)}
       />
     ) : undefined;
-  const queueHasUnfinished = Boolean(
-    session.queue?.entries.some(({ entry }) => entry.state !== 'completed' && entry.state !== 'canceled'),
+  const queuePanel = session.queue ? (
+    <SessionQueuePanel
+      queue={session.queue}
+      controller={session}
+      onChooseTarget={(queueEntry) =>
+        setTargetPicker({
+          deviceId: queueEntry.targetOperation?.destinationSelection.execution.deviceId,
+          queueEntry,
+        })
+      }
+    />
+  ) : null;
+  const deviceActivityPanel = (
+    <SessionDeviceActivityList activities={session.queuePresentation?.deviceActivities ?? []} />
   );
-  const preparationPanel = (
-    <>
-      {session.queue && (
-        <SessionQueuePanel
-          queue={session.queue}
-          controller={session}
-          onChooseTarget={(queueEntry) =>
-            setTargetPicker({
-              deviceId: queueEntry.targetOperation?.destinationSelection.execution.deviceId,
-              queueEntry,
-            })
-          }
-        />
-      )}
-      {!queueHasUnfinished && (
-        <SessionPreparationPanel
-          preparation={session.preparation}
-          preview={preview}
-          deviceName={
-            (previewOpen ? targetDraft.selection : session.preparation?.selection)?.execution
-              .deviceName ?? 'this device'
-          }
-          onClosePreview={() => setPreviewOpen(false)}
-          onCancel={() => void session.cancel()}
-          onRetry={() => void session.retryPreparation?.()}
-        />
-      )}
-    </>
-  );
+  const composerDialog = preview ? (
+    <SessionPreparationPanel
+      preparation={null}
+      preview={preview}
+      deviceName={targetDraft.selection?.execution.deviceName ?? 'this device'}
+      onClosePreview={() => setPreviewOpen(false)}
+      onCancel={() => undefined}
+    />
+  ) : null;
   const workspace =
     selection.kind === 'initial' ? (
       <p role="status">Loading sessions…</p>
@@ -494,7 +484,9 @@ export function StandaloneAgentSessionScreen({
         <AgentSessionWorkspace
           controller={session}
           composerToolbar={toolbar}
-          preparationPanel={preparationPanel}
+          deviceActivityPanel={deviceActivityPanel}
+          queuePanel={queuePanel}
+          composerDialog={composerDialog}
           targetSource={
             executionTargetClient && branchSource && profileClient
               ? {
@@ -538,15 +530,19 @@ export function StandaloneAgentSessionScreen({
             targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
             'existing'
               ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.target
-              : targetDraft.target
+              : targetPicker.queueEntry?.message
+                ? null
+                : targetDraft.target
           }
           initialRepositoryId={
-            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind === 'create'
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'create'
               ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.repositoryId
-              : draftRepositoryId ?? undefined
+              : (draftRepositoryId ?? undefined)
           }
           initialBranchRef={
-            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind === 'create'
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'create'
               ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.branchRef
               : targetDraft.branchChoice?.branchRef
           }
@@ -559,7 +555,7 @@ export function StandaloneAgentSessionScreen({
           sessionId={selectedSessionId ?? undefined}
           onClose={() => setTargetPicker(null)}
           onSelect={(target) => {
-            if (targetPicker.queueEntry && target) {
+            if (targetPicker.queueEntry?.targetOperation && target) {
               void session.updateTargetOperation?.({
                 entryId: targetPicker.queueEntry.entry.id,
                 destination: {
@@ -569,15 +565,27 @@ export function StandaloneAgentSessionScreen({
                   workspace: { kind: 'existing', target },
                 },
               });
+            } else if (targetPicker.queueEntry?.message && target) {
+              void session.enqueueTargetOperation?.(
+                {
+                  capabilityProfileId: target.capabilityProfileId,
+                  capabilityProfileRevision: target.capabilityProfileRevision,
+                  execution: target.execution,
+                  workspace: { kind: 'existing', target },
+                },
+                targetPicker.queueEntry.entry.id,
+              );
             } else if (!targetPicker.queueEntry) targetDraft.setTarget(target);
             setTargetPicker(null);
           }}
           onSelectSelection={(next) => {
-            if (targetPicker.queueEntry)
+            if (targetPicker.queueEntry?.targetOperation)
               void session.updateTargetOperation?.({
                 entryId: targetPicker.queueEntry.entry.id,
                 destination: next,
               });
+            else if (targetPicker.queueEntry?.message)
+              void session.enqueueTargetOperation?.(next, targetPicker.queueEntry.entry.id);
             else targetDraft.setSelection(next);
             setTargetPicker(null);
           }}

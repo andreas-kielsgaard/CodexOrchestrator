@@ -23,6 +23,10 @@ import type {
   UpdateQueuedMessageInputDto,
   UpdateTargetOperationInputDto,
 } from '../../application/agentSessions/sessionQueue';
+import {
+  presentSessionQueue,
+  type SessionQueuePresentation,
+} from '../../application/agentSessions/sessionQueuePresentation';
 import { samePreparedConfiguration } from './sessionPreparationState';
 import {
   clearCachedComposerDraft,
@@ -33,6 +37,7 @@ import {
 import {
   AgentSessionTranscriptProjectionCache,
   projectAgentSessionTranscript,
+  withoutTranscriptInvocations,
 } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 
@@ -69,13 +74,25 @@ export interface AgentSessionWorkspaceController {
   /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
   sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
-  respondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
+  respondToRequest?(
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ): Promise<void>;
   steeringAvailable?: boolean;
   queue?: SessionQueueViewDto | null;
+  queuePresentation?: SessionQueuePresentation;
   reorderQueue?(entryIds: readonly string[]): Promise<void>;
-  enqueueTargetOperation?(destination: SessionExecutionSelectionDto): Promise<void>;
-  updateQueuedMessage?(input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>): Promise<void>;
-  updateTargetOperation?(input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>): Promise<void>;
+  enqueueTargetOperation?(
+    destination: SessionExecutionSelectionDto,
+    beforeEntryId?: string,
+  ): Promise<void>;
+  updateQueuedMessage?(
+    input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>,
+  ): Promise<void>;
+  updateTargetOperation?(
+    input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>,
+  ): Promise<void>;
   startQueueEntry?(entryId: string): Promise<void>;
   retryQueueEntry?(entryId: string): Promise<void>;
   cancelQueueEntry?(entryId: string): Promise<void>;
@@ -280,10 +297,7 @@ export function useAgentSession(
         }
         return;
       }
-      if (
-        update.kind !== 'queue_updated' &&
-        !invocationIdsRef.current.has(update.invocationId)
-      ) {
+      if (update.kind !== 'queue_updated' && !invocationIdsRef.current.has(update.invocationId)) {
         return;
       }
       try {
@@ -576,17 +590,42 @@ export function useAgentSession(
   );
 
   const enqueueTargetOperation = useCallback(
-    async (destination: SessionExecutionSelectionDto) => {
+    async (destination: SessionExecutionSelectionDto, beforeEntryId?: string) => {
       const sessionId = selectedIdRef.current;
       const queueClient = options.execution?.client;
       if (!sessionId || !queueClient?.enqueueTargetOperation) return;
       try {
-        setQueue(await queueClient.enqueueTargetOperation({ sessionId, destination }));
+        const appended = await queueClient.enqueueTargetOperation({ sessionId, destination });
+        if (!beforeEntryId || !queueClient.reorderQueue) {
+          setQueue(appended);
+          return;
+        }
+        const unfinished = appended.entries.filter(
+          ({ entry }) => entry.state !== 'completed' && entry.state !== 'canceled',
+        );
+        const previousIds = new Set(queue?.entries.map(({ entry }) => entry.id));
+        const inserted = unfinished.find(
+          ({ entry, targetOperation }) => targetOperation && !previousIds.has(entry.id),
+        );
+        const ids = unfinished.map(({ entry }) => entry.id);
+        if (!inserted || !ids.includes(beforeEntryId)) {
+          setQueue(appended);
+          return;
+        }
+        const next = ids.filter((id) => id !== inserted.entry.id);
+        next.splice(next.indexOf(beforeEntryId), 0, inserted.entry.id);
+        setQueue(
+          await queueClient.reorderQueue({
+            sessionId,
+            expectedRevision: appended.revision,
+            entryIds: next,
+          }),
+        );
       } catch (caught) {
         setError(errorMessage(caught));
       }
     },
-    [options.execution?.client],
+    [options.execution?.client, queue],
   );
 
   const updateQueuedMessage = useCallback(
@@ -691,10 +730,14 @@ export function useAgentSession(
     });
   }, []);
 
-  const transcript = useMemo(
-    () => (details ? transcriptProjection.current.project(details, preparation) : null),
-    [details, preparation],
-  );
+  const queuePresentation = useMemo(() => presentSessionQueue(queue), [queue]);
+  const transcript = useMemo(() => {
+    if (!details) return null;
+    return withoutTranscriptInvocations(
+      transcriptProjection.current.project(details, preparation),
+      queuePresentation.queuedInvocationIds,
+    );
+  }, [details, preparation, queuePresentation]);
 
   useEffect(() => {
     if (details) {
@@ -897,6 +940,7 @@ export function useAgentSession(
     steeringAvailable: Boolean(client.steerSession) && !preparing && sameActiveConfiguration,
     steer,
     queue,
+    queuePresentation,
     enqueueTargetOperation,
     reorderQueue,
     updateQueuedMessage,

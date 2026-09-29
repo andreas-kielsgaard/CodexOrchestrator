@@ -1,0 +1,81 @@
+.session-device-activity {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: 20px;
+  width: min(330px, calc(100% - 40px));
+  padding: 10px;
+  border: 1px solid #dce4df;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 30px #173d2520;
+  color: #263d34;
+}
+.session-device-activity > strong {
+  display: block;
+  margin: 0 4px 7px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+.session-device-activity ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-device-activity li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #f1f6f2;
+}
+.session-device-activity li > span {
+  display: grid;
+  min-width: 0;
+}
+.session-device-activity b,
+.session-device-activity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-device-activity b {
+  font-size: 0.72rem;
+}
+.session-device-activity small {
+  color: #647269;
+  font-size: 0.65rem;
+}
+.session-device-activity__count {
+  display: flex !important;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 3px;
+  color: #4b6d59;
+  font-size: 0.64rem;
+}
+.session-device-activity__spinner {
+  color: #3d7a59;
+  animation: session-device-spin 1s linear infinite;
+}
+@keyframes session-device-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 900px) {
+  .session-device-activity {
+    top: 8px;
+    right: 14px;
+    width: min(290px, calc(100% - 28px));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-device-activity__spinner {
+    animation: none;
+  }
+}

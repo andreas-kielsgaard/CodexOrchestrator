@@ -1,6 +1,6 @@
 # Agent Session compact queue and device activity correction
 
-Status: proposed correction to the implemented ordered queue. This plan does not replace the durable queue model in `agent-session-queued-delivery-and-readiness-correction-plan.md`; it corrects target reconciliation and separates the queue, active message, and device activity presentations.
+Status: implemented on 2026-09-29. This correction keeps the durable queue model in `agent-session-queued-delivery-and-readiness-correction-plan.md`, reconciles resolved target intents, and separates the queue, active message, and device activity presentations.
 
 ## Target
 
@@ -200,9 +200,9 @@ The fallback intentionally inherits existing Send behavior: it sends when idle a
 | Change | File or module | Resulting responsibility |
 | --- | --- | --- |
 | Retain | `src-tauri/src/agent_sessions/application/queue.rs` | Durable queue dispatch, execution barrier, and transactional queue mutations. |
-| Extract | `src-tauri/src/agent_sessions/application/target_operation/planning.rs` | Target relation, applicable action planning, and staged-result invalidation. |
-| Extract | `src-tauri/src/agent_sessions/application/target_operation/execution.rs` | Execution of the persisted target-operation plan. |
-| Adapt | `src-tauri/src/agent_sessions/target_operation.rs` | Persist target intent, phase, applicable actions, results, and error categories; remove the universal action constructor. |
+| Extract | `src-tauri/src/agent_sessions/target_operation/planning.rs` | Target relation, applicable action planning, and staged-result invalidation. |
+| Adapt | `src-tauri/src/agent_sessions/application/queue.rs` | Execute persisted target-operation plans and reconcile already-active resolved targets. |
+| Adapt | `src-tauri/src/agent_sessions/target_operation/mod.rs` | Persist target intent, phase, applicable actions, results, and errors; remove the universal action constructor. |
 | Adapt | `src-tauri/src/agent_sessions/repository/queue.rs` | Replan target operations on material edit or retry without changing queue identity or ordinal. |
 | Adapt | `crates/orchid-engine/src/workspaces/checkout.rs` and its caller | Preserve categorized, sanitized checkout failure detail. |
 | Retain | `src/application/agentSessions/sessionQueue.ts` | Queue DTO helpers and effective-target projection. |

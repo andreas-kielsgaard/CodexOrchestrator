@@ -36,13 +36,17 @@ const capabilities: AgentSessionQuickFeatures = {
 function Harness({
   load,
   send,
+  steer,
   active = false,
+  steeringAvailable = true,
   contextKey = 'session-1',
   prefetched = false,
 }: {
   load: () => Promise<AgentSessionQuickFeatures>;
   send: ReturnType<typeof vi.fn>;
+  steer?: ReturnType<typeof vi.fn>;
   active?: boolean;
+  steeringAvailable?: boolean;
   contextKey?: string;
   prefetched?: boolean;
 }) {
@@ -59,13 +63,14 @@ function Harness({
       isNewSession={false}
       sending={false}
       active={active}
-      steeringAvailable
+      steeringAvailable={steeringAvailable}
       canceling={false}
       showWorkingDirectory={false}
       keyboardHint="tooltip"
       onWorkingDirectoryChange={() => {}}
       onCancel={() => {}}
       onSend={() => send(draft, selection)}
+      onSteer={steer ? () => steer(draft) : undefined}
       quickFeatures={{
         contextKey,
         load,
@@ -210,6 +215,36 @@ it('allows draft model changes during a turn and still offers skills', async () 
   await screen.findByRole('option', { name: /review/ });
   await user.keyboard('{Enter}');
   expect(input).toHaveValue('$review ');
+});
+
+it('uses Ctrl+Enter for steering when available', async () => {
+  const send = vi.fn();
+  const steer = vi.fn();
+  render(<Harness load={vi.fn(async () => capabilities)} send={send} steer={steer} active />);
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await userEvent.setup().type(input, 'Correct this');
+  fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+  expect(steer).toHaveBeenCalledWith('Correct this');
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('falls Ctrl+Enter back to ordinary queueing when steering is unavailable', async () => {
+  const send = vi.fn();
+  const steer = vi.fn();
+  render(
+    <Harness
+      load={vi.fn(async () => capabilities)}
+      send={send}
+      steer={steer}
+      active
+      steeringAvailable={false}
+    />,
+  );
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await userEvent.setup().type(input, 'Queue this');
+  fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
+  expect(send).toHaveBeenCalledWith('Queue this', expect.anything());
+  expect(steer).not.toHaveBeenCalled();
 });
 
 it('retains the draft on discovery failure and retries without sending', async () => {

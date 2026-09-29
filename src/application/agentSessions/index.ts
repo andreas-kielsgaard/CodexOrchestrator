@@ -8,6 +8,7 @@
 export * from './contracts';
 export * from './liveHistory';
 export * from './sessionQueue';
+export * from './sessionQueuePresentation';
 
 export * from './selections';
 

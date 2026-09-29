@@ -2,7 +2,11 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { repairClients, repairProfile } from '../workflowAuthoring/testFixtures';
 import { composerDraftCacheKey, writeCachedComposerDraft } from './composerDraftCache';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
-import { selectionForTarget, useSessionTarget } from './useSessionTarget';
+import {
+  selectionForTarget,
+  selectionSatisfiedByTarget,
+  useSessionTarget,
+} from './useSessionTarget';
 
 beforeEach(() => window.localStorage.clear());
 
@@ -37,4 +41,26 @@ it('requires a new choice when a cached worktree has disappeared', async () => {
   expect(result.current.selection?.workspace.kind).toBe('auxiliary');
   expect(result.current.target).toBeNull();
   expect(result.current.workspaceLabel).toContain('codex/durable-review');
+});
+
+it('recognizes a create-worktree intent resolved to the active target without consuming a later choice', () => {
+  const create = {
+    capabilityProfileId: remoteTarget.capabilityProfileId,
+    capabilityProfileRevision: remoteTarget.capabilityProfileRevision,
+    execution: remoteTarget.execution,
+    workspace: {
+      kind: 'create' as const,
+      repositoryId: remoteTarget.repositoryId,
+      branchRef: remoteTarget.branchRef,
+      commit: remoteTarget.head ?? '',
+      attachment: 'branch' as const,
+    },
+  };
+  expect(selectionSatisfiedByTarget(create, remoteTarget)).toBe(true);
+  expect(
+    selectionSatisfiedByTarget(
+      { ...create, workspace: { ...create.workspace, branchRef: 'refs/heads/another' } },
+      remoteTarget,
+    ),
+  ).toBe(false);
 });

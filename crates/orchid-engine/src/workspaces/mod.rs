@@ -301,5 +301,14 @@ mod tests {
             instance.branch_ref.as_deref(),
             Some("refs/heads/feature/local")
         );
+        let conflict = materialize_worktree(
+            source.to_str().unwrap(),
+            "refs/heads/feature/local",
+            &commit,
+            "another-instance",
+        )
+        .unwrap_err();
+        assert!(conflict.message.contains("refs/heads/feature/local"));
+        assert!(conflict.message.contains(&instance.path));
     }
 }

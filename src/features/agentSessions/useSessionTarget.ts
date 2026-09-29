@@ -30,6 +30,27 @@ export function selectionForTarget(
   };
 }
 
+export function selectionSatisfiedByTarget(
+  selection: SessionExecutionSelectionDto | null,
+  target: SessionExecutionTargetDto | null,
+) {
+  if (!selection || !target) return false;
+  if (
+    selection.capabilityProfileId !== target.capabilityProfileId ||
+    selection.capabilityProfileRevision !== target.capabilityProfileRevision ||
+    !sameExecutionRoute(selection.execution, target.execution)
+  )
+    return false;
+  if (selection.workspace.kind === 'existing')
+    return selection.workspace.target.worktreeId === target.worktreeId;
+  if (selection.workspace.kind === 'auxiliary') return !target.repositoryId;
+  return (
+    selection.workspace.repositoryId === target.repositoryId &&
+    selection.workspace.branchRef === target.branchRef &&
+    (!selection.workspace.commit || selection.workspace.commit === target.head)
+  );
+}
+
 function sameExecutionRoute(
   left: SessionExecutionSelectionDto['execution'],
   right: SessionExecutionSelectionDto['execution'],
@@ -248,9 +269,10 @@ export function useSessionTarget(
   );
   const adoptCurrent = useCallback(
     (target: SessionExecutionTargetDto | null, accepted?: SessionExecutionSelectionDto | null) => {
-      if (dirty.current) return;
+      if (dirty.current && !selectionSatisfiedByTarget(selectionRef.current, target)) return;
       const next = target ? selectionForTarget(target) : accepted;
       if (next) {
+        dirty.current = false;
         setSelectionState((previous) =>
           JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
         );
@@ -378,12 +400,15 @@ export function useSessionTarget(
   }, [selection, target?.path, client, branchResolutionKey]);
   const acceptReady = useCallback(
     (accepted: SessionExecutionSelectionDto | null, target: SessionExecutionTargetDto | null) => {
-      if (target)
+      if (target) {
+        if (selectionSatisfiedByTarget(selectionRef.current, target)) dirty.current = false;
         setSelectionState((current) =>
-          JSON.stringify(current) === JSON.stringify(accepted)
+          JSON.stringify(current) === JSON.stringify(accepted) ||
+          selectionSatisfiedByTarget(current, target)
             ? selectionForTarget(target)
             : current,
         );
+      }
     },
     [],
   );

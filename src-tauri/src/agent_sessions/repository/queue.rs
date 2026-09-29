@@ -7,7 +7,7 @@ use crate::agent_sessions::{
         SessionQueueSnapshot,
     },
     target_operation::{
-        planned_actions, validate_target_operation, SessionTargetOperation,
+        planned_actions, replan_actions, validate_target_operation, SessionTargetOperation,
         TargetOperationActionStatus, TargetOperationPhase,
     },
 };
@@ -141,13 +141,17 @@ pub(crate) fn migrate_legacy_target_transitions(connection: &Connection) -> Resu
         ensure_state(connection, &session).map_err(|error| error.to_string())?;
         let now = transition.updated_at;
         let operation_id = format!("legacy-transition:{}", transition.session_id.as_str());
+        let actions = planned_actions(
+            Some(&transition.source_target),
+            &transition.destination_selection,
+        );
         let mut operation = SessionTargetOperation {
             id: operation_id.clone(),
             session_id: transition.session_id.clone(),
             source_target: Some(transition.source_target),
             destination_selection: transition.destination_selection,
             phase: TargetOperationPhase::Pending,
-            actions: planned_actions(),
+            actions,
             staged_target: None,
             activated_binding: None,
             error: None,
@@ -760,12 +764,11 @@ impl SqliteAgentSessionRepository {
                     operation.phase = TargetOperationPhase::Pending;
                     operation.error = None;
                     operation.updated_at = at;
-                    for action in &mut operation.actions {
-                        if action.status == TargetOperationActionStatus::Failed {
-                            action.status = TargetOperationActionStatus::Pending;
-                            action.error = None;
-                        }
-                    }
+                    operation.actions = replan_actions(
+                        &operation.actions,
+                        operation.source_target.as_ref(),
+                        &operation.destination_selection,
+                    );
                     tx.execute(
                         "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1",
                         params![operation_id, to_json(&operation)?],
@@ -1000,7 +1003,10 @@ impl SqliteAgentSessionRepository {
             let mut operation: SessionTargetOperation = from_json(&json, "target operation")?;
             operation.destination_selection = destination;
             operation.phase = crate::agent_sessions::target_operation::TargetOperationPhase::Pending;
-            operation.actions = crate::agent_sessions::target_operation::planned_actions();
+            operation.actions = crate::agent_sessions::target_operation::planned_actions(
+                operation.source_target.as_ref(),
+                &operation.destination_selection,
+            );
             operation.staged_target = None;
             operation.activated_binding = None;
             operation.error = None;

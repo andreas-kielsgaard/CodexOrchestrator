@@ -3,6 +3,12 @@ use crate::execution_targets::domain::{SessionExecutionSelection, SessionExecuti
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod planning;
+
+pub(crate) use planning::{
+    planned_actions, replan_actions, selection_target_relation, SelectionTargetRelation,
+};
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TargetOperationPhase {
@@ -76,13 +82,14 @@ impl SessionTargetOperation {
         destination_selection: SessionExecutionSelection,
         now: DateTime<Utc>,
     ) -> Self {
+        let actions = planned_actions(source_target.as_ref(), &destination_selection);
         Self {
             id,
             session_id,
             source_target,
             destination_selection,
             phase: TargetOperationPhase::Pending,
-            actions: planned_actions(),
+            actions,
             staged_target: None,
             activated_binding: None,
             error: None,
@@ -91,32 +98,6 @@ impl SessionTargetOperation {
             updated_at: now,
         }
     }
-}
-
-pub(crate) fn planned_actions() -> Vec<TargetOperationAction> {
-    [
-        TargetOperationActionKind::PrepareDevice,
-        TargetOperationActionKind::ResolveRevision,
-        TargetOperationActionKind::MaterializeWorktree,
-        TargetOperationActionKind::VerifyWorktree,
-        TargetOperationActionKind::InspectSource,
-        TargetOperationActionKind::InspectDestination,
-        TargetOperationActionKind::CaptureSnapshot,
-        TargetOperationActionKind::TransferSnapshot,
-        TargetOperationActionKind::ApplySnapshot,
-        TargetOperationActionKind::VerifyMigratedState,
-        TargetOperationActionKind::ActivateSister,
-        TargetOperationActionKind::SelectProviderContext,
-        TargetOperationActionKind::ActivateTarget,
-    ]
-    .into_iter()
-    .map(|kind| TargetOperationAction {
-        kind,
-        status: TargetOperationActionStatus::Pending,
-        detail: None,
-        error: None,
-    })
-    .collect()
 }
 
 pub(crate) fn validate_target_operation(operation: &SessionTargetOperation) -> Result<(), String> {

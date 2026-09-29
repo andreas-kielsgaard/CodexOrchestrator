@@ -45,18 +45,24 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       menu.accept();
       return;
     }
-    if (
-      props.draft.trim() &&
-      !props.sending &&
-      !props.sendUnavailableReason
-    )
-      props.onSend();
+    if (props.draft.trim() && !props.sending && !props.sendUnavailableReason) props.onSend();
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (menu.keyDown(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      if (
+        event.ctrlKey &&
+        props.active &&
+        props.steeringAvailable &&
+        props.onSteer &&
+        props.draft.trim() &&
+        !props.sending
+      ) {
+        props.onSteer();
+        return;
+      }
       submit();
     }
   };
@@ -125,20 +131,14 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 className="send-agent-button"
                 type="submit"
                 disabled={
-                  !props.draft.trim() ||
-                  props.sending ||
-                  Boolean(props.sendUnavailableReason)
+                  !props.draft.trim() || props.sending || Boolean(props.sendUnavailableReason)
                 }
                 aria-describedby={
                   props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
                 }
               >
                 <Send size={16} aria-hidden="true" />
-                {props.sending
-                  ? 'Sending…'
-                  : props.active
-                    ? 'Queue'
-                    : 'Send'}
+                {props.sending ? 'Sending…' : props.active ? 'Queue' : 'Send'}
               </button>
               {props.keyboardHint === 'tooltip' && (
                 <span
@@ -147,7 +147,11 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                   role="tooltip"
                 >
                   {props.quickFeatures || props.targetSource ? '/ for quick features. ' : ''}Enter
-                  to send. Shift+Enter adds a new line.
+                  to {props.active ? 'queue' : 'send'}.{' '}
+                  {props.active && props.steeringAvailable && props.onSteer
+                    ? 'Ctrl+Enter steers the current turn. '
+                    : ''}
+                  Shift+Enter adds a new line.
                 </span>
               )}
             </span>

@@ -104,6 +104,48 @@
   box-shadow: 0 8px 30px #173d2520;
   padding: 18px;
 }
+.session-preparation-preview {
+  width: min(560px, calc(100vw - 40px));
+  padding: 22px;
+}
+.session-preparation-preview header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.session-preparation-preview header p {
+  margin: 0 0 3px;
+  color: #68786f;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.session-preparation-preview header h2 {
+  margin: 0;
+}
+.session-preparation-preview header small {
+  color: #65746c;
+}
+.session-preparation-preview header button {
+  border: 0;
+  background: transparent;
+  color: #53685e;
+}
+.session-preparation-preview ol {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.session-preparation-preview li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 9px;
+  color: #637269;
+}
 .session-preparation-panel header {
   display: flex;
   align-items: center;

@@ -7,20 +7,10 @@ import type {
 import type { SandboxModeDto } from '../executionConfiguration';
 
 export type SessionQueueEntryStateDto =
-  | 'pending'
-  | 'executing'
-  | 'blocked'
-  | 'completed'
-  | 'canceled';
+  'pending' | 'executing' | 'blocked' | 'completed' | 'canceled';
 
 export type TargetOperationPhaseDto =
-  | 'pending'
-  | 'staging'
-  | 'staged'
-  | 'activating'
-  | 'completed'
-  | 'blocked'
-  | 'canceled';
+  'pending' | 'staging' | 'staged' | 'activating' | 'completed' | 'blocked' | 'canceled';
 
 export type TargetOperationActionKindDto =
   | 'prepare_device'
@@ -127,10 +117,12 @@ export interface ProjectedQueueEntry {
   readonly target: SessionExecutionSelectionDto | SessionExecutionTargetDto | null;
 }
 
-export function projectSessionQueueTargets(queue: SessionQueueViewDto): readonly ProjectedQueueEntry[] {
+export function projectSessionQueueTargets(
+  queue: SessionQueueViewDto,
+): readonly ProjectedQueueEntry[] {
   let target: SessionExecutionSelectionDto | SessionExecutionTargetDto | null = queue.activeTarget;
   return queue.entries.map((item) => {
-    if (item.targetOperation && item.entry.state !== 'canceled')
+    if (item.targetOperation && item.entry.state !== 'completed' && item.entry.state !== 'canceled')
       target = item.targetOperation.destinationSelection;
     return { item, target };
   });
