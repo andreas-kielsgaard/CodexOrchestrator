@@ -4,7 +4,10 @@ use super::{
     build_presentation::{BuildWorkspacePlanInput, CreateBuildSourceInput},
     domain::*,
     source_materialization::SourceMaterializationService,
-    storage::{ReviewBuildRepository, WorkspaceRepository, WorktreeReviewDatabase},
+    storage::{
+        ReviewBuildRepository, WorkspaceRepository, WorktreeAssociationRepository,
+        WorktreeReviewDatabase,
+    },
     worktree_activity::WorktreeActivityService,
 };
 use crate::repository_context::{RepositoryContext, RepositoryIdentity};
@@ -154,6 +157,66 @@ fn worktree_branch_graph_browses_registered_repository_without_changing_review_s
             .repository_id,
         other.repository.id.as_str()
     );
+}
+
+#[test]
+fn branch_detail_excludes_a_checkout_that_moved_to_another_branch() {
+    use super::{branch_first::BranchFirstReviewService, WorktreeReviewApplication};
+    use crate::{
+        persistence::ActiveDatabase,
+        repository_catalog::{RepositoryCatalog, REPOSITORY_CATALOG_SCHEMA},
+    };
+
+    let fixture = Fixture::new();
+    let database = ActiveDatabase::from_connection(
+        rusqlite::Connection::open_in_memory().unwrap(),
+        |connection| {
+            connection
+                .execute_batch(REPOSITORY_CATALOG_SCHEMA)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    let catalog = Arc::new(RepositoryCatalog::new(Arc::new(database)));
+    catalog.register_directory(fixture.root.clone()).unwrap();
+    let application = Arc::new(WorktreeReviewApplication::open(
+        fixture.temp.path().join("app-data"),
+        fixture.temp.path().join("review"),
+        catalog,
+    ));
+    application.select_repository(fixture.repository.id.as_str());
+    let service = BranchFirstReviewService::open(application.clone()).unwrap();
+    service.overview().unwrap();
+
+    let main = service
+        .branch_detail(fixture.repository.id.as_str(), "refs/heads/main")
+        .unwrap();
+    assert_eq!(main.worktrees.len(), 1);
+    let root_worktree_id = main.worktrees[0].worktree_id.clone();
+
+    git(&fixture.root, &["checkout", "side"]);
+
+    let main = service
+        .branch_detail(fixture.repository.id.as_str(), "refs/heads/main")
+        .unwrap();
+    assert!(main.worktrees.is_empty());
+
+    let side = service
+        .branch_detail(fixture.repository.id.as_str(), "refs/heads/side")
+        .unwrap();
+    assert_eq!(side.worktrees.len(), 1);
+    assert_eq!(side.worktrees[0].worktree_id, root_worktree_id);
+
+    let repository_id = RepositoryId::new(fixture.repository.id.as_str()).unwrap();
+    let main_ref = BranchRef::new("refs/heads/main").unwrap();
+    let retained = application
+        .database()
+        .unwrap()
+        .associations()
+        .list_for_branch(&repository_id, &main_ref)
+        .unwrap();
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].worktree_id.as_str(), root_worktree_id);
 }
 
 #[test]

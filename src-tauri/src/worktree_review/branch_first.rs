@@ -681,6 +681,12 @@ impl BranchFirstReviewService {
         }
         let worktrees = associations
             .iter()
+            .filter(|association| {
+                by_id
+                    .get(association.worktree_id.as_str())
+                    .and_then(|observation| observation.head_ref.as_ref())
+                    .is_none_or(|head_ref| head_ref == &branch.full_name)
+            })
             .map(|association| {
                 self.association_view(
                     context,
