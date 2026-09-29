@@ -29,6 +29,9 @@ pub fn arguments(
     request: &RuntimeInvocationRequest,
     conversation: &Conversation,
 ) -> Result<Vec<String>, RuntimePortError> {
+    if request.kind == crate::contracts::ports::RuntimeInvocationKind::Compact {
+        return Err(unsupported("Conversation compaction is available only through Codex"));
+    }
     let mut args: Vec<String> = [
         "-p",
         "--input-format",
@@ -177,6 +180,7 @@ mod tests {
     fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![],
             session_id: AgentSessionId::new("session").unwrap(),
             invocation_id: AgentInvocationId::new("invocation").unwrap(),
+            kind: Default::default(),
             content: InvocationContent::query("hello"),
             working_directory: Some("/work".into()),
             options: AgentRuntimeOptions {

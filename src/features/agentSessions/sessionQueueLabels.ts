@@ -25,6 +25,7 @@ export function queueTargetLabel(
 }
 
 export function queueEntryTitle(item: SessionQueueEntryViewDto) {
+  if (item.entry.item.kind === 'compaction') return 'Compact conversation';
   if (item.message) return item.message.invocation.submittedText.split(/\r?\n/, 1)[0] || 'Message';
   return `Switch to ${item.targetOperation?.destinationSelection.execution.deviceName ?? 'destination'}`;
 }

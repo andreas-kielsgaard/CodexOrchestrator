@@ -119,11 +119,12 @@ impl AgentSessionApplication {
                 invocation_id: existing.id,
             });
         }
-        self.accept_prepared_inner(input)
+        self.accept_prepared_inner(input, AgentInvocationInputProvenance::User)
     }
-    fn accept_prepared_inner(
+    pub(super) fn accept_prepared_inner(
         &self,
         mut input: PreparedMessageInput,
+        provenance: AgentInvocationInputProvenance,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         let now = self.clock.now();
         let session = match &input.session_id {
@@ -172,7 +173,7 @@ impl AgentSessionApplication {
         let pending = AgentInvocation { attachments: input.attachments, id: id.clone(),
             session_id: session.id.clone(),
             submitted_text: input.submitted_text,
-            input_provenance: AgentInvocationInputProvenance::User,
+            input_provenance: provenance,
             status: AgentInvocationStatus::Pending,
             requested_options: AgentRuntimeOptions::default(),
             effective_options: None,

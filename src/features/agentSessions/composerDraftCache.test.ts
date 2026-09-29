@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearCachedComposerDraft,
+  clearCachedComposerText,
   composerDraftCacheKey,
   readCachedComposerDraft,
   readLastSentRuntimeSelection,
@@ -59,5 +60,19 @@ describe('composer draft cache', () => {
       reasoningMode: 'high',
     });
     expect(readCachedComposerDraft('new:unattached')).toBeNull();
+  });
+
+  it('clears sent text without forgetting the conversation runtime choice', () => {
+    const key = composerDraftCacheKey('session-42');
+    writeCachedComposerDraft(key, {
+      text: 'Use Sol for this turn',
+      runtimeSelection: { model: 'gpt-5.6-sol', reasoningMode: 'high' },
+    });
+
+    clearCachedComposerText(key);
+
+    expect(readCachedComposerDraft(key)).toEqual({
+      runtimeSelection: { model: 'gpt-5.6-sol', reasoningMode: 'high' },
+    });
   });
 });

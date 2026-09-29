@@ -11,6 +11,8 @@ use std::{error::Error, fmt, sync::Arc};
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeInvocationRequest { pub session_id: AgentSessionId,
     pub invocation_id: AgentInvocationId,
+    #[serde(default)]
+    pub kind: RuntimeInvocationKind,
     pub content: InvocationContent,
     #[serde(default)]
     pub attachments: Vec<RuntimeImageAttachment>,
@@ -18,6 +20,14 @@ pub struct RuntimeInvocationRequest { pub session_id: AgentSessionId,
     pub options: AgentRuntimeOptions,
     /// Prepared native-home binding, capability additions and explicit domain launch selections.
     pub launch_extension: Option<RuntimeLaunchExtension>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeInvocationKind {
+    #[default]
+    Turn,
+    Compact,
 }
 
 /// Portable image bytes. The provider materializes these on the execution device.

@@ -383,6 +383,9 @@ fn insert_entry(connection: &Connection, entry: &SessionQueueEntry) -> Result<()
         SessionQueueEntryItem::Message { invocation_id } => {
             ("message", Some(invocation_id.as_str()), None)
         }
+        SessionQueueEntryItem::Compaction { invocation_id } => {
+            ("message", Some(invocation_id.as_str()), None)
+        }
         SessionQueueEntryItem::TargetOperation { operation_id } => {
             ("target_operation", None, Some(operation_id.as_str()))
         }
@@ -414,8 +417,11 @@ fn read_entries(
 ) -> Result<Vec<SessionQueueEntry>, RepositoryError> {
     let mut statement = connection
         .prepare(
-            "SELECT id,ordinal,kind,state,invocation_id,operation_id,blocked_reason,created_at,updated_at
-             FROM agent_session_queue_entries WHERE session_id=?1 ORDER BY ordinal,id",
+            "SELECT q.id,q.ordinal,q.kind,q.state,q.invocation_id,q.operation_id,q.blocked_reason,q.created_at,q.updated_at,
+                    i.input_provenance,i.submitted_text
+             FROM agent_session_queue_entries q
+             LEFT JOIN agent_session_invocations i ON i.id=q.invocation_id
+             WHERE q.session_id=?1 ORDER BY q.ordinal,q.id",
         )
         .map_err(sql_unavailable("prepare Session queue"))?;
     let rows = statement
@@ -430,19 +436,28 @@ fn read_entries(
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
             ))
         })
         .map_err(sql_unavailable("read Session queue"))?;
     rows.map(|row| {
-        let (id, ordinal, kind, state, invocation, operation, blocked_reason, created, updated) =
+        let (id, ordinal, kind, state, invocation, operation, blocked_reason, created, updated, provenance, submitted_text) =
             row.map_err(sql_unavailable("read Session queue entry"))?;
         let item = match kind.as_str() {
-            "message" => SessionQueueEntryItem::Message {
-                invocation_id: AgentInvocationId::new(
+            "message" => {
+                let invocation_id = AgentInvocationId::new(
                     invocation.ok_or_else(|| invalid_data("queued message has no invocation"))?,
                 )
-                .map_err(contract_error)?,
-            },
+                .map_err(contract_error)?;
+                if provenance.as_deref() == Some("application")
+                    && submitted_text.as_deref() == Some("/compact")
+                {
+                    SessionQueueEntryItem::Compaction { invocation_id }
+                } else {
+                    SessionQueueEntryItem::Message { invocation_id }
+                }
+            }
             "target_operation" => SessionQueueEntryItem::TargetOperation {
                 operation_id: operation
                     .ok_or_else(|| invalid_data("queued target operation has no operation"))?,
@@ -554,6 +569,18 @@ impl SqliteAgentSessionRepository {
                 )?;
                 ordinal += 1;
             }
+            let queue_item = if invocation.input_provenance
+                == crate::agent_sessions::domain::AgentInvocationInputProvenance::Application
+                && invocation.submitted_text == "/compact"
+            {
+                SessionQueueEntryItem::Compaction {
+                    invocation_id: invocation.id.clone(),
+                }
+            } else {
+                SessionQueueEntryItem::Message {
+                    invocation_id: invocation.id.clone(),
+                }
+            };
             insert_entry(
                 tx,
                 &SessionQueueEntry {
@@ -561,9 +588,7 @@ impl SqliteAgentSessionRepository {
                     session_id: session.id.clone(),
                     ordinal,
                     state: SessionQueueEntryState::Pending,
-                    item: SessionQueueEntryItem::Message {
-                        invocation_id: invocation.id.clone(),
-                    },
+                    item: queue_item,
                     blocked_reason: None,
                     created_at: at,
                     updated_at: at,
@@ -802,7 +827,7 @@ impl SqliteAgentSessionRepository {
             let Some(session) = session else { return Ok(None) };
             let session_id = AgentSessionId::new(session).map_err(contract_error)?;
             Ok(read_entries(connection, &session_id)?.into_iter().find(|entry| {
-                matches!(&entry.item, SessionQueueEntryItem::Message { invocation_id: id } if id == invocation_id)
+                matches!(&entry.item, SessionQueueEntryItem::Message { invocation_id: id } | SessionQueueEntryItem::Compaction { invocation_id: id } if id == invocation_id)
             }))
         })
     }

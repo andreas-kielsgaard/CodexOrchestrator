@@ -28,6 +28,7 @@ export function presentSessionQueue(
   const projected = projectSessionQueueTargets(queue);
   const futureEntries = projected.filter(({ item }) => {
     if (terminalStates.has(item.entry.state)) return false;
+    if (item.entry.item.kind === 'compaction') return true;
     if (item.message) return item.entry.state !== 'executing';
     return item.targetOperation?.phase !== 'activating';
   });

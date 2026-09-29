@@ -435,6 +435,8 @@ export function projectedTranscriptContent(
   transcript: ProjectedTranscript,
 ): ProjectedTranscriptContent[] {
   return transcript.invocations.flatMap((invocation) => {
+    if (invocation.inputProvenance === 'application' && invocation.submittedText === '/compact')
+      return [];
     const input: ProjectedTranscriptContent = {
       anchor: eventAnchor(transcript.sessionId, invocation.id, 'submitted_input'),
       kind: 'submitted_input',

@@ -22,6 +22,7 @@ impl SessionQueueEntryState {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum SessionQueueEntryItem {
     Message { invocation_id: AgentInvocationId },
+    Compaction { invocation_id: AgentInvocationId },
     TargetOperation { operation_id: String },
 }
 
@@ -60,6 +61,11 @@ pub(crate) fn validate_queue_entry(entry: &SessionQueueEntry) -> Result<(), Stri
         SessionQueueEntryItem::Message { invocation_id } => {
             if invocation_id.as_str().trim().is_empty() {
                 return Err("Queued message requires an invocation".into());
+            }
+        }
+        SessionQueueEntryItem::Compaction { invocation_id } => {
+            if invocation_id.as_str().trim().is_empty() {
+                return Err("Queued compaction requires an invocation".into());
             }
         }
         SessionQueueEntryItem::TargetOperation { operation_id } => {

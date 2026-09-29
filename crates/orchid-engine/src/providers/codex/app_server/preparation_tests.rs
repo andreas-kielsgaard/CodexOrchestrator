@@ -60,6 +60,10 @@ impl SupervisedChild for FakeChild {
                 self.output(json!({"method":"turn/started","params":{"threadId":"thread-one","turn":{"id":"turn-one","status":"inProgress"}}}));
                 self.output(json!({"id":"approval-native","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-one","turnId":"turn-one","itemId":"command-one","command":"echo approved","availableDecisions":["accept","decline"]}}));
             }
+            Some("thread/compact/start") => {
+                self.output(json!({"id":id,"result":{}}));
+                self.output(json!({"method":"turn/started","params":{"threadId":"thread-one","turn":{"id":"turn-one","status":"inProgress"}}}));
+            }
             Some("turn/steer") => {
                 if value["params"]["input"][0]["text"] == "DISCONNECT" { return self.terminate(); }
                 self.output(json!({"id":id,"result":{"turnId":"turn-one"}}));
@@ -127,11 +131,40 @@ impl AgentRuntimeUpdateSink for Sink {
 fn request(cwd: &std::path::Path) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: AgentInvocationId::new("invocation").unwrap(),
+        kind: RuntimeInvocationKind::Turn,
         content: InvocationContent::query("frozen original prompt"),
         working_directory: Some(cwd.to_string_lossy().into_owned()),
         options: Default::default(),
         launch_extension: None,
     }
+}
+
+#[test]
+fn prepared_compaction_uses_the_native_compaction_method_without_a_prompt() {
+    let directory = tempfile::tempdir().unwrap();
+    let factory = Arc::new(Factory::default());
+    let runtime = CodexAppServerRuntime::new("fake", factory.clone());
+    let mut request = request(directory.path());
+    request.kind = RuntimeInvocationKind::Compact;
+    let id = request.invocation_id.clone();
+    runtime
+        .prepare_invocation(
+            request,
+            Some(ExternalRuntimeContextId::new("thread-one").unwrap()),
+            Arc::new(Sink::default()),
+        )
+        .unwrap();
+    runtime.deliver_prepared_invocation(&id).unwrap();
+    let child = factory.0.lock().unwrap()[0].clone();
+    let calls = child.requests.lock().unwrap();
+    let compact = calls
+        .iter()
+        .find(|request| request["method"] == "thread/compact/start")
+        .unwrap();
+    assert_eq!(compact["params"], json!({"threadId":"thread-one"}));
+    assert!(!calls.iter().any(|request| request["method"] == "turn/start"));
+    drop(calls);
+    runtime.shutdown().unwrap();
 }
 #[test]
 fn preparation_retains_native_identity_and_cwd_without_delivering_until_release() {

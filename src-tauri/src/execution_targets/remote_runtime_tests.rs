@@ -78,6 +78,7 @@ impl AgentRuntimeUpdateSink for Sink {
 fn invocation(id: &str) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("remote-session").unwrap(),
         invocation_id: AgentInvocationId::new(id).unwrap(),
+        kind: Default::default(),
         content: InvocationContent::query("Create the requested file"),
         working_directory: Some("/srv/project/worktrees/demo".into()),
         options: Default::default(),

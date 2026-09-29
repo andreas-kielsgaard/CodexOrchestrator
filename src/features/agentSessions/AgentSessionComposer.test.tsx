@@ -41,6 +41,7 @@ function Harness({
   steeringAvailable = true,
   contextKey = 'session-1',
   prefetched = false,
+  compact,
 }: {
   load: () => Promise<AgentSessionQuickFeatures>;
   send: ReturnType<typeof vi.fn>;
@@ -49,6 +50,7 @@ function Harness({
   steeringAvailable?: boolean;
   contextKey?: string;
   prefetched?: boolean;
+  compact?: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState('');
   const [selection, setSelection] = useState<PerMessageRuntimeSelection>({
@@ -74,8 +76,7 @@ function Harness({
       }
       onSteer={
         steer
-          ? (attachments) =>
-              attachments.length ? steer(draft, attachments) : steer(draft)
+          ? (attachments) => (attachments.length ? steer(draft, attachments) : steer(draft))
           : undefined
       }
       quickFeatures={{
@@ -83,11 +84,28 @@ function Harness({
         load,
         selection,
         setSelection,
+        compact,
         ...(prefetched ? { catalogue: capabilities } : {}),
       }}
     />
   );
 }
+
+it('offers /compact as a command and queues it without sending a message', async () => {
+  const compact = vi.fn(async () => undefined);
+  const send = vi.fn();
+  render(
+    <Harness load={vi.fn(async () => capabilities)} send={send} prefetched compact={compact} />,
+  );
+  const input = screen.getByRole('textbox', { name: 'Message' });
+
+  await userEvent.setup().type(input, '/compact{Enter}');
+
+  expect(compact).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
+  expect(input).toHaveValue('');
+  expect(screen.getByRole('status')).toHaveTextContent('Compaction added to the queue');
+});
 
 it('filters a prefetched catalogue without reloading or clearing results while typing', async () => {
   const load = vi.fn(async () => capabilities);

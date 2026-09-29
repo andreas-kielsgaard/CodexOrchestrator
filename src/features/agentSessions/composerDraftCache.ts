@@ -62,6 +62,22 @@ export function clearCachedComposerDraft(key: string): void {
   }
 }
 
+/** Clear only the submitted text while preserving the conversation's runtime choices. */
+export function clearCachedComposerText(key: string): void {
+  const current = readCachedComposerDraft(key);
+  if (!current) return;
+  const rest = { ...current };
+  delete rest.text;
+  const storage = browserStorage();
+  if (!storage) return;
+  try {
+    if (Object.keys(rest).length) storage.setItem(STORAGE_PREFIX + key, JSON.stringify(rest));
+    else storage.removeItem(STORAGE_PREFIX + key);
+  } catch {
+    // The send already succeeded; retaining stale text is safer than failing it.
+  }
+}
+
 export function readLastSentRuntimeSelection(): PerMessageRuntimeSelection | null {
   return readCachedComposerDraft(LAST_SENT_RUNTIME_KEY)?.runtimeSelection ?? null;
 }

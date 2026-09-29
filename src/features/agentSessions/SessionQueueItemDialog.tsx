@@ -32,6 +32,7 @@ export function SessionQueueItemDialog({
   readonly onClose: () => void;
 }) {
   const item = projection.item;
+  const compaction = item.entry.item.kind === 'compaction';
   const editable = item.entry.state === 'pending' || item.entry.state === 'blocked';
   const blocked = item.entry.state === 'blocked' || item.targetOperation?.phase === 'blocked';
   const finish = (action: (() => void) | undefined) => {
@@ -47,14 +48,18 @@ export function SessionQueueItemDialog({
     >
       <header>
         <div>
-          <p>{item.message ? 'Queued message' : 'Target operation'}</p>
+          <p>
+            {compaction ? 'Queued command' : item.message ? 'Queued message' : 'Target operation'}
+          </p>
           <h2 id="session-queue-item-title">{queueEntryTitle(item)}</h2>
         </div>
         <button type="button" onClick={onClose} aria-label="Close queue item">
           <X size={18} />
         </button>
       </header>
-      {item.message ? (
+      {compaction ? (
+        <CompactionDetails item={item} target={projection.target} />
+      ) : item.message ? (
         <MessageDetails
           item={item}
           target={projection.target}
@@ -94,7 +99,7 @@ export function SessionQueueItemDialog({
             Choose destination…
           </button>
         )}
-        {item.message && editable && (
+        {item.message && !compaction && editable && (
           <button type="button" onClick={() => finish(() => onChooseTarget(item))}>
             Change destination…
           </button>
@@ -110,6 +115,36 @@ export function SessionQueueItemDialog({
         )}
       </div>
     </ModalDialog>
+  );
+}
+
+function CompactionDetails({
+  item,
+  target,
+}: {
+  readonly item: SessionQueueEntryViewDto;
+  readonly target: ProjectedQueueEntry['target'];
+}) {
+  const destination = queueTargetLabel(target);
+  return (
+    <div className="session-queue-editor__target">
+      <dl>
+        <dt>Command</dt>
+        <dd>/compact</dd>
+        <dt>Destination</dt>
+        <dd>
+          {destination.device} / {destination.workspace}
+        </dd>
+        <dt>Status</dt>
+        <dd>{queueEntryState(item)}</dd>
+      </dl>
+      {item.entry.blockedReason && (
+        <p className="session-queue-editor__error" role="alert">
+          <AlertCircle size={15} />
+          {item.entry.blockedReason}
+        </p>
+      )}
+    </div>
   );
 }
 

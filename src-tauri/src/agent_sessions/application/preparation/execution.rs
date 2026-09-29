@@ -483,6 +483,13 @@ impl AgentSessionApplication {
             .prepare_invocation(
                 RuntimeInvocationRequest { attachments: invocation.attachments.clone(), session_id: p.session_id.clone(),
                     invocation_id: id.clone(),
+                    kind: if invocation.input_provenance == crate::agent_sessions::domain::AgentInvocationInputProvenance::Application
+                        && invocation.submitted_text == "/compact"
+                    {
+                        crate::agent_sessions::ports::RuntimeInvocationKind::Compact
+                    } else {
+                        crate::agent_sessions::ports::RuntimeInvocationKind::Turn
+                    },
                     content,
                     working_directory: Some(destination.path.clone()),
                     options: preflight.effective_options.clone(),

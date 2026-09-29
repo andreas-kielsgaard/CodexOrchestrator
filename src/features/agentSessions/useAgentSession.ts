@@ -31,6 +31,7 @@ import {
 import { samePreparedConfiguration } from './sessionPreparationState';
 import {
   clearCachedComposerDraft,
+  clearCachedComposerText,
   composerDraftCacheKey,
   readCachedComposerDraft,
   writeCachedComposerDraft,
@@ -88,6 +89,7 @@ export interface AgentSessionWorkspaceController {
     destination: SessionExecutionSelectionDto,
     beforeEntryId?: string,
   ): Promise<void>;
+  compact?(): Promise<void>;
   updateQueuedMessage?(
     input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>,
   ): Promise<void>;
@@ -220,6 +222,8 @@ export function useAgentSession(
   const [workingDirectory, setWorkingDirectory] = useState(
     initialComposer.draft?.workingDirectory ?? '',
   );
+  const workingDirectoryRef = useRef(workingDirectory);
+  workingDirectoryRef.current = workingDirectory;
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [canceling, setCanceling] = useState(false);
@@ -402,7 +406,10 @@ export function useAgentSession(
     }, 180);
     return () => {
       window.clearTimeout(timer);
-      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
+      writeCachedComposerDraft(composerCacheKey, {
+        text: draftRef.current,
+        workingDirectory: workingDirectoryRef.current,
+      });
     };
   }, [composerCacheKey, draft, hydratedComposerCacheKey, workingDirectory]);
 
@@ -567,7 +574,8 @@ export function useAgentSession(
         if (acceptedDelivery && clearComposer && draftRef.current === value) {
           draftRef.current = '';
           setDraft('');
-          clearCachedComposerDraft(sendCacheKey);
+          if (existingSessionId) clearCachedComposerText(sendCacheKey);
+          else clearCachedComposerDraft(sendCacheKey);
         }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
@@ -577,50 +585,54 @@ export function useAgentSession(
   );
 
   const send = useCallback(
-    (attachments: readonly NewAgentImageAttachmentDto[] = []) =>
-      sendText(draft, true, attachments),
+    (attachments: readonly NewAgentImageAttachmentDto[] = []) => sendText(draft, true, attachments),
     [draft, sendText],
   );
 
-  const steer = useCallback(async (attachments: readonly NewAgentImageAttachmentDto[] = []) => {
-    const sessionId = selectedIdRef.current;
-    const submittedText = draftRef.current.trim();
-    const invocationId = details ? projectAgentSessionTranscript(details).activeInvocationId : null;
-    if (
-      !sessionId ||
-      !invocationId ||
-      (!submittedText && !attachments.length) ||
-      !client.steerSession
-    )
-      return;
-    setSending(true);
-    setError(null);
-    try {
-      const outcome = await client.steerSession({
-        sessionId,
-        invocationId,
-        inputId: crypto.randomUUID(),
-        text: submittedText,
-        ...(attachments.length ? { attachments } : {}),
-      });
-      if (outcome.state === 'accepted') {
-        if (draftRef.current.trim() === submittedText) {
-          draftRef.current = '';
-          setDraft('');
-          clearCachedComposerDraft(composerCacheKeyRef.current);
+  const steer = useCallback(
+    async (attachments: readonly NewAgentImageAttachmentDto[] = []) => {
+      const sessionId = selectedIdRef.current;
+      const submittedText = draftRef.current.trim();
+      const invocationId = details
+        ? projectAgentSessionTranscript(details).activeInvocationId
+        : null;
+      if (
+        !sessionId ||
+        !invocationId ||
+        (!submittedText && !attachments.length) ||
+        !client.steerSession
+      )
+        return;
+      setSending(true);
+      setError(null);
+      try {
+        const outcome = await client.steerSession({
+          sessionId,
+          invocationId,
+          inputId: crypto.randomUUID(),
+          text: submittedText,
+          ...(attachments.length ? { attachments } : {}),
+        });
+        if (outcome.state === 'accepted') {
+          if (draftRef.current.trim() === submittedText) {
+            draftRef.current = '';
+            setDraft('');
+            clearCachedComposerText(composerCacheKeyRef.current);
+          }
+        } else {
+          setError(
+            outcome.result ?? `Steering ${outcome.state}. It will not be sent again automatically.`,
+          );
         }
-      } else {
-        setError(
-          outcome.result ?? `Steering ${outcome.state}. It will not be sent again automatically.`,
-        );
+        await loadSelected(sessionId, true);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      } finally {
+        if (mountedRef.current) setSending(false);
       }
-      await loadSelected(sessionId, true);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      if (mountedRef.current) setSending(false);
-    }
-  }, [client, details, loadSelected]);
+    },
+    [client, details, loadSelected],
+  );
 
   const reorderQueue = useCallback(
     async (entryIds: readonly string[]) => {
@@ -681,6 +693,18 @@ export function useAgentSession(
     },
     [options.execution?.client, queue],
   );
+
+  const compact = useCallback(async () => {
+    const sessionId = selectedIdRef.current;
+    const queueClient = options.execution?.client;
+    if (!sessionId || !queueClient?.enqueueCompaction) return;
+    try {
+      setQueue(await queueClient.enqueueCompaction(sessionId));
+      await loadSelected(sessionId, true);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }, [loadSelected, options.execution?.client]);
 
   const updateQueuedMessage = useCallback(
     async (input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>) => {
@@ -825,8 +849,12 @@ export function useAgentSession(
       ? details.session.workingDirectory
       : workingDirectory);
   const quickFolderTarget = selectedSessionId ? null : options.folderTarget;
+  const quickSessionScope =
+    options.executionSelection || options.executionQuickFeatures || quickExecutionTarget
+      ? null
+      : (selectedSessionId ?? options.draftId);
   const quickFeatureKey = JSON.stringify([
-    selectedSessionId ?? options.draftId,
+    quickSessionScope,
     quickContext,
     quickFolderTarget,
     quickExecutionTarget,
@@ -970,14 +998,7 @@ export function useAgentSession(
     quickFeatures:
       options.execution?.setSelection && quickFeaturesClient?.loadQuickFeatures
         ? {
-            contextKey: JSON.stringify([
-              selectedSessionId ?? options.draftId,
-              quickContext,
-              quickFolderTarget,
-              quickExecutionTarget,
-              options.executionSelection,
-              options.executionQuickFeatures,
-            ]),
+            contextKey: quickFeatureKey,
             catalogue: quickCatalogue,
             load: loadQuickFeatures,
             refresh: async () => {
@@ -987,6 +1008,12 @@ export function useAgentSession(
             },
             selection: options.execution.selection,
             setSelection: options.execution.setSelection,
+            compact:
+              selectedSessionId &&
+              options.execution.client.enqueueCompaction &&
+              quickCatalogue?.configuration?.provider === 'codex'
+                ? compact
+                : undefined,
           }
         : undefined,
     quickCatalogue,
@@ -996,6 +1023,7 @@ export function useAgentSession(
     queue,
     queuePresentation,
     enqueueTargetOperation,
+    compact,
     reorderQueue,
     updateQueuedMessage,
     updateTargetOperation,
